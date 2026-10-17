@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synth Playground</title>
+<style>
+  :root { --bg: #f4f4f1; --fg: #1d1d1b; --muted: #6b6b66; --key: #ffffff; --key-edge: #b9b9b2;
+          --black: #222220; --accent: #c8553d; --btn: #e4e4df; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #161615; --fg: #ecece6; --muted: #9a9a92; --key: #e8e8e2;
+          --key-edge: #4a4a45; --black: #0c0c0b; --accent: #e0745c; --btn: #2a2a27; }
+  }
+  :root[data-theme="dark"] { --bg: #161615; --fg: #ecece6; --muted: #9a9a92; --key: #e8e8e2;
+          --key-edge: #4a4a45; --black: #0c0c0b; --accent: #e0745c; --btn: #2a2a27; }
+
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font: 15px/1.4 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+       margin: 20px 0 8px; }
+  button { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid var(--key-edge);
+           border-radius: 6px; padding: 8px 12px; cursor: pointer; touch-action: none; user-select: none; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* SAVE while a press of it would act (ui_sm_save_armed): the save page's shortcut, the confirm popup */
+  @keyframes save-flash { 50% { background: var(--accent); color: #fff; border-color: var(--accent); } }
+  button.flash { animation: save-flash 0.5s steps(1) infinite; }
+  #start { font-size: 16px; padding: 12px 20px; }
+  #status { color: var(--muted); margin: 8px 0 0; min-height: 1.4em; font-size: 14px; }
+
+  .keys { position: relative; height: 180px; width: 100%; max-width: 560px; user-select: none; touch-action: none; }
+  .key { position: absolute; top: 0; box-sizing: border-box; border: 1px solid var(--key-edge);
+         border-radius: 0 0 6px 6px; background: var(--key); }
+  .key.white { height: 100%; width: calc(100% / 16); }
+  .key.black { height: 60%; width: calc(100% / 16 * 0.6); background: var(--black); z-index: 1; border-color: var(--black); }
+  .key.black.ignored { opacity: .45; }
+  .key.on { background: var(--accent); }
+  .key .label { position: absolute; bottom: 4px; left: 0; right: 0; text-align: center; font-size: 11px;
+                color: var(--muted); pointer-events: none; }
+  .key.black .label { color: #aaa; }
+
+  .menu { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; max-width: 560px; }
+  .menu button { padding: 10px 0; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .kbd { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  @media (max-width: 420px) { .menu { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: 560px; margin: 0 0 12px; }
+  .row .page { font-weight: 600; margin-right: 6px; }
+  select { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid var(--key-edge);
+           border-radius: 6px; padding: 7px 8px; }
+  .knobs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; max-width: 560px; }
+  .knobs.off { opacity: .45; pointer-events: none; }
+  @media (max-width: 420px) { .knobs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .knob { text-align: center; outline: none; touch-action: none; user-select: none; }
+  .knob .dial { position: relative; width: 64px; height: 64px; margin: 0 auto; border-radius: 50%;
+                border: 1px solid var(--key-edge); background: var(--key); cursor: ns-resize; }
+  .knob .dial::after { content: ""; position: absolute; left: 50%; top: 6px; width: 3px; height: 20px;
+                       margin-left: -1.5px; border-radius: 2px; background: var(--accent); }
+  .knob:focus-visible .dial { box-shadow: 0 0 0 2px var(--accent); }
+  .knob .name { color: var(--muted); font-size: 12px; line-height: 1.2; margin-top: 6px; min-height: 2.4em; }
+  .knob .val { font-family: ui-monospace, Consolas, monospace; font-size: 13px; margin-top: 2px; }
+  .knob.unused { opacity: .35; pointer-events: none; }
+  .encoders { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; max-width: 560px; margin-bottom: 10px; }
+  .encoders.off { opacity: .45; pointer-events: none; }
+  .enc { border: 1px solid var(--key-edge); border-radius: 8px; padding: 8px 10px; background: var(--btn); outline: none; touch-action: none; }
+  .enc:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .enc .enc-name { color: var(--muted); font-size: 12px; letter-spacing: .06em; margin-bottom: 6px; }
+  .enc .enc-btns { display: flex; gap: 6px; }
+  .enc .enc-btns button { flex: 1; padding: 6px 0; }
+  .enc .enc-name span { color: var(--fg); letter-spacing: 0; }
+  .plist { max-width: 560px; border: 1px solid var(--key-edge); border-radius: 8px; overflow: hidden; }
+  .prow { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border-top: 1px solid var(--key-edge); font-size: 14px; }
+  .prow:first-child { border-top: 0; }
+  .prow.cur { background: var(--accent); color: #fff; }
+  .prow.off { color: var(--muted); }
+  .prow .pval { font-family: ui-monospace, Consolas, monospace; text-align: right; }
+  .plist-empty { padding: 10px; color: var(--muted); font-size: 13px; }
+  .key.step { box-shadow: inset 0 3px 0 var(--accent); }
+  .key.chord { box-shadow: inset 0 -3px 0 var(--muted); }
+  /* the key LEDs (ui_sm_key_leds): lit, mid, dim */
+  .key.led-lit { background: color-mix(in srgb, var(--accent) 80%, var(--key)); }
+  .key.led-mid { background: color-mix(in srgb, var(--accent) 45%, var(--key)); }
+  .key.led-dim { background: color-mix(in srgb, var(--accent) 18%, var(--key)); }
+  .key.black.led-lit { background: color-mix(in srgb, var(--accent) 85%, var(--black)); }
+  .key.black.led-mid { background: color-mix(in srgb, var(--accent) 50%, var(--black)); }
+  .key.black.led-dim { background: color-mix(in srgb, var(--accent) 25%, var(--black)); }
+  .key.black.step { box-shadow: inset 0 3px 0 var(--accent); }
+  .screen-wrap { max-width: 560px; }
+  #screen { display: block; width: 100%; max-width: 480px; aspect-ratio: 1; border-radius: 10px; background: #000;
+            image-rendering: pixelated; }
+  button.rec.active { background: #d23c3c; border-color: #d23c3c; }
+  button.held { background: var(--fg); color: var(--bg); }
+</style>
+</head>
+<body>
+  <h1>Synth Playground</h1>
+  <button id="start" type="button">Start Audio</button>
+  <p id="status">Press Start Audio to load the synth core and unlock the browser's audio.</p>
+
+  <h2>Keyboard</h2>
+  <div id="keys" class="keys" aria-label="Keyboard"></div>
+  <p class="hint">
+    Mouse or touch the keys, or play with the computer keyboard:
+    <span class="kbd">A W S E D F T G Y H U J K</span> = C to C.
+    <span class="kbd">Z</span> / <span class="kbd">X</span> = octave down / up.
+    Base note: <span id="base" class="kbd"></span>
+  </p>
+
+  <h2>Menu</h2>
+  <div id="menu" class="menu"></div>
+  <p class="hint">Section buttons from the FM1 spec (2.1), sent to the core as the FM1's buttons are: a press opens the
+    section's first page, the next press cycles its submenus (skipping the ones the layer's architecture hides). SAVE:
+    the first press opens PRESET, the next SAVE. There, ACTION picks what a SAVE press runs: SAVE asks ARE YOU SURE?, or
+    OVERWRITE? when the slot already holds a save (ALGORITHM picks, SAVE confirms); COPY puts the TARGET's live item on
+    the clipboard; PASTE (offered once the clipboard holds that kind) asks, then replaces the live item. The emulator has
+    no flash: saves stay in memory until the page reloads. Any button or encoder clears SAVED.
+    HOME acts when released. Hold it and press OCT&minus; / OCT+ to edit LAYER 1 (wood) / LAYER 2 (stone) instead: the
+    page you are on stays up, and HOME does nothing on release. While HOME is held the focused layer's OCT button is lit
+    and the other flashes. The whole screen wears the focused layer's colours: oak for LAYER 1, granite for LAYER 2.</p>
+
+  <h2>Screen</h2>
+  <div class="row">
+    <span class="hint">Colours follow the layer being edited: oak for LAYER 1, granite for LAYER 2.</span>
+  </div>
+  <div class="screen-wrap">
+    <canvas id="screen" width="480" height="480" aria-label="FM1 screen"></canvas>
+  </div>
+  <p class="hint">Every page, drawn by the firmware's own renderers (src/ui_page_draw.c, src/ui_seq_draw.c,
+    src/ui_arp_draw.c) inside the core. The screen's text uses your system font; the FM1 uses Inter Tight.</p>
+
+  <h2>Sequencer</h2>
+  <div class="row">
+    <button id="play" type="button">PLAY</button>
+    <button id="rec" type="button" class="rec">REC</button>
+    <button id="octdn" type="button" aria-pressed="false">OCT&minus;</button>
+    <button id="octup" type="button" aria-pressed="false">OCT+</button>
+  </div>
+  <p class="hint">
+    PLAY (or <span class="kbd">Space</span>) starts and stops the MAQ sequencer from any page; navigating never stops it.
+    On the SEQ page the 16 white keys (marked lane:step) are four blocks of four: C D E F lane 1, G A B C lane 2, D E F G
+    lane 3, A B C D lane 4 (each block's first key glows; the active lane and step group's key is lit), and a key's place in its block puts steps 1&ndash;4, 5&ndash;8, 9&ndash;12 or 13&ndash;16 of that
+    lane on the knobs. The black keys do nothing there. Hold OCT&minus; or OCT+ (or <span class="kbd">Z</span> /
+    <span class="kbd">X</span>) and press white key n to set the active lane's loop start / end to step n: while held, the 16
+    keys show the lane's steps (the loop window glows, the playhead is lit, the boundary you are about to move is lit
+    when stopped and half lit when playing). REC (SEQ page)
+    enters step record: SELECT walks the steps, knob 1 to 4 edit lanes 1 to 4, and keys (held together for a chord) write
+    the step (its notes light on the keyboard). Pick the lane and its EV / TARGET / MD / P with SELECT and ALGORITHM; TARGET hides when it has one choice.
+    Tempo: HOME (last page) &rarr; GLOBAL &rarr; knob 4 (or the INT TEMPO row), with CLOCK SOURCE on INTERNAL.
+  </p>
+  <p class="hint">
+    ARP (spec 8): the 13 keys C&ndash;C (marked underneath) are chord keys: each plays a 4-voice chord from the GENRE BANK.
+    The 8 white keys above them are step keys 1&ndash;8 (marked on top); steps up to SEQ LENGTH glow (rests stay dark), the playing step's key
+    is lit, and while playing the chord key of the transposition is half lit. Hold step keys
+    and strike a chord key to capture that chord into them, with the four knobs (GATE, OCTAVE, STYLE, RHYTHM) as they are;
+    a knob turned while step keys are held edits those steps. PLAY runs the pattern with the MAQ; while it plays, a chord
+    key transposes it by its distance from the first chord key (and the MAQ too with TRANSPOSE MAQ on).
+    The black keys among the step keys are functions (marked on top): LAT toggles latch (the chord's arpeggio plays on
+    after you let go); hold TIE, CLR or ACC and tap step keys (or hold step keys and tap them) to make a tie (the chord
+    before carries on), a rest, or toggle the accent (first strike at ACCENT VEL); hold CPY, tap the source step, then
+    the steps to copy it to. REC on the ARP page records: playing, chord keys land on the nearest step and the knobs
+    overdub the playing step; stopped, chord keys fill steps 1, 2, 3&hellip; (SEQ LENGTH follows), and TIE / CLR alone
+    record a tie or a rest.
+  </p>
+
+  <h2>Knobs</h2>
+  <div class="row">
+    <span id="page" class="page"></span>
+    <button id="l1" type="button" class="active">Layer 1</button>
+    <button id="l2" type="button">Layer 2</button>
+    <label>Performance <select id="perf">
+      <option value="0">SINGL</option><option value="1">DUAL</option><option value="2">SPLIT</option>
+    </select></label>
+  </div>
+  <div id="knobs" class="knobs off" aria-label="Knobs"></div>
+  <p class="hint">Knob 1 to 4 for the page above (2.2), as the layer's voice architecture maps them (set it with
+    L1 ARCH / L2 ARCH on HOME). Drag up or down, scroll, or use the arrow keys on a focused knob. Pitch Bend springs back
+    to centre. Knob 1 to 3 on HOME are sent as MIDI. Greyed knobs have no parameter in this architecture.</p>
+
+  <h2>Parameters</h2>
+  <div id="encoders" class="encoders off" aria-label="Encoders">
+    <div id="selEnc" class="enc" tabindex="0" aria-label="Select encoder">
+      <div class="enc-name">SELECT</div>
+      <div class="enc-btns"><button id="selUp" type="button" aria-label="Select up">&#9650;</button><button id="selDn" type="button" aria-label="Select down">&#9660;</button></div>
+    </div>
+    <div id="algEnc" class="enc" tabindex="0" aria-label="Algorithm encoder">
+      <div class="enc-name">ALGORITHM</div>
+      <div class="enc-btns"><button id="algDn" type="button" aria-label="Algorithm down">&minus;</button><button id="algUp" type="button" aria-label="Algorithm up">+</button></div>
+    </div>
+    <div id="preEnc" class="enc" tabindex="0" aria-label="Preset encoder">
+      <div class="enc-name">PRESET <span id="preWhat"></span></div>
+      <div class="enc-btns"><button id="preDn" type="button" aria-label="Previous preset">&minus;</button><button id="preUp" type="button" aria-label="Next preset">+</button></div>
+    </div>
+  </div>
+  <div id="plist" class="plist" aria-label="Selectable parameters"></div>
+  <p class="hint">The page's selectable parameters (2.2), in the core's own order. SELECT moves the cursor down the list
+    (wheel, buttons, or the arrow keys on the encoder); ALGORITHM changes the highlighted value. Greyed rows are skipped.
+    PRESET loads the next or previous saved preset (5.2): a sequencer slot on SEQ, a performance on HOME, an arp pattern
+    on ARP, and the focused layer's patch on every other page. It skips slots never saved, so save something first.</p>
+
+<script>
+(() => {
+  const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  const MENU = ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "ARP", "SAVE", "SEQ"];
+  // Knob pages, indexed by the WPAGE_* ids in src/host/web_entry.c. js: the knob is a performance controller
+  // sent as MIDI here (velocity, pitch bend, mod wheel), not a core parameter. spring: returns to centre.
+  // Once the core runs, each knob's name and kind come from the core's knob map, which follows the layer's voice
+  // architecture (UIStateMachine.c); the names below are only the fallback before audio starts.
+  const PAGES = [
+    { name: "OSC1", knobs: [["Wavetable Scan", "raw"], ["Octave", "oct"], ["Fine Tune", "bip"], ["Pitch Mod Amount", "raw"]] },
+    { name: "OSC2", knobs: [["Wavetable Scan", "raw"], ["Octave", "oct"], ["Fine Tune", "bip"], ["Pitch Mod Amount", "raw"]] },
+    { name: "OSC MIX", knobs: [["Oscillator Mix", "bip"], ["Cross-Mod (FM)", "raw"], ["Sub-Osc Level", "raw"], ["Oscillator Spread", "raw"]] },
+    { name: "FILTER1", knobs: [["Filter Type (Morph)", "raw"], ["Cutoff", "raw"], ["Resonance", "raw"], ["Filter Mod Amount", "bip"]] },
+    { name: "FILTER2", knobs: [["Filter Type (Morph)", "raw"], ["Cutoff", "raw"], ["Resonance", "raw"], ["Filter Mod Amount", "bip"]] },
+    { name: "FILTER MIX", knobs: [["Filter Balance", "bip"], ["Routing (Serial/Parallel)", "raw"], ["Balance Mod Amount", "bip"], ["Routing Mod Amount", "bip"]] },
+    { name: "ENV1", knobs: [["Attack", "raw"], ["Decay", "raw"], ["Sustain", "raw"], ["Release", "raw"]] },
+    { name: "ENV2", knobs: [["Attack", "raw"], ["Decay", "raw"], ["Sustain", "raw"], ["Release", "raw"]] },
+    { name: "ENV3", knobs: [["Attack", "raw"], ["Decay", "raw"], ["Sustain", "raw"], ["Release", "raw"]] },
+    { name: "LFO1", knobs: [["Waveshape (Morph)", "raw"], ["Rate", "raw"], ["Delay", "raw"], ["Fade In/Out", "bip"]] },
+    { name: "LFO2", knobs: [["Waveshape (Morph)", "raw"], ["Rate", "raw"], ["Delay", "raw"], ["Fade In/Out", "bip"]] },
+    { name: "LFO3", knobs: [["Waveshape (Morph)", "raw"], ["Rate", "raw"], ["Delay", "raw"], ["Fade In/Out", "bip"]] },
+    { name: "MOD1", knobs: [["Mod Source A", "src"], ["Transform", "fn"], ["Mod Source B", "src"], ["Attenuator", "bip"]] },
+    { name: "MOD2", knobs: [["Mod Source A", "src"], ["Transform", "fn"], ["Mod Source B", "src"], ["Attenuator", "bip"]] },
+    { name: "MOD3", knobs: [["Mod Source A", "src"], ["Transform", "fn"], ["Mod Source B", "src"], ["Attenuator", "bip"]] },
+    { name: "AMP", knobs: [["Drive", "raw"], ["Amp Mod Depth", "raw"], ["Delay Send", "raw"], ["Reverb Send", "raw"]] },
+    { name: "EFFECTS", knobs: [["Delay Time", "raw"], ["Delay Feedback", "raw"], ["Reverb Decay", "raw"], ["Reverb Damping", "raw"]] },
+    { name: "HOME", knobs: [["Keyboard Velocity", "raw", "vel"], ["Pitch Bend", "bip", "bend", true], ["Mod Wheel", "raw", "mod"], ["Portamento Time", "raw"]] },
+    { name: "SEQ", knobs: [["Step 1", "seq"], ["Step 2", "seq"], ["Step 3", "seq"], ["Step 4", "seq"]] },
+    { name: "ARP", knobs: [["Gate Length", "raw"], ["Octave Range", "list"], ["Style", "list"], ["Rhythm", "list"]] },
+    { name: "GLOBAL", knobs: [["", "none"], ["", "none"], ["", "none"], ["Int Tempo", "bpm"]] },
+    { name: "HOME (SPLIT)", knobs: [["Keyboard Velocity", "raw", "vel"], ["Pitch Bend", "bip", "bend", true], ["Mod Wheel", "raw", "mod"], ["Portamento Time", "raw"]] },
+    { name: "PRESET", knobs: [["L1 Patch", "raw"], ["L2 Patch", "raw"], ["Seq Link", "raw"], ["Arp Link", "raw"]] },
+    { name: "SAVE", knobs: [["Target", "list"], ["Slot", "raw"], ["Char Pos", "list"], ["Character", "list"]] },
+  ];
+  const PAGE_HOME = 17;
+  const PAGE_SEQ = 18;                              // WPAGE_SEQ
+  const PAGE_ARP = 19;                              // WPAGE_ARP
+  const ARP_ZONE = 13;                              // 8.1: the lowest 13 keys are chord keys, the next 8 white keys steps
+  const PAGE_HOME3 = 21;                            // WPAGE_HOME3
+  const isHome = (p) => p === PAGE_HOME || p === PAGE_HOME3;
+  const keyPage = (p) => p === PAGE_SEQ || p === PAGE_ARP;   // the core takes the keys first (7.1, 8.1)
+  let arpPos = 255, arpHeld = 0;                    // the ARP step playing, the step keys held (from the core)
+  let keyLeds = [0, 0, 0];                          // the key LEDs from the core: lit, mid, dim (bit = semitones above base)
+  const SEQ_WHITE_KEYS = 16;                        // 7.1: the bottom 16 white keys select lane (block) and step group
+  // the core's UIKNOB_* kinds, as fmt() names them
+  const KIND = ["none", "raw", "bip", "oct", "src", "fn", "perf", "seq", "list", "bpm"];
+  const MSRC = ["none", "velocity", "keyboard", "mod wheel", "aftertouch", "env1", "env2", "env3",
+                "lfo1", "lfo2", "lfo3", "modslot1", "modslot2", "modslot3", "customcc1", "customcc2"];
+  const MFN = ["*", "+", "-", "max", "min", "sample B on A", "quantize B to A", "|a-b|", "lag", "diode"];
+  // 16 white keys (C..B, C..B, C, D) and the black keys between them: 27 keys, as many as the FM1 has (F3..G5).
+  const SPAN = 16;                                  // white keys shown
+  const KEY_MAP = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 };
+
+  const startBtn = document.getElementById("start");
+  const statusEl = document.getElementById("status");
+  const keysEl = document.getElementById("keys");
+  const menuEl = document.getElementById("menu");
+  const baseEl = document.getElementById("base");
+
+  let ctx = null;
+  let node = null;
+  let base = 48;                                    // C3, the render_demo pattern's low end
+  const held = new Map();                           // pointer id or key -> midi note (for clean note-off)
+  const onKeys = new Set();
+  let noteVel = 100;                                // HOME knob 1: keyboard velocity (1..127)
+  let modVal = 0;                                   // HOME knob 3: mod wheel, sent as CC 1
+  let bendVal = 64;                                 // HOME knob 2: pitch bend, 64 = centre
+  let page = 0, layer = 0, perf = 0;                // the knob page, layer focus (0/1), performance mode (SINGL)
+  let ready = false;                                // the core is running: knobs reach it
+  let core = null;                                  // the core's knob map for page / layer: { labels, kinds }
+  let visible = [];                                 // per page: shown for the layer's voice architecture
+  let archInfo = "";                                // "STACK · 4v": the layer's architecture and voice limit
+
+  const noteName = (n) => `${NOTE_NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
+  const showBase = () => { baseEl.textContent = noteName(base); };
+
+  const setStatus = (text) => { statusEl.textContent = text; };
+
+  function send(status, d1, d2) {
+    if (node) node.port.postMessage({ type: "midi", status, data1: d1, data2: d2 });
+  }
+  // SEQ page: a key goes to the core first (7.1 step selectors and loop shortcuts, 7.2 step capture); the worklet plays
+  // it only if the core does not take it. OCT- / OCT+ held turn a step key into a loop boundary.
+  const seqMods = () => (octHeld.dn ? 1 : 0) | (octHeld.up ? 2 : 0);
+  function seqKey(note, down) {
+    if (octHeld.dn) octHeld.dnUsed = true;
+    if (octHeld.up) octHeld.upUsed = true;
+    node.port.postMessage({ type: "seqkey", key: note - base, note, down, vel: noteVel, mods: seqMods() });
+  }
+  function noteOn(source, note) {
+    if (held.has(source)) return;
+    const viaSeq = ready && keyPage(page);           // SEQ and ARP: the core takes its keys first
+    held.set(source, { note, viaSeq });
+    if (viaSeq) seqKey(note, true);
+    else send(0x90, note, noteVel);
+    onKeys.add(note);
+    paintKeys();
+  }
+  function noteOff(source) {
+    const h = held.get(source);
+    if (h === undefined) return;
+    const note = h.note;
+    held.delete(source);
+    if (h.viaSeq) seqKey(note, false);              // released the way it was pressed: no hanging note
+    else send(0x80, note, 0);
+    let stillHeld = false;
+    for (const v of held.values()) if (v.note === note) stillHeld = true;
+    if (!stillHeld) onKeys.delete(note);
+    paintKeys();
+  }
+  function releaseAll() {
+    for (const source of [...held.keys()]) noteOff(source);
+  }
+
+  // ---- on-screen keyboard: SPAN white keys from base, black keys between them
+  const keyEls = new Map();                         // semitones above base -> element
+  const whiteIdx = new Map();                       // semitones above base -> white key index (white keys only)
+  function buildKeys() {
+    const whiteSemis = [0, 2, 4, 5, 7, 9, 11];      // white keys within an octave
+    const blackAfter = { 1: 0, 3: 1, 6: 3, 8: 4, 10: 5 }; // black semitone -> white index it follows
+    const w = 100 / SPAN;
+    for (let i = 0; i < SPAN; i++) {
+      const semi = Math.floor(i / 7) * 12 + whiteSemis[i % 7];
+      const el = makeKey("white", semi, i * w);
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = NOTE_NAMES[semi % 12];
+      el.appendChild(label);
+      keysEl.appendChild(el);
+      keyEls.set(semi, el);
+      whiteIdx.set(semi, i);
+    }
+    for (let oct = 0; oct < 3; oct++)
+      for (const [semi, whiteIdx] of Object.entries(blackAfter)) {
+        const wi = oct * 7 + whiteIdx;
+        if (wi >= SPAN - 1) continue;
+        const s = oct * 12 + Number(semi);
+        const el = makeKey("black", s, (wi + 1) * w - w * 0.3);
+        keysEl.appendChild(el);
+        keyEls.set(s, el);
+      }
+  }
+  function makeKey(kind, semi, leftPct) {
+    const el = document.createElement("div");
+    el.className = `key ${kind}`;
+    el.style.left = `${leftPct}%`;
+    el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      noteOn(`p${e.pointerId}`, base + semi);
+    });
+    el.addEventListener("pointerup", (e) => noteOff(`p${e.pointerId}`));
+    el.addEventListener("pointercancel", (e) => noteOff(`p${e.pointerId}`));
+    return el;
+  }
+
+  // SEQ page (7.1): white key w is block w >> 2 (the lane) and place w & 3 (the step group); the black keys among them
+  // do nothing. Labels read lane:first step.
+  function paintKeys() {
+    if (page === PAGE_ARP) { paintArpKeys(); return; }
+    const seq = page === PAGE_SEQ;
+    for (const [semi, el] of keyEls) {
+      const w = whiteIdx.has(semi) ? whiteIdx.get(semi) : -1;
+      const sel = seq && w >= 0 && w < SEQ_WHITE_KEYS;
+      el.classList.toggle("on", onKeys.has(base + semi));
+      el.classList.toggle("step", sel);
+      el.classList.toggle("ignored", seq && w < 0);
+      const label = el.querySelector(".label");
+      if (label) label.textContent = sel ? `${(w >> 2) + 1}:${(w & 3) * 4 + 1}` : NOTE_NAMES[semi % 12];
+      el.title = sel ? `Lane ${(w >> 2) + 1}, steps ${(w & 3) * 4 + 1}-${(w & 3) * 4 + 4}` : seq && w < 0 ? "Not used on SEQ" : "";
+      el.classList.remove("chord");
+      paintLed(el, semi);
+    }
+  }
+  // the core's key LEDs on the SEQ and ARP pages (ui_sm_key_leds), the key held (.on) over them
+  function paintLed(el, semi) {
+    const keyed = page === PAGE_SEQ || page === PAGE_ARP;
+    el.classList.toggle("led-lit", keyed && ((keyLeds[0] >>> semi) & 1) === 1);
+    el.classList.toggle("led-mid", keyed && ((keyLeds[1] >>> semi) & 1) === 1);
+    el.classList.toggle("led-dim", keyed && ((keyLeds[2] >>> semi) & 1) === 1);
+  }
+  function paintLedState(leds) {
+    if (!leds || (leds[0] === keyLeds[0] && leds[1] === keyLeds[1] && leds[2] === keyLeds[2])) return;
+    keyLeds = leds;
+    for (const [semi, el] of keyEls) paintLed(el, semi);
+  }
+  // ARP page (8.1): semitones 0..12 above base are chord keys, then 8 white keys are steps 1..8 (lit while playing or
+  // held); the black keys among the step keys are function keys, by the step key below them
+  const ARP_FN = { 1: "LAT", 2: "TIE", 4: "CLR", 5: "CPY", 7: "ACC" };
+  function paintArpKeys() {
+    const firstStepWhite = whiteIdx.get(12) + 1;    // the white key after the last chord key
+    for (const [semi, el] of keyEls) {
+      const w = whiteIdx.has(semi) ? whiteIdx.get(semi) - firstStepWhite : -1;
+      const chord = semi < ARP_ZONE;
+      const stepKey = !chord && w >= 0 && w < 8;
+      const below = whiteIdx.has(semi) ? -1 : whiteIdx.get(semi - 1) - firstStepWhite + 1;   // white step keys below a black key
+      const fn = !chord && below >= 0 ? ARP_FN[below] : undefined;
+      el.classList.toggle("on", onKeys.has(base + semi));
+      el.classList.toggle("chord", chord);
+      el.classList.toggle("step", stepKey);
+      el.classList.toggle("ignored", !chord && !stepKey && !fn && semi < 26);
+      paintLed(el, semi);
+      const label = el.querySelector(".label");
+      if (label) label.textContent = stepKey ? `S${w + 1}` : fn || NOTE_NAMES[semi % 12];
+      el.title = chord ? "Chord key" : stepKey ? `Step ${w + 1}` : fn ? `Function: ${fn}` : "";
+    }
+  }
+
+  // ---- computer keyboard
+  // Z / X: OCT- / OCT+. Tapped, they shift the octave; on the SEQ page, held with a step key, they set the loop instead
+  // (7.1), and the octave stays put.
+  const octHeld = { dn: false, up: false, dnUsed: false, upUsed: false };
+  const shiftOctave = (d) => { releaseAll(); base = Math.max(12, Math.min(96, base + 12 * d)); showBase(); };
+  function octPress(which) {
+    if (homeHeld) { homeChord = true; setLayer(which === "up" ? 1 : 0); paintOct(); return; }   // HOME + OCT: the layer
+    if (page !== PAGE_SEQ) { shiftOctave(which === "dn" ? -1 : 1); return; }
+    octHeld[which] = true;
+    octHeld[which + "Used"] = false;
+    paintOct();
+  }
+  function octRelease(which) {
+    if (!octHeld[which]) return;
+    octHeld[which] = false;
+    if (!octHeld[which + "Used"]) shiftOctave(which === "dn" ? -1 : 1);
+    paintOct();
+  }
+  window.addEventListener("keydown", (e) => {
+    if (e.repeat || e.target.tagName === "BUTTON" || e.target.tagName === "SELECT") return;
+    const k = e.key.toLowerCase();
+    if (k === "z") { octPress("dn"); return; }
+    if (k === "x") { octPress("up"); return; }
+    if (k === " ") { e.preventDefault(); transport(0); return; }
+    if (k in KEY_MAP) noteOn(`k${k}`, base + KEY_MAP[k]);
+  });
+  window.addEventListener("keyup", (e) => {
+    const k = e.key.toLowerCase();
+    if (k === "z") { octRelease("dn"); return; }
+    if (k === "x") { octRelease("up"); return; }
+    if (k in KEY_MAP) noteOff(`k${k}`);
+  });
+  window.addEventListener("blur", releaseAll);
+
+  // ---- menu: each press goes to the core's button handler (2.1: the first press opens the section, the next cycle its
+  // submenus, skipping hidden pages; SAVE's commit dialogs, 6.2.2); the core reports the page it lands on (adoptCore)
+  // HOME acts on release, as the FM1's does: held, OCT- / OCT+ focus LAYER 1 / LAYER 2 instead (a chord), and the page
+  // being edited stays up. While it is held the OCT buttons show the chord: the focused layer's lit, the other flashing.
+  let homeHeld = false, homeChord = false;
+  function pressMenu(b, btn) {
+    if (!ready) { setStatus("Start audio first: the menu runs in the synth core."); return; }
+    document.querySelectorAll("#menu button").forEach((x) => x.classList.toggle("active", x === b));
+    sendUi({ op: "button", btn });
+  }
+  MENU.forEach((name, btn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = name;
+    if (name === "HOME") {
+      b.addEventListener("pointerdown", (e) => {
+        e.preventDefault(); b.setPointerCapture(e.pointerId);
+        homeHeld = true; homeChord = false; paintOct();
+      });
+      const up = () => {
+        if (!homeHeld) return;
+        homeHeld = false; paintOct();
+        if (!homeChord) pressMenu(b, btn);
+      };
+      b.addEventListener("pointerup", up);
+      b.addEventListener("pointercancel", () => { homeHeld = false; paintOct(); });
+    } else {
+      b.addEventListener("click", () => pressMenu(b, btn));
+    }
+    menuEl.appendChild(b);
+  });
+
+  // ---- audio
+  async function startAudio() {
+    startBtn.disabled = true;
+    setStatus("Loading the synth core...");
+    try {
+      // The core is written for 44.1 kHz (LFO and oscillator phase steps, MIDI clock frames per tick).
+      ctx = new AudioContext({ sampleRate: 44100, latencyHint: "interactive" });
+      // Cache-busted: the dev server sends no Cache-Control, so a rebuilt core could otherwise load stale.
+      const bust = "?v=" + Date.now();
+      await ctx.audioWorklet.addModule("synth-worklet.js" + bust);
+      const wasm = await (await fetch("synth.wasm" + bust, { cache: "no-store" })).arrayBuffer();
+
+      node = new AudioWorkletNode(ctx, "synth-core", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+      node.connect(ctx.destination);
+      node.port.onmessage = (e) => {
+        const m = e.data;
+        if (m.type === "ready") {
+          const rate = m.rate;
+          setStatus(`Running: ${ctx.sampleRate} Hz context, core ${rate} Hz${ctx.sampleRate === rate ? "" : " (MISMATCH: the core will run detuned)"}.`);
+          startBtn.textContent = "Audio running";
+          ready = true;
+          knobsEl.classList.remove("off");
+          encodersEl.classList.remove("off");
+          node.port.postMessage({ type: "perf", mode: perf });   // the core starts in SINGL: send the picked mode
+          readPage();
+          sendUi({ op: "layer", layer });
+          sendUi({ op: "page", page });
+        } else if (m.type === "knobs") {
+          if (m.page === page && m.layer === layer) {
+            visible = m.visible;
+            archInfo = `${m.arch} · ${m.voices}v`;
+            core = { labels: m.labels, kinds: m.kinds, texts: m.texts || [] };
+            m.values.forEach((v, k) => { if (v !== 255) knobVals[k] = v; });
+            pageEl.textContent = `${PAGES[page].name} · Layer ${layer + 1} · ${archInfo}`;
+            paintKnobs();
+          }
+        } else if (m.type === "screen") {
+          paintScreen(m.blits);
+          paintTransport(m.playing, m.recording);
+          paintArpState(m.arpPos, m.arpHeld);
+          paintLedState(m.leds);
+        } else if (m.type === "seqstate") {
+          paintTransport(m.playing, m.recording);
+          paintArpState(m.arpPos, m.arpHeld);
+          paintLedState(m.leds);
+        } else if (m.type === "rows") {
+          rowsState = m;
+          menuEl.children[MENU.indexOf("SAVE")].classList.toggle("flash", !!m.saveArmed);
+          adoptPreset(m);                                     // a loaded performance brings its mode
+          paintList();
+          adoptCore(m);                                       // a button, a dialog or a hidden page moved the core
+          readPage();                                         // an edit (ARCH on HOME) can change the knob map
+        } else if (m.type === "error") {
+          setStatus(`Synth core failed to load: ${m.message}`);
+          startBtn.disabled = false;
+        }
+      };
+      node.port.postMessage({ type: "load", wasm }, [wasm]);
+      await ctx.resume();
+    } catch (err) {
+      setStatus(`Audio failed: ${err && err.message ? err.message : err}`);
+      startBtn.disabled = false;
+    }
+  }
+  startBtn.addEventListener("click", startAudio);
+
+  // ---- knobs (2.2): the four knobs of the page. Core values go to the worklet, which owns the core; the HOME
+  // performance controls are sent as MIDI (velocity stays here, pitch bend and mod wheel go out as messages).
+  const knobsEl = document.getElementById("knobs");
+  const pageEl = document.getElementById("page");
+  const l1Btn = document.getElementById("l1");
+  const l2Btn = document.getElementById("l2");
+  const perfSel = document.getElementById("perf");
+  const knobVals = [0, 0, 0, 0];
+  const knobUI = [];
+
+  const fmt = (kind, v) => {
+    if (kind === "bip") return v - 64 > 0 ? `+${v - 64}` : `${v - 64}`;
+    if (kind === "oct") { const d = Math.trunc(((v - 64) * 3) / 63); return d > 0 ? `+${d}` : `${d}`; }
+    if (kind === "src") return MSRC[Math.floor((v * MSRC.length) / 128)];
+    if (kind === "fn") return MFN[Math.floor((v * MFN.length) / 128)];
+    if (kind === "bpm") return `${40 + v} BPM`;           // MIDI_CLOCK_BPM_BASE + INT TEMPO
+    return String(v);
+  };
+  const spring = (i) => !!PAGES[page].knobs[i][3];
+  // a knob's name and kind: the core's for the layer's architecture, except HOME's MIDI controllers (local)
+  function knobDef(i) {
+    const def = PAGES[page].knobs[i];
+    if (!core || def[2]) return { name: def[0], kind: def[1] };
+    const kind = KIND[core.kinds[i]] || "none";
+    return { name: kind === "none" ? "—" : core.labels[i], kind };
+  }
+
+  function paintKnob(i) {
+    const def = knobDef(i);
+    const u = knobUI[i];
+    const unused = def.kind === "none";
+    u.wrap.classList.toggle("unused", unused);
+    u.dial.style.transform = `rotate(${-135 + (270 * (unused ? 0 : knobVals[i])) / 127}deg)`;
+    u.name.textContent = def.name;
+    const coreText = (def.kind === "seq" || def.kind === "list") && core && core.texts[i] != null ? core.texts[i] : null;
+    u.val.textContent = unused ? "" : coreText !== null ? coreText : fmt(def.kind, knobVals[i]);
+    u.wrap.setAttribute("aria-label", def.name);
+    u.wrap.setAttribute("aria-valuenow", String(knobVals[i]));
+  }
+  function paintKnobs() { for (let i = 0; i < 4; i++) paintKnob(i); }
+
+  function setKnob(i, v) {
+    v = Math.max(0, Math.min(127, v));
+    const js = PAGES[page].knobs[i][2];
+    if (!js && knobDef(i).kind === "none") return;            // no parameter on this knob in this architecture
+    knobVals[i] = v;
+    if (js === "vel") noteVel = Math.max(1, v);            // a note-on with velocity 0 is a note-off
+    else if (js === "bend") { bendVal = v; send(0xE0, 0, v); }   // the core reads the wheel from data2
+    else if (js === "mod") { modVal = v; send(0xB0, 1, v); }
+    if (ready) node.port.postMessage({ type: "knob", page, layer, knob: i, value: v });   // (HOME 1..3: for the screen)
+    paintKnob(i);
+    if (keyPage(page) || knobDef(i).kind === "list") readPage();   // value text ("C#3", "-1 OCT") comes from the core
+  }
+  function makeKnob(i) {
+    const wrap = document.createElement("div");
+    wrap.className = "knob";
+    wrap.tabIndex = 0;
+    wrap.setAttribute("role", "slider");
+    wrap.setAttribute("aria-valuemin", "0");
+    wrap.setAttribute("aria-valuemax", "127");
+    const dial = document.createElement("div");
+    dial.className = "dial";
+    const name = document.createElement("div");
+    name.className = "name";
+    const val = document.createElement("div");
+    val.className = "val";
+    wrap.append(dial, name, val);
+    knobsEl.appendChild(wrap);
+    knobUI[i] = { wrap, dial, name, val };
+
+    let drag = null, wheel = 0;
+    wrap.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      wrap.setPointerCapture(e.pointerId);
+      wrap.focus();
+      drag = { y: e.clientY, acc: 0 };
+    });
+    wrap.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      drag.acc += drag.y - e.clientY;
+      drag.y = e.clientY;
+      const n = Math.trunc(drag.acc / 3);                   // 3 px a step
+      if (n) { drag.acc -= n * 3; setKnob(i, knobVals[i] + n); }
+    });
+    const end = () => {
+      if (drag && spring(i)) setKnob(i, 64);
+      drag = null;
+    };
+    wrap.addEventListener("pointerup", end);
+    wrap.addEventListener("pointercancel", end);
+    wrap.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+      if (Math.abs(dy) >= 50) { setKnob(i, knobVals[i] + (dy < 0 ? 1 : -1)); wheel = 0; return; }  // a notch
+      wheel -= dy;                                           // a trackpad: by distance
+      const n = Math.trunc(wheel / 25);
+      if (n) { wheel -= n * 25; setKnob(i, knobVals[i] + n); }
+    }, { passive: false });
+    wrap.addEventListener("keydown", (e) => {
+      const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+      if (d) { setKnob(i, knobVals[i] + d); e.preventDefault(); e.stopPropagation(); }
+    });
+  }
+
+  function readPage() {
+    if (ready) node.port.postMessage({ type: "read", page, layer, npages: PAGES.length });
+  }
+  function updateLayerButtons() {
+    l1Btn.classList.toggle("active", layer === 0);
+    l2Btn.classList.toggle("active", layer === 1);
+    l2Btn.disabled = perf === 0;                             // LAYER2 is refused under SINGL_SYNTH (5.2)
+  }
+  function refreshPage() {
+    pageEl.textContent = `${PAGES[page].name} · Layer ${layer + 1}${archInfo ? " · " + archInfo : ""}`;
+    core = null;                                               // until the core answers for this page / layer
+    updateLayerButtons();
+    paintKnobs();
+    readPage();
+  }
+  function showPage(p) {
+    page = p;
+    if (isHome(p)) { knobVals[0] = noteVel; knobVals[1] = bendVal; knobVals[2] = modVal; }
+    refreshPage();
+    screenForce = true;                                      // the whole screen on a new page
+    paintKeys();
+  }
+  function setPage(p) {
+    showPage(p);
+    sendUi({ op: "page", page: p });                         // a new page starts its cursor on its first row
+  }
+  // the core moved on its own (a section button, a dialog, a page the architecture hides, SINGL dropping LAYER 2):
+  // follow it without telling it back
+  function adoptCore(m) {
+    if (m.wpage === undefined || (m.wpage === page && m.layer === layer)) return;
+    layer = m.layer;
+    if (m.wpage !== page) setStatus(`Menu: ${PAGES[m.wpage].name}`);
+    showPage(m.wpage);
+  }
+  // returns false when refused, with the reason in the status line
+  function setLayer(l) {
+    if (l === 1 && perf === 0) {
+      setStatus("LAYER 2 is refused under SINGL. Pick DUAL or SPLIT first.");
+      return false;
+    }
+    layer = l;
+    refreshPage();
+    sendUi({ op: "layer", layer: l });
+    return true;
+  }
+
+  l1Btn.addEventListener("click", () => setLayer(0));
+  l2Btn.addEventListener("click", () => setLayer(1));
+  perfSel.addEventListener("change", () => {
+    perf = Number(perfSel.value);
+    if (perf === 0) layer = 0;                               // SINGL forces LAYER1 (5.2)
+    if (ready) node.port.postMessage({ type: "perf", mode: perf });
+    setStatus(`Performance: ${perfSel.options[perf].text}`);
+    refreshPage();
+    sendUi({ op: "layer", layer });
+  });
+
+  // ---- parameters (2.2 Select and Algorithm encoders): the core's UI state machine owns the page's rows and the
+  // cursor; this page sends the encoder turns and paints the list it posts back. Greyed rows are skipped by the core.
+  const encodersEl = document.getElementById("encoders");
+  const plistEl = document.getElementById("plist");
+  let rowsState = { cursor: 255, rows: [] };
+
+  function sendUi(msg) {
+    if (ready) node.port.postMessage(Object.assign({ type: "ui" }, msg));
+  }
+  function paintList() {
+    plistEl.replaceChildren();
+    if (!ready) { plistEl.innerHTML = '<div class="plist-empty">Start audio to show this page\'s parameters.</div>'; return; }
+    if (rowsState.rows.length === 0) {
+      plistEl.innerHTML = '<div class="plist-empty">No selectable parameters on this page: its four values are all knobs.</div>';
+      return;
+    }
+    rowsState.rows.forEach((r, i) => {
+      if (r.hidden) return;                                  // SEQ TARGET with one choice: not shown, never the cursor
+      const el = document.createElement("div");
+      el.className = "prow" + (i === rowsState.cursor ? " cur" : "") + (r.active ? "" : " off");
+      const label = document.createElement("span");
+      label.textContent = r.label;
+      const val = document.createElement("span");
+      val.className = "pval";
+      val.textContent = r.text !== null ? r.text : String(r.value);
+      el.append(label, val);
+      plistEl.appendChild(el);
+    });
+  }
+  // SELECT: + moves down the list (as the core takes it); ALGORITHM: + raises the value; PRESET: + the next saved preset
+  const select = (d) => sendUi({ op: "select", detents: d });
+  const algo = (d) => sendUi({ op: "algo", detents: d });
+  const PRESET_KIND = ["ARP", "SEQ", "PATCH", "PERF"];              // UISAVE_* order
+  let presetTurn = null;                                             // { target, slot } before a turn, for the status line
+  const preset = (d) => {
+    if (rowsState.preset) presetTurn = rowsState.preset;
+    sendUi({ op: "preset", detents: d });
+  };
+  // the core's preset pointer and performance mode, after any UI event
+  function adoptPreset(m) {
+    if (!m.preset) return;
+    const kind = PRESET_KIND[m.preset.target] || "";
+    const what = m.preset.target === 2 ? `L${m.layer + 1} ${kind}` : kind;
+    document.getElementById("preWhat").textContent = `${what} ${String(m.preset.slot).padStart(3, "0")}`;
+    if (m.perf !== undefined && m.perf !== perf) {
+      perf = m.perf;
+      perfSel.value = String(perf);
+      updateLayerButtons();
+    }
+    if (presetTurn) {
+      const moved = presetTurn.target !== m.preset.target || presetTurn.slot !== m.preset.slot;
+      setStatus(moved ? `Preset: loaded ${what} ${String(m.preset.slot).padStart(3, "0")}`
+                      : `Preset: no saved ${kind} further that way.`);
+      presetTurn = null;
+    }
+  }
+  document.getElementById("preUp").addEventListener("click", () => preset(1));
+  document.getElementById("preDn").addEventListener("click", () => preset(-1));
+  document.getElementById("selUp").addEventListener("click", () => select(-1));
+  document.getElementById("selDn").addEventListener("click", () => select(1));
+  document.getElementById("algUp").addEventListener("click", () => algo(1));
+  document.getElementById("algDn").addEventListener("click", () => algo(-1));
+
+  // a wheel notch is one detent; a trackpad counts distance, as the knobs do
+  function bindWheel(el, turn) {
+    let wheel = 0;
+    el.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+      if (Math.abs(dy) >= 50) { turn(dy < 0 ? -1 : 1); wheel = 0; return; }
+      wheel += dy;
+      const n = Math.trunc(wheel / 25);
+      if (n) { wheel -= n * 25; turn(n); }
+    }, { passive: false });
+  }
+  bindWheel(document.getElementById("selEnc"), (d) => select(d));
+  bindWheel(document.getElementById("algEnc"), (d) => algo(-d));   // wheel up = value up
+  bindWheel(document.getElementById("preEnc"), (d) => preset(-d));  // wheel up = next preset
+
+  document.getElementById("selEnc").addEventListener("keydown", (e) => {
+    const d = { ArrowUp: -1, ArrowDown: 1 }[e.key];
+    if (d) { select(d); e.preventDefault(); e.stopPropagation(); }
+  });
+  document.getElementById("algEnc").addEventListener("keydown", (e) => {
+    const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    if (d) { algo(d); e.preventDefault(); e.stopPropagation(); }
+  });
+  document.getElementById("preEnc").addEventListener("keydown", (e) => {
+    const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    if (d) { preset(d); e.preventDefault(); e.stopPropagation(); }
+  });
+
+  // ---- the FM1 screen (SEQ page): the core runs the firmware's renderer (src/ui_seq_draw.c) and sends only the regions
+  // it redrew, each with its RGB565 pixels and its text. Pixels go to a 240 x 240 backing canvas, shown at 2x; the text
+  // is drawn at 2x over them, clipped to its region, at the baseline the core measured it with (seq_shim_metrics.h).
+  const screenEl = document.getElementById("screen");
+  const sctx = screenEl.getContext("2d");
+  const fbCanvas = document.createElement("canvas");
+  fbCanvas.width = fbCanvas.height = 240;
+  const fbCtx = fbCanvas.getContext("2d");
+  const FACE = { S: { px: 12, asc: 13 }, M: { px: 15, asc: 17 } };
+  const rgb565 = (c) => `rgb(${((c >> 11) & 31) * 255 / 31 | 0},${((c >> 5) & 63) * 255 / 63 | 0},${(c & 31) * 255 / 31 | 0})`;
+  let screenForce = true;
+  sctx.fillStyle = "#000";
+  sctx.fillRect(0, 0, 480, 480);
+
+  function paintScreen(blits) {
+    sctx.imageSmoothingEnabled = false;
+    for (const b of blits) {
+      if (!b.w || !b.h) continue;                  // createImageData throws on an empty region, losing the rest
+      const img = fbCtx.createImageData(b.w, b.h);
+      for (let i = 0; i < b.px.length; i++) {
+        const c = b.px[i];
+        img.data[i * 4] = ((c >> 11) & 31) * 255 / 31;
+        img.data[i * 4 + 1] = ((c >> 5) & 63) * 255 / 63;
+        img.data[i * 4 + 2] = (c & 31) * 255 / 31;
+        img.data[i * 4 + 3] = 255;
+      }
+      fbCtx.putImageData(img, b.x, b.y);
+      sctx.drawImage(fbCanvas, b.x, b.y, b.w, b.h, b.x * 2, b.y * 2, b.w * 2, b.h * 2);
+      if (!b.texts.length) continue;
+      sctx.save();
+      sctx.beginPath();
+      sctx.rect(b.x * 2, b.y * 2, b.w * 2, b.h * 2);
+      sctx.clip();
+      sctx.textBaseline = "alphabetic";
+      for (const t of b.texts) {
+        const f = FACE[t.face] || FACE.S;
+        sctx.font = `${t.face === "M" ? 500 : 400} ${f.px * 2}px "Segoe UI", "Inter Tight", system-ui, sans-serif`;
+        sctx.fillStyle = rgb565(t.col);
+        sctx.fillText(t.s, t.x * 2, (t.y + f.asc) * 2);
+      }
+      sctx.restore();
+    }
+  }
+
+  // ---- transport: PLAY anywhere, REC on the SEQ page (the core refuses it elsewhere), OCT- / OCT+ held as modifiers
+  const playBtn = document.getElementById("play");
+  const recBtn = document.getElementById("rec");
+  const octDnBtn = document.getElementById("octdn");
+  const octUpBtn = document.getElementById("octup");
+  function transport(which) {
+    if (!ready) { setStatus("Start audio first: the sequencer runs in the synth core."); return; }
+    if (which === 1 && page !== PAGE_SEQ) { setStatus("REC (step record) works on the SEQ page."); return; }
+    sendUi({ op: "transport", which });
+  }
+  function paintArpState(pos, held) {
+    if (pos === undefined || (pos === arpPos && held === arpHeld)) return;
+    arpPos = pos;
+    arpHeld = held;
+    if (page === PAGE_ARP) paintKeys();
+  }
+  function paintTransport(playing, recording) {
+    playBtn.classList.toggle("active", playing);
+    playBtn.textContent = playing ? "STOP" : "PLAY";
+    recBtn.classList.toggle("active", recording);
+  }
+  function paintOct() {
+    const chord = homeHeld && ready;
+    octDnBtn.classList.toggle("held", chord ? layer === 0 : octHeld.dn);
+    octUpBtn.classList.toggle("held", chord ? layer === 1 : octHeld.up);
+    octDnBtn.classList.toggle("flash", chord && layer === 1);
+    octUpBtn.classList.toggle("flash", chord && layer === 0 && perf !== 0);
+    octDnBtn.setAttribute("aria-pressed", String(octHeld.dn));
+    octUpBtn.setAttribute("aria-pressed", String(octHeld.up));
+  }
+  playBtn.addEventListener("click", () => transport(0));
+  recBtn.addEventListener("click", () => transport(1));
+  for (const [btn, which] of [[octDnBtn, "dn"], [octUpBtn, "up"]]) {
+    btn.addEventListener("pointerdown", (e) => { e.preventDefault(); btn.setPointerCapture(e.pointerId); octPress(which); });
+    btn.addEventListener("pointerup", () => octRelease(which));
+    btn.addEventListener("pointercancel", () => octRelease(which));
+  }
+  setInterval(() => {
+    if (!ready) return;
+    node.port.postMessage({ type: "screen", force: screenForce, base, mods: seqMods() });
+    screenForce = false;
+  }, 50);
+
+  for (let i = 0; i < 4; i++) makeKnob(i);
+  paintList();
+  setPage(0);
+  buildKeys();
+  showBase();
+})();
+</script>
+</body>
+</html>

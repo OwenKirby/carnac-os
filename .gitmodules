@@ -1,0 +1,3 @@
+[submodule "x0x-firmware"]
+	path = x0x-firmware
+	url = https://github.com/charlesvestal/fm1-x0x.git

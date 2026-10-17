@@ -1,0 +1,19 @@
+# Build output and listening renders (regenerate them; release packages go on the GitHub release page)
+build/
+listening/
+src/host/renders/*.wav
+web/emu/synth.js
+web/emu/synth.wasm
+*.exe
+*.o
+
+# The older Felucca-based tree: the firmware no longer builds on it (X0X is the submodule below)
+felucca-firmware/
+
+# Not ours to publish, or private working notes
+docs/roland J6 Manual.pdf
+mvave_fm1_master_specification.txt
+.claudeprompt.txt
+sys_config.dat
+tui_after.txt
+.claude/
