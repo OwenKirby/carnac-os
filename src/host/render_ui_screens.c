@@ -221,11 +221,12 @@ int main(int argc, char **argv)
     go(UIPAGE_ATTACK);
     shot(dir, "attack");
     e->oscmix.atk_sample = 6; e->oscmix.atk_start = 64; e->oscmix.atk_decay = 50; e->oscmix.atk_filter = 90;
-    e->oscmix.atk_bend = 64 + 24;
+    e->oscmix.atk_bend = 64 + 24; e->oscmix.atk_bend_mod_amt = 64 - 20;
     shot(dir, "attack_lith");
     go(UIPAGE_OSCMIX);
     shot(dir, "oscmix_strike");
     e->oscmix.atk_start = 0; e->oscmix.atk_decay = 127; e->oscmix.atk_filter = 0; e->oscmix.atk_bend = 64;
+    e->oscmix.atk_bend_mod_amt = 64;
 
     /* FILTER: a resonant bandpass-ish SVF, a ladder; FILTER MIXER in each architecture */
     e->arch = VARCH_DUAL_FILTER;

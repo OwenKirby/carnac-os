@@ -324,8 +324,9 @@ int main(void)
         perf_state.clock_source = CLKSRC_INTERNAL;
     }
 
-    /* STRIKE (2026-10-16): FX cycles OSC1 -> ATTACK -> OSCMIX; ATTACK's knobs are the sound, level, decay and TO FILTER,
-     * its rows tune, start, velocity and key track; OSCMIX has SINGLE's knobs; no other architecture shows ATTACK */
+    /* STRIKE (2026-10-16): FX cycles OSC1 -> ATTACK -> OSCMIX; ATTACK's knobs are DECAY, TO FILTER, BEND, BEND MOD
+     * (2026-10-17), its rows sound, start, tune, velocity, key track, bend mod source; OSCMIX has the attack level;
+     * no other architecture shows ATTACK */
     {
         UiKnobInfo i;
         ui_sm_set_layer_focus(&sm, 0u);                  /* layer 1 (an earlier check may have left layer 2) */
@@ -336,13 +337,14 @@ int main(void)
         while (sm.page != UIPAGE_OSC1) press(BTN_FX);
         press(BTN_FX); CHECK(sm.page == UIPAGE_ATTACK, "STRIKE: FX 2 is ATTACK, not %u", sm.page);
         dump("ATTACK STRIKE"); knobs(UIPAGE_ATTACK, "ATTACK STRIKE");
-        CHECK(ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 0, &i) == &engine_state[0].oscmix.atk_start &&
-              ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 1, &i) == &engine_state[0].oscmix.atk_decay &&
-              ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 2, &i) == &engine_state[0].oscmix.atk_filter, "ATTACK knobs 1..3");
-        CHECK(ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 3, &i) == &engine_state[0].oscmix.atk_bend && i.kind == UIKNOB_BIP,
-              "ATTACK knob 4: BEND, bipolar (as OSC1's PITCH MOD)");
-        CHECK(find_row("SOUND") == 0 && find_row("TUNE") >= 0 && find_row("VELOCITY") >= 0 && find_row("KEY TRACK") >= 0,
-              "ATTACK rows: SOUND first");
+        CHECK(ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 0, &i) == &engine_state[0].oscmix.atk_decay &&
+              ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 1, &i) == &engine_state[0].oscmix.atk_filter, "ATTACK knobs 1, 2");
+        CHECK(ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 2, &i) == &engine_state[0].oscmix.atk_bend && i.kind == UIKNOB_BIP,
+              "ATTACK knob 3: BEND, bipolar");
+        CHECK(ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 3, &i) == &engine_state[0].oscmix.atk_bend_mod_amt && i.kind == UIKNOB_BIP,
+              "ATTACK knob 4: BEND MOD, bipolar (as OSC1's PITCH MOD)");
+        CHECK(find_row("SOUND") == 0 && find_row("START") == 1 && find_row("TUNE") >= 0 && find_row("VELOCITY") >= 0 &&
+              find_row("KEY TRACK") >= 0 && find_row("BEND MOD SRC") >= 0, "ATTACK rows: SOUND, START first, BEND MOD SRC");
         press(BTN_FX); CHECK(sm.page == UIPAGE_OSCMIX, "STRIKE: FX 3 is OSCMIX, not %u", sm.page);
         CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i) == &engine_state[0].oscmix.atk_level &&
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == &engine_state[0].oscmix.noise_colour &&

@@ -270,7 +270,7 @@ static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t v
         v->atk_end = (uint32_t)(ai->length - 1u) << 16;
         v->atk_fade = 1.f;
         v->atk_tt = 0xFFFFu;                   /* (the step is worked out on the first tick) */
-        v->atk_bend_c = (float)((int)e->oscmix.atk_bend - 64) * 50.f;   /* BEND: half a semitone a step */
+        v->atk_glide = (e->oscmix.atk_bend != 64u || e->oscmix.atk_bend_mod_amt != 64u) ? 1.f : 0.f;   /* BEND */
     } else {
         v->atk_p = NULL;
     }

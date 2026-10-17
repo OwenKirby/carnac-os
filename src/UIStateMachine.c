@@ -171,12 +171,15 @@ static const UiRow OSCMIX_ROWS[] = {
      (uint8_t)(VARCH_ALL & ~VARCH_BIT(VARCH_SINGLE))},
     {"SUB WAVE", OFS(OscMixerParams, sub_waveform), 0, SUBWAVE_COUNT - 1, RK_BYTE, 0, SUBWAVE_NAMES, A_ALL},
 };
-/* ATTACK (STRIKE only, 2026-10-16): the attack sound's settings beyond its knobs, in OscMixerParams */
+/* ATTACK (STRIKE only, 2026-10-16): the attack sound's settings beyond its knobs, in OscMixerParams; BEND MOD's source
+ * last (its amount is knob 4, as OSC1's PITCH MOD SRC / PITCH MOD) */
 static const UiRow ATTACK_ROWS[] = {
     {"SOUND", OFS(OscMixerParams, atk_sample), 0, ATK_COUNT - 1, RK_BYTE, 0, attack_names, A(STRIKE)},
+    {"START", OFS(OscMixerParams, atk_start), 0, VAL_MAX, RK_BYTE, 0, NULL, A(STRIKE)},
     {"TUNE", OFS(OscMixerParams, atk_tune), 40, 88, RK_BYTE, RF_BIPOLAR, NULL, A(STRIKE)},          /* -24..+24 */
     {"VELOCITY", OFS(OscMixerParams, atk_vel), 0, VAL_MAX, RK_BYTE, 0, NULL, A(STRIKE)},
     {"KEY TRACK", OFS(OscMixerParams, atk_track), 0, ATKTRK_COUNT - 1, RK_BYTE, 0, ATKTRK_NAMES, A(STRIKE)},
+    {"BEND MOD SRC", OFS(OscMixerParams, atk_bend_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(STRIKE)},
 };
 /* FILTER1 / FILTER2 (4.2): the type morph's own mod source and amount show in every architecture */
 static const UiRow FILTER_ROWS[] = {
@@ -437,11 +440,12 @@ static const UiKnob OSCMIX_KNOBS[VARCH_COUNT][4] = {
     {KMIX(atk_level, "ATK LEVEL", UIKNOB_RAW), KMIX(noise_colour, "NOISE COLOUR", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* STRIKE */
 };
-/* ATTACK (STRIKE): where it starts, how soon it fades, how much of it goes into FILTER1, its pitch bend (knob 4, as
- * OSC1's PITCH MOD). The sound is the first row; the level is on OSCMIXER, with the other sources' */
+/* ATTACK (STRIKE, 2026-10-17): how soon it fades, how much of it goes into FILTER1, its pitch bend, and how far the
+ * BEND MOD SRC row's source moves that bend (knob 4, as OSC1's PITCH MOD). The sound and START are rows; the level
+ * is on OSCMIXER, with the other sources' */
 static const UiKnob ATTACK_KNOBS[4] = {
-    KMIX(atk_start, "START", UIKNOB_RAW), KMIX(atk_decay, "DECAY", UIKNOB_RAW),
-    KMIX(atk_filter, "TO FILTER", UIKNOB_RAW), KMIX(atk_bend, "BEND", UIKNOB_BIP),
+    KMIX(atk_decay, "DECAY", UIKNOB_RAW), KMIX(atk_filter, "TO FILTER", UIKNOB_RAW),
+    KMIX(atk_bend, "BEND", UIKNOB_BIP), KMIX(atk_bend_mod_amt, "BEND MOD", UIKNOB_BIP),
 };
 static const UiKnob FILTER_KNOBS[4] = {
     KFLT(morph, "TYPE MORPH", UIKNOB_RAW), KFLT(cutoff, "CUTOFF", UIKNOB_RAW),

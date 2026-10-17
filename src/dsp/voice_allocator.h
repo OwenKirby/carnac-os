@@ -83,7 +83,7 @@ typedef struct __attribute__((aligned(64))) {
     uint32_t atk_f1;              // OSC1's frequency atk_step was worked out for, and TUNE | TRACK << 8 (atk_tt):
     uint16_t atk_tt;              //   the step is worked out again only when one of them moves
     uint32_t atk_base;            // that step before BEND
-    float atk_bend_c;             // BEND: cents off pitch now, gliding to 0 a tick at a time
+    float atk_glide;              // BEND (+ BEND MOD): how much of it is left, 1 at the note's start, gliding to 0
     int32_t choke_q15;            // choke fade: 32767 = untouched, ramps to 0 over CHOKE_TICKS ticks, then silence
     uint8_t choke;                // 1 = fading out: over its layer's voice limit, or the layer's architecture changed
     uint8_t arch;                 // VARCH_* the note was started with: picks the control tick and render function

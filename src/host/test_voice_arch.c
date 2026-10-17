@@ -553,6 +553,25 @@ int main(void)
         double r1 = bent_end / (double)attack_info[FLINT].rate_q16;
         CHECK(r1 > 1.0 && r1 < 0.75 * r0, "STRIKE: BEND did not glide toward the pitch (x%.3f -> x%.3f)", r0, r1);
 
+        /* BEND MOD +24 from VELOCITY with no BEND: a hard note starts ~an octave up, a soft one ~a half octave up */
+        double rv[2];
+        for (int k = 0; k < 2; k++) {
+            synth_init();
+            base_patch(&engine_state[0], VARCH_STRIKE);
+            engine_state[0].oscmix.atk_sample = FLINT;
+            engine_state[0].oscmix.atk_bend_mod_src = MSRC_VELOCITY;
+            engine_state[0].oscmix.atk_bend_mod_amt = 64 + 24;
+            synth_midi_3(0x90, 60, k ? 127 : 64);
+            synth_render_q15(buf, 64);
+            rv[k] = 0;
+            for (int v = 0; v < POLYPHONY_VOICES; v++)
+                if (poly_bank[v].is_gate_open) rv[k] = poly_bank[v].atk_step / (double)attack_info[FLINT].rate_q16;
+            all_off();
+        }
+        printf("STRIKE BEND MOD +12 by velocity: x%.3f at 64, x%.3f at 127\n", rv[0], rv[1]);
+        CHECK(rv[1] > 1.85 && rv[1] < 2.02 && rv[0] > 1.3 && rv[0] < 1.45, "STRIKE: BEND MOD by velocity x%.3f / x%.3f",
+              rv[0], rv[1]);
+
         /* after the attack the voice is SINGLE's, sample for sample */
         strike_take(VARCH_STRIKE, BOW, 64, 60, strike_l);
         strike_take(VARCH_SINGLE, BOW, 64, 60, single_l);

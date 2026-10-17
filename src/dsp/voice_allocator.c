@@ -64,7 +64,7 @@ void voice_allocator_init(void) {
         n->atk_f1 = 0;
         n->atk_tt = 0xFFFFu;
         n->atk_base = 0;
-        n->atk_bend_c = 0.f;
+        n->atk_glide = 0.f;
         for (int k = 0; k < 4; k++) n->mix_a[k] = n->mix_b[k] = 0.f;
         n->choke = 0;
         n->choke_q15 = 32767;

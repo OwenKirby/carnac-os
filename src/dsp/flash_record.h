@@ -18,7 +18,7 @@
 #include "global.h"
 
 /* the current layout of each kind: 1..0xFE */
-#define FREC_VER_ENGINE 7u           /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); v5 and v6 migrate (engine_from_v5 / _v6) */
+#define FREC_VER_ENGINE 8u           /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; v5, v6 and v7 migrate (engine_from_v5 / _v6 / _v7) */
 #define FREC_VER_PERF   5u           /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed */
 #define FREC_VER_SEQ    2u           /* SequencerLane[SEQ_NLANE], one sequencer slot (SEQ_SETTINGS); 2: scale, scale_root */
 #define FREC_VER_ARP    3u           /* ArpState, one arp slot (ARP_SEQ); 2: chord_root (a MIDI note) and the 24-way variation; 3: TIE, accents */
@@ -86,30 +86,47 @@ static inline void frec_pack(FrecKind k, const void *payload, uint8_t *rec)
 /* the version byte of a stored record, for a migration that needs to know which layout it holds */
 static inline uint8_t frec_stored_version(const uint8_t *rec) { return rec[0]; }
 
-/* ---- a patch in flash (v7): ENGINE_STORED_SIZE bytes. Every EngineState byte in order, but for the name, atk_bend and
- * the two bytes nothing reads (OSC1's SYNC: only OSC2 syncs; ENV1's INVERT: ENV1 is never inverted), then the name at
- * 6 bits a character (UI_CHAR_MAP has 41), then atk_bend minus 64 in the last byte (the spare byte v7 first wrote as 0:
- * no bend). Unpacked, the two unread bytes are 0. */
+/* ---- a patch in flash (v8): ENGINE_STORED_SIZE bytes. Every EngineState byte in order, but for the name, the two
+ * bytes nothing reads (OSC1's SYNC: only OSC2 syncs; ENV1's INVERT: ENV1 is never inverted) and the three LFOs' CLOCK
+ * SYNC and KEY RESET (0 / 1 each), then those six as bits of one byte, then the name at 6 bits a character
+ * (UI_CHAR_MAP has 41), then 0s. Unpacked, the two unread bytes are 0. */
 #define ENG_OFS_NAME ((uint32_t)offsetof(EngineState, name))
 #define ENG_OFS_UNREAD1 ((uint32_t)offsetof(EngineState, osc[0].sync))
 #define ENG_OFS_UNREAD2 ((uint32_t)offsetof(EngineState, env[0].invert))
 #define ENG_OFS_BEND ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_bend))
+#define ENG_OFS_LFO ((uint32_t)offsetof(EngineState, lfo))
 #define ENG_NAME_PACKED ((NAME_LEN * 6u + 7u) / 8u)
+#define ENG_NFLAG (2u * NLFO)
 PS_STATIC_ASSERT(CHAR_MAP_LEN <= 64u, "a name character fits 6 bits");
-PS_STATIC_ASSERT(sizeof(EngineState) - 3u - NAME_LEN + ENG_NAME_PACKED + 1u == ENGINE_STORED_SIZE,
-                 "the packed patch fills ENGINE_STORED_SIZE, atk_bend last");
+PS_STATIC_ASSERT(ENG_NFLAG <= 8u, "the LFO flags fit a byte");
+PS_STATIC_ASSERT(sizeof(EngineState) - 2u - ENG_NFLAG - NAME_LEN + 1u + ENG_NAME_PACKED <= ENGINE_STORED_SIZE,
+                 "the packed patch fits ENGINE_STORED_SIZE");
+/* flag f (0..5): LFO f / 2's CLOCK SYNC (even) or KEY RESET (odd) */
+static inline uint32_t engine_flag_ofs(uint32_t f)
+{
+    return ENG_OFS_LFO + (f >> 1) * (uint32_t)sizeof(LfoParams) +
+           ((f & 1u) ? (uint32_t)offsetof(LfoParams, key_reset) : (uint32_t)offsetof(LfoParams, clock_sync));
+}
 static inline int engine_byte_stored(uint32_t i)
 {
-    return i != ENG_OFS_UNREAD1 && i != ENG_OFS_UNREAD2 && i != ENG_OFS_BEND &&
-           (i < ENG_OFS_NAME || i >= ENG_OFS_NAME + NAME_LEN);
+    uint32_t f;
+    if (i == ENG_OFS_UNREAD1 || i == ENG_OFS_UNREAD2 || (i >= ENG_OFS_NAME && i < ENG_OFS_NAME + NAME_LEN))
+        return 0;
+    for (f = 0; f < ENG_NFLAG; f++)
+        if (i == engine_flag_ofs(f))
+            return 0;
+    return 1;
 }
 static inline void engine_store_pack(const EngineState *e, uint8_t *out)
 {
     const uint8_t *d = (const uint8_t *)e;
-    uint32_t i, j = 0, acc = 0, bits = 0;
+    uint32_t i, j = 0, acc = 0, bits = 0, fl = 0;
     for (i = 0; i < sizeof(EngineState); i++)
         if (engine_byte_stored(i))
             out[j++] = d[i];
+    for (i = 0; i < ENG_NFLAG; i++)
+        fl |= (d[engine_flag_ofs(i)] ? 1u : 0u) << i;
+    out[j++] = (uint8_t)fl;
     for (i = 0; i < NAME_LEN; i++) {
         acc |= (uint32_t)(e->name[i] & 63u) << bits;
         bits += 6u;
@@ -121,40 +138,70 @@ static inline void engine_store_pack(const EngineState *e, uint8_t *out)
     }
     if (bits)
         out[j++] = (uint8_t)acc;
-    while (j < ENGINE_STORED_SIZE - 1u)
+    while (j < ENGINE_STORED_SIZE)
         out[j++] = 0u;
-    out[ENGINE_STORED_SIZE - 1u] = (uint8_t)(e->oscmix.atk_bend - 64u);
 }
-static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
+static inline void engine_name_unpack(const uint8_t *in, uint8_t *name)
 {
-    uint8_t *d = (uint8_t *)e;
     uint32_t i, j = 0, acc = 0, bits = 0;
-    for (i = 0; i < sizeof(EngineState); i++)
-        d[i] = engine_byte_stored(i) ? in[j++] : 0u;
     for (i = 0; i < NAME_LEN; i++) {
         while (bits < 6u) {
             acc |= (uint32_t)in[j++] << bits;
             bits += 8u;
         }
-        e->name[i] = (uint8_t)(acc & 63u);
+        name[i] = (uint8_t)(acc & 63u);
         acc >>= 6;
         bits -= 6u;
     }
-    e->oscmix.atk_bend = (uint8_t)(in[ENGINE_STORED_SIZE - 1u] + 64u);
+}
+static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
+{
+    uint8_t *d = (uint8_t *)e;
+    uint32_t i, j = 0;
+    for (i = 0; i < sizeof(EngineState); i++)
+        d[i] = engine_byte_stored(i) ? in[j++] : 0u;
+    for (i = 0; i < ENG_NFLAG; i++)
+        d[engine_flag_ofs(i)] = (uint8_t)((in[j] >> i) & 1u);
+    engine_name_unpack(in + j + 1u, e->name);
 }
 
-/* A v6 patch (ENGINE_V6_SIZE bytes, stored as it sat in RAM, no atk_filter .. atk_bend) -> the current layout: the
- * bytes before go where they were, the six get ATK_V7_DEFAULTS (as v6 played: unfiltered, its whole length, from the
- * start, full velocity, AUTO tracking, no bend), the rest moves up six. */
+/* A v7 patch (ENGINE_STORED_SIZE bytes): its RAM layout (ENGINE_V7_RAM) was today's without the two BEND MOD bytes
+ * after atk_bend; it stored every byte of it in order but the two unread ones, atk_bend and the name, then the name
+ * 6 bits a character, then atk_bend minus 64 in the last byte. BEND MOD gets its defaults (VELOCITY, no amount). */
+#define ENG_V7_NAME (ENG_OFS_NAME - 2u)
+PS_STATIC_ASSERT(sizeof(EngineState) == ENGINE_V7_RAM + 2u && ENG_OFS_BEND + 3u ==
+                 (uint32_t)offsetof(EngineState, oscmix) + (uint32_t)sizeof(OscMixerParams) &&
+                 ENG_OFS_UNREAD1 < ENG_OFS_BEND && ENG_OFS_UNREAD2 > ENG_OFS_BEND,
+                 "engine_from_v7: BEND MOD inserted after atk_bend, the last of OscMixerParams");
+static inline void engine_from_v7(const uint8_t *in, EngineState *e)
+{
+    static const uint8_t def[8] = ATK_V8_DEFAULTS;
+    uint8_t v7[ENGINE_V7_RAM];
+    uint8_t *d = (uint8_t *)e;
+    uint32_t i, j = 0;
+    for (i = 0; i < ENGINE_V7_RAM; i++)
+        v7[i] = (i == ENG_OFS_UNREAD1 || i == ENG_OFS_UNREAD2 - 2u || i == ENG_OFS_BEND ||
+                 (i >= ENG_V7_NAME && i < ENG_V7_NAME + NAME_LEN)) ? 0u : in[j++];
+    engine_name_unpack(in + j, v7 + ENG_V7_NAME);
+    v7[ENG_OFS_BEND] = (uint8_t)(in[ENGINE_STORED_SIZE - 1u] + 64u);
+    memcpy(d, v7, ENG_OFS_BEND + 1u);
+    d[ENG_OFS_BEND + 1u] = def[6];
+    d[ENG_OFS_BEND + 2u] = def[7];
+    memcpy(d + ENG_OFS_BEND + 3u, v7 + ENG_OFS_BEND + 1u, ENGINE_V7_RAM - ENG_OFS_BEND - 1u);
+}
+
+/* A v6 patch (ENGINE_V6_SIZE bytes, stored as it sat in RAM, no atk_filter .. atk_bend_mod_amt) -> the current layout:
+ * the bytes before go where they were, the eight get ATK_V8_DEFAULTS (as v6 played: unfiltered, its whole length,
+ * from the start, full velocity, AUTO tracking, no bend), the rest moves up eight. */
 static inline void engine_from_v6(const uint8_t *v6, EngineState *e)
 {
-    static const uint8_t def[6] = ATK_V7_DEFAULTS;
+    static const uint8_t def[8] = ATK_V8_DEFAULTS;
     uint8_t *d = (uint8_t *)e;
     memcpy(d, v6, ENGINE_V6_INSERT);
     memcpy(d + ENGINE_V6_INSERT, def, sizeof def);
     memcpy(d + ENGINE_V6_INSERT + sizeof def, v6 + ENGINE_V6_INSERT, ENGINE_V6_SIZE - ENGINE_V6_INSERT);
 }
-PS_STATIC_ASSERT(sizeof(EngineState) == ENGINE_V6_SIZE + 6u, "engine_from_v6 inserts six bytes");
+PS_STATIC_ASSERT(sizeof(EngineState) == ENGINE_V6_SIZE + 8u, "engine_from_v6 inserts eight bytes");
 
 /* A v5 patch (ENGINE_V5_SIZE bytes, no attack bytes): to v6 (the attack's first three: the first sound, level 100, no
  * transposition), then to the current layout. */

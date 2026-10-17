@@ -209,11 +209,11 @@ int main(void)
     CHECK(holds(UISAVE_PATCH_PRESET, 5, 0x30 + 38), "a damaged newest copy: not the save before it");
 
     /* patch chunks in the v5 layout (170-byte patches, before STRIKE) and the v6 one (173, STRIKE's first three attack
-     * bytes, stored as in RAM), as the firmware before each wrote them: their slots load through engine_from_v5 / _v6,
-     * and the next save writes the chunk as v7 (packed) */
-    for (uint32_t ver = 5u; ver <= 6u; ver++) {
+     * bytes, stored as in RAM) and v7 (packed, no BEND MOD), as the firmware before each wrote them: their slots load
+     * through engine_from_v5 / _v6 / _v7, and the next save writes the chunk as the current version */
+    for (uint32_t ver = 5u; ver <= 7u; ver++) {
         uint32_t c = ver - 4u, chunk = PS_KIND[UISAVE_PATCH_PRESET].first + c, first, n = ps_slots(&PS_KIND[UISAVE_PATCH_PRESET], c, &first);
-        uint32_t size = ver == 5u ? ENGINE_V5_SIZE : ENGINE_V6_SIZE, len = PS_USED_BYTES + n * size, i, j;
+        uint32_t size = ver == 5u ? ENGINE_V5_SIZE : (ver == 6u ? ENGINE_V6_SIZE : ENGINE_STORED_SIZE), len = PS_USED_BYTES + n * size, i, j;
         static uint8_t pay[4096];
         PsHdr h;
         memset(pay, 0, sizeof pay);
@@ -240,27 +240,34 @@ int main(void)
         uint32_t last = first + n - 1u;
         CHECK(syn_slot_used(UISAVE_PATCH_PRESET, (uint8_t)first) && syn_slot_used(UISAVE_PATCH_PRESET, (uint8_t)last) &&
               !syn_slot_used(UISAVE_PATCH_PRESET, (uint8_t)(first + 1u)), "v%u chunk: the used slots", (unsigned)ver);
-        /* where each old byte must land: the v5 bytes after the attack's place move up 3 + 6, the v6 ones after
-         * atk_filter's place up 6; the attack's new bytes are their defaults */
-        static const uint8_t def7[6] = ATK_V7_DEFAULTS;
+        /* where each old byte must land: the v5 bytes after the attack's place move up 3 + 8, the v6 ones after
+         * atk_filter's place up 8; the attack's new bytes are their defaults. v7: as engine_from_v7 unpacks it (its
+         * byte map is checked in test_flash_record) */
+        static const uint8_t def8[8] = ATK_V8_DEFAULTS;
         int ok = 1;
         for (i = 0; i < 2; i++) {
             uint32_t s = i ? last : first, k = i ? n - 1u : 0u;
             const uint8_t *e = slot_ptr(UISAVE_PATCH_PRESET, s);
-            uint32_t ins = ver == 5u ? ENGINE_V5_INSERT : ENGINE_V6_INSERT, add = ver == 5u ? 9u : 6u;
+            if (ver == 7u) {
+                EngineState want;
+                engine_from_v7(pay + PS_USED_BYTES + k * size, &want);
+                ok &= memcmp(e, &want, sizeof want) == 0;
+                continue;
+            }
+            uint32_t ins = ver == 5u ? ENGINE_V5_INSERT : ENGINE_V6_INSERT, add = ver == 5u ? 11u : 8u;
             for (j = 0; j < ins; j++)
                 ok &= e[j] == (uint8_t)(j * 7u + k);
             if (ver == 5u)
                 ok &= e[ENGINE_V5_INSERT] == 0u && e[ENGINE_V5_INSERT + 1u] == ATK_LEVEL_DEFAULT && e[ENGINE_V5_INSERT + 2u] == 64u;
-            ok &= memcmp(e + ENGINE_V6_INSERT, def7, 6) == 0;
+            ok &= memcmp(e + ENGINE_V6_INSERT, def8, 8) == 0;
             for (j = ins; j < size; j++)
                 ok &= e[j + add] == (uint8_t)(j * 7u + k);
         }
         CHECK(ok, "v%u chunk: a patch's bytes not where the migration puts them", (unsigned)ver);
         const EngineState *e = (const EngineState *)(const void *)slot_ptr(UISAVE_PATCH_PRESET, first);
-        CHECK(e->name[NAME_LEN - 1] == (uint8_t)((size - 1u) * 7u) && e->oscmix.atk_track == ATKTRK_AUTO,
+        CHECK(ver == 7u || (e->name[NAME_LEN - 1] == (uint8_t)((size - 1u) * 7u) && e->oscmix.atk_track == ATKTRK_AUTO),
               "v%u chunk: the name / the attack's last byte", (unsigned)ver);
-        /* a save in that chunk writes it as v7: the migrated slots come back as their packed form */
+        /* a save in that chunk writes it as the current version: the migrated slots come back as their packed form */
         EngineState keep;
         uint8_t rec[ENGINE_STORED_SIZE];
         engine_store_pack((const EngineState *)(const void *)slot_ptr(UISAVE_PATCH_PRESET, last), rec);
@@ -269,11 +276,11 @@ int main(void)
         wipe_ram();
         ps_load();
         CHECK(holds(UISAVE_PATCH_PRESET, first + 1u, 0x66) &&
-              memcmp(&keep, slot_ptr(UISAVE_PATCH_PRESET, last), sizeof keep) == 0, "v%u chunk: not the same after a v7 save",
+              memcmp(&keep, slot_ptr(UISAVE_PATCH_PRESET, last), sizeof keep) == 0, "v%u chunk: not the same after a save",
               (unsigned)ver);
         PsHdr h2;
         CHECK(ps_current(chunk, UISAVE_PATCH_PRESET, (uint8_t)c, &h2) >= 0 && h2.ver == FREC_VER_ENGINE,
-              "v%u chunk: the save did not write v7", (unsigned)ver);
+              "v%u chunk: the save did not write the current version", (unsigned)ver);
     }
 
     /* no flash: a SAVE reports failure (the slot stays in RAM) */

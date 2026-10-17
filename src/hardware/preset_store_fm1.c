@@ -14,8 +14,8 @@
  * A SAVE copies into the bank at once (syn_commit, inside syn_lock) and marks its chunk; the main loop writes it
  * (ps_tick, outside the lock: the erase stops the flash, and the audio with it, for tens of ms), then reports the save
  * done, so SAVED means it is in flash. The boot loads every chunk (ps_load). Patches are stored packed (engine_store_pack,
- * ENGINE_STORED_SIZE a slot); a patch chunk still in the v5 or v6 layout loads through engine_from_v5 / _v6 and is
- * written as v7 the next time one of its slots is saved. */
+ * ENGINE_STORED_SIZE a slot); a patch chunk still in the v5, v6 or v7 layout loads through engine_from_v5 / _v6 / _v7
+ * and is written as the current version the next time one of its slots is saved. */
 #define PS_BASE WT_STORE_BASE
 #define PS_SECTOR 4096u
 #define PS_PAYLOAD_OFF 256u
@@ -46,8 +46,9 @@ PS_STATIC_ASSERT(UISAVE_ARP_SEQ == 0 && UISAVE_SEQ_SETTINGS == 1 && UISAVE_PATCH
                  "PS_KIND is in UISAVE_* order");
 PS_STATIC_ASSERT(PS_NCHUNK <= 32u && PS_NCHUNK * 2u * PS_SECTOR <= WT_STORE_SIZE, "the chunks fit the store and ps_dirty");
 PS_STATIC_ASSERT(SYN_SLOTS <= PS_USED_BYTES * 8u && PATCH_SLOTS == SYN_SLOTS, "the used bits");
-/* v5 and v6 patches (2026-10-16, before STRIKE's attack bytes) load through engine_from_v5 / _v6: the same slots to a
- * chunk as v7's packed ones, so their chunks sit where v7's do and the chunks after them never moved */
+/* v5, v6 and v7 patches (2026-10-16/17, before STRIKE's attack bytes or BEND MOD) load through engine_from_v5 / _v6 /
+ * _v7: the same slots to a chunk as v8's packed ones, so their chunks sit where v8's do and the chunks after them never
+ * moved */
 PS_STATIC_ASSERT(PS_PER(ENGINE_V5_SIZE) == PS_PER(ENGINE_STORED_SIZE) && PS_PER(ENGINE_V6_SIZE) == PS_PER(ENGINE_STORED_SIZE),
                  "v5, v6 and v7 patch chunks hold the same slots");
 static const PsKind PS_KIND[UISAVE_COUNT] = {
@@ -116,20 +117,20 @@ static void ps_load(void)
             if (ps_current(pk->first + c, (uint8_t)k, (uint8_t)c, &h) < 0)
                 continue;                           /* never written, or damaged: empty */
             old = 0u;                               /* a patch chunk of an older layout that migrates: its slot size */
-            if (k == UISAVE_PATCH_PRESET && h.ver == 5u)
-                old = ENGINE_V5_SIZE;
-            if (k == UISAVE_PATCH_PRESET && h.ver == 6u)
-                old = ENGINE_V6_SIZE;
+            if (k == UISAVE_PATCH_PRESET && h.ver >= 5u && h.ver <= 7u)
+                old = h.ver == 5u ? ENGINE_V5_SIZE : (h.ver == 6u ? ENGINE_V6_SIZE : ENGINE_STORED_SIZE);
             if (old ? h.len != PS_USED_BYTES + n * old : (h.ver != pk->ver || h.len != PS_USED_BYTES + n * pk->stored))
                 continue;                           /* another layout: empty */
             for (i = 0; i < n; i++)
                 if ((st_buf[i >> 3] >> (i & 7u)) & 1u) {
                     uint8_t *dst = pk->bank + (first + i) * pk->size;
                     const uint8_t *src = st_buf + PS_USED_BYTES + i * (old ? old : pk->stored);
-                    if (old == ENGINE_V5_SIZE)
+                    if (old && h.ver == 5u)
                         engine_from_v5(src, (EngineState *)(void *)dst);
-                    else if (old == ENGINE_V6_SIZE)
+                    else if (old && h.ver == 6u)
                         engine_from_v6(src, (EngineState *)(void *)dst);
+                    else if (old)
+                        engine_from_v7(src, (EngineState *)(void *)dst);
                     else if (k == UISAVE_PATCH_PRESET)
                         engine_store_unpack(src, (EngineState *)(void *)dst);
                     else

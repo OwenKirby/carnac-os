@@ -53,9 +53,9 @@ int main(void)
     arp.sequence_length = 8;
     arp.steps[7].variation = 11;
 
-    /* a patch is stored packed (v7, engine_store_pack): every byte but the two unread ones and the name, the name at
-     * 6 bits a character. A patch with every stored byte different and a name using the whole character map comes back
-     * exactly; the two unread bytes come back 0 */
+    /* a patch is stored packed (v8, engine_store_pack): every byte but the two unread ones, the six LFO flags and the
+     * name, then the flags as bits, then the name at 6 bits a character. A patch with every stored byte different and a
+     * name using the whole character map comes back exactly; the two unread bytes come back 0 */
     {
         static EngineState e, back;
         uint8_t rec[FREC_SIZE_ENGINE];
@@ -65,6 +65,10 @@ int main(void)
             for (uint32_t i = 0; i < sizeof e; i++) d[i] = (uint8_t)(i * 31u + 7u + (uint32_t)pass * 101u);
             for (uint32_t i = 0; i < NAME_LEN; i++) e.name[i] = (uint8_t)((i * 3u + (uint32_t)pass * 13u) % CHAR_MAP_LEN);
             if (pass == 2) for (uint32_t i = 0; i < NAME_LEN; i++) e.name[i] = (uint8_t)(CHAR_MAP_LEN - 1u);
+            for (uint32_t l = 0; l < NLFO; l++) {        /* every flag pattern across the passes */
+                e.lfo[l].clock_sync = (uint8_t)(((l + (uint32_t)pass) >> 0) & 1u);
+                e.lfo[l].key_reset = (uint8_t)(((l * 2u + (uint32_t)pass) >> 1) & 1u);
+            }
             e.osc[0].sync = 0;
             e.env[0].invert = 0;
             frec_pack(FREC_ENGINE, &e, rec);
@@ -73,23 +77,53 @@ int main(void)
             CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_OK && memcmp(&back, &e, sizeof e) == 0,
                   "ENGINE: packed round trip differs (pass %d)", pass);
         }
-        e.oscmix.atk_bend = 64;                          /* no bend: the last byte 0, as v7 wrote it before BEND */
-        frec_pack(FREC_ENGINE, &e, rec);
-        CHECK(rec[FREC_SIZE_ENGINE - 1u] == 0u, "ENGINE: BEND's centre not stored as 0");
-        rec[FREC_SIZE_ENGINE - 1u] = 0u;
-        frec_unpack(FREC_ENGINE, rec, &back);
-        CHECK(back.oscmix.atk_bend == 64u, "ENGINE: a 0 in the last byte is not BEND's centre");
+        for (uint32_t f = 0; f < ENG_NFLAG; f++) {      /* each flag on its own: its own bit, the others stay 0 */
+            memset(&e, 0, sizeof e);
+            ((uint8_t *)&e)[engine_flag_ofs(f)] = 1u;
+            frec_pack(FREC_ENGINE, &e, rec);
+            frec_unpack(FREC_ENGINE, rec, &back);
+            CHECK(memcmp(&back, &e, sizeof e) == 0, "ENGINE: LFO flag %u alone", (unsigned)f);
+        }
         e.osc[0].sync = 1;
         e.env[0].invert = 1;
+        e.osc[1].sync = 1;
+        e.env[1].invert = 1;
         frec_pack(FREC_ENGINE, &e, rec);
         frec_unpack(FREC_ENGINE, rec, &back);
         CHECK(back.osc[0].sync == 0 && back.env[0].invert == 0 && back.osc[1].sync == e.osc[1].sync &&
               back.env[1].invert == e.env[1].invert, "ENGINE: the unread bytes");
+        /* a v7 patch (BEND last, no BEND MOD), packed here as v7 wrote it from its 179-byte RAM layout: each byte lands
+         * where engine_from_v7 says, BEND MOD gets VELOCITY / centre, the LFO flags come back as bytes */
+        {
+            static uint8_t v7[ENGINE_V7_RAM], old[ENGINE_STORED_SIZE];
+            uint32_t u1 = (uint32_t)offsetof(EngineState, osc[0].sync), u2 = (uint32_t)offsetof(EngineState, env[0].invert) - 2u;
+            uint32_t bend = (uint32_t)offsetof(EngineState, oscmix.atk_bend), nm = ENGINE_V7_RAM - NAME_LEN, j = 0, acc = 0, bits = 0;
+            for (uint32_t i = 0; i < ENGINE_V7_RAM; i++) v7[i] = (uint8_t)(i * 13u + 5u);
+            v7[u1] = v7[u2] = 0u;
+            for (uint32_t i = 0; i < NAME_LEN; i++) v7[nm + i] = (uint8_t)((i * 7u + 3u) % CHAR_MAP_LEN);
+            for (uint32_t i = 0; i < ENGINE_V7_RAM; i++)
+                if (i != u1 && i != u2 && i != bend && i < nm) old[j++] = v7[i];
+            for (uint32_t i = 0; i < NAME_LEN; i++) {
+                acc |= (uint32_t)v7[nm + i] << bits;
+                for (bits += 6u; bits >= 8u; bits -= 8u, acc >>= 8) old[j++] = (uint8_t)acc;
+            }
+            while (j < ENGINE_STORED_SIZE - 1u) old[j++] = 0u;
+            old[ENGINE_STORED_SIZE - 1u] = (uint8_t)(v7[bend] - 64u);
+            memset(&back, 0xA5, sizeof back);
+            engine_from_v7(old, &back);
+            const uint8_t *b = (const uint8_t *)&back;
+            int ok = 1;
+            for (uint32_t i = 0; i < ENGINE_V7_RAM; i++)
+                ok &= b[i <= bend ? i : i + 2u] == v7[i];
+            CHECK(ok, "ENGINE: a v7 patch's bytes not where they were");
+            CHECK(back.oscmix.atk_bend_mod_src == MSRC_VELOCITY && back.oscmix.atk_bend_mod_amt == 64u,
+                  "ENGINE: v7 -> BEND MOD defaults");
+        }
         memset(&back, 0x5A, sizeof back);
         rec[0] = 0xFFu;
         CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_EMPTY, "ENGINE: erased slot not empty");
-        rec[0] = 6u;
-        CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_OLD_LAYOUT && back.arch == 0x5A, "ENGINE: v6 record accepted");
+        rec[0] = 7u;
+        CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_OLD_LAYOUT && back.arch == 0x5A, "ENGINE: v7 record accepted");
         printf("ENGINE   record %3u B (version %u + %u B packed, %u B in RAM)\n", frec_size(FREC_ENGINE),
                (unsigned)FREC_VER_ENGINE, (unsigned)ENGINE_STORED_SIZE, (unsigned)sizeof(EngineState));
     }

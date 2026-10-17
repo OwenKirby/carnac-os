@@ -314,6 +314,9 @@ typedef struct {                     /* OSCMIXER; which knob a field sits on dep
     uint8_t atk_track;               /* ATKTRK_*: follow the keys or not */
     uint8_t atk_bend;                /* (bip) BEND: the attack starts this far off pitch, half a semitone a step (+-32
                                       * semitones; + above, - below) and glides to it, a ~40 ms time constant */
+    /* 2026-10-17 (FREC_VER_ENGINE 8) */
+    uint8_t atk_bend_mod_src;        /* MSRC_* (default VELOCITY): moves BEND while the attack glides */
+    uint8_t atk_bend_mod_amt;        /* (bip) knob 4 STRIKE ATTACK: a full source adds up to +-32 semitones to BEND */
 } OscMixerParams;
 enum { ATKTRK_AUTO, ATKTRK_FIXED, ATKTRK_TRACK, ATKTRK_COUNT };   /* AUTO: pitched sounds track, the others do not.
         * TRACK on an unpitched sound: its own pitch at C4 (60) */
@@ -404,17 +407,19 @@ typedef struct {
     uint8_t arch;                    /* VARCH_*: the voice architecture, HOME View 1 / 2 (5.3) */
     uint8_t name[NAME_LEN];          /* char_map indices (0 = space), not ASCII: RENAME PATCH (6.2.1) */
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 179u, "EngineState layout");
+PS_STATIC_ASSERT(sizeof(EngineState) == 181u, "EngineState layout");
 /* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 173 is the most that keeps 22
  * patches to a store chunk (preset_store_fm1.c: (3840 - 16) / 173), so the chunks stay where they were. Since v7 the
- * stored form packs the name 6 bits a character and leaves out OSC1's SYNC and ENV1's INVERT (nothing reads them):
- * 179 in RAM, 173 in flash, the last byte atk_bend (stored as its offset from the centre, so v7 patches written before
- * it, a 0 there, play no bend). v5 (170 bytes) lacked all nine attack bytes, v6 (173, stored as in RAM) the last six. */
+ * stored form packs the name 6 bits a character and leaves out OSC1's SYNC and ENV1's INVERT (nothing reads them); v8
+ * also packs the three LFOs' CLOCK SYNC and KEY RESET into one byte: 181 in RAM, 171 + 2 spare in flash. v7 (179 in
+ * RAM, atk_bend in the last stored byte) lacked the two BEND MOD bytes, v6 (173, stored as in RAM) atk_filter on,
+ * v5 (170 bytes) all the attack bytes. */
 #define ENGINE_STORED_SIZE 173u
 #define ENGINE_V6_SIZE 173u
 #define ENGINE_V6_INSERT ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_filter))
 #define ATK_LEVEL_DEFAULT 100u
-#define ATK_V7_DEFAULTS {0u, 127u, 0u, 127u, ATKTRK_AUTO, 64u}   /* atk_filter .. atk_bend */
+#define ATK_V8_DEFAULTS {0u, 127u, 0u, 127u, ATKTRK_AUTO, 64u, MSRC_VELOCITY, 64u}   /* atk_filter .. atk_bend_mod_amt */
+#define ENGINE_V7_RAM 179u
 #define ENGINE_V5_SIZE 170u
 #define ENGINE_V5_INSERT ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_sample))
 

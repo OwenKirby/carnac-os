@@ -64,13 +64,15 @@ void engine_defaults(EngineState *e)
     e->oscmix.atk_level = ATK_LEVEL_DEFAULT;
     e->oscmix.atk_tune = BIPOLAR_CENTER;
     {
-        static const uint8_t def[6] = ATK_V7_DEFAULTS;  /* unfiltered, whole, from the start, full velocity, AUTO, no bend */
+        static const uint8_t def[8] = ATK_V8_DEFAULTS;  /* unfiltered, whole, from the start, full velocity, AUTO, no bend */
         e->oscmix.atk_filter = def[0];
         e->oscmix.atk_decay = def[1];
         e->oscmix.atk_start = def[2];
         e->oscmix.atk_vel = def[3];
         e->oscmix.atk_track = def[4];
         e->oscmix.atk_bend = def[5];
+        e->oscmix.atk_bend_mod_src = def[6];
+        e->oscmix.atk_bend_mod_amt = def[7];
     }
 
     for (unsigned i = 0; i < NFILTER; i++) {

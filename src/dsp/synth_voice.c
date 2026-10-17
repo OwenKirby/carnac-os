@@ -569,12 +569,15 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
             voice->atk_f1 = freq1_q16;
             voice->atk_tt = tt;
         }
-        if (voice->atk_bend_c != 0.f) {                 /* BEND: off pitch at the note's start, gliding back, tau ~40 ms */
-            uint32_t b = apply_cents_q16(voice->atk_base, (int32_t)voice->atk_bend_c);
+        if (voice->atk_glide != 0.f) {                  /* BEND: off pitch at the note's start, gliding back, tau ~40 ms */
+            int32_t steps_q15 = bip(mx->atk_bend) << 15;     /* half a semitone a step; BEND MOD's source adds to it */
+            if (mx->atk_bend_mod_amt != BIPOLAR_CENTER)
+                steps_q15 += resolve_source(&c, mx->atk_bend_mod_src, 0) * bip(mx->atk_bend_mod_amt);
+            uint32_t b = apply_cents_q16(voice->atk_base, (int32_t)((float)steps_q15 * (50.f / 32768.f) * voice->atk_glide));
             voice->atk_step = b > (8u << 16) ? 8u << 16 : (b < 1u ? 1u : b);
-            voice->atk_bend_c *= 0.991f;                /* exp(-16 / (44100 * 0.04)) a tick */
-            if (voice->atk_bend_c < 0.5f && voice->atk_bend_c > -0.5f) {
-                voice->atk_bend_c = 0.f;
+            voice->atk_glide *= 0.991f;                 /* exp(-16 / (44100 * 0.04)) a tick */
+            if (voice->atk_glide < (1.f / 8192.f)) {    /* under half a cent even from 64 steps off */
+                voice->atk_glide = 0.f;
                 voice->atk_step = voice->atk_base;
             }
         }
