@@ -107,9 +107,14 @@ enum { VMODE_MONO_RETRIG, VMODE_MONO_LEGATO, VMODE_POLY_REUSE, VMODE_POLY_RESET,
        VMODE_COUNT };
 enum { PORTA_CONST_RATE, PORTA_CONST_TIME, PORTA_LEGATO_TIED, PORTA_COUNT };
 enum { ARPLAYER_L1, ARPLAYER_L2, ARPLAYER_BOTH, ARPLAYER_COUNT };          /* BOTH: DUAL_SYNTH only */
-enum {                               /* 8.2 time division reference */
+enum {                               /* 8.2 time division: the ARP's TIMING, a step's length (1/32T 2026-10-21) */
     ARPDIV_2, ARPDIV_1, ARPDIV_1_2, ARPDIV_1_4, ARPDIV_1_4T, ARPDIV_1_8, ARPDIV_1_8T,
-    ARPDIV_1_16, ARPDIV_1_16T, ARPDIV_1_32, ARPDIV_COUNT
+    ARPDIV_1_16, ARPDIV_1_16T, ARPDIV_1_32, ARPDIV_1_32T, ARPDIV_COUNT
+};
+enum {                               /* an ARP step's RATE (knob 1, 2026-10-21): its rhythm cells (a 4-cell rhythm's; a
+                                      * triplet's 3 cells span the same 4) and a HOLD strum's gap between notes */
+    ARPRATE_1_2, ARPRATE_1_4, ARPRATE_1_4T, ARPRATE_1_8, ARPRATE_1_8T, ARPRATE_1_16, ARPRATE_1_16T,
+    ARPRATE_1_32, ARPRATE_1_32T, ARPRATE_1_64, ARPRATE_1_64T, ARPRATE_1_128, ARPRATE_COUNT
 };
 enum { UICTX_SYNTH, UICTX_SEQ, UICTX_ARP, UICTX_SAVE, UICTX_COUNT };
 enum { SAVEPAGE_PRESET, SAVEPAGE_SAVE, SAVEPAGE_COUNT };                    /* 6: SAVE button presses */
@@ -208,18 +213,21 @@ static inline void seq_lane_set_event(SequencerLane *lane, uint8_t event_type)
 #define ARP_NOCT 4u                  /* octave_range 0..3 = the pattern spans 1..4 octaves */
 #define ARP_NVAR 24u                 /* variation: 8.3 rhythm_variation_table row r, column c (A / B) = r * 2 + c */
 enum {                               /* style (knob 3, "phrase category"): the order a step's strikes take the notes */
+    ARPSTYLE_HOLD,                   /* the chord struck once and held while the steps after it play the same chord (not
+                                      * again on the clock); RHYTHM is its strum then: 0 none, 1 up, 2 down, its notes
+                                      * RATE apart (FREC_VER_ARP 5, 2026-10-21: first in the list, was last) */
     ARPSTYLE_BLOCK,                  /* the whole chord on every strike */
     ARPSTYLE_UP, ARPSTYLE_DOWN, ARPSTYLE_UPDN, ARPSTYLE_DNUP, ARPSTYLE_RANDOM,   /* one note per strike */
     ARPSTYLE_STRUM_UP, ARPSTYLE_STRUM_DN,                                       /* the chord, spread across the cell */
-    ARPSTYLE_HOLD,                   /* the chord struck once at the step and held (not again on the clock); RHYTHM is
-                                      * its strum then (2026-10-17): 0 none, 1..12 up, 13..23 down, faster to slower */
     ARPSTYLE_COUNT
 };
+#define ARP_NSTRUM 3u                /* a HOLD step's RHYTHM: none, up, down */
 
 /* 8.1: one step key's capture: the chord struck plus the 4 ARP knob values at that moment (2.2) */
 typedef struct {
     uint8_t chord_root;              /* the chord key's MIDI note 0..125 (the chord's bass), ARP_CHORD_TIE, ARP_CHORD_EMPTY */
-    uint8_t rate;                    /* knob 1: ARPDIV_*, the step's length (FREC_VER_ARP 4, 2026-10-17: was its GATE) */
+    uint8_t rate;                    /* knob 1: ARPRATE_*, its notes' rate (FREC_VER_ARP 5, 2026-10-21: was the step's
+                                      * length, ARPDIV_*, now the pattern's TIMING; v4, 2026-10-17: was its GATE) */
     uint8_t octave_range;            /* knob 2: 0..ARP_NOCT - 1 */
     uint8_t style;                   /* knob 3: ARPSTYLE_* */
     uint8_t variation;               /* knob 4: 0..ARP_NVAR - 1 */
@@ -230,7 +238,8 @@ PS_STATIC_ASSERT(sizeof(ArpChordStep) == 6u, "ArpChordStep flash layout");
 /* the 8-step chord pattern ARP_SEQ saves and arp_link loads; footers are the 8.2 menu list */
 typedef struct {
     ArpChordStep steps[ARP_NSTEP];
-    uint8_t target_layer;            /* ARPLAYER_* */
+    uint8_t layer_timing;            /* low nibble LAYER (ARPLAYER_*), high nibble TIMING (ARPDIV_*, every step's length;
+                                      * FREC_VER_ARP 5, 2026-10-21): ARP_LAYER / ARP_TIMING, arp_set_layer / _timing */
     uint8_t gate_length;             /* GATE: a strike's length = its cells x (value + 1) / 128, 127 = legato (FREC_VER_ARP
                                       * 4, 2026-10-17: where TIME DIVISION was, before each step had its own RATE) */
     uint8_t sequence_length;         /* 1..8 */
@@ -243,7 +252,32 @@ PS_STATIC_ASSERT(sizeof(ArpState) == 54u, "ArpState flash layout");
 /* the factory arp slot: every step empty (captured steps start from the default knob values), 1/4 steps (8.3's
  * rhythm cells are then the 16ths its table names), 8 steps, layer 1, no MAQ transpose, Phrygian, no accents */
 #define ARP_GATE_DEFAULT 96u
-#define ARP_RATE_DEFAULT ARPDIV_1_4
+#define ARP_RATE_DEFAULT ARPRATE_1_16  /* .. a 4-cell rhythm a beat long: one TIMING 1/4 step */
+#define ARP_TIMING_DEFAULT ARPDIV_1_4
+#define ARP_LAYER(st) ((uint8_t)((st)->layer_timing & 0x0Fu))
+#define ARP_TIMING(st) ((uint8_t)((st)->layer_timing >> 4))
+static inline void arp_set_layer(ArpState *a, uint8_t layer)
+{
+    a->layer_timing = (uint8_t)((a->layer_timing & 0xF0u) | (layer & 0x0Fu));
+}
+static inline void arp_set_timing(ArpState *a, uint8_t div)
+{
+    a->layer_timing = (uint8_t)((a->layer_timing & 0x0Fu) | (uint8_t)(div << 4));
+}
+/* RATE as 96ths of a beat (a 4-cell rhythm lasts 4 of these, a HOLD strum's notes are one apart) */
+static inline uint8_t arp_rate_q(uint8_t rate)
+{
+    static const uint8_t Q[ARPRATE_COUNT] = {192u, 96u, 64u, 48u, 32u, 24u, 16u, 12u, 8u, 6u, 4u, 3u};
+    return Q[rate < ARPRATE_COUNT ? rate : (uint8_t)ARP_RATE_DEFAULT];
+}
+/* the RATE whose 4 cells fill a step of TIME DIVISION div (before 2026-10-21 the rhythm always filled its step) */
+static inline uint8_t arp_rate_of_div(uint8_t div)
+{
+    static const uint8_t R[ARPDIV_COUNT] = {ARPRATE_1_2, ARPRATE_1_4, ARPRATE_1_8, ARPRATE_1_16, ARPRATE_1_16T,
+                                            ARPRATE_1_32, ARPRATE_1_32T, ARPRATE_1_64, ARPRATE_1_64T, ARPRATE_1_128,
+                                            ARPRATE_1_128};
+    return R[div < ARPDIV_COUNT ? div : (uint8_t)ARP_TIMING_DEFAULT];
+}
 #define ARP_ACCENT_DEFAULT 120u
 #define ARP_GENRE_DEFAULT 83u        /* arp_chords.h ARP_GENRE_PHRYGIAN (asserted there) */
 static inline void arp_defaults(ArpState *a)
@@ -257,7 +291,7 @@ static inline void arp_defaults(ArpState *a)
         a->steps[i].variation = 0u;
         a->steps[i].accent = 0u;
     }
-    a->target_layer = ARPLAYER_L1;
+    a->layer_timing = (uint8_t)(ARPLAYER_L1 | ARP_TIMING_DEFAULT << 4);
     a->gate_length = ARP_GATE_DEFAULT;
     a->sequence_length = ARP_NSTEP;
     a->transpose_maq_option = 0u;

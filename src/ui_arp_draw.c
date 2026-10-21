@@ -4,7 +4,8 @@
  *
  *   y   0..20   header: ARP, its transport (carp_playing) and the playing step, REC and LATCH when on, the clock
  *   y  21..53   knob cards: RATE, OCTAVE, STYLE, RHYTHM (STRUM under HOLD) (the live dial values a capture copies)
- *   y  56..124  menu list: LAYER, GATE, SEQ LENGTH, TRANSPOSE MAQ, GENRE BANK, ACCENT VEL (the cursor row in white)
+ *   y  56..124  menu list: LAYER, TIMING, GATE, SEQ LENGTH, TRANSPOSE MAQ, GENRE BANK, ACCENT VEL (the cursor row in
+ *               white; 6 at a time, the window scrolling with the cursor)
  *   y 127..143  the chord sounding (the playing step's or the chord key's) as names and standing stones (laid out by
  *               its octave range and style), and the transposition
  *   y 146..238  steps 1..8, two rows of four cards: number (an accent mark after it, the octave range as a cairn of
@@ -133,17 +134,18 @@ static void ar_draw_knobs(UIStateMachine *sm)
 
 /* -------------------------------------------------------------- menu --- */
 /* 8.2's rows, label left and value right; the cursor row on the SEQ page's noisy ground in white (the one white thing
- * on the page), as every page's menu */
+ * on the page), as every page's menu. AR_NROW at a time: past them the window follows the cursor down. */
 static void ar_draw_menu(const UIStateMachine *sm)
 {
     char b[8];
-    uint8_t r, n = ui_sm_row_count(sm), st;
+    uint8_t r, n = ui_sm_row_count(sm), st, f = sm->s.current_param_focus;
+    uint8_t top = f >= AR_NROW ? (uint8_t)(f - (AR_NROW - 1u)) : 0u;
     int32_t y;
     const char *t;
     uint16_t lc, vc, bg;
     cv_begin(240, AR_MENU_H, SQC(BG));
-    for (r = 0; r < n && r < AR_NROW; r++) {
-        y = 2 + r * AR_ROW_H;
+    for (r = top; r < n && r < top + AR_NROW; r++) {
+        y = 2 + (r - top) * AR_ROW_H;
         st = ui_sm_row_state(sm, r);
         bg = SQC(BG);
         lc = st == UIROW_ACTIVE ? SQC(MID) : SQC(DIM);
@@ -295,10 +297,11 @@ static void ar_draw_chord(const UIStateMachine *sm, const CarpSeq *a)
 }
 
 /* ------------------------------------------------------------- steps --- */
-/* a tablet's second line: the style (3 letters at most) left, the RATE right (whole notes, then 1/2 .. 32nds; T a
+/* a tablet's second line: the style (3 letters at most) left, the RATE right (1/2, 1/4, then 8ths .. 128ths; T a
  * triplet), 42 px at the widest of the 44 there */
-static const char *const AR_STYLE_SHORT[ARPSTYLE_COUNT] = {"BLK", "UP", "DN", "U-D", "D-U", "RND", "ST+", "ST-", "HLD"};
-static const char *const AR_RATE_SHORT[ARPDIV_COUNT] = {"2", "1", "1/2", "1/4", "4T", "1/8", "8T", "16", "16T", "32"};
+static const char *const AR_STYLE_SHORT[ARPSTYLE_COUNT] = {"HLD", "BLK", "UP", "DN", "U-D", "D-U", "RND", "ST+", "ST-"};
+static const char *const AR_RATE_SHORT[ARPRATE_COUNT] = {"1/2", "1/4", "4T", "1/8", "8T", "16", "16T", "32", "32T",
+                                                         "64", "64T", "128"};
 
 /* Each step is a tablet of dark stone (ui_seq_draw.c sq_tablet: SQ_ROCK, the popups' stone): its edges hewn, the
  * corners knocked off, a chip here and there, the same shape for the step every time */
@@ -363,14 +366,14 @@ static void ar_draw_cell(const ArpState *st, uint8_t i, uint8_t live, uint8_t he
         cv_rect(gx - 1, AR_GLYPH_Y, gw + 2, 2, txt);
     }
     if (!empty || tie)                               /* the step's RATE, right */
-        sq_text_r(AR_CELL_W - 6, 13 + CAP_IN(S, 14), &AF_S, AR_RATE_SHORT[s->rate < ARPDIV_COUNT ? s->rate : ARP_RATE_DEFAULT],
+        sq_text_r(AR_CELL_W - 6, 13 + CAP_IN(S, 14), &AF_S, AR_RATE_SHORT[s->rate < ARPRATE_COUNT ? s->rate : ARP_RATE_DEFAULT],
                   dim, SQC(BG));
     if (!empty)
         sq_text_on(6, 13 + CAP_IN(S, 14), &AF_S, AR_STYLE_SHORT[s->style < ARPSTYLE_COUNT ? s->style : (uint8_t)ARPSTYLE_UP],
                    dim, SQC(BG));
     if (!empty && s->style == ARPSTYLE_HOLD) {      /* the chord's stones under one lintel: held */
-        uint8_t up, sgap = carp_hold_strum(s->variation, &up);
-        int32_t d = sgap == 0u ? 0 : 1 + sgap / 4u, hk;
+        uint8_t up, strum = carp_hold_strum(s->variation, &up);
+        int32_t d = strum ? 2 : 0, hk;
         cw = gw / (int32_t)ARP_CHORD_NOTES;
         w = cw - 3;
         for (c = 0; c < ARP_CHORD_NOTES; c++) {     /* stepped as it strums: rising up, falling down */
@@ -424,7 +427,7 @@ static void arp_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint
     if (ar_dirty(ARR_KNOBS, h, force))
         ar_draw_knobs(sm);
     h = sq_mix(base, sm->s.current_param_focus | (uint32_t)sm->perf->perf_mode << 8);
-    h = sq_mix(h, (uint32_t)sm->arp->target_layer | (uint32_t)sm->arp->gate_length << 8 |
+    h = sq_mix(h, (uint32_t)sm->arp->layer_timing | (uint32_t)sm->arp->gate_length << 8 |
                       (uint32_t)sm->arp->sequence_length << 16 | (uint32_t)sm->arp->transpose_maq_option << 24);
     h = sq_mix(h, sm->arp->current_genre_bank | (uint32_t)sm->arp->accent_velocity << 8);
     for (r = 0; r < ui_sm_row_count(sm); r++)

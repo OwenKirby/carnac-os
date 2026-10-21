@@ -224,12 +224,13 @@ static void test_factory(void)
         /* the arp pattern */
         const ArpState *a = &syn_arp_bank[s];
         CHECK(a->current_genre_bank < ARP_GENRE_COUNT && a->gate_length <= VAL_MAX && a->sequence_length == ARP_NSTEP &&
-              a->target_layer == ARPLAYER_L1 && a->transpose_maq_option == fa->maq, "arp %u out of range", s);
+              ARP_LAYER(a) == ARPLAYER_L1 && ARP_TIMING(a) == fa->div && a->transpose_maq_option == fa->maq,
+              "arp %u out of range", s);
         CHECK(ARP_ROOT_IS_CHORD(a->steps[0].chord_root), "arp %u starts on a chord", s);
         for (i = 0; i < ARP_NSTEP; i++) {
             const ArpChordStep *c = &a->steps[i];
             CHECK((ARP_ROOT_IS_CHORD(c->chord_root) || c->chord_root == ARP_CHORD_TIE) && c->octave_range < ARP_NOCT &&
-                  c->style < ARPSTYLE_COUNT && c->variation < ARP_NVAR && c->accent <= 1u && c->rate < ARPDIV_COUNT,
+                  c->style < ARPSTYLE_COUNT && c->variation < ARP_NVAR && c->accent <= 1u && c->rate < ARPRATE_COUNT,
                   "arp %u step %u out of range", s, i);
         }
     }
@@ -328,7 +329,7 @@ int main(void)
         st_read(ps_sector(pch, c), &h, sizeof h);
         if (h.magic != PS_MAGIC) continue;
         memset(nor + ps_sector(pch, c), 0xFF, 32);  /* (a header rewritten as an old firmware would have it) */
-        h.ver = (uint8_t)(FREC_VER_PERF - 2u);       /* (v6 migrates: below) */
+        h.ver = 5u;                                  /* (v6 and v7 migrate: below) */
         h.hcrc = st_crc32(&h, sizeof h - 4u);
         memcpy(nor + ps_sector(pch, c), &h, sizeof h);
     }
@@ -433,14 +434,17 @@ int main(void)
     }
 
     /* an arp chunk of FREC_VER_ARP 3 and a performance chunk of FREC_VER_PERF 6 (before 2026-10-17's RATE: each step's
-     * byte its gate, the pattern's TIME DIVISION where GATE is now) load through arp_from_v3; a performance saved into
-     * the v6 chunk keeps the others, converted, and writes the chunk as v7 */
+     * byte its gate, the pattern's TIME DIVISION where GATE is now) load through arp_from_v3 and arp_from_v4; a
+     * performance saved into the v6 chunk keeps the others, converted, and writes the chunk as v8 */
     {
         static uint8_t pay[4096];
         ArpState v3, want;
         WholePerformance w, got, exp;
         uint32_t first, n, len, i, ok;
         arp_defaults(&v3);                           /* (the v3 bytes, in today's field names) */
+        v3.layer_timing = ARPLAYER_L1;               /* v3: target_layer */
+        for (i = 0; i < ARP_NSTEP; i++)
+            v3.steps[i].style = 1u;                  /* v3: UP */
         v3.steps[1].chord_root = 60;
         v3.steps[1].rate = 77;                       /* v3: step 2's gate, the first chord step's */
         v3.steps[4].chord_root = 65;
@@ -450,6 +454,10 @@ int main(void)
         arp_from_v3(&want);
         CHECK(want.gate_length == 77 && want.steps[0].rate == ARPDIV_1_8 && want.steps[4].rate == ARPDIV_1_8 &&
               want.steps[1].chord_root == 60 && want.current_genre_bank == v3.current_genre_bank, "arp_from_v3");
+        arp_from_v4(&want);
+        CHECK(ARP_TIMING(&want) == ARPDIV_1_8 && ARP_LAYER(&want) == ARPLAYER_L1 && want.steps[0].rate == ARPRATE_1_32 &&
+              want.steps[4].rate == ARPRATE_1_32 && want.steps[1].style == ARPSTYLE_UP && want.gate_length == 77,
+              "arp_from_v4 after it: TIMING the old 1/8 steps, RATE 1/32 (a 4-cell rhythm across an eighth)");
         n = ps_slots(&PS_KIND[UISAVE_ARP_SEQ], 0u, &first);
         len = PS_USED_BYTES + n * sizeof(ArpState);
         memset(pay, 0, len);
@@ -486,7 +494,46 @@ int main(void)
         ok = ok && ps_perf_read(0, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0;
         CHECK(ok && holds(PERF, 1, 0x61), "the v6 chunk's others kept, migrated, after a save into it");
         PsHdr h3;
-        CHECK(ps_current(PS_KIND[PERF].first, PERF, 0u, &h3) >= 0 && h3.ver == FREC_VER_PERF, "the save wrote v7");
+        CHECK(ps_current(PS_KIND[PERF].first, PERF, 0u, &h3) >= 0 && h3.ver == FREC_VER_PERF, "the save wrote v8");
+    }
+
+    /* an arp chunk of FREC_VER_ARP 4 (2026-10-17 .. 21: RATE each step's length, HOLD the last style, its strum 1..12 up
+     * / 13..23 down 96ths apart) loads through arp_from_v4: TIMING the first chord step's length, every RATE the one
+     * filling its old length, HOLD first, its strum up / down at the nearest RATE */
+    {
+        static uint8_t pay[4096];
+        ArpState v4, want;
+        uint32_t first, n, len;
+        arp_defaults(&v4);                           /* (the v4 bytes, in today's field names) */
+        v4.layer_timing = ARPLAYER_L2;               /* v4: target_layer */
+        v4.steps[2].chord_root = 60;
+        v4.steps[2].rate = ARPDIV_1_2;               /* v4: ARPDIV_*, the step's length */
+        v4.steps[2].style = 8u;                      /* v4: HOLD */
+        v4.steps[2].variation = 16u;                 /* v4: DN 4 */
+        v4.steps[3].chord_root = 62;
+        v4.steps[3].rate = ARPDIV_1_4;
+        v4.steps[3].style = 0u;                      /* v4: BLOCK */
+        v4.steps[4].chord_root = 64;
+        v4.steps[4].rate = ARPDIV_1_8;
+        v4.steps[4].style = 8u;
+        v4.steps[4].variation = 0u;                  /* v4: HOLD, no strum */
+        want = v4;
+        arp_from_v4(&want);
+        CHECK(ARP_TIMING(&want) == ARPDIV_1_2 && ARP_LAYER(&want) == ARPLAYER_L2 &&
+              want.steps[2].style == ARPSTYLE_HOLD && want.steps[2].variation == 2u && want.steps[2].rate == ARPRATE_1_64T &&
+              want.steps[3].style == ARPSTYLE_BLOCK && want.steps[3].rate == ARPRATE_1_16 &&
+              want.steps[4].style == ARPSTYLE_HOLD && want.steps[4].variation == 0u && want.steps[4].rate == ARPRATE_1_32,
+              "arp_from_v4: TIMING %u, HOLD first, DN 4 -> DOWN at 1/64T", ARP_TIMING(&want));
+        n = ps_slots(&PS_KIND[UISAVE_ARP_SEQ], 0u, &first);
+        len = PS_USED_BYTES + n * sizeof(ArpState);
+        memset(pay, 0, len);
+        pay[0] = 1u << 5;
+        memcpy(pay + PS_USED_BYTES + 5u * sizeof v4, &v4, sizeof v4);
+        put_chunk(PS_KIND[UISAVE_ARP_SEQ].first, UISAVE_ARP_SEQ, 0u, 4u, pay, len);
+        wipe_ram();
+        ps_load();
+        CHECK(syn_slot_used(UISAVE_ARP_SEQ, 5) && memcmp(slot_ptr(UISAVE_ARP_SEQ, 5), &want, sizeof want) == 0,
+              "a v4 arp chunk: loaded, migrated");
     }
 
     /* no flash: a SAVE reports failure (the slot stays in RAM), and no performance reads */

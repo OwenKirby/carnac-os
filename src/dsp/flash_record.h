@@ -19,9 +19,9 @@
 
 /* the current layout of each kind: 1..0xFE */
 #define FREC_VER_ENGINE 8u           /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; v5, v6 and v7 migrate (engine_from_v5 / _v6 / _v7) */
-#define FREC_VER_PERF   7u           /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4 (v6 migrates: whole_perf_from_v6) */
+#define FREC_VER_PERF   8u           /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4 (v6 migrates: whole_perf_from_v6); 8: the arp's v5 (v7 migrates: whole_perf_from_v7) */
 #define FREC_VER_SEQ    3u           /* SequencerLane[SEQ_NLANE], one sequencer slot (SEQ_SETTINGS); 2: scale, scale_root; 3: the 32-slot bank (2026-10-17, the lane unchanged: the 128-slot bank's chunks are left out, so the factory sequences show) */
-#define FREC_VER_ARP    4u           /* ArpState, one arp slot (ARP_SEQ); 2: chord_root (a MIDI note) and the 24-way variation; 3: TIE, accents; 4: each step's RATE where its gate was, the pattern's GATE where TIME DIVISION was (v3 migrates: arp_from_v3) */
+#define FREC_VER_ARP    5u           /* ArpState, one arp slot (ARP_SEQ); 2: chord_root (a MIDI note) and the 24-way variation; 3: TIE, accents; 4: each step's RATE where its gate was, the pattern's GATE where TIME DIVISION was (v3 migrates: arp_from_v3); 5: RATE the notes' rate, TIMING the steps' length (in LAYER's byte), HOLD the first style, its strum none / up / down (v4 migrates: arp_from_v4) */
 #define FREC_VER_GLOBAL 1u           /* GlobalSystemConfig */
 
 #define FREC_HEADER 1u               /* the version byte */
@@ -253,14 +253,54 @@ static inline void arp_from_v3(ArpState *a)
             gate = a->steps[i].rate;                /* (v3: gate_length) */
             found = 1u;
         }
-        a->steps[i].rate = div < ARPDIV_COUNT ? div : (uint8_t)ARP_RATE_DEFAULT;
+        a->steps[i].rate = div < ARPDIV_1_32T ? div : (uint8_t)ARP_TIMING_DEFAULT;   /* (v4: ARPDIV_*) */
     }
     a->gate_length = gate <= VAL_MAX ? gate : (uint8_t)VAL_MAX;
+}
+/* ---- the arp's v4 -> v5 (2026-10-21): each step's RATE was its length (ARPDIV_*); the steps' length is now the
+ * pattern's TIMING (LAYER's high nibble) and RATE the rate of its notes (ARPRATE_*). In place: TIMING takes the RATE of
+ * the first chord step (the default without one), each step the RATE that fills its old length with its rhythm, so a
+ * step plays as before (a step whose length differed from the first's now lasts TIMING). HOLD moves to the front of the
+ * styles; its strum (RHYTHM 0 none, 1..12 up, 13..23 down, gaps of 1..12 96ths of a beat) becomes none / up / down,
+ * the gap its RATE (the nearest). */
+static inline void arp_from_v4(ArpState *a)
+{
+    uint8_t div = ARP_TIMING_DEFAULT, i, r, best, v, g;
+    for (i = 0u; i < ARP_NSTEP; i++)
+        if (ARP_ROOT_IS_CHORD(a->steps[i].chord_root)) {
+            div = a->steps[i].rate < ARPDIV_1_32T ? a->steps[i].rate : (uint8_t)ARP_TIMING_DEFAULT;
+            break;
+        }
+    a->layer_timing = (uint8_t)((a->layer_timing < ARPLAYER_COUNT ? a->layer_timing : (uint8_t)ARPLAYER_L1) | div << 4);
+    for (i = 0u; i < ARP_NSTEP; i++) {
+        ArpChordStep *s = &a->steps[i];
+        s->rate = arp_rate_of_div(s->rate);
+        if (s->style == 8u) {                        /* (v4: ARPSTYLE_HOLD) */
+            v = s->variation < ARP_NVAR ? s->variation : (uint8_t)0u;
+            g = v <= 12u ? v : (uint8_t)(v - 12u);
+            s->variation = v == 0u ? 0u : v <= 12u ? 1u : 2u;
+            if (g != 0u) {
+                for (r = 0u, best = 0u; r < ARPRATE_COUNT; r++)
+                    if ((arp_rate_q(r) > g ? arp_rate_q(r) - g : g - arp_rate_q(r)) <
+                        (arp_rate_q(best) > g ? arp_rate_q(best) - g : g - arp_rate_q(best)))
+                        best = r;
+                s->rate = best;
+            }
+            s->style = ARPSTYLE_HOLD;
+        } else if (s->style < 8u) {
+            s->style = (uint8_t)(s->style + 1u);    /* (v4: BLOCK 0 .. STRUM DN 7) */
+        }
+    }
 }
 /* a stored v6 whole performance (WHOLE_PERF_STORED_SIZE bytes, its arp last) to v7, in place */
 static inline void whole_perf_from_v6(uint8_t *stored)
 {
     arp_from_v3((ArpState *)(void *)(stored + WHOLE_PERF_STORED_SIZE - sizeof(ArpState)));
+}
+/* .. and v7 to v8 */
+static inline void whole_perf_from_v7(uint8_t *stored)
+{
+    arp_from_v4((ArpState *)(void *)(stored + WHOLE_PERF_STORED_SIZE - sizeof(ArpState)));
 }
 
 /* record -> payload. Copies only on FREC_OK; otherwise the payload is left as it was. */

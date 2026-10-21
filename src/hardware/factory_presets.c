@@ -436,7 +436,7 @@ static uint8_t fs_digit(char c) { return (uint8_t)((c - '0') * 127 / 9); }
  * chord and steps two arp steps a note (8 arp steps = 16 of its own) */
 static void factory_seq(uint32_t s, SequencerLane lanes[SEQ_NLANE])
 {
-    static const uint8_t DIV_TICKS[ARPDIV_COUNT] = {192, 96, 48, 24, 16, 12, 8, 6, 4, 3};
+    static const uint8_t DIV_TICKS[ARPDIV_COUNT] = {192, 96, 48, 24, 16, 12, 8, 6, 4, 3, 2};
     const FactorySeq *f = &FS_TAB[s];
     const FactoryArp *a = &FA_TAB[s];
     uint8_t root = f->root, p = f->prescale, l, i;
@@ -493,12 +493,13 @@ static void factory_arp(uint32_t s, ArpState *st)
     for (i = 0; i < ARP_NSTEP; i++) {
         ArpChordStep *c = &st->steps[i];
         c->chord_root = f->root[i];
-        c->rate = f->div;
+        c->rate = arp_rate_of_div(f->div);          /* its rhythm across the step, as TIMING plays it */
         c->octave_range = f->oct;
         c->style = f->style;
         c->variation = (uint8_t)(f->var[i] - 'a');
         c->accent = (uint8_t)(f->acc[i] == '1');
     }
+    arp_set_timing(st, f->div);
     st->gate_length = f->gate;
     st->transpose_maq_option = f->maq;
     st->current_genre_bank = f->genre;

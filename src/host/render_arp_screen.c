@@ -59,9 +59,9 @@ static void pattern(void)
     static const uint8_t root[8] = {53, 58, 55, ARP_CHORD_EMPTY, 60, ARP_CHORD_TIE, 62, 65};
     static const uint8_t style[8] = {ARPSTYLE_UP, ARPSTYLE_BLOCK, ARPSTYLE_HOLD, 0, ARPSTYLE_STRUM_UP, ARPSTYLE_RANDOM,
                                      ARPSTYLE_DOWN, ARPSTYLE_STRUM_DN};
-    static const uint8_t var[8] = {1, 8, 13, 0, 3, 19, 10, 22};
-    static const uint8_t rate[8] = {ARPDIV_1_4, ARPDIV_1_8, ARPDIV_1_4T, ARPDIV_1_4, ARPDIV_1_2, ARPDIV_1_4,
-                                    ARPDIV_1_16, ARPDIV_1_8T};
+    static const uint8_t var[8] = {1, 8, 2, 0, 3, 19, 10, 22};
+    static const uint8_t rate[8] = {ARPRATE_1_16, ARPRATE_1_32, ARPRATE_1_64, ARPRATE_1_16, ARPRATE_1_8, ARPRATE_1_16,
+                                    ARPRATE_1_64, ARPRATE_1_32T};
     int i;
     preset_defaults();
     midi_clock_init();
@@ -140,18 +140,18 @@ int main(int argc, char **argv)
     seq_palette_set(SQPAL_RED);
     pattern();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
-    arp_state.target_layer = ARPLAYER_BOTH;
+    arp_set_layer(&arp_state, ARPLAYER_BOTH);
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
     fails |= shot(dir, "stopped");
 
     /* stopped, ORANGE: REC armed (step entry, two chords in: the cursor on step 3), LATCH on, the cursor on ACCENT VEL,
-     * the knobs RATE 1/16T and HOLD strummed UP 5 */
+     * the knobs RATE 1/16T and HOLD strummed UP */
     seq_palette_set(SQPAL_ORANGE);
     pattern();
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 5);
-    sm.arp_knob[0] = ARPDIV_1_16T;                   /* the knobs: RATE 1/16T, STYLE HOLD (knob 4 then STRUM) */
+    sm.arp_knob[0] = ARPRATE_1_16T;                  /* the knobs: RATE 1/16T, STYLE HOLD (knob 4 then STRUM) */
     sm.arp_knob[2] = ARPSTYLE_HOLD;
-    sm.arp_knob[3] = 5;
+    sm.arp_knob[3] = 1;
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
     ui_sm_arp_key(&sm, 15, 68, 1, 100);              /* G#4: LATCH */
     ui_sm_arp_key(&sm, 15, 68, 0, 0);

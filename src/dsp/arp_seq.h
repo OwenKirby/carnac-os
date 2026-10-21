@@ -9,8 +9,10 @@
  * SEQ page the MAQ alone, on any other page both. Started together, both take their first step on the same 24 PPQN
  * pulse; one started while the other plays waits for the other's next bar (MAQ_SYNC_PULSES from its first step), so
  * the two stay on one grid. Under CLOCK SOURCE MIDI, MIDI Start starts it from the top and MIDI Stop stops it, as
- * the MAQ. A step lasts its own RATE (knob 1, ARPDIV_*: 2 .. 1/32) and is split into the cells of its rhythm (8.3
- * rhythm_variation_table: 4 cells, or 3 for a triplet B column). o strikes, ~ holds the strike before it, _ rests.
+ * the MAQ. Every step lasts the pattern's TIMING (ARPDIV_*: 2 .. 1/32T, ARP_TIMING) and plays its rhythm (8.3
+ * rhythm_variation_table: 4 cells, or 3 for a triplet B column) at its own RATE (knob 1, ARPRATE_*: 1/2 .. 1/128, a
+ * 4-cell rhythm's cell; a triplet's 3 cells span the same 4), round and round until the step ends (2026-10-21: RATE was
+ * the step's length, the rhythm always filling it). o strikes, ~ holds the strike before it, _ rests.
  * Cells, gates and strums are scheduled in frames from the pulse period, so they stay sample-accurate at any tempo.
  *
  * A strike plays the step's chord as its STYLE orders it: BLOCK the whole chord, UP / DOWN / UP-DN / DN-UP / RANDOM one
@@ -18,9 +20,9 @@
  * / DN the whole chord with its notes staggered over the first half of the cell. BLOCK and STRUM move up an octave per
  * strike within the range. A strike lasts its cells (the o and the ~ after it) x (GATE + 1) / 128 (the pattern's GATE);
  * GATE 127 is legato. HOLD strikes the chord once at the step's start and holds it to the step's end, whatever the
- * GATE; a HOLD step whose chord is the one already sounding (struck in full) holds it on, unstruck, so a chord repeated
- * step after step is never retriggered by the clock. Its RHYTHM is the strike's strum instead (carp_hold_strum): none,
- * or the notes upward / downward, 1 .. 12 96ths of a beat apart (5 .. 63 ms at 120 BPM: slower with the tempo).
+ * GATE; a HOLD step whose chord is the HOLD chord already sounding (or still strumming) holds it on, unstruck, so a
+ * chord repeated step after step is never retriggered by the clock, at any TIMING. Its RHYTHM is the strike's strum
+ * instead (carp_hold_strum): none, or the notes upward / downward, RATE apart.
  * An accented step's first strike plays at ACCENT VEL instead of the base velocity.
  *
  * A TIE step (ARP_CHORD_TIE) carries on the chord before it with that step's knobs: a one-note style runs its rhythm again
@@ -30,7 +32,7 @@
  *
  * A chord key held outside a capture (carp_hold) arpeggiates its own chord live, while the captured pattern is not playing
  * (transport stopped, or no chord in the pattern's SEQ LENGTH steps): steps of the live knob values (carp_set_knobs:
- * RATE, OCTAVE, STYLE, RHYTHM; the pattern's GATE) at the key's velocity, the first step on the key's own frame (stopped) or
+ * RATE, OCTAVE, STYLE, RHYTHM; the pattern's GATE and TIMING) at the key's velocity, the first step on the key's own frame (stopped) or
  * at once inside the running step (playing). Gate, octave and style changes take effect on the next strike, the rate
  * and the rhythm on the next step. With the captured pattern playing, a held chord key sounds its chord as a block, as a capture does.
  *
@@ -71,9 +73,11 @@ typedef struct {
     MaqMidiOut out;
     /* the running step */
     uint8_t pos;                     /* step on the playhead, CARP_POS_NONE stopped */
-    uint8_t ticks_left;              /* clock pulses until the next step (RATE 2 = 192 at most, a bar's wait 96) */
-    uint8_t step_ticks;              /* the running step's length in pulses (its RATE) */
-    uint8_t cells[CARP_NCELL], ncell, cell;   /* the step's rhythm and the next cell to fire */
+    uint8_t ticks_left;              /* clock pulses until the next step (TIMING 2 = 192 at most, a bar's wait 96) */
+    uint8_t step_ticks;              /* the running step's length in pulses (TIMING) */
+    uint8_t cells[CARP_NCELL], ncell, cell;   /* the step's rhythm and the next cell's place in it */
+    uint16_t cell_k, cell_max;       /* cells fired this step, and how many fit in it (the rhythm runs round) */
+    uint8_t rate_q;                  /* the step's RATE in 96ths of a beat (arp_rate_q) */
     uint8_t ncell_var;               /* the rhythm's cell count (a tied step runs it again) */
     uint8_t gate, oct, style;        /* the step's knob values, range-checked */
     uint8_t chord[ARP_CHORD_NOTES], nchord;   /* the step's chord (untransposed, ascending); 0 notes: a rest step */
@@ -88,6 +92,7 @@ typedef struct {
     uint8_t ch[2], vel;              /* where and how loud the step strikes */
     uint8_t accent, strike_vel;      /* the step's first strike is still to come accented; the running strike's velocity */
     uint8_t hold_strum;              /* a HOLD step's strum (its RHYTHM, carp_hold_strum) */
+    uint8_t hold_notes[ARP_CHORD_NOTES], hold_n, hold_oct;   /* the HOLD chord sounding (0 notes: none), its octave */
     uint8_t tie_hold;                /* a BLOCK / strum chord sustains into the TIE step after it */
     /* a chord key's chord, sounding while the key is held */
     uint8_t aud_on[ARP_CHORD_NOTES], aud_ch[2];
@@ -140,11 +145,11 @@ uint8_t carp_shown_shape(const CarpSeq *a, uint8_t *style);  /* .. its octave ra
 uint8_t carp_rec_step(const CarpSeq *a);
 
 /* shared with the UI: the chord a chord key plays in a genre (ascending, notes above 127 dropped; returns how many),
- * a variation's rhythm cells (CARP_CELL_*; returns 4, or 3 for a triplet), TIME DIVISION in 24 PPQN pulses */
+ * a variation's rhythm cells (CARP_CELL_*; returns 4, or 3 for a triplet), TIMING (ARPDIV_*) in 24 PPQN pulses */
 uint8_t carp_chord_notes(uint8_t genre, uint8_t root, uint8_t out[ARP_CHORD_NOTES]);
 uint8_t carp_rhythm(uint8_t variation, uint8_t cells[CARP_NCELL]);
 uint16_t carp_div_ticks(uint8_t division);
-/* a HOLD step's RHYTHM as its strum: the gap between notes in 96ths of a beat (0: all at once), *up 1 / 0 */
+/* a HOLD step's RHYTHM as its strum: 1 strummed (its notes RATE apart), 0 all at once; *up 1 upward / 0 downward */
 uint8_t carp_hold_strum(uint8_t variation, uint8_t *up);
 
 #ifdef __cplusplus

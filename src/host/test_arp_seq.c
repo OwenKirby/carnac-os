@@ -80,7 +80,7 @@ static int all_off(const Log *g) { int c, n; for (c = 0; c < 16; c++) for (n = 0
 static void step(uint8_t i, uint8_t root, uint8_t gate, uint8_t oct, uint8_t style, uint8_t var)
 {
     ArpChordStep *s = &arp_state.steps[i];
-    s->chord_root = root; s->rate = ARPDIV_1_4; s->octave_range = oct; s->style = style; s->variation = var;
+    s->chord_root = root; s->rate = ARP_RATE_DEFAULT; s->octave_range = oct; s->style = style; s->variation = var;
     arp_state.gate_length = gate;
 }
 
@@ -118,7 +118,7 @@ int main(void)
     CHECK(strcmp(arp_genre_names[ARP_GENRE_PHRYGIAN], "Phrygian") == 0 && (arp_genre_scale[ARP_GENRE_PHRYGIAN] & 15u) ==
           SEQSCALE_PHRYGIAN, "Phrygian after the spec's list, on the Phrygian scale");
     { ArpState d; arp_defaults(&d);
-      CHECK(d.current_genre_bank == ARP_GENRE_PHRYGIAN && d.steps[3].rate == ARPDIV_1_4 && d.gate_length == ARP_GATE_DEFAULT,
+      CHECK(d.current_genre_bank == ARP_GENRE_PHRYGIAN && d.steps[3].rate == ARPRATE_1_16 && ARP_TIMING(&d) == ARPDIV_1_4 && d.gate_length == ARP_GATE_DEFAULT,
             "the default pattern: Phrygian, 1/4 steps, the default GATE"); }
     n = carp_chord_notes(ARP_GENRE_PHRYGIAN, 49, c);
     CHECK(n == 4 && c[1] - c[0] == 7 && c[2] - c[0] == 11 && c[3] - c[0] == 16, "Phrygian's bII: a major seventh");
@@ -133,7 +133,7 @@ int main(void)
     CHECK(carp_rhythm(13, cells) == 3 && cells[0] == 1 && cells[1] == 0 && cells[2] == 0, "07T = o _ _, 3 cells");
     CHECK(carp_rhythm(11, cells) == 4, "06B is straight: 4 cells");
     CHECK(carp_div_ticks(ARPDIV_2) == 192 && carp_div_ticks(ARPDIV_1_4) == 24 && carp_div_ticks(ARPDIV_1_4T) == 16 &&
-          carp_div_ticks(ARPDIV_1_32) == 3, "TIME DIVISION in pulses");
+          carp_div_ticks(ARPDIV_1_32) == 3 && carp_div_ticks(ARPDIV_1_32T) == 2, "TIMING in pulses");
 
     /* ---- UP over 01B: two strikes a step, the order runs on across steps, gate 96 ---- */
     reset();
@@ -306,18 +306,19 @@ int main(void)
               arp_state.steps[2].rate == ARP_RATE_DEFAULT && arp_state.steps[0].chord_root == ARP_CHORD_EMPTY,
               "A3 + the dials captured into steps 3 and 5 only");
         kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 0, &info);
-        CHECK(info.kind == UIKNOB_LIST && info.n_enum == ARPDIV_COUNT && strcmp(info.label, "RATE") == 0, "knob 1: RATE");
-        *kb = ARPDIV_1_8; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
-        CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/8") == 0 && arp_state.steps[2].rate == ARPDIV_1_8 &&
-              arp_state.steps[4].rate == ARPDIV_1_8 && arp_state.steps[3].rate == ARP_RATE_DEFAULT,
+        CHECK(info.kind == UIKNOB_LIST && info.n_enum == ARPRATE_COUNT && strcmp(info.label, "RATE") == 0, "knob 1: RATE");
+        *kb = ARPRATE_1_8; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/8") == 0 && arp_state.steps[2].rate == ARPRATE_1_8 &&
+              arp_state.steps[4].rate == ARPRATE_1_8 && arp_state.steps[3].rate == ARP_RATE_DEFAULT,
               "a knob turned with step keys held edits those steps");
         ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
         ui_sm_arp_key(&sm, 21, FM1_LOW + 21u, 0, 0);
-        *kb = ARPDIV_1_16; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
-        CHECK(arp_state.steps[2].rate == ARPDIV_1_8, "released: the knob edits only the live value");
+        *kb = ARPRATE_1_32; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        CHECK(arp_state.steps[2].rate == ARPRATE_1_8, "released: the knob edits only the live value");
         *kb = 99; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
-        CHECK(sm.arp_knob[0] == ARPDIV_COUNT - 1u, "RATE held to its list");
-        *kb = ARPDIV_1_4; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        CHECK(sm.arp_knob[0] == ARPRATE_COUNT - 1u && strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/128") == 0,
+              "RATE held to its list");
+        *kb = ARP_RATE_DEFAULT; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
         run(4);
         carp_chord_notes(arp_state.current_genre_bank, FM1_LOW + 4u, c);
         CHECK(count(&la, 0x90) == 4 && count(&la, 0x80) == 4 && on_note(0) == c[0] && la.ev[0].d2 == 90 && all_off(&la),
@@ -423,7 +424,7 @@ int main(void)
     /* ---- LAYER BOTH in DUAL: both channels; under SINGL the row falls back to L1 ---- */
     reset();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
-    arp_state.target_layer = ARPLAYER_BOTH;
+    arp_set_layer(&arp_state, ARPLAYER_BOTH);
     step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);
     arp_state.sequence_length = 1;
     play(1);
@@ -431,7 +432,7 @@ int main(void)
     CHECK(count(&la, 0x90) == 8 && (la.ev[0].st & 0x0Fu) == 0 && (la.ev[1].st & 0x0Fu) == 1, "BOTH: the chord on channels 1 and 2");
     perf_state.perf_mode = PERF_SINGL_SYNTH;
     ui_sm_enforce(&sm);
-    CHECK(arp_state.target_layer == ARPLAYER_L1, "SINGL: LAYER back to L1");
+    CHECK(ARP_LAYER(&arp_state) == ARPLAYER_L1, "SINGL: LAYER back to L1");
     play(0);
     run(2);
     CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after a layer change");
@@ -627,9 +628,9 @@ int main(void)
     {
         UiKnobInfo info;
         uint8_t *kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 0, &info);
-        *kb = ARPDIV_1_16; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        *kb = ARPRATE_1_32; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
     }
-    CHECK(carp_pos(&a) == 2 && arp_state.steps[2].rate == ARPDIV_1_16 && arp_state.steps[3].rate == ARPDIV_1_4,
+    CHECK(carp_pos(&a) == 2 && arp_state.steps[2].rate == ARPRATE_1_32 && arp_state.steps[3].rate == ARP_RATE_DEFAULT,
           "playing + REC: the knob overdubs the playing step (pos %d)", carp_pos(&a));
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
     run(4);
@@ -684,32 +685,53 @@ int main(void)
         CHECK(all_off(&la) && all_off(&lm) && la.stuck == 0 && lm.stuck == 0, "no stuck notes with two transports");
     }
 
-    /* ---- each step its own RATE ---- */
+    /* ---- TIMING (2026-10-21): every step's length, the pattern's; RATE: the rate its rhythm runs at, round and round ---- */
     reset();
     arp_state.current_genre_bank = G_UTIL_MAJ;
-    step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);
+    step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);           /* o _ _ _ */
     step(1, 50, 64, 0, ARPSTYLE_BLOCK, 0);
     step(2, 52, 64, 0, ARPSTYLE_BLOCK, 0);
-    arp_state.steps[0].rate = ARPDIV_1_8;
-    arp_state.steps[1].rate = ARPDIV_1_2;
     arp_state.sequence_length = 3;
+    arp_set_timing(&arp_state, ARPDIV_1_8);
     carp_set_playing(&a, 1);
-    run(QUARTER / 2u + 2u * QUARTER - 10u);
+    run(QUARTER - 10u);
     CHECK(count(&la, 0x90) == 8 && near(on_frame(4), QUARTER / 2u) && on_note(4) == 50,
-          "1/8 then 1/2: step 2 at an eighth (%u)", on_frame(4));
+          "TIMING 1/8: step 2 an eighth in (%u), one strike a step (RATE 1/16: half the rhythm fits)", on_frame(4));
     run(20u);
-    CHECK(count(&la, 0x90) == 12 && near(on_frame(8), QUARTER / 2u + 2u * QUARTER) && on_note(8) == 52,
-          "step 3 after the half (%u)", on_frame(8));
-    k = nth(&la, 0x80, 4);
-    CHECK(k >= 0 && near(la.ev[k].frame, QUARTER / 2u + ((2u * QUARTER / 4u) * 65u >> 7)),
-          "a 1/2 step's cells are an eighth long (gate end %u)", k >= 0 ? la.ev[k].frame : 0u);
+    CHECK(count(&la, 0x90) == 12 && near(on_frame(8), QUARTER) && on_note(8) == 52, "step 3 a quarter in (%u)", on_frame(8));
     play(0);
     run(2);
+    reset();                                         /* TIMING 1/2, RATE 1/16: the rhythm twice a step */
+    arp_state.current_genre_bank = G_UTIL_MAJ;
+    step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);
+    arp_state.sequence_length = 1;
+    arp_set_timing(&arp_state, ARPDIV_1_2);
+    carp_set_playing(&a, 1);
+    run(2u * QUARTER - 10u);
+    CHECK(count(&la, 0x90) == 8 && near(on_frame(4), QUARTER), "TIMING 1/2: o _ _ _ again a beat in (%u)", on_frame(4));
+    play(0);
+    run(2);
+    reset();                                         /* TIMING 1/4, RATE 1/32: twice a step, cells a 32nd long */
+    arp_state.current_genre_bank = G_UTIL_MAJ;
+    step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);
+    arp_state.steps[0].rate = ARPRATE_1_32;
+    arp_state.sequence_length = 1;
+    carp_set_playing(&a, 1);
+    run(QUARTER - 10u);
+    k = nth(&la, 0x80, 0);
+    CHECK(count(&la, 0x90) == 8 && near(on_frame(4), QUARTER / 2u) && k >= 0 && near(la.ev[k].frame, (CELL / 2u) * 65u >> 7),
+          "RATE 1/32: struck an eighth apart, the gate over a 32nd cell (%u, gate end %u)", on_frame(4),
+          k >= 0 ? la.ev[k].frame : 0u);
+    run(20u);
+    CHECK(count(&la, 0x90) == 12 && near(on_frame(8), QUARTER), "the next step on the beat, not a cell early (%u)", on_frame(8));
+    play(0);
+    run(2);
+    CHECK(all_off(&la) && la.stuck == 0, "no stuck notes with TIMING and RATE");
 
     /* ---- HOLD: struck once, held to the step's end; the same chord on is never struck again ---- */
     reset();
     arp_state.current_genre_bank = G_UTIL_MAJ;
-    step(0, 48, 20, 0, ARPSTYLE_HOLD, 3);            /* a short GATE and o o o o's rhythm: neither applies */
+    step(0, 48, 20, 0, ARPSTYLE_HOLD, 0);            /* a short GATE: it does not apply */
     step(1, 48, 20, 0, ARPSTYLE_HOLD, 0);
     step(2, 53, 20, 0, ARPSTYLE_HOLD, 0);
     arp_state.sequence_length = 3;
@@ -724,22 +746,45 @@ int main(void)
     play(0);
     run(2);
     CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after HOLD");
-    reset();                                         /* the rhythm is the strum: UP 2, DN 2 */
+    reset();                                         /* the rhythm is the strum (UP, DOWN), RATE its gap */
     arp_state.current_genre_bank = G_UTIL_MAJ;
     carp_chord_notes(G_UTIL_MAJ, 48, c);
-    step(0, 48, 64, 0, ARPSTYLE_HOLD, 2);
-    step(1, 53, 64, 0, ARPSTYLE_HOLD, 14);
+    step(0, 48, 64, 0, ARPSTYLE_HOLD, 1);
+    step(1, 53, 64, 0, ARPSTYLE_HOLD, 2);
+    arp_state.steps[0].rate = ARPRATE_1_128;
+    arp_state.steps[1].rate = ARPRATE_1_64;
     arp_state.sequence_length = 2;
     carp_set_playing(&a, 1);
-    run(QUARTER + 2000u);
+    run(QUARTER + 6000u);
     {
-        uint32_t gap = (235200u * 2u) >> 10;         /* 918.75 frames a pulse, q8; 2 quarter pulses */
+        uint32_t gap = (235200u * 3u) >> 10;         /* 918.75 frames a pulse, q8; 1/128 = 3 quarter pulses */
+        uint32_t gap2 = (235200u * 6u) >> 10;        /* 1/64 */
         uint8_t c53[ARP_CHORD_NOTES];
         carp_chord_notes(G_UTIL_MAJ, 53, c53);
         CHECK(on_note(0) == c[0] && on_note(3) == c[3] && on_frame(1) - on_frame(0) == gap && on_frame(3) == 3u * gap,
-              "UP 2: bass first, %u frames apart (%u)", gap, on_frame(1) - on_frame(0));
-        CHECK(on_note(4) == c53[3] && on_note(7) == c53[0] && near(on_frame(4), QUARTER), "DN 2: the top first");
+              "UP at 1/128: bass first, %u frames apart (%u)", gap, on_frame(1) - on_frame(0));
+        CHECK(on_note(4) == c53[3] && on_note(7) == c53[0] && near(on_frame(4), QUARTER) &&
+              on_frame(5) - on_frame(4) == gap2, "DOWN at 1/64: the top first, RATE apart (%u)", on_frame(5) - on_frame(4));
     }
+    play(0);
+    run(2);
+    CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after a strummed HOLD");
+    reset();                                         /* fast TIMING, a strum longer than the step, 2 octaves: one strum */
+    arp_state.current_genre_bank = G_UTIL_MAJ;
+    for (i = 0; i < 8; i++)
+        step((uint8_t)i, 48, 64, 1, ARPSTYLE_HOLD, 1);
+    arp_set_timing(&arp_state, ARPDIV_1_32T);
+    carp_set_playing(&a, 1);
+    run(4u * QUARTER);
+    CHECK(count(&la, 0x90) == 4 && count(&la, 0x80) == 0 && on_frame(3) == 3u * ((235200u * 24u) >> 10),
+          "HOLD at 1/32T, strummed at 1/16 over 2 octaves: struck once, held (%d on, %d off)", count(&la, 0x90),
+          count(&la, 0x80));
+    for (i = 0; i < 8; i++)                          /* another chord: the held one off, the new one an octave up */
+        step((uint8_t)i, 50, 64, 1, ARPSTYLE_HOLD, 1);
+    run(QUARTER);
+    k = nth(&la, 0x90, 4);
+    CHECK(count(&la, 0x80) == 4 && k >= 0 && la.ev[k].d1 == 50 + 12, "a new chord: struck an octave up (%u)",
+          k >= 0 ? la.ev[k].d1 : 0u);
     play(0);
     run(2);
     CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after a strummed HOLD");
@@ -748,12 +793,28 @@ int main(void)
         uint8_t *kb;
         reset();
         ui_sm_goto(&sm, UIPAGE_ARP);
-        kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 2, &info);
-        *kb = ARPSTYLE_HOLD; ui_sm_knob_written(&sm, UIPAGE_ARP, 2);
         kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 3, &info);
         *kb = 14; ui_sm_knob_written(&sm, UIPAGE_ARP, 3);
-        CHECK(strcmp(info.label, "STRUM") == 0 && strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 2), "HOLD") == 0 &&
-              strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 3), "DN 2") == 0, "STYLE HOLD: knob 4 reads STRUM");
+        kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 2, &info);
+        *kb = 0; ui_sm_knob_written(&sm, UIPAGE_ARP, 2);
+        CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 2), "HOLD") == 0 && sm.arp_knob[3] == 2u,
+              "HOLD first in the STYLE list; RHYTHM 14 pulled into the strum's list");
+        kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 3, &info);
+        *kb = 9; ui_sm_knob_written(&sm, UIPAGE_ARP, 3);
+        CHECK(strcmp(info.label, "STRUM") == 0 && info.n_enum == ARP_NSTRUM && sm.arp_knob[3] == 2u &&
+              strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 3), "DOWN") == 0, "STYLE HOLD: knob 4 reads STRUM");
+        *kb = 1; ui_sm_knob_written(&sm, UIPAGE_ARP, 3);
+        CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 3), "UP") == 0, "STRUM UP");
+    }
+    {                                                /* TIMING: the menu row after LAYER, in LAYER's byte */
+        reset();
+        ui_sm_goto(&sm, UIPAGE_ARP);
+        CHECK(strcmp(ui_sm_row_label(&sm, 1), "TIMING") == 0 && strcmp(ui_sm_row_text(&sm, 1), "1/4") == 0,
+              "row 2: TIMING 1/4 (%s %s)", ui_sm_row_label(&sm, 1), ui_sm_row_text(&sm, 1));
+        arp_set_layer(&arp_state, ARPLAYER_L2);
+        arp_set_timing(&arp_state, ARPDIV_1_32T);
+        CHECK(ARP_LAYER(&arp_state) == ARPLAYER_L2 && strcmp(ui_sm_row_text(&sm, 1), "1/32T") == 0 &&
+              carp_div_ticks(ARP_TIMING(&arp_state)) == 2, "TIMING and LAYER share a byte, apart");
     }
 
     if (fails == 0)

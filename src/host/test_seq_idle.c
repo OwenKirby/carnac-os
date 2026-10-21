@@ -70,12 +70,12 @@ int main(void)
         }
         for (int s = 0; s < 3; s++) {
             ArpChordStep *st = &arp_state.steps[s];
-            st->chord_root = (uint8_t)(55 + s * 2); st->rate = (uint8_t)(ARPDIV_1_4 + s * 2); st->octave_range = 1;
+            st->chord_root = (uint8_t)(55 + s * 2); st->rate = (uint8_t)(ARPRATE_1_8 + s * 2); st->octave_range = 1;
             st->style = (uint8_t)(ARPSTYLE_UP + s); st->variation = (uint8_t)(s * 3);
         }
         arp_state.sequence_length = 3;
         arp_state.steps[2].style = ARPSTYLE_HOLD;
-        arp_state.steps[2].variation = 15;           /* (HOLD, strummed down) */
+        arp_state.steps[2].variation = 2;            /* (HOLD, strummed down) */
         MaqSeq *q = synth_seq();
         CarpSeq *a = synth_arp();
 

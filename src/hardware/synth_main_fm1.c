@@ -1000,6 +1000,8 @@ static void panel_leds(void)
     plat_play_red((int)rec);
     plat_keys_dim(kl.dim);
     plat_leds(b, kl.lit | kl.mid | keys_prev);
+    if (sm.page == UIPAGE_ARP && kl.dim)            /* the ARP's chord steps at half brightness, not X0X's quarter */
+        fm1_led_dim_div = 2u;                       /* (2026-10-21: too faint to read; the playhead stays full) */
 }
 
 /* ------------------------------------------------------------- boot --- */

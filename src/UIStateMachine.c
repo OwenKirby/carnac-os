@@ -33,7 +33,8 @@ enum {                               /* how a row reads and writes its value */
                                       * it, the Algorithm Encoder does nothing) */
     RK_SEQ_EVENT,                    /* EV:, written through seq_lane_set_event */
     RK_SEQ_TARGET,                   /* TARGET:, max from seq_target_max, values from seq_target_ok */
-    RK_ARP_LAYER,                    /* 8.2 Layer: L2 needs a second layer, BOTH needs DUAL_SYNTH */
+    RK_ARP_LAYER,                    /* 8.2 Layer: L2 needs a second layer, BOTH needs DUAL_SYNTH (layer_timing's low nibble) */
+    RK_ARP_TIMING,                   /* TIMING: every step's length, ARPDIV_* (layer_timing's high nibble) */
     RK_PERF_SLOT,                    /* SAVE submenu 1 performance pointer */
     RK_RENAME,                       /* RENAME: no value, the knobs edit the name (6.2.1) */
     RK_SAVE_ACTION,                  /* ACTION: UIACT_* (6.2.2) */
@@ -94,7 +95,12 @@ static const char *const THEME_NAMES[UITHEME_COUNT] = {"SAMHAIN", "BLOOD MOON", 
                                                        "RITUAL", "GRANITE", "OAK"};
 static const char *const DELAYTYPE_NAMES[] = {"TAPE", "BBD"};
 static const char *const ARPLAYER_NAMES[] = {"L1", "L2", "BOTH"};
-static const char *const ARPDIV_NAMES[] = {"2", "1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32"};
+static const char *const ARPDIV_NAMES[] = {"2", "1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32",
+                                           "1/32T"};
+PS_STATIC_ASSERT(sizeof(ARPDIV_NAMES) / sizeof(ARPDIV_NAMES[0]) == ARPDIV_COUNT, "one name per ARPDIV_*");
+static const char *const ARPRATE_NAMES[] = {"1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T",
+                                            "1/64", "1/64T", "1/128"};
+PS_STATIC_ASSERT(sizeof(ARPRATE_NAMES) / sizeof(ARPRATE_NAMES[0]) == ARPRATE_COUNT, "one name per ARPRATE_*");
 static const char *const BOOL_NAMES[] = {"OFF", "ON"};
 static const char *const ATKTRK_NAMES[] = {"AUTO", "FIXED", "TRACK"};
 PS_STATIC_ASSERT(sizeof(ATKTRK_NAMES) / sizeof(ATKTRK_NAMES[0]) == ATKTRK_COUNT, "one name per ATKTRK_*");
@@ -112,23 +118,20 @@ PS_STATIC_ASSERT(sizeof(SAVE_TARGET_NAMES) / sizeof(SAVE_TARGET_NAMES[0]) == UIS
 PS_STATIC_ASSERT(sizeof(NAME_POS_NAMES) / sizeof(NAME_POS_NAMES[0]) == NAME_LEN, "one name per name position");
 PS_STATIC_ASSERT(sizeof(CHAR_NAMES) / sizeof(CHAR_NAMES[0]) == CHAR_MAP_LEN && sizeof(UI_CHAR_MAP) == CHAR_MAP_LEN + 1u,
                  "one name per character");
-/* 2.2 ARP knobs: RATE (ARPDIV_NAMES), OCTAVE RANGE, STYLE (arp_seq.h), RHYTHM (8.3 row and column: A / B, T for the
- * triplet B column; a HOLD step's strum, carp_hold_strum, under STYLE HOLD) */
+/* 2.2 ARP knobs: RATE (ARPRATE_NAMES), OCTAVE RANGE, STYLE (arp_seq.h; HOLD first, 2026-10-21), RHYTHM (8.3 row and
+ * column: A / B, T for the triplet B column; a HOLD step's strum, carp_hold_strum, under STYLE HOLD) */
 static const char *const ARPOCT_NAMES[] = {"1 OCT", "2 OCT", "3 OCT", "4 OCT"};
-static const char *const ARPSTYLE_NAMES[] = {"BLOCK", "UP", "DOWN", "UP-DN", "DN-UP", "RANDOM", "STRUM UP", "STRUM DN",
-                                             "HOLD"};
+static const char *const ARPSTYLE_NAMES[] = {"HOLD", "BLOCK", "UP", "DOWN", "UP-DN", "DN-UP", "RANDOM", "STRUM UP",
+                                             "STRUM DN"};
 static const char *const ARPVAR_NAMES[] = {
     "01A", "01B", "02A", "02B", "03A", "03B", "04A", "04B", "05A", "05B", "06A", "06B",
     "07A", "07T", "08A", "08T", "09A", "09T", "10A", "10T", "11A", "11T", "12A", "12T",
 };
 PS_STATIC_ASSERT(sizeof(ARPOCT_NAMES) / sizeof(ARPOCT_NAMES[0]) == ARP_NOCT, "one name per octave range");
 PS_STATIC_ASSERT(sizeof(ARPSTYLE_NAMES) / sizeof(ARPSTYLE_NAMES[0]) == ARPSTYLE_COUNT, "one name per ARPSTYLE_*");
-static const char *const ARPSTRUM_NAMES[] = {
-    "NONE", "UP 1", "UP 2", "UP 3", "UP 4", "UP 5", "UP 6", "UP 7", "UP 8", "UP 9", "UP 10", "UP 11",
-    "UP 12", "DN 1", "DN 2", "DN 3", "DN 4", "DN 5", "DN 6", "DN 7", "DN 8", "DN 9", "DN 10", "DN 11",
-};
+static const char *const ARPSTRUM_NAMES[] = {"NONE", "UP", "DOWN"};   /* its notes RATE apart */
 PS_STATIC_ASSERT(sizeof(ARPVAR_NAMES) / sizeof(ARPVAR_NAMES[0]) == ARP_NVAR, "one name per variation");
-PS_STATIC_ASSERT(sizeof(ARPSTRUM_NAMES) / sizeof(ARPSTRUM_NAMES[0]) == ARP_NVAR, "one strum per variation");
+PS_STATIC_ASSERT(sizeof(ARPSTRUM_NAMES) / sizeof(ARPSTRUM_NAMES[0]) == ARP_NSTRUM, "one name per strum");
 /* 7.4 footer: EV: and MD: (MAQ-style short names), LANE as 1..4 */
 static const char *const SEQEV_NAMES[] = {
     "Note", "Dyn", "Trns", "Time", "Gate", "Rtch", "PSkp", "PMut", "MW", "AT", "CC1", "CC2", "PC", "Layr",
@@ -332,7 +335,8 @@ static const UiRow SAVE_COMMIT_ROWS[] = {
     {"RENAME PERF", 0, 0, 0, RK_RENAME, 0, NULL, A_ALL},
 };
 static const UiRow ARP_ROWS[] = {
-    {"LAYER", OFS(ArpState, target_layer), 0, ARPLAYER_COUNT - 1, RK_ARP_LAYER, 0, ARPLAYER_NAMES, A_ALL},
+    {"LAYER", OFS(ArpState, layer_timing), 0, ARPLAYER_COUNT - 1, RK_ARP_LAYER, 0, ARPLAYER_NAMES, A_ALL},
+    {"TIMING", OFS(ArpState, layer_timing), 0, ARPDIV_COUNT - 1, RK_ARP_TIMING, 0, ARPDIV_NAMES, A_ALL},
     {"GATE", OFS(ArpState, gate_length), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"SEQ LENGTH", OFS(ArpState, sequence_length), 1, ARP_NSTEP, RK_BYTE, 0, NULL, A_ALL},
     {"TRANSPOSE MAQ", OFS(ArpState, transpose_maq_option), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
@@ -493,7 +497,7 @@ static const UiKnob EFFECTS_KNOBS[4] = {
 };
 /* 2.2 ARP (chord page): the live dial values a capture copies into a step (UIStateMachine.arp_knob, by index) */
 static const UiKnob ARP_KNOBS[4] = {
-    {"RATE", 0, UIKNOB_LIST, ARPDIV_COUNT, ARPDIV_NAMES}, {"OCTAVE", 1, UIKNOB_LIST, ARP_NOCT, ARPOCT_NAMES},
+    {"RATE", 0, UIKNOB_LIST, ARPRATE_COUNT, ARPRATE_NAMES}, {"OCTAVE", 1, UIKNOB_LIST, ARP_NOCT, ARPOCT_NAMES},
     {"STYLE", 2, UIKNOB_LIST, ARPSTYLE_COUNT, ARPSTYLE_NAMES}, {"RHYTHM", 3, UIKNOB_LIST, ARP_NVAR, ARPVAR_NAMES},
 };
 /* LAYER (2026-10-17): the play controllers. VELOCITY is the keys' own; MOD WHEEL goes out as CC 1; CC1 / CC2 set
@@ -726,6 +730,8 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     case RK_RENAME: case RK_CHAIN: return 0u;
     case RK_ENG: return ((const uint8_t *)sm->engine[row_layer(r)])[r->offset];
     case RK_VOICES: return ui_sm_layer_voices(sm, row_layer(r));
+    case RK_ARP_LAYER: return ARP_LAYER(sm->arp);
+    case RK_ARP_TIMING: return ARP_TIMING(sm->arp);
     default: return page_block(sm, ui_cur_page(sm))[r->offset];
     }
 }
@@ -740,6 +746,8 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
     case RK_RENAME: case RK_VOICES: case RK_CHAIN: case RK_SEQ_STEPS: break;
     case RK_ENG: ((uint8_t *)sm->engine[row_layer(r)])[r->offset] = v; break;
     case RK_SEQ_EVENT: seq_lane_set_event(cur_lane(sm), v); break;   /* also restarts TARGET: */
+    case RK_ARP_LAYER: arp_set_layer(sm->arp, v); break;
+    case RK_ARP_TIMING: arp_set_timing(sm->arp, v); break;
     default: page_block(sm, ui_cur_page(sm))[r->offset] = v; break;
     }
 }
@@ -1568,7 +1576,7 @@ uint8_t ui_sm_arp_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t dow
 
 void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
 {
-    static const uint8_t lim[4] = {ARPDIV_COUNT - 1u, ARP_NOCT - 1u, ARPSTYLE_COUNT - 1u, ARP_NVAR - 1u};
+    static const uint8_t lim[4] = {ARPRATE_COUNT - 1u, ARP_NOCT - 1u, ARPSTYLE_COUNT - 1u, ARP_NVAR - 1u};
     uint8_t i, v, held;
     if (page == UIPAGE_SAVE_COMMIT && knob == 0u) {
         ui_sm_enforce(sm);           /* a new TARGET: RENAME greys or returns, PASTE may lose its clipboard */
@@ -1591,6 +1599,11 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         return;
     v = sm->arp_knob[knob] <= lim[knob] ? sm->arp_knob[knob] : lim[knob];
     sm->arp_knob[knob] = v;
+    if (sm->arp_knob[2] == ARPSTYLE_HOLD && sm->arp_knob[3] >= ARP_NSTRUM) {
+        sm->arp_knob[3] = ARP_NSTRUM - 1u;           /* HOLD: RHYTHM is the strum, none / up / down */
+        if (knob == 3u)
+            v = sm->arp_knob[3];
+    }
     if (sm->carp != 0)
         carp_set_knobs(sm->carp, sm->arp_knob);      /* a held chord key follows the dials */
     held = sm->arp_held;
@@ -1603,7 +1616,11 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         switch (knob) {
         case 0: s->rate = v; break;
         case 1: s->octave_range = v; break;
-        case 2: s->style = v; break;
+        case 2:
+            s->style = v;
+            if (v == ARPSTYLE_HOLD && s->variation >= ARP_NSTRUM)
+                s->variation = sm->arp_knob[3];      /* (clamped above) */
+            break;
         default: s->variation = v; break;
         }
     }
@@ -2023,10 +2040,12 @@ void ui_sm_enforce(UIStateMachine *sm)
         sm->name_cursor = NAME_LEN - 1u;
     seq_target_settle(sm);
     {                                /* 8.2 LAYER: a mode change can take its layer away (the engine plays L1 then) */
-        uint8_t t = sm->arp->target_layer;
+        uint8_t t = ARP_LAYER(sm->arp);
         if (t >= ARPLAYER_COUNT || (t == ARPLAYER_L2 && mode == PERF_SINGL_SYNTH) ||
             (t == ARPLAYER_BOTH && mode != PERF_DUAL_SYNTH))
-            sm->arp->target_layer = ARPLAYER_L1;
+            arp_set_layer(sm->arp, ARPLAYER_L1);
+        if (ARP_TIMING(sm->arp) >= ARPDIV_COUNT)
+            arp_set_timing(sm->arp, ARP_TIMING_DEFAULT);
     }
     if (sm->page >= UIPAGE_COUNT) {
         enter_page(sm, UIPAGE_HOME1);
@@ -2150,6 +2169,7 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     if (page == UIPAGE_ARP && knob == 3u && sm->arp_knob[2] == ARPSTYLE_HOLD) {
         info->label = "STRUM";                       /* HOLD: RHYTHM is the strike's strum */
         info->names = ARPSTRUM_NAMES;
+        info->n_enum = ARP_NSTRUM;
     }
     if (k->kind == UIKNOB_NONE)
         return 0;

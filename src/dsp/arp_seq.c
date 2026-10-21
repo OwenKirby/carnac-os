@@ -28,13 +28,13 @@ static const uint8_t CARP_RHYTHM[12][2][4] = {
 };
 PS_STATIC_ASSERT(ARP_NVAR == 2u * 12u, "one variation per rhythm table row and column");
 
-/* 8.2 TIME DIVISION in 24 PPQN pulses: 2, 1, 1/2, 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32 (whole notes) */
-static const uint8_t CARP_DIV_TICKS[ARPDIV_COUNT] = {192u, 96u, 48u, 24u, 16u, 12u, 8u, 6u, 4u, 3u};
+/* 8.2 TIME DIVISION (TIMING) in 24 PPQN pulses: 2, 1, 1/2, 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T (whole notes) */
+static const uint8_t CARP_DIV_TICKS[ARPDIV_COUNT] = {192u, 96u, 48u, 24u, 16u, 12u, 8u, 6u, 4u, 3u, 2u};
 
 /* ------------------------------------------------------------ helpers --- */
 uint16_t carp_div_ticks(uint8_t division)
 {
-    return CARP_DIV_TICKS[division < ARPDIV_COUNT ? division : (uint8_t)ARPDIV_1_4];
+    return CARP_DIV_TICKS[division < ARPDIV_COUNT ? division : (uint8_t)ARP_TIMING_DEFAULT];
 }
 
 uint8_t carp_rhythm(uint8_t variation, uint8_t cells[CARP_NCELL])
@@ -48,9 +48,8 @@ uint8_t carp_rhythm(uint8_t variation, uint8_t cells[CARP_NCELL])
 
 uint8_t carp_hold_strum(uint8_t variation, uint8_t *up)
 {
-    uint8_t v = variation < ARP_NVAR ? variation : (uint8_t)0u;
-    *up = (uint8_t)(v <= 12u);
-    return v <= 12u ? v : (uint8_t)(v - 12u);       /* 0 none, 1..12 up, 13..23 down 1..11 */
+    *up = (uint8_t)(variation != 2u);
+    return (uint8_t)(variation != 0u);               /* 0 none, 1 up, 2 down (more, from a non-HOLD step: up) */
 }
 
 uint8_t carp_chord_notes(uint8_t genre, uint8_t root, uint8_t out[ARP_CHORD_NOTES])
@@ -83,7 +82,7 @@ static uint32_t carp_rand(CarpSeq *a)
  * unless BOTH on two different channels. */
 static void carp_channels(const CarpSeq *a, uint8_t ch[2])
 {
-    uint8_t mode = a->perf->perf_mode, t = a->st->target_layer;
+    uint8_t mode = a->perf->perf_mode, t = ARP_LAYER(a->st);
     uint8_t c1 = (uint8_t)(a->perf->midi_ch[0] & 0x0Fu), c2 = (uint8_t)(a->perf->midi_ch[1] & 0x0Fu);
     ch[0] = t == ARPLAYER_L2 && mode != PERF_SINGL_SYNTH ? c2 : c1;
     ch[1] =t == ARPLAYER_BOTH && mode == PERF_DUAL_SYNTH && c2 != c1 ? c2 : (uint8_t)CARP_CH_NONE;
@@ -113,6 +112,7 @@ static void carp_release(CarpSeq *a)
         }
     a->rel_pending = 0u;
     a->nstrum = 0u;
+    a->hold_n = 0u;                                  /* no HOLD chord sounding */
 }
 
 /* one pattern note on, into the cache (a note already sounding is struck again, not doubled) */
@@ -168,20 +168,26 @@ static void carp_knobs(CarpSeq *a, uint8_t gate, uint8_t oct, uint8_t style)
     a->style = style < ARPSTYLE_COUNT ? style : (uint8_t)ARPSTYLE_UP;
 }
 
-/* the step's length in pulses: its RATE, or the RATE dial's for a held key playing live */
-static uint8_t carp_rate_ticks(const CarpSeq *a)
+/* a step's length in pulses: the pattern's TIMING (a held key playing live too) */
+static uint8_t carp_step_len(const CarpSeq *a)
 {
-    uint8_t r = carp_live_now(a) ? (uint8_t)a->req_knobs :
-                a->pos < ARP_NSTEP ? a->st->steps[a->pos].rate : (uint8_t)ARP_RATE_DEFAULT;
-    return (uint8_t)carp_div_ticks(r);
+    return (uint8_t)carp_div_ticks(ARP_TIMING(a->st));
 }
 
-/* the step's cells from this frame: the step's length split evenly between them */
+/* the step's cells from this frame: its rhythm at its RATE (4 RATEs a pass, split evenly between the rhythm's cells),
+ * running round as long as the step lasts. A cell is struck only if half of it fits before the step's end (the next
+ * step's first cell comes on the clock, and a cell ending with the step would double it); HOLD strikes once. */
 static void carp_cells_start(CarpSeq *a)
 {
-    uint32_t frames = ((uint32_t)a->step_ticks * midi_clock_period_q8()) >> 8;   /* 192 ticks at 40 BPM: ~529k */
-    a->cell_frames = a->ncell ? frames / a->ncell : frames;
+    uint32_t p = midi_clock_period_q8(), step = ((uint32_t)a->step_ticks * p) >> 8;   /* 192 ticks at 40 BPM: ~529k */
+    uint32_t pass = ((uint32_t)a->rate_q * p) >> 8, half, m;                          /* 4 x rate_q 96ths */
+    a->cell_frames = a->ncell ? pass / a->ncell : pass;
     if (a->cell_frames == 0u) a->cell_frames = 1u;
+    half = a->cell_frames >> 1;
+    m = step > half ? (step - half - 1u) / a->cell_frames + 1u : 1u;
+    a->cell_max = a->ncell == 0u ? 0u : a->style == ARPSTYLE_HOLD ? 1u : m > 0xFFFFu ? 0xFFFFu : (uint16_t)m;
+    a->cell = 0u;
+    a->cell_k = 0u;
     a->step_start = a->frame;
     a->cell_due = a->frame;
 }
@@ -199,11 +205,13 @@ static void carp_load(CarpSeq *a)
         k = a->req_knobs;
         root = a->live_root;
         carp_knobs(a, st->gate_length, (uint8_t)(k >> 8), (uint8_t)(k >> 16));
+        a->rate_q = arp_rate_q((uint8_t)k);
         var = (uint8_t)(k >> 24);
     } else if (a->pos < ARP_NSTEP) {
         const ArpChordStep *s = &st->steps[a->pos];
         root = s->chord_root;
         carp_knobs(a, st->gate_length, s->octave_range, s->style);
+        a->rate_q = arp_rate_q(s->rate);
         var = s->variation;
         a->accent = (uint8_t)(s->accent != 0u);
     }
@@ -215,8 +223,10 @@ static void carp_load(CarpSeq *a)
         a->ncell = a->ncell_var = 1u;
     }
     a->cell = 0u;
+    a->cell_k = 0u;
     if (a->nchord == 0u) {
         a->ncell = 0u;                               /* an empty step: a rest */
+        a->cell_max = 0u;
         return;
     }
     a->nshown = a->nchord;                           /* the display shows the step's chord as it sounds */
@@ -253,7 +263,7 @@ static void carp_tie(CarpSeq *a)
 {
     a->accent = 0u;
     a->ncell = a->tie_hold ? (uint8_t)0u : a->ncell_var;
-    a->cell = 0u;
+    a->rate_q = arp_rate_q(a->st->steps[a->pos].rate);   /* its own RATE */
     carp_cells_start(a);
 }
 
@@ -263,7 +273,7 @@ static void carp_step_begin(CarpSeq *a)
 {
     if (a->running)
         a->pos = carp_next_pos(a);
-    a->ticks_left = a->step_ticks = carp_rate_ticks(a);
+    a->ticks_left = a->step_ticks = carp_step_len(a);
     if (carp_tied(a)) {
         carp_tie(a);                                 /* the chord before it sounds on: no Note-Offs */
         return;
@@ -306,28 +316,36 @@ static void carp_strike_vel(CarpSeq *a)
     }
 }
 
-/* a HOLD step's one strike: its chord (climbing an octave a step within the range, as BLOCK), held to the step's end.
- * The chord already sounding in full, on the same channels, carries on unstruck; anything else is released and the
- * chord struck, strummed as its RHYTHM says (carp_hold_strum). */
-static void carp_hold_strike(CarpSeq *a)
+/* chord + base (semitones): the notes in range, ascending */
+static uint8_t carp_hold_notes(const CarpSeq *a, int16_t base, uint8_t notes[ARP_CHORD_NOTES])
 {
-    uint8_t notes[ARP_CHORD_NOTES], n = 0u, i, j, on = 0u, same, up, gap;
-    int16_t base = (int16_t)(12 * (a->counter % a->oct) + carp_shift(a)), v;
+    uint8_t n = 0u, i;
+    int16_t v;
     for (i = 0u; i < a->nchord; i++) {
         v = (int16_t)(a->chord[i] + base);
         if (v >= 0 && v <= (int16_t)VAL_MAX)
             notes[n++] = (uint8_t)v;
     }
-    for (i = 0u; i < ARP_CHORD_NOTES; i++)
-        on = (uint8_t)(on + (a->on[i] != CARP_NOTE_NONE));
-    same = (uint8_t)(n != 0u && on == n && a->strum_i >= a->nstrum && a->on_ch[0] == a->ch[0] && a->on_ch[1] == a->ch[1]);
-    for (i = 0u; same && i < n; i++) {
-        for (j = 0u; j < ARP_CHORD_NOTES && a->on[j] != notes[i]; j++) {}
-        same = (uint8_t)(j < ARP_CHORD_NOTES);
-    }
-    a->counter++;
+    return n;
+}
+
+/* a HOLD step's one strike: its chord, held to the step's end. The HOLD chord still sounding (or strumming) from a step
+ * before, the same notes on the same channels, carries on unstruck, so a chord repeated step after step is struck once,
+ * at any TIMING (2026-10-21: before, a strum longer than the step, or the octave climb, struck it again every step).
+ * Anything else is released and the chord struck, an octave higher a new chord within the range (as BLOCK), strummed
+ * as its RHYTHM says (carp_hold_strum) with its notes RATE apart. */
+static void carp_hold_strike(CarpSeq *a)
+{
+    uint8_t notes[ARP_CHORD_NOTES], n, i, same = 0u, up;
+    int16_t shift = carp_shift(a);
     a->tie_hold = (uint8_t)(a->running && !a->live && a->pos < ARP_NSTEP &&
                             a->st->steps[carp_next_pos(a)].chord_root == ARP_CHORD_TIE);
+    if (a->hold_n != 0u && a->hold_oct < a->oct && a->on_ch[0] == a->ch[0] && a->on_ch[1] == a->ch[1]) {
+        n = carp_hold_notes(a, (int16_t)(12 * a->hold_oct + shift), notes);
+        same = (uint8_t)(n == a->hold_n);
+        for (i = 0u; same && i < n; i++)
+            same = (uint8_t)(notes[i] == a->hold_notes[i]);
+    }
     if (same) {
         a->rel_pending = 0u;                         /* held on (a gate the step before set ends nothing now) */
         a->accent = 0u;
@@ -335,15 +353,20 @@ static void carp_hold_strike(CarpSeq *a)
     }
     carp_release(a);
     carp_strike_vel(a);
-    gap = carp_hold_strum(a->hold_strum, &up);
-    if (gap == 0u || n <= 1u) {
+    a->hold_oct = (uint8_t)(a->counter % a->oct);
+    a->counter++;
+    n = carp_hold_notes(a, (int16_t)(12 * a->hold_oct + shift), notes);
+    for (i = 0u; i < n; i++)
+        a->hold_notes[i] = notes[i];
+    a->hold_n = n;
+    if (!carp_hold_strum(a->hold_strum, &up) || n <= 1u) {
         for (i = 0u; i < n; i++)
             carp_note_on(a, notes[i]);
         return;
     }
-    for (i = 0u; i < n; i++)                         /* strummed: the first note now, the rest gap apart */
+    for (i = 0u; i < n; i++)                         /* strummed: the first note now, the rest RATE apart */
         a->strum[i] = notes[up ? i : (uint8_t)(n - 1u - i)];
-    a->strum_frames = (midi_clock_period_q8() * gap) >> 10;   /* gap quarter pulses = gap 96ths of a beat */
+    a->strum_frames = (midi_clock_period_q8() * a->rate_q) >> 10;   /* rate_q quarter pulses = 96ths of a beat */
     if (a->strum_frames == 0u) a->strum_frames = 1u;
     carp_note_on(a, a->strum[0]);
     a->nstrum = n;
@@ -354,8 +377,9 @@ static void carp_hold_strike(CarpSeq *a)
 /* an o cell: shield, strike as the style says, schedule the gate end over this cell and the ~ cells after it */
 static void carp_strike(CarpSeq *a)
 {
-    uint8_t hold = 1u, i, n, up, last = 1u;
+    uint8_t i, n, up, last = 1u;
     uint8_t chord = (uint8_t)(a->style == ARPSTYLE_BLOCK || a->style == ARPSTYLE_STRUM_UP || a->style == ARPSTYLE_STRUM_DN);
+    uint16_t hold = 1u, k;
     uint32_t gate;
     int16_t base;
     if (a->style == ARPSTYLE_HOLD) {
@@ -364,10 +388,10 @@ static void carp_strike(CarpSeq *a)
     }
     carp_release(a);
     carp_strike_vel(a);                              /* an accented step's first strike */
-    while (a->cell + hold < a->ncell && a->cells[a->cell + hold] == CARP_CELL_TIE)
-        hold++;
-    for (i = (uint8_t)(a->cell + 1u); i < a->ncell; i++)
-        if (a->cells[i] == CARP_CELL_STRIKE)
+    while (a->cell_k + hold < a->cell_max && a->cells[(a->cell + hold) % a->ncell] == CARP_CELL_TIE)
+        hold++;                                      /* (the rhythm runs round: cell_k counts the cells, cell its place) */
+    for (k = 1u; a->cell_k + k < a->cell_max && last; k++)
+        if (a->cells[(a->cell + k) % a->ncell] == CARP_CELL_STRIKE)
             last = 0u;
     gate = a->gate >= VAL_MAX ? 0u : ((uint32_t)hold * a->cell_frames * ((uint32_t)a->gate + 1u)) >> 7;
     if (a->gate < VAL_MAX && gate == 0u) gate = 1u;
@@ -413,7 +437,7 @@ static void carp_due(CarpSeq *a)
     while (guard--) {
         uint8_t rel = (uint8_t)(a->rel_pending && (int32_t)(a->frame - a->rel_due) >= 0);
         uint8_t strum = (uint8_t)(a->strum_i < a->nstrum && (int32_t)(a->frame - a->strum_due) >= 0);
-        uint8_t cell = (uint8_t)(a->cell < a->ncell && (int32_t)(a->frame - a->cell_due) >= 0);
+        uint8_t cell = (uint8_t)(a->cell_k < a->cell_max && (int32_t)(a->frame - a->cell_due) >= 0);
         if (strum && (!cell || (int32_t)(a->cell_due - a->strum_due) > 0)) {
             if (a->strum[a->strum_i] != 0xFFu) carp_note_on(a, a->strum[a->strum_i]);
             a->strum_i++;
@@ -425,8 +449,9 @@ static void carp_due(CarpSeq *a)
                 carp_strike(a);
             else if (a->cells[a->cell] == CARP_CELL_REST && !a->tie_hold)
                 carp_release(a);                     /* _ silences a legato strike (not one tied on); ~ holds it */
-            a->cell++;
-            a->cell_due = a->step_start + a->cell_frames * a->cell;
+            a->cell_k++;
+            a->cell = (uint8_t)(a->cell + 1u >= a->ncell ? 0u : a->cell + 1u);
+            a->cell_due = a->step_start + a->cell_frames * a->cell_k;
         } else {
             break;
         }
@@ -464,6 +489,7 @@ static void carp_rewind(CarpSeq *a)
     a->ticks_left = 1u;
     a->ncell = 0u;
     a->cell = 0u;
+    a->cell_k = a->cell_max = 0u;
     a->nchord = 0u;                                  /* a TIE on step 1 rests at the start */
     a->tie_hold = 0u;
     a->counter = 0u;
@@ -489,7 +515,7 @@ static void carp_live_start(CarpSeq *a)
     carp_release(a);
     if (!a->running) {
         a->counter = 0u;                             /* the key lands inside a pulse: one more, so the step is never cut */
-        a->step_ticks = carp_rate_ticks(a);
+        a->step_ticks = carp_step_len(a);
         a->ticks_left = (uint8_t)(a->step_ticks + 1u);
     }
     carp_load(a);
@@ -508,6 +534,7 @@ static void carp_aud_apply(CarpSeq *a, uint32_t req)
         if (a->live) {
             carp_release(a);
             a->ncell = 0u;
+            a->cell_k = a->cell_max = 0u;
             a->nchord = 0u;
             a->live = 0u;
         }
@@ -557,9 +584,12 @@ void carp_init(CarpSeq *a, ArpState *st, const MasterPerformancePreset *perf, Ma
     a->nstrum = a->strum_i = 0u;
     a->pos = CARP_POS_NONE;
     a->ticks_left = 1u;
-    a->step_ticks = (uint8_t)carp_div_ticks(ARP_RATE_DEFAULT);
+    a->step_ticks = (uint8_t)carp_div_ticks(ARP_TIMING_DEFAULT);
+    a->rate_q = arp_rate_q(ARP_RATE_DEFAULT);
     a->hold_strum = 0u;
+    a->hold_n = a->hold_oct = 0u;
     a->ncell = a->cell = 0u;
+    a->cell_k = a->cell_max = 0u;
     a->nchord = 0u;
     a->counter = 0u;
     a->req_aud = 0u;
@@ -648,7 +678,7 @@ void carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q)
      * Bit-exact; it skips the knobs, the pulses and carp_due, which change nothing then. */
 #if !defined(SYNTH_SEQ_NO_IDLE)                     /* test_seq_idle.c builds it both ways */
     if ((uint16_t)(req >> 16) == a->aud_serial && !a->live && a->live_root == CARP_NOTE_NONE && !a->rel_pending &&
-        a->strum_i >= a->nstrum && a->cell >= a->ncell && carp_transport_idle(a)) {
+        a->strum_i >= a->nstrum && a->cell_k >= a->cell_max && carp_transport_idle(a)) {
         a->transpose = a->req_transpose;
         if (a->st->transpose_maq_option == 1u)
             carp_follow(a);

@@ -19,8 +19,9 @@
  * done, so SAVED means it is in flash. The boot loads every chunk (ps_load). Patches are stored packed (engine_store_pack,
  * ENGINE_STORED_SIZE a slot); a patch chunk still in the v5, v6 or v7 layout loads through engine_from_v5 / _v6 / _v7
  * and is written as the current version the next time one of its slots is saved.
- * An arp chunk of FREC_VER_ARP 3 and a performance chunk of FREC_VER_PERF 6 (2026-10-17: knob 1 became each step's
- * RATE, GATE the pattern's) are the same size as now: they load through arp_from_v3 / whole_perf_from_v6, and a
+ * An arp chunk of FREC_VER_ARP 3 / 4 and a performance chunk of FREC_VER_PERF 6 / 7 (2026-10-17: knob 1 became each
+ * step's RATE, GATE the pattern's; 2026-10-21: RATE the notes' rate, TIMING the steps' length) are the same size as
+ * now: they load through arp_from_v3 / _v4 and whole_perf_from_v6 / _v7, and a
  * performance chunk is converted whole in st_buf before a SAVE writes one of its slots, so its other slots stay.
  * A performance (WholePerformance: 883 bytes in RAM, WHOLE_PERF_STORED_SIZE packed) lives in flash only: the boot reads
  * its name (syn_perf_name) and that it is there, a load reads the one slot (ps_perf_read), and a SAVE stages the one
@@ -132,7 +133,8 @@ static int ps_perf_read(uint32_t slot, WholePerformance *w)
     if (!flash_ok || slot >= pk->slots)
         return -1;
     n = ps_slots(pk, c, &first);
-    if (ps_current(pk->first + c, UISAVE_WHOLE_PERF, (uint8_t)c, &h) < 0 || (h.ver != pk->ver && h.ver != 6u) ||
+    if (ps_current(pk->first + c, UISAVE_WHOLE_PERF, (uint8_t)c, &h) < 0 ||
+        (h.ver != pk->ver && h.ver != 6u && h.ver != 7u) ||
         h.len != PS_USED_BYTES + n * pk->stored)
         return -1;
     i = slot - first;
@@ -140,6 +142,8 @@ static int ps_perf_read(uint32_t slot, WholePerformance *w)
         return -1;
     if (h.ver == 6u)
         whole_perf_from_v6(st_buf + PS_USED_BYTES + i * pk->stored);
+    if (h.ver <= 7u)
+        whole_perf_from_v7(st_buf + PS_USED_BYTES + i * pk->stored);
     whole_perf_unpack(st_buf + PS_USED_BYTES + i * pk->stored, w);
     return 0;
 }
@@ -163,8 +167,8 @@ static void ps_load(void)
             old = 0u;                               /* a patch chunk of an older layout that migrates: its slot size */
             if (k == UISAVE_PATCH_PRESET && h.ver >= 5u && h.ver <= 7u)
                 old = h.ver == 5u ? ENGINE_V5_SIZE : (h.ver == 6u ? ENGINE_V6_SIZE : ENGINE_STORED_SIZE);
-            arp3 = (uint8_t)(k == UISAVE_ARP_SEQ && h.ver == 3u);   /* same-size layouts that migrate in place */
-            perf6 = (uint8_t)(k == UISAVE_WHOLE_PERF && h.ver == 6u);
+            arp3 = (uint8_t)(k == UISAVE_ARP_SEQ && (h.ver == 3u || h.ver == 4u));   /* same-size layouts that */
+            perf6 = (uint8_t)(k == UISAVE_WHOLE_PERF && (h.ver == 6u || h.ver == 7u));   /* migrate in place */
             if (old ? h.len != PS_USED_BYTES + n * old :
                       ((h.ver != pk->ver && !arp3 && !perf6) || h.len != PS_USED_BYTES + n * pk->stored))
                 continue;                           /* another layout: empty */
@@ -184,8 +188,10 @@ static void ps_load(void)
                         engine_store_unpack(src, (EngineState *)(void *)dst);
                     else
                         memcpy(dst, src, pk->size);
-                    if (arp3)
+                    if (arp3 && h.ver == 3u)
                         arp_from_v3((ArpState *)(void *)dst);
+                    if (arp3)
+                        arp_from_v4((ArpState *)(void *)dst);
                     syn_used[k][(first + i) >> 3] |= (uint8_t)(1u << ((first + i) & 7u));
                 }
         }
@@ -203,11 +209,14 @@ static int ps_save_chunk(uint32_t k, uint32_t c)
     cur = ps_current(chunk, (uint8_t)k, (uint8_t)c, &h);
     seq = cur < 0 ? 0u : h.seq;
     if (pk->bank == NULL) {                         /* a performance: the staged one over the chunk's copy before */
-        if (cur < 0 || (h.ver != pk->ver && h.ver != 6u) || h.len != len)
+        if (cur < 0 || (h.ver != pk->ver && h.ver != 6u && h.ver != 7u) || h.len != len)
             memset(st_buf, 0, len);                 /* (none, or another layout: the chunk's others stay unsaved) */
-        else if (h.ver == 6u)                       /* v6: every slot to v7 first (unused ones are never read) */
-            for (i = 0; i < n; i++)
-                whole_perf_from_v6(st_buf + PS_USED_BYTES + i * pk->stored);
+        else if (h.ver != pk->ver)                  /* v6 / v7: every slot to v8 first (unused ones are never read) */
+            for (i = 0; i < n; i++) {
+                if (h.ver == 6u)
+                    whole_perf_from_v6(st_buf + PS_USED_BYTES + i * pk->stored);
+                whole_perf_from_v7(st_buf + PS_USED_BYTES + i * pk->stored);
+            }
         if (ps_perf_save_slot >= first && ps_perf_save_slot < first + n) {
             i = ps_perf_save_slot - first;
             st_buf[i >> 3] |= (uint8_t)(1u << (i & 7u));
