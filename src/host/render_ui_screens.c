@@ -243,9 +243,9 @@ int main(int argc, char **argv)
     shot(dir, "filter1_frm0");
     e->filter[0].flavour = FLT_MULTI; e->filter[0].morph = 0;
     shot(dir, "filter1_lad0");
-    e->filter[0].flavour = FLT_MS20; e->filter[0].morph = 110; e->filter[0].resonance = 110;
+    e->filter[0].flavour = FLT_MS20; e->filter[0].morph = 0; e->filter[0].drive = 110; e->filter[0].resonance = 110;
     shot(dir, "filter1_ms20");
-    e->filter[0].flavour = FLT_SVF; e->filter[0].morph = 100; e->filter[0].resonance = 90;
+    e->filter[0].flavour = FLT_SH2; e->filter[0].morph = 100; e->filter[0].resonance = 90;
     go(UIPAGE_FILTER2);
     shot(dir, "filter2");
     e->fltmix.routing = 90; e->fltmix.balance = 70;

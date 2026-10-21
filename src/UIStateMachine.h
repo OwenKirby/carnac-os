@@ -132,7 +132,7 @@ typedef union {
     ArpState arp;                    /* ARP_SEQ: the live arp pattern */
     WholePerformance whole;          /* WHOLE_PERF: the performance and everything it plays */
 } UiClipboard;
-PS_STATIC_ASSERT(sizeof(UiClipboard) == 883u, "the clipboard's RAM (spec 6.2.3)");   /* 883: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD) */
+PS_STATIC_ASSERT(sizeof(UiClipboard) == 887u, "the clipboard's RAM (spec 6.2.3)");   /* 887: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE) */
 /* spec 1: the name characters; MasterPerformancePreset.name holds indices into it (0 = space) */
 #define UI_CHAR_MAP " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/"
 /* 5.1: the play controllers. LAYER's knobs (2026-10-17): VELOCITY, MOD WHEEL, CC1, CC2; PITCH BEND has no knob now */

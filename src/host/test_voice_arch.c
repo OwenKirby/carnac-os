@@ -362,12 +362,15 @@ int main(void)
         CHECK(fabs(hi.rms_l - lo.rms_l) > 0.1 * lo.rms_l, "filter morph mod made no difference");
         all_off();
 
-        /* (b) SINGLE, white noise at full level: the colour mod darkens it towards pink, the level drops (about 0.7 dB
-         * through the open 14 kHz lowpass; ~4 dB unfiltered) */
+        /* (b) SINGLE, white noise at full level: the colour mod darkens it towards pink, the level drops (~4 dB
+         * unfiltered). The filter out of the way: the SH-2's HP24 at 20 Hz (2026-10-21: the default MULTI LP12's two
+         * real poles at 14 kHz took more of white's top octave than pink's) */
         synth_init();
         base_patch(&engine_state[0], VARCH_SINGLE);
         engine_state[0].filter[0].mod_amt = BIPOLAR_CENTER;
-        engine_state[0].filter[0].cutoff = 127;
+        engine_state[0].filter[0].flavour = FLT_SH2;
+        engine_state[0].filter[0].morph = 127;
+        engine_state[0].filter[0].cutoff = 0;
         engine_state[0].oscmix.noise_level = 127;
         engine_state[0].oscmix.noise_colour = NOISE_WHITE;
         engine_state[0].oscmix.noise_col_mod_src = MSRC_MODWHEEL;

@@ -8,6 +8,7 @@
 #include "PresetStructures.h"
 #include "preset.h"
 #include "flash_record.h"
+#include "filter.h"                   /* filter_multi_mode_name */
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
@@ -93,13 +94,21 @@ int main(void)
         CHECK(back.osc[0].sync == 0 && back.env[0].invert == 0 && back.osc[1].sync == e.osc[1].sync &&
               back.env[1].invert == e.env[1].invert, "ENGINE: the unread bytes");
         /* a v7 patch (BEND last, no BEND MOD), packed here as v7 wrote it from its 179-byte RAM layout: each byte lands
-         * where engine_from_v7 says, BEND MOD gets VELOCITY / centre, the LFO flags come back as bytes */
+         * where engine_from_v7 then engine_from_v8_ram say (BEND MOD inserted after BEND, each filter's DRIVE after its
+         * last byte), BEND MOD gets VELOCITY / centre, the LFO flags come back as bytes; FILTER1 an MS-20 LOW (its morph
+         * the DRIVE now), FILTER2 an SVF (MULTI now) */
         {
             static uint8_t v7[ENGINE_V7_RAM], old[ENGINE_STORED_SIZE];
-            uint32_t u1 = (uint32_t)offsetof(EngineState, osc[0].sync), u2 = (uint32_t)offsetof(EngineState, env[0].invert) - 2u;
+            uint32_t u1 = (uint32_t)offsetof(EngineState, osc[0].sync), u2 = (uint32_t)offsetof(EngineState, env[0].invert) - 4u;
             uint32_t bend = (uint32_t)offsetof(EngineState, oscmix.atk_bend), nm = ENGINE_V7_RAM - NAME_LEN, j = 0, acc = 0, bits = 0;
+            uint32_t f0 = (uint32_t)offsetof(EngineState, filter[0]) - 2u, f1 = f0 + (uint32_t)sizeof(FilterParams) - 1u;
+            uint32_t d0 = (uint32_t)offsetof(EngineState, filter[0].drive);
             for (uint32_t i = 0; i < ENGINE_V7_RAM; i++) v7[i] = (uint8_t)(i * 13u + 5u);
             v7[u1] = v7[u2] = 0u;
+            v7[f0 + offsetof(FilterParams, flavour)] = 2u;   /* v8's MS-20 LOW */
+            v7[f0 + offsetof(FilterParams, morph)] = 90u;
+            v7[f1 + offsetof(FilterParams, flavour)] = 0u;   /* v8's SVF */
+            v7[f1 + offsetof(FilterParams, morph)] = 127u;
             for (uint32_t i = 0; i < NAME_LEN; i++) v7[nm + i] = (uint8_t)((i * 7u + 3u) % CHAR_MAP_LEN);
             for (uint32_t i = 0; i < ENGINE_V7_RAM; i++)
                 if (i != u1 && i != u2 && i != bend && i < nm) old[j++] = v7[i];
@@ -113,17 +122,59 @@ int main(void)
             engine_from_v7(old, &back);
             const uint8_t *b = (const uint8_t *)&back;
             int ok = 1;
-            for (uint32_t i = 0; i < ENGINE_V7_RAM; i++)
-                ok &= b[i <= bend ? i : i + 2u] == v7[i];
+            for (uint32_t i = 0; i < ENGINE_V7_RAM; i++) {
+                uint32_t k = i <= bend ? i : i + 2u;                                  /* v8 */
+                k = k < d0 ? k : k < d0 + (uint32_t)sizeof(FilterParams) - 1u ? k + 1u : k + 2u;   /* v9 */
+                uint32_t r = k - (uint32_t)offsetof(EngineState, filter[0]);
+                if (k >= (uint32_t)offsetof(EngineState, filter[0]) && r < 2u * sizeof(FilterParams)) {
+                    r %= (uint32_t)sizeof(FilterParams);
+                    if (r == offsetof(FilterParams, flavour) || r == offsetof(FilterParams, morph) ||
+                        r == offsetof(FilterParams, morph_mod_amt))
+                        continue;                                                     /* converted: below */
+                }
+                ok &= b[k] == v7[i];
+            }
             CHECK(ok, "ENGINE: a v7 patch's bytes not where they were");
             CHECK(back.oscmix.atk_bend_mod_src == MSRC_VELOCITY && back.oscmix.atk_bend_mod_amt == 64u,
                   "ENGINE: v7 -> BEND MOD defaults");
+            CHECK(back.filter[0].flavour == FLT_MS20 && back.filter[0].drive == 90u && back.filter[0].morph == 0u &&
+                  back.filter[0].morph_mod_amt == BIPOLAR_CENTER, "ENGINE: v8's MS-20 LOW -> the MS-20, its morph the DRIVE");
+            CHECK(back.filter[1].flavour == FLT_MULTI && back.filter[1].morph == 91u && back.filter[1].drive == 0u &&
+                  back.filter[1].morph_mod_amt == v7[f1 + offsetof(FilterParams, morph_mod_amt)],
+                  "ENGINE: v8's SVF (HP) -> MULTI HP12");
         }
+        /* a stored v8 patch (today's stored form without the two DRIVE bytes, then 2 spare 0s): engine_from_v8 gives
+         * the patch back, DRIVE 0 but where the filter conversion sets it: FILTER1 an MS-20 HIGH (MS-20, HP, its old
+         * morph the DRIVE), FILTER2 FORMANT (4 -> 3) */
+        {
+            EngineState want;
+            uint8_t st9[ENGINE_STORED_SIZE], st8[ENGINE_STORED_SIZE], *w = (uint8_t *)&want;
+            uint32_t j = 0;
+            for (uint32_t i = 0; i < sizeof want; i++) w[i] = (uint8_t)(i * 7u + 1u);
+            want.osc[0].sync = 0u; want.env[0].invert = 0u;
+            for (uint32_t l = 0; l < NLFO; l++) { want.lfo[l].clock_sync = 1u; want.lfo[l].key_reset = (uint8_t)(l & 1u); }
+            for (uint32_t i = 0; i < NAME_LEN; i++) want.name[i] = (uint8_t)((i * 5u + 2u) % CHAR_MAP_LEN);
+            want.filter[0].flavour = 3u; want.filter[0].morph = 40u; want.filter[0].drive = 0u;
+            want.filter[1].flavour = 4u; want.filter[1].drive = 0u;
+            engine_store_pack(&want, st9);
+            for (uint32_t i = 0; i < ENGINE_STORED_SIZE; i++)
+                if (i != ENG_ST_DRIVE0 && i != ENG_ST_DRIVE1) st8[j++] = st9[i];
+            while (j < ENGINE_STORED_SIZE) st8[j++] = 0u;
+            want.filter[0].flavour = FLT_MS20; want.filter[0].drive = 40u; want.filter[0].morph = (uint8_t)VAL_MAX;
+            want.filter[0].morph_mod_amt = BIPOLAR_CENTER;
+            want.filter[1].flavour = FLT_FORMANT;
+            memset(&back, 0xA5, sizeof back);
+            engine_from_v8(st8, &back);
+            CHECK(memcmp(&back, &want, sizeof want) == 0, "ENGINE: a v8 patch to v9");
+        }
+        CHECK(filter_svf_to_multi(0u) == 36u && filter_svf_to_multi(64u) == 73u && filter_svf_to_multi(127u) == 91u &&
+              !strcmp(filter_multi_mode_name(36), "LP12") && !strcmp(filter_multi_mode_name(73), "BP") &&
+              !strcmp(filter_multi_mode_name(91), "HP12"), "ENGINE: the SVF's LP / BP / HP on MULTI's LP12 / BP / HP12");
         memset(&back, 0x5A, sizeof back);
         rec[0] = 0xFFu;
         CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_EMPTY, "ENGINE: erased slot not empty");
-        rec[0] = 7u;
-        CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_OLD_LAYOUT && back.arch == 0x5A, "ENGINE: v7 record accepted");
+        rec[0] = 8u;
+        CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_OLD_LAYOUT && back.arch == 0x5A, "ENGINE: v8 record accepted");
         printf("ENGINE   record %3u B (version %u + %u B packed, %u B in RAM)\n", frec_size(FREC_ENGINE),
                (unsigned)FREC_VER_ENGINE, (unsigned)ENGINE_STORED_SIZE, (unsigned)sizeof(EngineState));
     }

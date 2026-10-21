@@ -76,7 +76,7 @@ static const char *const MSRC_NAMES[] = {
     "none", "velocity", "keyboard", "mod wheel", "aftertouch", "env1", "env2", "env3",
     "lfo1", "lfo2", "lfo3", "modslot1", "modslot2", "modslot3", "customcc1", "customcc2",
 };
-static const char *const FLT_NAMES[] = {"SVF", "MULTI", "MS-20 LOW", "MS-20 HIGH", "FORMANT"};
+static const char *const FLT_NAMES[] = {"SH-2", "MULTI", "MS-20", "FORMANT"};
 static const char *const XMOD_NAMES[] = {"FM", "AM", "RING", "PM"};
 static const char *const SUBOCT_NAMES[] = {"-1 OCT", "-2 OCT"};
 static const char *const SUBWAVE_NAMES[] = {"SINE", "SQUARE", "CURRENT"};
@@ -190,8 +190,10 @@ static const UiRow ATTACK_ROWS[] = {
     {"KEY TRACK", OFS(OscMixerParams, atk_track), 0, ATKTRK_COUNT - 1, RK_BYTE, 0, ATKTRK_NAMES, A(STRIKE)},
     {"BEND MOD SRC", OFS(OscMixerParams, atk_bend_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(STRIKE)},
 };
-/* FILTER1 / FILTER2 (4.2): the type morph's own mod source and amount show in every architecture */
+/* FILTER1 / FILTER2 (4.2): DRIVE first (2026-10-21), then the circuit; the type morph's own mod source and amount
+ * show in every architecture */
 static const UiRow FILTER_ROWS[] = {
+    {"DRIVE", OFS(FilterParams, drive), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"FLAVOUR", OFS(FilterParams, flavour), 0, FLT_COUNT - 1, RK_BYTE, 0, FLT_NAMES, A_ALL},
     {"MOD SRC", OFS(FilterParams, mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"MORPH MOD SRC", OFS(FilterParams, morph_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
@@ -2157,11 +2159,11 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     }
     info->label = k->label;
     if ((page == UIPAGE_FILTER1 || page == UIPAGE_FILTER2) && knob == 0u) {
-        /* the type morph is each circuit's own (dsp/filter.h): the SVF's HP .. LP, the multimode's mode, the MS-20's
-         * drive, the formant's band spread, the multimode's mode */
-        static const char *const MORPH_LABEL[FLT_COUNT] = {"TYPE MORPH", "MODE", "DRIVE", "DRIVE", "SPREAD"};
+        /* the type morph is each circuit's own (dsp/filter.h): the SH-2's and MS-20's LP .. BP .. HP, the multimode's
+         * mode, the formant's band spread */
+        static const char *const MORPH_LABEL[FLT_COUNT] = {"LP-BP-HP", "MODE", "LP-BP-HP", "SPREAD"};
         uint8_t fl = sm->engine[layer]->filter[page - UIPAGE_FILTER1].flavour;
-        info->label = MORPH_LABEL[fl < FLT_COUNT ? fl : FLT_SVF];
+        info->label = MORPH_LABEL[fl < FLT_COUNT ? fl : FLT_MULTI];
     }
     info->kind = k->kind;
     info->n_enum = k->kind == UIKNOB_SRC ? (uint8_t)MSRC_COUNT : k->kind == UIKNOB_FN ? (uint8_t)MFN_COUNT : k->n_enum;

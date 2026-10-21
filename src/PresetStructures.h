@@ -53,10 +53,12 @@ enum {                                                                      /* s
     SUBWAVE_CURRENT,                 /* OSC1's live bank and morph frame, at the sub's own octave-down rate */
     SUBWAVE_COUNT
 };
-enum { FLT_SVF, FLT_MULTI, FLT_MS20, FLT_MS20_HP, FLT_FORMANT, FLT_COUNT };  /* filter circuit flavour, in the
-        * FLAVOUR knob's order (MS20: its lowpass, MS20_HP its highpass; reordered 2026-10-15, FREC_VER_ENGINE 4). MULTI: the zero-delay 4-pole ladder multimode
-        * (dsp/filter.h), its morph the mode LP24 .. LP18 .. LP12 .. LP6 .. BP .. HP12 .. HP24 .. NOTCH. Slot 1 was the
-        * LADDER (2026-10-15): its slopes are MULTI's first four modes, the same circuit */
+enum { FLT_SH2, FLT_MULTI, FLT_MS20, FLT_FORMANT, FLT_COUNT };  /* filter circuit flavour, in the FLAVOUR knob's
+        * order (dsp/filter.h). SH-2: the Roland OTA cascade, its morph LP24 .. BP .. HP24. MULTI: the zero-delay 4-pole
+        * ladder multimode, its morph the mode LP24 .. LP18 .. LP12 .. LP6 .. BP .. HP12 .. HP24 .. NOTCH (slot 1 was the
+        * LADDER until 2026-10-15: its slopes are MULTI's first four modes). MS-20: the Korg 35, its morph LP .. BP .. HP.
+        * 2026-10-21 (FREC_VER_ENGINE 9): the SH-2 replaced the SVF (0; old SVF patches load as MULTI, engine_filters_from_v8)
+        * and MS-20 LOW (2) / HIGH (3) became one MS-20; FORMANT moved from 4 to 3 */
 PS_STATIC_ASSERT(FLT_MULTI == 1, "filter_feedback_q12 (dsp/filter.h) tests flavour 1 for MULTI");
 /* OSCMIXER noise colour, a morph 0..127: white at 0, pink at 64, brown at 127, crossfaded in between */
 #define NOISE_WHITE 0u
@@ -363,7 +365,7 @@ enum { ATKTRK_AUTO, ATKTRK_FIXED, ATKTRK_TRACK, ATKTRK_COUNT };   /* AUTO: pitch
         * TRACK on an unpitched sound: its own pitch at C4 (60) */
 
 typedef struct {                     /* FILTER1 / FILTER2 */
-    uint8_t morph;                   /* knob 1, by flavour: SVF LP -> BP -> HP, MULTI mode LP24 -> .. -> NOTCH, MS-20 drive,
+    uint8_t morph;                   /* knob 1, by flavour: SH-2 and MS-20 LP -> BP -> HP, MULTI mode LP24 -> .. -> NOTCH,
                                       * FORMANT band spread (dsp/filter.h) */
     uint8_t cutoff;                  /* knob 2 */
     uint8_t resonance;               /* knob 3 */
@@ -372,6 +374,8 @@ typedef struct {                     /* FILTER1 / FILTER2 */
     uint8_t mod_src;                 /* MSRC_* (default ENV2) */
     uint8_t morph_mod_src;           /* MSRC_* (default LFO1): moves the type morph, every architecture */
     uint8_t morph_mod_amt;           /* (bip) */
+    uint8_t drive;                   /* the first row: the level into the circuit, 0 clean .. 127 driven hard (2026-10-21,
+                                      * FREC_VER_ENGINE 9; it was the MS-20's morph before) */
 } FilterParams;
 
 typedef struct {                     /* FILTER MIXER (DUAL FILTER, STACK, BINAURAL; hidden otherwise) */
@@ -448,11 +452,12 @@ typedef struct {
     uint8_t arch;                    /* VARCH_*: the voice architecture, HOME View 1 / 2 (5.3) */
     uint8_t name[NAME_LEN];          /* char_map indices (0 = space), not ASCII: RENAME PATCH (6.2.1) */
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 181u, "EngineState layout");
+PS_STATIC_ASSERT(sizeof(EngineState) == 183u, "EngineState layout");
 /* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 173 is the most that keeps 22
  * patches to a store chunk (preset_store_fm1.c: (3840 - 16) / 173), so the chunks stay where they were. Since v7 the
  * stored form packs the name 6 bits a character and leaves out OSC1's SYNC and ENV1's INVERT (nothing reads them); v8
- * also packs the three LFOs' CLOCK SYNC and KEY RESET into one byte: 181 in RAM, 171 + 2 spare in flash. v7 (179 in
+ * also packs the three LFOs' CLOCK SYNC and KEY RESET into one byte: 181 in RAM, 171 + 2 spare in flash; v9 spends the
+ * two on the filters' DRIVE: 183 in RAM, all 173 stored (no spare left). v8 (ENGINE_V8_RAM), v7 (179 in
  * RAM, atk_bend in the last stored byte) lacked the two BEND MOD bytes, v6 (173, stored as in RAM) atk_filter on,
  * v5 (170 bytes) all the attack bytes. */
 #define ENGINE_STORED_SIZE 173u
@@ -460,6 +465,7 @@ PS_STATIC_ASSERT(sizeof(EngineState) == 181u, "EngineState layout");
 #define ENGINE_V6_INSERT ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_filter))
 #define ATK_LEVEL_DEFAULT 100u
 #define ATK_V8_DEFAULTS {0u, 127u, 0u, 127u, ATKTRK_AUTO, 64u, MSRC_VELOCITY, 64u}   /* atk_filter .. atk_bend_mod_amt */
+#define ENGINE_V8_RAM 181u
 #define ENGINE_V7_RAM 179u
 #define ENGINE_V5_SIZE 170u
 #define ENGINE_V5_INSERT ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_sample))
@@ -586,7 +592,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 883u, "WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 887u, "WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */
