@@ -17,6 +17,8 @@ What the host can't settle and has to be measured on a real FM1. Every number in
 - [ ] **64-bit multiplies on the pi32v2.** The LADDER and MS-20 one-pole stages (`ONEPOLE` in src/dsp/filter.c) and the LADDER output tap are 32 x 32 -> 64-bit multiplies. That is cheap on x86 but may be several instructions on the pi32v2, so the host ratios above may understate the device cost. If they are dear, split the multiply into two 32-bit halves, or keep the states in Q15 + 8 bits held as two int16.
 - [ ] **FORMANT cost.** It now runs two full SVFs (before, its second band was a shortcut). The host said it was no dearer than the SVF; check that on the device.
 
+- [ ] **SH-2 filter, DRIVE, one MS-20 (2026-10-21, in source, not installed).** The SH-2 replaced the SVF: four OTA stages (a cubic each), a clipping input mixer (a cubic) and a tanh-bounded resonance (3 mul + a divide) a sample. Host, per SINGLE voice (bench_voice_arch, resonance 90): SH-2 42.3 ns, MULTI 22.0, MS-20 22.5, FORMANT 10.3, so an SH-2 voice is ~1.9x a MULTI one. Estimate from the 2026-10-15 profile (FILTER ~21 % of a core for 8 voices): 8 SH-2 voices on both cores add ~10 % a core, SINGLE x 8 ~38 -> ~48 %, heavy ~53 -> ~63 %. Run the PERF TEST: row SINGLE SH-2 (new, the MS-20 HIGH row's place), and a DUAL FILTER / STACK patch with both filters SH-2 at their caps (7 / 6): the dearest case, not a PERF row yet. Caps are per architecture only; if SH-2 overruns, the cheap fix is a filter-flavour cost column in varch_voice_cap, NOT fewer voices for everything. Also check: FILTER DRIVE (new first row) on every flavour; MS-20 morph LP .. BP .. HP; saved v8 patches and performances load after a power cycle (SVF ones as MULTI LP12 .. BP .. HP12, MS-20 LOW / HIGH ones as the MS-20 with their old drive); the SH-2 self-oscillates in tune up to the top of the cutoff, at DRIVE 0 and 127.
+
 - [ ] **Float filters (2026-10-15, build/fm1/synth_float1.fwsc, profile build synth_float1_prof.fwsc).** All flavours are now single-precision float. SVF, FORMANT, LADDER and MULTI are zero-delay (TPT) circuits that run one pass a sample instead of two. The oscillator's table reads are worked out once per tick (bit-identical). On the host, per voice: SINGLE 20.3 -> 16.8 ns, DUAL FILTER 32 -> 22, SINGLE LADDER 28 -> 23. On the device, compare the FILTER / OSC / EXTRAS stages of the profile against the 2026-10-15 13:01 profile. Expected: FILTER well down (no int64 MACs, one pass), OSC a little down. **Device 2026-10-15 (synth_float2.fwsc, normal build): smaller win than the host said.** SINGLE x 8 120.7 -> 115.0 %, SINGLE HEAVY 140.4 -> 135.6, per SINGLE voice ~12.4 -> ~11.7 % (host predicted ~17 % less per voice, device gave ~6 %). DUAL FILTER x 5 100.7 -> 92.7, SINGLE LADDER/MULTI x 6 100.7 -> 95.3, DUAL FLT LADDER x 3 73.5 -> 68.7 (now passes). Stage split not measured yet (needs synth_float2_prof.fwsc).
 - [x] **MULTI (FLT_MULTI) cost.** MULTI replaced LADDER in flavour slot 1 (2026-10-15). It is the same cascade with one more output tap, and LADDER's slopes are its first four modes. It keeps LADDER's cap column (flt_heavy). Expected: the same cost as LADDER's float version. **Device 2026-10-15:** the SINGLE LADDER and DUAL FLT LADDER scenarios now run MULTI (slot 1): 6 voices 95.3 %, DUAL FILTER x 3 68.7 %, about 1.05x SINGLE per voice ((95.3 - 21.3) / 6 = 12.3 % vs 11.7 %), so its own cap column (6) is now stricter than it needs to be. **Done 2026-10-15:** at the normal caps every architecture passes with the heavy patch on MULTI (worst SPREAD x 7, 64.4 %), so the separate MULTI caps (flt_heavy) were removed.
 
@@ -104,6 +106,65 @@ What the host can't settle and has to be measured on a real FM1. Every number in
 ## PERF TEST runs (device)
 
 Written by src/hardware/fm1_perf.py. Pass: avg <= 70 %, peak < 90 %, no late halves. One core, factory patch + the scenario's settings (src/hardware/perf_test.c).
+
+### 2026-10-21 11:34, CARNAC OS DEV (2 cores), done
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 16.3 | 16.7 | 0 | 0 | 61.6 | 1 | pass |
+| SINGLE 1V | 23.2 | 23.9 | 0 | 1 | 61.0 | 3 | pass |
+| SINGLE | 42.3 | 43.0 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE HEAVY | 53.9 | 54.6 | 0 | 8 | 57.5 | 1 | pass |
+| DUAL OSC | 55.7 | 56.4 | 0 | 5 | 57.5 | 1 | pass |
+| SPREAD | 43.6 | 44.4 | 0 | 6 | 57.2 | 1 | pass |
+| DUAL FILTER | 54.7 | 55.5 | 0 | 7 | 57.2 | 1 | pass |
+| STACK | 57.2 | 58.1 | 0 | 6 | 57.2 | 7 | pass |
+| BINAURAL | 50.5 | 51.3 | 0 | 6 | 57.2 | 1 | pass |
+| DUAL OSC HEAVY | 62.0 | 63.0 | 0 | 5 | 53.9 | 8 | pass |
+| SPREAD HEAVY | 52.3 | 53.2 | 0 | 6 | 57.2 | 1 | pass |
+| DUAL FLT HEAVY | 65.6 | 66.5 | 0 | 7 | 51.5 | 8 | pass |
+| STACK HEAVY | 64.3 | 65.2 | 0 | 6 | 51.9 | 8 | pass |
+| BINAURAL HEAVY | 67.0 | 67.8 | 0 | 6 | 50.9 | 9 | pass |
+| SINGLE LADDER | 42.3 | 43.0 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE MS20 | 40.3 | 40.9 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE SH-2 | 47.7 | 48.5 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE FORMANT | 41.3 | 42.0 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL FLT LADDER | 54.7 | 55.5 | 0 | 7 | 57.2 | 1 | pass |
+| SEQ+ARP HOME | 62.9 | 65.7 | 0 | 8 | 52.5 | 20 | pass |
+| SEQ+ARP AMP | 63.1 | 66.0 | 0 | 8 | 51.9 | 20 | pass |
+| SEQ+ARP SEQ | 62.7 | 65.6 | 0 | 8 | 21.2 | 58 | pass |
+| SEQ+ARP MOD1 | 63.2 | 66.5 | 0 | 8 | 15.0 | 70 | pass |
+| LADDER FILTER PG | 42.3 | 43.0 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 57.2 | 58.0 | 0 | 8 | 57.5 | 7 | pass |
+| HEAVY CELEST+PP | 58.5 | 59.4 | 0 | 8 | 57.6 | 8 | pass |
+| SEQ+ARP CELEST+PP | 67.7 | 70.5 | 0 | 8 | 45.9 | 20 | pass |
+| SINGLE MULTI H | 55.0 | 55.8 | 0 | 8 | 57.2 | 1 | pass |
+| DUALOSC MULTI H | 62.8 | 63.6 | 0 | 5 | 51.9 | 8 | pass |
+| SPREAD MULTI H | 53.2 | 54.0 | 0 | 6 | 57.2 | 1 | pass |
+| DUALFLT MULTI H | 67.4 | 68.4 | 0 | 7 | 45.5 | 9 | pass |
+| STACK MULTI H | 65.5 | 66.5 | 0 | 6 | 51.9 | 8 | pass |
+| BINAUR MULTI H | 68.2 | 69.2 | 0 | 6 | 44.2 | 9 | pass |
+| SPREAD H CEL+PP | 57.8 | 58.9 | 0 | 6 | 57.6 | 7 | pass |
+| DUALOSC H CEL+PP | 67.2 | 68.1 | 0 | 5 | 49.6 | 9 | pass |
+| SPREAD H TUM+PP | 55.9 | 56.9 | 0 | 6 | 57.2 | 1 | pass |
+| SEQ+ARP SPRD CEL | 78.8 | 81.7 | 0 | 6 | 42.9 | 12 | FAIL |
+| HEAVY SPRING+PP | 57.6 | 58.3 | 0 | 8 | 57.2 | 7 | pass |
+| HEAVY CEL+BBD PP | 58.6 | 59.5 | 0 | 8 | 57.2 | 8 | pass |
+| SEQ+ARP SPR+BBD | 66.7 | 69.2 | 0 | 8 | 48.5 | 20 | pass |
+| STRIKE | 42.9 | 43.7 | 0 | 8 | 57.3 | 1 | pass |
+| STRIKE HEAVY | 54.8 | 55.6 | 0 | 8 | 57.2 | 1 | pass |
+| SEQ+ARP STRIKE | 72.1 | 74.9 | 0 | 8 | 42.9 | 12 | FAIL |
+| SEQ+ARP STRK FILT | 72.2 | 75.6 | 0 | 8 | 42.9 | 13 | FAIL |
+| SINGLE SH2 H | 60.4 | 61.2 | 0 | 8 | 55.9 | 8 | pass |
+| DUALOSC SH2 H | 66.7 | 67.6 | 0 | 5 | 50.5 | 9 | pass |
+| SPREAD SH2 H | 57.4 | 58.3 | 0 | 6 | 56.9 | 7 | pass |
+| DUALFLT SH2 H | 78.5 | 79.6 | 0 | 7 | 42.9 | 1 | FAIL |
+| STACK SH2 H | 73.8 | 74.8 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAUR SH2 H | 76.6 | 77.6 | 0 | 6 | 42.9 | 1 | FAIL |
+| STRIKE SH2 H | 61.0 | 62.0 | 0 | 8 | 54.8 | 8 | pass |
+| SPREAD SH2 CEL+PP | 62.2 | 63.3 | 0 | 6 | 53.2 | 8 | pass |
+| DUALFLT SH2 CEL | 83.6 | 84.6 | 0 | 7 | 42.9 | 1 | FAIL |
+| SEQ+ARP SH2 CEL | 74.6 | 77.9 | 0 | 8 | 42.9 | 12 | FAIL |
 
 ### 2026-10-17 16:16, CARNAC OS DEV (2 cores), done
 

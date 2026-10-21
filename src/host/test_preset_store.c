@@ -328,7 +328,7 @@ int main(void)
         st_read(ps_sector(pch, c), &h, sizeof h);
         if (h.magic != PS_MAGIC) continue;
         memset(nor + ps_sector(pch, c), 0xFF, 32);  /* (a header rewritten as an old firmware would have it) */
-        h.ver = (uint8_t)(FREC_VER_PERF - 2u);       /* (v6 migrates: below) */
+        h.ver = (uint8_t)(FREC_VER_PERF - 3u);       /* (v5: v6 and v7 migrate, below) */
         h.hcrc = st_crc32(&h, sizeof h - 4u);
         memcpy(nor + ps_sector(pch, c), &h, sizeof h);
     }
@@ -371,9 +371,10 @@ int main(void)
     CHECK(holds(UISAVE_PATCH_PRESET, 5, 0x30 + 38), "a damaged newest copy: not the save before it");
 
     /* patch chunks in the v5 layout (170-byte patches, before STRIKE) and the v6 one (173, STRIKE's first three attack
-     * bytes, stored as in RAM) and v7 (packed, no BEND MOD), as the firmware before each wrote them: their slots load
-     * through engine_from_v5 / _v6 / _v7, and the next save writes the chunk as the current version */
-    for (uint32_t ver = 5u; ver <= 7u; ver++) {
+     * bytes, stored as in RAM), v7 (packed, no BEND MOD) and v8 (packed, no DRIVE), as the firmware before each wrote
+     * them: their slots load through engine_from_v5 / _v6 / _v7 / _v8, and the next save writes the chunk as the
+     * current version */
+    for (uint32_t ver = 5u; ver <= 8u; ver++) {
         uint32_t c = ver - 4u, chunk = PS_KIND[UISAVE_PATCH_PRESET].first + c, first, n = ps_slots(&PS_KIND[UISAVE_PATCH_PRESET], c, &first);
         uint32_t size = ver == 5u ? ENGINE_V5_SIZE : (ver == 6u ? ENGINE_V6_SIZE : ENGINE_STORED_SIZE), len = PS_USED_BYTES + n * size, i, j;
         static uint8_t pay[4096];
@@ -389,32 +390,41 @@ int main(void)
         uint32_t last = first + n - 1u;
         CHECK(syn_slot_used(UISAVE_PATCH_PRESET, (uint8_t)first) && syn_slot_used(UISAVE_PATCH_PRESET, (uint8_t)last) &&
               !syn_slot_used(UISAVE_PATCH_PRESET, (uint8_t)(first + 1u)), "v%u chunk: the used slots", (unsigned)ver);
-        /* where each old byte must land: the v5 bytes after the attack's place move up 3 + 8, the v6 ones after
-         * atk_filter's place up 8; the attack's new bytes are their defaults. v7: as engine_from_v7 unpacks it (its
-         * byte map is checked in test_flash_record) */
+        /* where each old byte must land: in v8's layout, the v5 bytes after the attack's place move up 3 + 8, the v6
+         * ones after atk_filter's place up 8, the attack's new bytes their defaults; then to v9 (engine_from_v8_ram).
+         * v7, v8: as engine_from_v7 / _v8 unpack them (their byte maps are checked in test_flash_record) */
         static const uint8_t def8[8] = ATK_V8_DEFAULTS;
         int ok = 1;
         for (i = 0; i < 2; i++) {
             uint32_t s = i ? last : first, k = i ? n - 1u : 0u;
             const uint8_t *e = slot_ptr(UISAVE_PATCH_PRESET, s);
-            if (ver == 7u) {
-                EngineState want;
-                engine_from_v7(pay + PS_USED_BYTES + k * size, &want);
+            EngineState want;
+            if (ver >= 7u) {
+                if (ver == 7u)
+                    engine_from_v7(pay + PS_USED_BYTES + k * size, &want);
+                else
+                    engine_from_v8(pay + PS_USED_BYTES + k * size, &want);
                 ok &= memcmp(e, &want, sizeof want) == 0;
                 continue;
             }
+            uint8_t v8[ENGINE_V8_RAM];
             uint32_t ins = ver == 5u ? ENGINE_V5_INSERT : ENGINE_V6_INSERT, add = ver == 5u ? 11u : 8u;
             for (j = 0; j < ins; j++)
-                ok &= e[j] == (uint8_t)(j * 7u + k);
-            if (ver == 5u)
-                ok &= e[ENGINE_V5_INSERT] == 0u && e[ENGINE_V5_INSERT + 1u] == ATK_LEVEL_DEFAULT && e[ENGINE_V5_INSERT + 2u] == 64u;
-            ok &= memcmp(e + ENGINE_V6_INSERT, def8, 8) == 0;
+                v8[j] = (uint8_t)(j * 7u + k);
+            if (ver == 5u) {
+                v8[ENGINE_V5_INSERT] = 0u;
+                v8[ENGINE_V5_INSERT + 1u] = ATK_LEVEL_DEFAULT;
+                v8[ENGINE_V5_INSERT + 2u] = 64u;
+            }
+            memcpy(v8 + ENGINE_V6_INSERT, def8, 8);
             for (j = ins; j < size; j++)
-                ok &= e[j + add] == (uint8_t)(j * 7u + k);
+                v8[j + add] = (uint8_t)(j * 7u + k);
+            engine_from_v8_ram(v8, &want);
+            ok &= memcmp(e, &want, sizeof want) == 0;
         }
         CHECK(ok, "v%u chunk: a patch's bytes not where the migration puts them", (unsigned)ver);
         const EngineState *e = (const EngineState *)(const void *)slot_ptr(UISAVE_PATCH_PRESET, first);
-        CHECK(ver == 7u || (e->name[NAME_LEN - 1] == (uint8_t)((size - 1u) * 7u) && e->oscmix.atk_track == ATKTRK_AUTO),
+        CHECK(ver >= 7u || (e->name[NAME_LEN - 1] == (uint8_t)((size - 1u) * 7u) && e->oscmix.atk_track == ATKTRK_AUTO),
               "v%u chunk: the name / the attack's last byte", (unsigned)ver);
         /* a save in that chunk writes it as the current version: the migrated slots come back as their packed form */
         EngineState keep;
@@ -433,8 +443,9 @@ int main(void)
     }
 
     /* an arp chunk of FREC_VER_ARP 3 and a performance chunk of FREC_VER_PERF 6 (before 2026-10-17's RATE: each step's
-     * byte its gate, the pattern's TIME DIVISION where GATE is now) load through arp_from_v3; a performance saved into
-     * the v6 chunk keeps the others, converted, and writes the chunk as v7 */
+     * byte its gate, the pattern's TIME DIVISION where GATE is now) load through arp_from_v3; performance chunks of
+     * FREC_VER_PERF 6 (that arp, v8 patches) and 7 (v8 patches) load through whole_perf_from_old, and a performance
+     * saved into one keeps the others, converted, and writes the chunk as today's */
     {
         static uint8_t pay[4096];
         ArpState v3, want;
@@ -461,32 +472,53 @@ int main(void)
         CHECK(syn_slot_used(UISAVE_ARP_SEQ, 3) && !syn_slot_used(UISAVE_ARP_SEQ, 0) &&
               memcmp(slot_ptr(UISAVE_ARP_SEQ, 3), &want, sizeof want) == 0, "a v3 arp chunk: loaded, migrated");
 
-        n = ps_slots(&PS_KIND[PERF], 0u, &first);
-        len = PS_USED_BYTES + n * WHOLE_PERF_STORED_SIZE;
-        memset(pay, 0, len);
-        pay[0] = 1u << 0 | 1u << 2;
-        for (i = 0; i < 3; i += 2) {
-            memset(&w, (int)(0x40 + i), sizeof w);
-            w.arp = v3;
-            whole_perf_pack(&w, pay + PS_USED_BYTES + i * WHOLE_PERF_STORED_SIZE);
+        for (uint32_t ver = 6u; ver <= 7u; ver++) {
+            static uint8_t mig[WHOLE_PERF_STORED_SIZE];
+            n = ps_slots(&PS_KIND[PERF], 0u, &first);
+            len = PS_USED_BYTES + n * WHOLE_PERF_STORED_SIZE;
+            memset(pay, 0, len);
+            pay[0] = 1u << 0 | 1u << 2;
+            for (i = 0; i < 3; i += 2) {
+                memset(&w, (int)(0x40 + i), sizeof w);
+                w.arp = ver == 6u ? v3 : want;
+                w.engine[0].filter[0].flavour = 2u;      /* v8's MS-20 LOW, its morph 0x40 + i the drive */
+                w.engine[1].filter[1].flavour = 0u;      /* v8's SVF */
+                whole_perf_pack(&w, pay + PS_USED_BYTES + i * WHOLE_PERF_STORED_SIZE);
+                /* (packed from today's struct: the DRIVE bytes stored where v8 had the next ones; drop them as v8's
+                 * store did, the 2 spare 0s at the end) */
+                for (uint32_t l = 0; l < NLAYER; l++) {
+                    uint8_t *pt = pay + PS_USED_BYTES + i * WHOLE_PERF_STORED_SIZE + sizeof(MasterPerformancePreset) +
+                                  l * ENGINE_STORED_SIZE;
+                    memmove(pt + ENG_ST_DRIVE0, pt + ENG_ST_DRIVE0 + 1u, ENG_ST_DRIVE1 - ENG_ST_DRIVE0 - 1u);
+                    memmove(pt + ENG_ST_DRIVE1 - 1u, pt + ENG_ST_DRIVE1 + 1u, ENGINE_STORED_SIZE - ENG_ST_DRIVE1 - 1u);
+                    pt[ENGINE_STORED_SIZE - 2u] = pt[ENGINE_STORED_SIZE - 1u] = 0u;
+                }
+            }
+            put_chunk(PS_KIND[PERF].first, PERF, 0u, (uint8_t)ver, pay, len);
+            wipe_ram();
+            ps_load();
+            memcpy(mig, pay + PS_USED_BYTES + 2u * WHOLE_PERF_STORED_SIZE, sizeof mig);
+            whole_perf_from_old(mig, (uint8_t)ver);
+            whole_perf_unpack(mig, &exp);
+            CHECK(memcmp(&exp.arp, &want, sizeof want) == 0 && exp.engine[0].filter[0].flavour == FLT_MS20 &&
+                  exp.engine[0].filter[0].drive == 0x42 && exp.engine[1].filter[1].flavour == FLT_MULTI &&
+                  exp.engine[1].filter[0].drive == 0u, "whole_perf_from_old (v%u): the arp, the patches' filters", (unsigned)ver);
+            CHECK(syn_slot_used(PERF, 0) && syn_slot_used(PERF, 2) && !syn_slot_used(PERF, 1) && syn_perf_name[2][0] == 0x42 &&
+                  ps_perf_read(2, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0,
+                  "a v%u performance chunk: loaded, migrated", (unsigned)ver);
+            CHECK(save(PERF, 1, 0x61), "a performance save into a v%u chunk", (unsigned)ver);
+            wipe_ram();
+            ps_load();
+            ok = ps_perf_read(2, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0;
+            memcpy(mig, pay + PS_USED_BYTES, sizeof mig);
+            whole_perf_from_old(mig, (uint8_t)ver);
+            whole_perf_unpack(mig, &exp);
+            ok = ok && ps_perf_read(0, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0;
+            CHECK(ok && holds(PERF, 1, 0x61), "the v%u chunk's others kept, migrated, after a save into it", (unsigned)ver);
+            PsHdr h3;
+            CHECK(ps_current(PS_KIND[PERF].first, PERF, 0u, &h3) >= 0 && h3.ver == FREC_VER_PERF,
+                  "the save into the v%u chunk wrote v%u", (unsigned)ver, (unsigned)FREC_VER_PERF);
         }
-        put_chunk(PS_KIND[PERF].first, PERF, 0u, 6u, pay, len);
-        wipe_ram();
-        ps_load();
-        whole_perf_unpack(pay + PS_USED_BYTES + 2u * WHOLE_PERF_STORED_SIZE, &exp);
-        exp.arp = want;
-        CHECK(syn_slot_used(PERF, 0) && syn_slot_used(PERF, 2) && !syn_slot_used(PERF, 1) && syn_perf_name[2][0] == 0x42 &&
-              ps_perf_read(2, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0, "a v6 performance chunk: loaded, migrated");
-        CHECK(save(PERF, 1, 0x61), "a performance save into a v6 chunk");
-        wipe_ram();
-        ps_load();
-        ok = ps_perf_read(2, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0;
-        whole_perf_unpack(pay + PS_USED_BYTES, &exp);
-        exp.arp = want;
-        ok = ok && ps_perf_read(0, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0;
-        CHECK(ok && holds(PERF, 1, 0x61), "the v6 chunk's others kept, migrated, after a save into it");
-        PsHdr h3;
-        CHECK(ps_current(PS_KIND[PERF].first, PERF, 0u, &h3) >= 0 && h3.ver == FREC_VER_PERF, "the save wrote v7");
     }
 
     /* no flash: a SAVE reports failure (the slot stays in RAM), and no performance reads */

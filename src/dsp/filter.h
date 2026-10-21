@@ -2,34 +2,38 @@
 #define FILTER_H
 #include <stdint.h>
 /* One filter core: its state and the settings of the current control tick. Each flavour is its own circuit:
- *   SVF      state-variable, the morph HP -> BP -> LP
+ *   SH-2     the Roland OTA cascade (SH-2 VCF, 2026-10-21): MULTI's four-stage loop, each stage an OTA that slews on its
+ *            own input - output, the input mixer clipping, the resonance bounded by a tanh (it rings up softly, no flat
+ *            top) and kept in tune when driven; the morph LP24 -> BP -> HP24. It replaced the SVF.
  *   MULTI    the transistor ladder: four one-pole stages, the last fed back (inverted) to the input through a
  *            saturating input stage, its output mixed from the loop's input and the four stages (the Oberheim Xpander's
  *            trick), so one resonant circuit gives LP24, LP18, LP12, LP6, BP, HP12, HP24 and NOTCH; the morph walks
  *            through them, crossfading neighbours (it replaced the LADDER, whose slopes are its first four modes)
- *   MS-20    LOW / HIGH: the Korg 35 / Sallen-Key 2-pole, its lowpass or its highpass: two one-poles, the band between them fed back (positive) through a
- *            diode clipper, so the resonance screams but stays bounded; the morph drives the input into it
+ *   MS-20    the Korg 35 / Sallen-Key 2-pole: two one-poles, the band between them fed back (positive) through a
+ *            diode clipper, so the resonance screams but stays bounded; the morph LP -> BP -> HP (its outputs,
+ *            crossfaded; LOW and HIGH were two flavours until 2026-10-21)
  *   FORMANT  two resonant SVF bandpasses in parallel, the second above the cutoff; the morph spreads them apart
+ * DRIVE (every flavour, 0..127): the level into the circuit. SH-2: into the input mixer's clip and the OTAs, its makeup
+ * holding the level; MULTI: into the ladder's input pair; MS-20: 1x .. 24x into the diode clipper (what its morph did
+ * before); FORMANT: an input clip like the SH-2's, off at 0.
  * 2026-10-15: single-precision float (the FM1's FPU: a multiply 7 cycles against 10 for int32, 15 for the int64 MACs
  * the fixed-point cores needed; docs/fm1-measure-checklist.md). Signals stay in Q15 units (full scale 32768.0f), so
- * the int samples convert in and out without a scale. The SVF, FORMANT and MULTI are zero-delay-feedback (TPT)
+ * the int samples convert in and out without a scale. SH-2, FORMANT and MULTI are zero-delay-feedback (TPT)
  * circuits: one pass a sample at 44.1 kHz, stable and in tune up to 14 kHz, where the fixed-point Chamberlin SVF
  * and ladder needed two passes (2x oversampling). The MS-20 keeps its one-pass explicit loop (its tuned growl). */
 typedef struct {
-float s1,s2;            // SVF: the two integrators' states (TPT ic1eq, ic2eq); FORMANT: the first band
+float s1,s2;            // FORMANT: the first band's states (TPT ic1eq, ic2eq)
 float t1,t2;            // FORMANT: the second band's states
-float s[4];             // MULTI: the four stages' TPT states; MS-20: s[0], s[1], plain one-poles
-float c[3],dc[3];       // SVF: c[0] g, c[1] the base damping; FORMANT band 1: a1, a2, a3 (TPT); ramped by dc a sample toward the tick's values;
-                        // MULTI: c[0] the stage gain G = g / (1 + g), c[1] the loop's solve 1 / (1 + k G^4); MS-20: c[0] g
-float e[3],de[3];       // FORMANT: the second band's a1, a2, a3, ramped the same way
-float k;                // SVF / FORMANT: damping (1 / Q; SVF: the tick's base, ramped in c[1]); MULTI, MS-20: the feedback (MULTI self-oscillates near 4, MS-20 near 2)
-float m0,m1,m2;         // SVF: the morph's weights on hp, bp, lp (lp's with hp's folded in: hp = x - k bp - lp)
-float bp;               // SVF: the last sample's band, which sets this sample's extra damping
-float drive;            // MS-20: the input gain into the clipper; MULTI: the resonance's makeup gain
-float makeup;           // MS-20: the output gain that undoes the drive
-float tap[5];           // MULTI: the output's weights on the loop's input u and the four stages
-uint8_t flavour;        // FLT_*, the circuit (FLT_MS20_HP runs as FLT_MS20 with hp set)
-uint8_t hp;             // MS-20: the highpass output (FLT_MS20_HP)
+float s[4];             // MULTI, SH-2: the four stages' TPT states; MS-20: s[0], s[1], plain one-poles
+float c[3],dc[3];       // FORMANT band 1: a1, a2, a3 (TPT); ramped by dc a sample toward the tick's values;
+                        // MULTI, SH-2: c[0] the stage gain G = g / (1 + g), c[1] the loop's solve 1 / (1 + k G^4), SH-2 c[2] g; MS-20: c[0] g
+float e[3],de[3];       // FORMANT: the second band's a1, a2, a3, ramped the same way; SH-2: e[0] the feedback's ceiling, e[1] 1 / it
+float k;                // FORMANT: damping (1 / Q); MULTI, SH-2, MS-20: the feedback (MULTI, SH-2 self-oscillate near 4, MS-20 near 2)
+float drive;            // the input gain: MS-20 into the clipper, MULTI into the input pair (with the resonance's makeup), SH-2 and FORMANT into the input clip
+float makeup;           // MS-20, FORMANT: the output gain that undoes the drive (SH-2, MULTI: in the taps)
+float tap[5];           // MULTI, SH-2: the output's weights on the loop's input u and the four stages; MS-20: on u, s[0], s[1]
+uint8_t flavour;        // FLT_*, the circuit
+uint8_t driven;         // FORMANT: DRIVE above 0, the input clipped
 } SvfCore;
 typedef struct {
 SvfCore core[2];
@@ -37,16 +41,15 @@ float parallel;         // routing: 0 = serial (1 into 2), ~1 = parallel
 float bal2;             // balance: FILTER2's share of the output
 } DualFilterMatrix;
 void dual_filter_init(DualFilterMatrix *dfm);
-/* Control rate: cutoffs in Q8 knob units, res / morph / routing / balance 0..127, flavour FLT_* per core. The
+/* Control rate: cutoffs in Q8 knob units, res / morph / drive / routing / balance 0..127, flavour FLT_* per core. The
  * coefficients ramp to the new values over the 2^shift samples of the tick; snap = 1 jumps at once (a new note). */
-void dual_filter_prepare(DualFilterMatrix *dfm,int cutoff1_q8,int res1,int morph1,int flavor1,int cutoff2_q8,int res2,int morph2,int flavor2,int routing_morph,int balance_morph,uint8_t shift,int snap);
+void dual_filter_prepare(DualFilterMatrix *dfm,int cutoff1_q8,int res1,int morph1,int drive1,int flavor1,int cutoff2_q8,int res2,int morph2,int drive2,int flavor2,int routing_morph,int balance_morph,uint8_t shift,int snap);
 /* Audio rate: one sample through both cores, routed and balanced (DUAL FILTER). */
 int32_t dual_filter_render(DualFilterMatrix *dfm,int32_t input_sample_q15);
 /* One core on its own, for the architectures that run each filter as a separate path (SINGLE, STACK, BINAURAL...).
- * raw_morph is filter.c's: SVF 0 = HP .. 127 = LP (the knob reversed). The other flavours read the knob's own way
- * round, 127 - raw_morph: MULTI 0 = LP24 .. 127 = NOTCH, MS-20 0 = clean .. 127 = driven hard (1x .. 24x), FORMANT 0 = the bands
- * close (about 2/3 octave) .. 127 = far apart (about 3 octaves). */
-void filter_core_prepare(SvfCore *k,int cutoff_q8,int raw_res,int raw_morph,int flavor,uint8_t shift,int snap);
+ * morph is the knob's (with its mod): SH-2 and MS-20 0 = LP .. 64 = BP .. 127 = HP, MULTI 0 = LP24 .. 127 = NOTCH,
+ * FORMANT 0 = the bands close (about 2/3 octave) .. 127 = far apart (about 3 octaves). drive 0 = clean .. 127. */
+void filter_core_prepare(SvfCore *k,int cutoff_q8,int raw_res,int morph,int drive,int flavor,uint8_t shift,int snap);
 int32_t filter_core_render(SvfCore *k,int32_t input_q15);
 /* The same two renders with the output left in float, Q15 units inside +-32768 (the knee holds it): the voice's
  * float amp takes it as it is, without the round trip through int (~11 cycles a sample on the FM1). */
@@ -59,7 +62,7 @@ float dual_filter_render_f(DualFilterMatrix *dfm,int32_t input_sample_q15);
 void filter_core_render_block(SvfCore *k,const float *x,float *y,int n);
 void dual_filter_render_block(DualFilterMatrix *dfm,const float *x,float *y,int n);
 /* The circuits' settings from the knobs, shared with the FILTER pages' curves (ui_page_draw.c). knob_morph is the
- * knob's own 0..127 (127 - raw_morph). */
+ * knob's own 0..127. */
 /* FORMANT: the second band's distance above the cutoff in knob steps (13.4 an octave): 2/3 octave .. 3 octaves */
 static inline int32_t filter_formant_gap(int knob_morph){return 9+(knob_morph*31)/127;}
 /* MULTI / MS-20: the feedback (Q12) for resonance 0..115. Up to 105 it climbs on 1 - (1 - r)^2 to the loop's edge
@@ -77,18 +80,6 @@ if(raw_res>at)return edge+((raw_res-at)*(top-edge))/(115-at);
 int32_t x=((at-raw_res)*16384)/at,c=16384-((x+((x*x)>>14))>>1);   /* 1 - (x + x^2) / 2, x the distance to the edge */
 return (c*edge)>>14;
 }
-/* SVF: the damping (1 / Q, Q12) for resonance 0..115: Q 0.707 at 0 (Butterworth, flat: no bump at the cutoff)
- * rising exponentially to about 12 at 115, so the peak grows by the same dB a step across the whole knob.
- * Generated: round(4096 * sqrt(2) * (0.085 / sqrt(2)) ** (r / 115)), r = 0..115. */
-static const uint16_t filter_svf_damp_q12[116]={
-5793,5653,5516,5383,5253,5126,5002,4881,4764,4648,4536,4427,4320,4215,4114,4014,
-3917,3823,3730,3640,3552,3467,3383,3301,3221,3144,3068,2994,2921,2851,2782,2715,
-2649,2585,2523,2462,2402,2344,2288,2232,2178,2126,2074,2024,1975,1928,1881,1836,
-1791,1748,1706,1665,1625,1585,1547,1510,1473,1438,1403,1369,1336,1304,1272,1241,
-1211,1182,1154,1126,1099,1072,1046,1021,996,972,949,926,903,882,860,840,
-819,799,780,761,743,725,707,690,674,657,642,626,611,596,582,568,
-554,541,528,515,502,490,478,467,456,445,434,423,413,403,393,384,
-375,366,357,348};
 /* Resonance tapers off above about 1.6 kHz (cutoff knob 85), as an analogue filter's does, so a high resonant peak
  * rings without piercing: 0 below, 1 at the top of the range (cutoff Q8 knob units) */
 static inline float filter_res_taper(int32_t cutoff_q8){
@@ -116,11 +107,11 @@ static inline int32_t filter_exp2_q8(int32_t e_q8){
 int32_t i=e_q8>>8,f=e_q8&255,m=256+((f*(171+((85*f)>>8)))>>8);
 return i>=0?m<<i:m>>(-i);
 }
-/* MS-20: the input gain into the clipper it shares with the resonance, Q8, exponential 1x .. 24x (log2 24 = 1174 Q8), and the output's makeup,
+/* MS-20: DRIVE's input gain into the clipper it shares with the resonance, Q8, exponential 1x .. 24x (log2 24 = 1174 Q8), and the output's makeup,
  * drive^-1/16. A voice reaches the filter near full scale, already at the clipper's ceiling, so a makeup that undid
  * the small-signal gain (1 / sqrt(drive)) only turned it down: more drive sounded weaker. drive^-1/16 lets the clipped
  * wave's extra energy through: a full-scale saw (LP, cutoff 70) comes out about 2 dB louder by a quarter of the knob,
  * then holds within 0.5 dB to the top; a quarter-scale one about 12 dB louder. */
-static inline int32_t filter_ms20_drive_q8(int knob_morph){return filter_exp2_q8((knob_morph*1174)/127);}
-static inline int32_t filter_ms20_makeup_q8(int knob_morph){return filter_exp2_q8(-(knob_morph*1174)/(127*16));}
+static inline int32_t filter_ms20_drive_q8(int drive){return filter_exp2_q8((drive*1174)/127);}
+static inline int32_t filter_ms20_makeup_q8(int drive){return filter_exp2_q8(-(drive*1174)/(127*16));}
 #endif

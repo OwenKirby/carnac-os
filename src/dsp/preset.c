@@ -78,7 +78,8 @@ void engine_defaults(EngineState *e)
     for (unsigned i = 0; i < NFILTER; i++) {
         e->filter[i].cutoff = 110;       /* open */
         e->filter[i].mod_amt = BIPOLAR_CENTER;
-        e->filter[i].flavour = FLT_SVF;
+        e->filter[i].flavour = FLT_MULTI;
+        e->filter[i].morph = 36;         /* LP12: as the SVF's lowpass played (FREC_VER_ENGINE 9) */
         e->filter[i].mod_src = MSRC_ENV2;
         e->filter[i].morph_mod_src = MSRC_LFO1;
         e->filter[i].morph_mod_amt = BIPOLAR_CENTER;

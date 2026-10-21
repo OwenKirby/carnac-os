@@ -37,6 +37,7 @@ build render_hash $DSP src/host/test_render_hash.c && run render_hash "$OUT/rend
 run render_hash_core2 "$OUT/render_hash.exe" --core2
 run render_hash_core2_fail "$OUT/render_hash.exe" --core2-fail
 build voice_arch $DSP src/host/test_voice_arch.c && run voice_arch "$OUT/voice_arch.exe"
+build filter src/host/test_filter.c src/dsp/filter.c && run filter "$OUT/filter.exe"
 build ui_arch $DSP src/UIStateMachine.c src/host/test_ui_arch.c && run ui_arch "$OUT/ui_arch.exe"
 build maq_seq $DSP src/UIStateMachine.c src/host/test_maq_seq.c && run maq_seq "$OUT/maq_seq.exe"
 build arp_seq $DSP src/UIStateMachine.c src/host/test_arp_seq.c && run arp_seq "$OUT/arp_seq.exe"

@@ -351,19 +351,18 @@ static int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f) {
     return (resolve_source(c, f->mod_src, 0) * bip(f->mod_amt)) >> 7;
 }
 
-/* A FILTER page's type morph plus its own mod source and amount (spec 4.2, every architecture), as filter.c reads it:
- * the spec's morph runs LP (0) -> BP -> HP (127), filter.c's HP (0) -> LP (127) (the other flavours turn it back:
- * dsp/filter.h). An amount of 0 resolves no source. */
+/* A FILTER page's type morph plus its own mod source and amount (spec 4.2, every architecture), the knob's way round
+ * (dsp/filter.h). An amount of 0 resolves no source. */
 static int filter_morph(const SourceCtx *c, const FilterParams *f) {
     int m = f->morph;
     if (f->morph_mod_amt != BIPOLAR_CENTER)
         m = clampi(m + (int)((resolve_source(c, f->morph_mod_src, 0) * bip(f->morph_mod_amt)) >> 15), 0, 127);
-    return 127 - m;
+    return m;
 }
 
 /* One core from a FILTER page, its morph modulated through c (the BINAURAL right ear passes its phase-offset context). */
 static void filter_prepare_one(SvfCore *k, const SourceCtx *c, const FilterParams *f, int cut_q8, int snap) {
-    filter_core_prepare(k, cut_q8, f->resonance, filter_morph(c, f), f->flavour, SYNTH_CTRL_SHIFT, snap);
+    filter_core_prepare(k, cut_q8, f->resonance, filter_morph(c, f), f->drive, f->flavour, SYNTH_CTRL_SHIFT, snap);
 }
 
 /* Wavetable scan: knob 0..127 plus its mod and an offset, kept in Q8 so a mod sweep (LFO, envelope) moves smoothly
@@ -501,8 +500,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         int32_t balance_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt)) >> 15;
         int32_t routing_mod = (resolve_source(&c, fm->routing_mod_src, 0) * bip(fm->routing_mod_amt)) >> 15;
         dual_filter_prepare(&voice->synth_filters,
-                            cutoff_q8(f1->cutoff, f1_mod_q8), f1->resonance, filter_morph(&c, f1), f1->flavour,
-                            cutoff_q8(f2->cutoff, filter_mod_q8(&c, f2)), f2->resonance, filter_morph(&c, f2), f2->flavour,
+                            cutoff_q8(f1->cutoff, f1_mod_q8), f1->resonance, filter_morph(&c, f1), f1->drive, f1->flavour,
+                            cutoff_q8(f2->cutoff, filter_mod_q8(&c, f2)), f2->resonance, filter_morph(&c, f2), f2->drive, f2->flavour,
                             clampi(fm->routing + (int)routing_mod, 0, 127), clampi(fm->balance + (int)balance_mod, 0, 127),
                             SYNTH_CTRL_SHIFT, snap);
         break;

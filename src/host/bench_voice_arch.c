@@ -65,7 +65,7 @@ int main(void)
 {
     double ref = 0;
     printf("%-12s %8s %8s %8s %10s %12s\n", "arch", "1v ns", "4v ns", "ns/voice", "x SINGLE", "fair cap");
-    static const char *const FLV[FLT_COUNT] = {"", " (multi)", " (ms-20 low)", " (ms-20 high)", " (formant)"};
+    static const char *const FLV[FLT_COUNT] = {" (sh-2)", " (multi)", " (ms-20)", " (formant)"};
     for (int flv = 0; flv < FLT_COUNT; flv++) {
         for (uint8_t a = 0; a < VARCH_COUNT; a++) {
             double t1 = time_voices(a, 1, flv), t4 = time_voices(a, 4, flv);

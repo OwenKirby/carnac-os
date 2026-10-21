@@ -11,6 +11,7 @@
  * Knob units: time 0..127 (32 = 34 ms, 64 = 0.37 s, 80 = 1.1 s, 96 = 3 s, 112 = 8 s), cutoff ~13.4 knob steps an octave
  * (85 = 1.6 kHz), LFO rate 0.5 Hz * 80^(k/127), LFO shape 0 sine 21 tri 43 saw 64 square 85 step 106 slew.
  * Built from the host-side reading of the engine: nothing here has been heard on the device yet. */
+#include "dsp/flash_record.h"       /* engine_filters_from_v8: the table's filters are v8's */
 #define FP_OCT(k) ((uint8_t)((k) == 0 ? 64 : 18 * ((k) + 3) + 9))
 #define FP_BIP(v) ((uint8_t)((v) + 64))
 /* a fine tune in cents as the FINE TUNE byte nearest it (osc_fine_cents' square law, 2026-10-17) */
@@ -33,7 +34,9 @@ typedef struct {
     uint8_t b2, s2; int8_t o2, f2;       /* OSC2 (DUAL OSC / STACK): bank, scan, octave, fine cents */
     uint8_t mix, xm;                     /* DUAL: balance as bipolar offset / SPREAD: spread; xmod amount */
     uint8_t sub, noise;                  /* sub level, noise level */
-    uint8_t flav, morph, cut, res;       /* FILTER1 */
+    uint8_t flav, morph, cut, res;       /* FILTER1, in v8's flavours (0 SVF 1 MULTI 2 MS-20 LOW 3 MS-20 HIGH 4 FORMANT, the
+                                          * MS-20's morph its drive): factory_patch turns them into today's as a saved v8
+                                          * patch is (engine_filters_from_v8) */
     int8_t fenv;                         /* ENV2 -> cutoff, bipolar */
     uint8_t a, d, s, r;                  /* amp envelope (ENV1); ENV2 follows it, ENV3 scans */
     uint8_t shape, rate;                 /* LFO1 */
@@ -122,8 +125,9 @@ static void factory_patch(EngineState *e, const EngineState *base, const Factory
     e->filter[0].mod_amt = FP_BIP(f->fenv);
     e->filter[1] = e->filter[0];                         /* a second filter, where the architecture has one */
     if (f->arch == VARCH_DUAL_FILTER) {
-        e->filter[1].flavour = FLT_SVF; e->filter[1].morph = 64; e->filter[1].cutoff = 76;
+        e->filter[1].flavour = 0u; e->filter[1].morph = 64; e->filter[1].cutoff = 76;   /* (v8's SVF, BP) */
     }
+    engine_filters_from_v8(e);
     e->env[0].attack = f->a; e->env[0].decay = f->d; e->env[0].sustain = f->s; e->env[0].release = f->r;
     e->env[1] = e->env[0];
     e->env[1].decay = (uint8_t)(f->d * 3u / 4u); e->env[1].sustain = (uint8_t)(f->s / 2u);

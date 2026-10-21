@@ -22,8 +22,8 @@
  *                 the bank's 8 frames as a row of stones, the scan's place between them on the ground
  *   OSCMIXER      two cycles of the mix: OSC1, OSC2 by the balance (STACK: the blend), the sub at its octave and wave,
  *                 the noise at its colour; SPREAD adds its detuned playheads as dim ghosts
- *   FILTER1 / 2   the response curve of the flavour's circuit (dsp/filter.h: the SVF's morph LP .. BP .. HP, the
- *                 MULTI's 4-pole loop at its mode, the MS-20 Sallen-Key (LOW its lowpass, HIGH its highpass),
+ *   FILTER1 / 2   the response curve of the flavour's circuit (dsp/filter.h: the SH-2's 4-pole loop at its morph
+ *                 LP .. BP .. HP, MULTI's at its mode, the MS-20 Sallen-Key at its morph LP .. BP .. HP,
  *                 FORMANT's two bands at their spread); what the morph does on the right; the cutoff as a
  *                 stone on the ground (FORMANT: a second for the upper band)
  *   FILTER MIXER  DUAL FILTER: both curves and their serial / parallel mix. STACK: A and B as stones across the stereo
@@ -925,29 +925,42 @@ static int32_t pu_ladder(int32_t kq8, int32_t c, const int16_t *tap, int32_t fb,
            14 * 256 + 2 * (pu_log2((uint64_t)drive_q8) - 8 * 256);
 }
 
-/* one filter page's response at kq8, as filter.c's circuits give it (dsp/filter.h): the SVF's morph (the knob LP 0 ..
- * BP 64 .. HP 127), MULTI's 4-pole loop tapped by its mode, the MS-20's Sallen-Key 2-pole (1 / (s^2 + (2 - fb) s
- * + 1); LOW its lowpass, HIGH its highpass) at unity: its drive's small-signal gain (up to +26 dB) is not what a voice
- * hears, near full scale at the clipper, within about 2 dB across the knob (dsp/filter.h), FORMANT's two bands, spread
- * apart */
+/* the morph's LP / BP / HP weights, Q6 (64 = 1): 0 LP .. 64 BP .. 127 HP, crossfaded (filter.c lbh_weights) */
+static void pu_lbh(int32_t m, int32_t *wl, int32_t *wb, int32_t *wh)
+{
+    int32_t f = (m * 128) / 127;
+    *wl = f <= 64 ? 64 - f : 0;
+    *wb = f <= 64 ? f : 128 - f;
+    *wh = f <= 64 ? 0 : f - 64;
+}
+
+/* one filter page's response at kq8, as filter.c's circuits give it (dsp/filter.h), DRIVE aside (it holds the level):
+ * the SH-2's 4-pole loop tapped by its morph (LP24 y4, BP 4 (y2 - 2 y3 + y4), HP24 (1 - H)^4), MULTI's by its mode,
+ * the MS-20's Sallen-Key 2-pole (1 / (s^2 + (2 - fb) s + 1)) at its morph's mix of LP, BP and HP, FORMANT's two bands,
+ * spread apart */
 static int32_t pu_filter_l2(const FilterParams *f, int32_t kq8, int32_t c)
 {
     int32_t res = f->resonance > 115u ? 115 : f->resonance, damp = (((127 - res) * 180) + 1200) >> 3;
-    int32_t m = f->morph > VAL_MAX ? (int32_t)VAL_MAX : f->morph, raw = 127 - m, fb;
+    int32_t m = f->morph > VAL_MAX ? (int32_t)VAL_MAX : f->morph, fb, wl, wb, wh, i;
     int16_t tap[5] = {0, 0, 0, 0, 0};
     switch (f->flavour) {
     case FLT_MULTI:
         fb = filter_feedback_q12(FLT_MULTI, res);
         filter_multi_taps(m, tap);
         return pu_ladder(kq8, c, tap, fb, 256 + ((fb * 64) >> 12));
-    case FLT_MS20: case FLT_MS20_HP:
+    case FLT_MS20:
         fb = 8192 - filter_feedback_q12(FLT_MS20, res);
-        return (f->flavour == FLT_MS20_HP ? pu_svf(kq8, c, fb < 64 ? 64 : fb, 0, 0, 64) : pu_svf(kq8, c, fb < 64 ? 64 : fb, 64, 0, 0));
+        pu_lbh(m, &wl, &wb, &wh);
+        return pu_svf(kq8, c, fb < 64 ? 64 : fb, wl, wb, wh);
     case FLT_FORMANT:
         return pu_logadd(pu_svf(kq8, c, damp, 0, 64, 0), pu_svf(kq8, c + filter_formant_gap(m), damp, 0, 64, 0)) - 2 * 256;
-    default:
-        damp = filter_svf_damp_q12[res];
-        return raw < 64 ? pu_svf(kq8, c, damp, 0, raw, 64 - raw) : pu_svf(kq8, c, damp, raw - 64, 128 - raw, 0);
+    default: {                                       /* SH-2 */
+        static const int16_t LP[5] = {0, 0, 0, 0, 128}, BP[5] = {0, 0, 512, -1024, 512}, HP[5] = {128, -512, 768, -512, 128};
+        pu_lbh(m, &wl, &wb, &wh);
+        for (i = 0; i < 5; i++)
+            tap[i] = (int16_t)((wl * LP[i] + wb * BP[i] + wh * HP[i]) / 64);
+        return pu_ladder(kq8, c, tap, filter_feedback_q12(FLT_MULTI, res), 256);
+    }
     }
 }
 
@@ -983,7 +996,7 @@ static int32_t pu_cut_x(int32_t c) { return PV_X0 + (c * (PV_W - 1)) / 127; }
 
 static void pu_viz_filter(const UIStateMachine *sm, uint8_t i)
 {
-    static const char *const FLV[FLT_COUNT] = {"SVF", "MULTI", "MS-20", "MS-20", "FORMANT"};
+    static const char *const FLV[FLT_COUNT] = {"SH-2", "MULTI", "MS-20", "FORMANT"};
     const EngineState *e = sm->engine[sm->s.active_synth_layer];
     const FilterParams *f = &e->filter[i];
     int32_t x, c = f->cutoff > VAL_MAX ? (int32_t)VAL_MAX : f->cutoff;
@@ -997,9 +1010,6 @@ static void pu_viz_filter(const UIStateMachine *sm, uint8_t i)
         uint8_t m = f->morph > VAL_MAX ? (uint8_t)VAL_MAX : f->morph;
         int32_t t;
         switch (f->flavour) {
-        case FLT_MS20: case FLT_MS20_HP:
-            pu_cat(b, f->flavour == FLT_MS20_HP ? "HP" : "LP");
-            break;
         case FLT_MULTI:                              /* the mode nearest the knob */
             pu_cat(b, filter_multi_mode_name(m));
             break;
@@ -1009,7 +1019,7 @@ static void pu_viz_filter(const UIStateMachine *sm, uint8_t i)
             *e++ = '.';
             pu_cat(pu_num(e, t % 10, 0u, 1u), " OCT");
             break;
-        default:
+        default:                                     /* SH-2, MS-20: the output nearest the morph */
             pu_cat(b, m < 32u ? "LP" : m < 96u ? "BP" : "HP");
             break;
         }
