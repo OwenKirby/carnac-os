@@ -9,7 +9,7 @@
  * Wavebanks: 0 Menhir 1 Barrow 2 Trilithon 3 Ley Line 4 Solstice 5 Moonstone 6 Star Chart 7 Druid Chant
  *            8 Overtone Rite 9 Votive Choir 10 Bone Flute 11 Erosion 12 Frost Shatter 13 Dust
  * Knob units: time 0..127 (32 = 34 ms, 64 = 0.37 s, 80 = 1.1 s, 96 = 3 s, 112 = 8 s), cutoff ~13.4 knob steps an octave
- * (85 = 1.6 kHz), LFO rate 0.5 Hz * 80^(k/127), LFO shape 0 sine 21 tri 43 saw 64 square 85 step 106 slew.
+ * (85 = 1.6 kHz), LFO rate 0.05 Hz * 800^(k/127), LFO shape 0 sine 21 tri 43 saw 64 square 85 step 106 slew.
  * Built from the host-side reading of the engine: nothing here has been heard on the device yet. */
 #define FP_OCT(k) ((uint8_t)((k) == 0 ? 64 : 18 * ((k) + 3) + 9))
 #define FP_BIP(v) ((uint8_t)((v) + 64))
