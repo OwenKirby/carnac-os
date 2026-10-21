@@ -63,11 +63,14 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_FX_SPR 32u                 /* the SPRING reverb (two dispersive springs) and PING PONG */
 #define F_DLY_BBD 64u                /* the delay as a BBD (DELAY TYPE), with any of the above */
 #define F_ATK_FILT 128u              /* STRIKE: half the attack through FILTER1 (ATTACK TO FILTER 64), its dearer path */
+#define F_HP 256u                    /* both filters' morph at 110 (SH-2: past BP, all five output taps) */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
 
 typedef struct {
     const char *name;
-    uint8_t kind, arch, flavour, flags, page;
+    uint8_t kind, arch, flavour;
+    uint16_t flags;
+    uint8_t page;
 } PtScen;
 
 static const PtScen SCEN[] = {
@@ -132,6 +135,8 @@ static const PtScen SCEN[] = {
     {"SPREAD SH2 CEL+PP", K_HELD, VARCH_SPREAD, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
     {"DUALFLT SH2 CEL", K_HELD, VARCH_DUAL_FILTER, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
     {"SEQ+ARP SH2 CEL", K_SEQ, VARCH_SINGLE, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    {"DUALFLT SH2 HP", K_HELD, VARCH_DUAL_FILTER, FLT_SH2, F_HEAVY | F_HP, UIPAGE_HOME1},
+    {"BINAUR SH2 HP", K_HELD, VARCH_BINAURAL, FLT_SH2, F_HEAVY | F_HP, UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -228,6 +233,8 @@ static void patch(EngineState *e, const PtScen *s)
     e->filter[0].mod_amt = 100;
     e->filter[0].flavour = e->filter[1].flavour = s->flavour;
     e->filter[0].resonance = e->filter[1].resonance = 90;
+    if (s->flags & F_HP)
+        e->filter[0].morph = e->filter[1].morph = 110;
     if (s->flags & F_HEAVY) {
         e->oscmix.xmod_type = XMOD_RING;
         e->oscmix.noise_level = 100;

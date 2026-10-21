@@ -40,9 +40,12 @@ static double self_osc_hz(int cutoff, int drive)
 
 int main(void)
 {
-    int fl, d, i, blk;
+    int fl, d, i, blk, m, st;
+    static const int MORPH[5] = {0, 40, 64, 110, 127};   /* SH-2's tap variants: LP, LP..BP, BP, past BP, HP */
     for (fl = 0; fl < FLT_COUNT; fl++)
-        for (d = 0; d <= 127; d += 127) {
+        for (d = 0; d <= 127; d += 127)
+        for (m = 0; m < 5; m++)
+        for (st = 0; st < 2; st++) {                    /* st: a still cutoff (no coefficient ramps) */
             SvfCore a, b;
             float x[32], ya[32], yb[32];
             int same = 1;
@@ -50,15 +53,16 @@ int main(void)
             memset(&b, 0, sizeof b);
             a.flavour = b.flavour = 255;
             for (blk = 0; blk < 2000; blk++) {
-                int cut = (int)((20.f + 107.f * expf(-(float)(blk % 400) / 60.f)) * 256.f);
-                filter_core_prepare(&a, cut, 112, 40, d, fl, 5, blk == 0);
-                filter_core_prepare(&b, cut, 112, 40, d, fl, 5, blk == 0);
+                int cut = st ? 70 << 8 : (int)((20.f + 107.f * expf(-(float)(blk % 400) / 60.f)) * 256.f);
+                filter_core_prepare(&a, cut, 112, MORPH[m], d, fl, 5, blk == 0);
+                filter_core_prepare(&b, cut, 112, MORPH[m], d, fl, 5, blk == 0);
                 for (i = 0; i < 32; i++) x[i] = saw(blk * 32 + i);
                 filter_core_render_block(&a, x, ya, 32);
                 for (i = 0; i < 32; i++) yb[i] = filter_core_render_f(&b, (int32_t)x[i]);
                 same &= memcmp(ya, yb, sizeof ya) == 0;
             }
-            CHECK(same, "flavour %d drive %d: the block render is not the per-sample one", fl, d);
+            CHECK(same, "flavour %d drive %d morph %d%s: the block render is not the per-sample one", fl, d, MORPH[m],
+                  st ? " still" : "");
         }
     {
         static const int cut[3] = {30, 70, 105};

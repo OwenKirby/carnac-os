@@ -72,6 +72,14 @@ static inline float sat_f(float x){
 x=fclampf(x,-32767.f,32767.f);
 return x-x*x*x*(1.f/(3.f*32768.f*32768.f));
 }
+/* sat_f in the SH-2's own units, w = SH2_Q x: there the cubic is w - w^3, a multiply less (SH-2 runs six a sample).
+ * SH2_Q = 1 / (sqrt 3 * 32768); the SH-2's input, ceiling and taps carry it (filter_core_prepare), so its output is
+ * sat_f's to float rounding. */
+#define SH2_Q (1.f/(1.7320508f*32768.f))
+static inline float sat_w(float w){
+w=fclampf(w,-32767.f*SH2_Q,32767.f*SH2_Q);
+return w-w*w*w;
+}
 /* tanh, Pade (3,2), exact to 0.2 % below |x| 3 and meeting 1 there with zero slope: smooth, no corner (the SH-2's
  * resonance bound). 3 multiplies and a divide. */
 static inline float tanh_f(float x){
@@ -228,14 +236,16 @@ float tp=filter_res_taper(cutoff_q8),cents=SH2_PITCH*lr*lr*(1.f-4.f/k->k)*(1.f-0
 cutoff_q8+=(int)(cents*(256.f/89.3f));
 }
 float g=lut_g(tpt_g_lut,cutoff_q8),G=g/(1.f+g),G2=G*G,wl,wb,wh;
-k->e[0]=SH2_RES_CEIL*Le;k->e[1]=1.f/k->e[0];  /* the feedback's ceiling, with the level the OTAs see (run_ota) */
+k->e[0]=SH2_RES_CEIL*Le*SH2_Q;k->e[1]=1.f/k->e[0];  /* the feedback's ceiling, with the level the OTAs see (run_ota),
+                                                     in the SH-2's units (sat_w) */
 k->makeup=1.f/Le;
+k->drive*=SH2_Q;                             /* the input into the SH-2's units: Le above was taken unscaled */
 n[0]=G;n[1]=1.f/(1.f+k->k*G2*G2);n[2]=g;
 ramp_to(k->c,k->dc,n,3,shift,snap);
 /* LP24 y4, BP 4 (y2 - 2 y3 + y4) = 4 H^2 (1 - H)^2 (unity at the cutoff), HP24 (1 - H)^4 */
 static const float LP[5]={0,0,0,0,1},BP[5]={0,0,4,-8,4},HP[5]={1,-4,6,-4,1};
 lbh_weights(morph,&wl,&wb,&wh);
-for(int i=0;i<5;i++)k->tap[i]=(wl*LP[i]+wb*BP[i]+wh*HP[i])*k->makeup;
+for(int i=0;i<5;i++)k->tap[i]=(wl*LP[i]+wb*BP[i]+wh*HP[i])*(k->makeup*(1.f/SH2_Q));   /* back to Q15 units */
 return;
 }
 }
@@ -301,7 +311,7 @@ return k->tap[0]*u+k->tap[1]*s0+k->tap[2]*s1;
 }
 /* SH-2: an OTA stage, y = s + g ota(in - y). The OTA's input is taken from the linear solve (in - y =
  * (in - s)(1 - G)), so small signals run exactly as MULTI's linear stages; big ones slew (the OTA's current limit) */
-#define OTA_STAGE(in,s,yo) do{float d_=((in)-(s))*om;float v_=g*sat_f(d_);yo=v_+(s);s=yo+v_;}while(0)
+#define OTA_STAGE(in,s,yo) do{float d_=((in)-(s))*om;float v_=g*sat_w(d_);yo=v_+(s);s=yo+v_;}while(0)
 static float run_ota(SvfCore *k,float x){
 float G=k->c[0],inv=k->c[1],g=k->c[2],om=1.f-G;
 k->c[0]+=k->dc[0];k->c[1]+=k->dc[1];k->c[2]+=k->dc[2];
@@ -310,7 +320,7 @@ float S=(((s0*G+s1)*G+s2)*G+s3)*(1.f-G);
 /* the feedback bounded by a tanh at e[0] (1 / it in e[1]): the ringing compresses gradually as it grows, as an
  * analogue loop's does, with no flat top (the cubic's), so the stages stay clean at drive 0 and a zap is not squashed.
  * The loop is solved linearly (u), its feedback part f = drive x - u then bounded. tanh_f: 3 mul, 1 div a sample. */
-float xd=sat_f(x*k->drive),u=(xd-k->k*S)*inv,f=xd-u;   /* the input mixer clips (a 2nd cubic a sample) */
+float xd=sat_w(x*k->drive),u=(xd-k->k*S)*inv,f=xd-u;   /* the input mixer clips (a 2nd cubic a sample) */
 u=xd-k->e[0]*tanh_f(f*k->e[1]);
 float y1,y2,y3,y4;
 OTA_STAGE(u,s0,y1);OTA_STAGE(y1,s1,y2);OTA_STAGE(y2,s2,y3);OTA_STAGE(y3,s3,y4);
@@ -402,13 +412,13 @@ for(int i=0;i<n;i++){
 float Gi=G,iv=inv,gi=g,om=1.f-Gi;
 G+=dG;inv+=dinv;g+=dg;
 float S=(((s0*Gi+s1)*Gi+s2)*Gi+s3)*(1.f-Gi);
-float xd=sat_f(x[i]*dr),u=(xd-kk*S)*iv,f=xd-u;
+float xd=sat_w(x[i]*dr),u=(xd-kk*S)*iv,f=xd-u;
 u=xd-ce*tanh_f(f*ci);
 float y1,y2,y3,y4;
-{float d_=(u-s0)*om,v_=gi*sat_f(d_);y1=v_+s0;s0=y1+v_;}
-{float d_=(y1-s1)*om,v_=gi*sat_f(d_);y2=v_+s1;s1=y2+v_;}
-{float d_=(y2-s2)*om,v_=gi*sat_f(d_);y3=v_+s2;s2=y3+v_;}
-{float d_=(y3-s3)*om,v_=gi*sat_f(d_);y4=v_+s3;s3=y4+v_;}
+{float d_=(u-s0)*om,v_=gi*sat_w(d_);y1=v_+s0;s0=y1+v_;}
+{float d_=(y1-s1)*om,v_=gi*sat_w(d_);y2=v_+s1;s1=y2+v_;}
+{float d_=(y2-s2)*om,v_=gi*sat_w(d_);y3=v_+s2;s2=y3+v_;}
+{float d_=(y3-s3)*om,v_=gi*sat_w(d_);y4=v_+s3;s3=y4+v_;}
 y[i]=soft_limit(p0*u+p1*y1+p2*y2+p3*y3+p4*y4);
 }
 k->c[0]=G;k->c[1]=inv;k->c[2]=g;k->s[0]=s0;k->s[1]=s1;k->s[2]=s2;k->s[3]=s3;
