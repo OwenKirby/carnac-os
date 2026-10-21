@@ -99,12 +99,12 @@ int main(int argc, char **argv)
     const char *dir = argc > 1 ? argv[1] : ".";
     int fails = 0;
 
-    /* live play, ORANGE: lane 1 active, knobs on steps 5..8, the cursor on EV:, playing. Lane 4 transposes the only
-     * NOTE lane, so its TARGET is hidden */
+    /* live play, ORANGE: lane 1 active, the cursor on STEPS with steps 5..8 on the knobs, playing (the playhead's knob
+     * card framed). Lane 4 transposes the only NOTE lane, so its TARGET is hidden */
     seq_palette_set(SQPAL_ORANGE);
     pattern();
-    sm.seq_group = 1;
-    ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);              /* LANE -> EV */
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);              /* STEPS: 1..4 -> 5..8 */
+    if (sm.seq_step0 != 4 || sm.s.current_param_focus != 0) { printf("FAIL: the Select Encoder should move STEPS to 5..8\n"); fails = 1; }
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
     run(5512u * 6u + 100u);
     fails |= shot(dir, "live");
@@ -118,14 +118,14 @@ int main(int argc, char **argv)
     blits = 0; blit_px = 0;
     seq_draw(&sm, &q, 0);
     printf("  one 1/16 step later: %d regions, %ld px (%ld%% of the screen)\n", blits, blit_px, blit_px * 100 / (240 * 240));
-    if (blits == 0 || blits > 2 * (int)SEQ_NLANE) { printf("FAIL: a step redrew %d regions\n", blits); fails = 1; }
+    if (blits == 0 || blits > 2 * (int)SEQ_NLANE + 1) { printf("FAIL: a step redrew %d regions\n", blits); fails = 1; }
     ui_sm_seq_knob_turn(&sm, 2, 3);
     blits = 0;
     seq_draw(&sm, &q, 0);
     printf("  knob 3 turned: %d regions\n", blits);
     if (blits != 2) { printf("FAIL: a knob turn should redraw the knob cards and lane 1's grid, got %d\n", blits); fails = 1; }
 
-    /* step record on step 7: knobs = lanes 1..4, the frame on one column, REC in the header; the cursor on LANE */
+    /* step record on step 7: knobs = lanes 1..4, the frame on one column, REC in the header; the cursor on STEPS */
     seq_palette_set(SQPAL_ORANGE);
     pattern();
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
@@ -142,21 +142,21 @@ int main(int argc, char **argv)
     perf_state.clock_source = CLKSRC_MIDI;
     lanes[0].target_mask = SEQ_TGT_BOTH;
     lanes[2].event_type = SEQEV_NOTE; lanes[2].target_mask = SEQ_TGT_L2;
-    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);                /* LANE row: 1 -> 2 */
-    ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);              /* -> TARGET */
-    sm.seq_group = 3;
+    ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);           /* SEQ on the page: lane 1 -> 2 */
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, 6);              /* STEPS 1..4 .. 13..16, then P, EV -> TARGET */
     fails |= shot(dir, "stopped");
-    if (ui_sm_row_state(&sm, 2) != UIROW_ACTIVE || sm.s.current_param_focus != 2) {
+    if (sm.s.active_seq_lane != 1 || sm.seq_step0 != 12 || ui_sm_row_state(&sm, 3) != UIROW_ACTIVE ||
+        sm.s.current_param_focus != 3) {
         printf("FAIL: the cursor should sit on lane 2's TARGET\n"); fails = 1;
     }
 
-    /* live play, ORANGE, the cursor on LANE: lane 2 on its foggy ground, its knob group (steps 9..12) on the textured
-     * block; lane 2 loops steps 3..13 so the grass runs short of both ends */
+    /* live play, ORANGE, the cursor on STEPS: lane 2 active, its knob window (steps 7..10, a step key's) lit; lane 2
+     * loops steps 3..13 so the grass runs short of both ends */
     seq_palette_set(SQPAL_ORANGE);
     pattern();
     lanes[1].loop_start = 2; lanes[1].loop_end = 12;
-    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);                /* LANE row: 1 -> 2 */
-    sm.seq_group = 2;
+    ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);           /* lane 1 -> 2 */
+    sm.seq_step0 = 6;
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
     run(5512u * 3u + 100u);
     fails |= shot(dir, "lane");
@@ -169,7 +169,7 @@ int main(int argc, char **argv)
     lanes[0].target_mask = SEQ_TGT_BOTH; lanes[0].scale = SEQSCALE_HARM_MINOR; lanes[0].scale_root = 1;
     lanes[2].event_type = SEQEV_NOTE; lanes[2].target_mask = SEQ_TGT_L2; lanes[2].scale = SEQSCALE_GENRE;
     sm.s.active_seq_lane = 0;
-    sm.s.current_param_focus = 3;
+    sm.s.current_param_focus = 4;                       /* SCALE */
     fails |= shot(dir, "scale");
     lanes[0].scale = SEQSCALE_OFF; lanes[2].scale = SEQSCALE_OFF;
 

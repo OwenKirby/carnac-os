@@ -29,7 +29,8 @@ enum {                               /* how a row reads and writes its value */
     RK_ENG,                          /* the byte at offset in a layer's EngineState (RF_LAYER2: layer 2's), HOME */
     RK_VOICES,                       /* read-only: the layer's voice limit (RF_LAYER2: layer 2's) */
     RK_CHAIN,                        /* read-only: a MOD page destination that is another slot's source (no amount) */
-    RK_LANE_SEL,                     /* UIState.active_seq_lane */
+    RK_SEQ_STEPS,                    /* SEQ: the knob window, seq_step0; no value of its own (the Select Encoder moves
+                                      * it, the Algorithm Encoder does nothing) */
     RK_SEQ_EVENT,                    /* EV:, written through seq_lane_set_event */
     RK_SEQ_TARGET,                   /* TARGET:, max from seq_target_max, values from seq_target_ok */
     RK_ARP_LAYER,                    /* 8.2 Layer: L2 needs a second layer, BOTH needs DUAL_SYNTH */
@@ -138,10 +139,8 @@ static const char *const SEQSCALE_NAMES[] = {"OFF", "Genr", "Maj", "Min", "Dor",
                                              "MinP", "Blus"};   /* (the screen font is capitals: not MPen / mPen) */
 static const char *const ROOT_NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 PS_STATIC_ASSERT(sizeof(SEQSCALE_NAMES) / sizeof(SEQSCALE_NAMES[0]) == SEQSCALE_COUNT, "one name per SEQSCALE_*");
-static const char *const LANE_NAMES[] = {"1", "2", "3", "4"};
 PS_STATIC_ASSERT(sizeof(SEQEV_NAMES) / sizeof(SEQEV_NAMES[0]) == SEQEV_COUNT, "one name per SEQEV_*");
 PS_STATIC_ASSERT(sizeof(SEQMODE_NAMES) / sizeof(SEQMODE_NAMES[0]) == SEQ_MODE_COUNT, "one name per SEQ_MODE_*");
-PS_STATIC_ASSERT(sizeof(LANE_NAMES) / sizeof(LANE_NAMES[0]) == SEQ_NLANE, "one name per lane");
 PS_STATIC_ASSERT(sizeof(VARCH_NAMES) / sizeof(VARCH_NAMES[0]) == VARCH_COUNT, "one name per VARCH_*");
 
 /* OSC1 / OSC2: knobs 1..4 are not rows (3: the knob frame cannot be highlighted); sync last, OSC2 only */
@@ -340,15 +339,16 @@ static const UiRow ARP_ROWS[] = {
     {"GENRE BANK", OFS(ArpState, current_genre_bank), 0, ARP_GENRE_COUNT - 1, RK_BYTE, 0, arp_genre_names, A_ALL},
     {"ACCENT VEL", OFS(ArpState, accent_velocity), 1, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
 };
-/* 7.4: the active lane's footer; the order is the footer's (ui_seq_draw.c highlights the field the cursor is on) */
+/* 7.4: the knob window, then the active lane's footer left to right (2026-10-21; ui_seq_draw.c highlights the field the
+ * cursor is on). The Select Encoder walks STEPS a group of 4 at a time, then the footer, then wraps (seq_cursor_move). */
 static const UiRow SEQ_ROWS[] = {
-    {"LANE", 0, 0, SEQ_NLANE - 1, RK_LANE_SEL, 0, LANE_NAMES, A_ALL},
+    {"STEPS", 0, 0, UISEQ_STEP0_MAX, RK_SEQ_STEPS, 0, NULL, A_ALL},
+    {"PRESCALE", OFS(SequencerLane, prescale), SEQ_PRESCALE_MIN, SEQ_PRESCALE_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"EVENT TYPE", OFS(SequencerLane, event_type), 0, SEQEV_COUNT - 1, RK_SEQ_EVENT, 0, SEQEV_NAMES, A_ALL},
     {"TARGET", OFS(SequencerLane, target_mask), 0, SEQ_TGT_MASK, RK_SEQ_TARGET, 0, NULL, A_ALL},
     {"SCALE", OFS(SequencerLane, scale), 0, SEQSCALE_COUNT - 1, RK_BYTE, 0, SEQSCALE_NAMES, A_ALL},   /* NOTE lanes */
     {"ROOT", OFS(SequencerLane, scale_root), 0, 11, RK_BYTE, 0, ROOT_NAMES, A_ALL},                 /* .. with a scale */
     {"PLAY MODE", OFS(SequencerLane, playback_mode), 0, SEQ_MODE_COUNT - 1, RK_BYTE, 0, SEQMODE_NAMES, A_ALL},
-    {"PRESCALE", OFS(SequencerLane, prescale), SEQ_PRESCALE_MIN, SEQ_PRESCALE_MAX, RK_BYTE, 0, NULL, A_ALL},
 };
 
 /* -------------------------------------------------------- page table --- */
@@ -718,7 +718,7 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     if (r->via != 0u && mod_route(sm, r) != UIMOD_HERE)
         return (r->flags & RF_BIPOLAR) ? (uint8_t)BIPOLAR_CENTER : 0u;   /* not fed by this slot: none of it */
     switch (r->kind) {
-    case RK_LANE_SEL: return sm->s.active_seq_lane;
+    case RK_SEQ_STEPS: return sm->seq_step0;
     case RK_PERF_SLOT: return sm->perf_slot;
     case RK_SAVE_ACTION: return sm->save_action;
     case RK_THEME: return sm->theme;
@@ -733,12 +733,11 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
 static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
 {
     switch (r->kind) {
-    case RK_LANE_SEL: sm->s.active_seq_lane = v; break;
     case RK_PERF_SLOT: sm->perf_slot = v; break;
     case RK_SAVE_ACTION: sm->save_action = v; break;
     case RK_THEME: sm->theme = v; break;
     case RK_INST: ((uint8_t *)ui_inst(sm))[r->offset] = v; break;
-    case RK_RENAME: case RK_VOICES: case RK_CHAIN: break;
+    case RK_RENAME: case RK_VOICES: case RK_CHAIN: case RK_SEQ_STEPS: break;
     case RK_ENG: ((uint8_t *)sm->engine[row_layer(r)])[r->offset] = v; break;
     case RK_SEQ_EVENT: seq_lane_set_event(cur_lane(sm), v); break;   /* also restarts TARGET: */
     default: page_block(sm, ui_cur_page(sm))[r->offset] = v; break;
@@ -751,7 +750,7 @@ static void row_step(UIStateMachine *sm, const UiRow *r, int16_t delta)
     int16_t lo = r->min, hi = row_max(sm, r), dir = delta > 0 ? 1 : -1;
     int16_t cur = row_get(sm, r), v, t;
     int16_t n = delta > 0 ? delta : (int16_t)-delta;
-    if (r->kind == RK_RENAME || r->kind == RK_VOICES || r->kind == RK_CHAIN)
+    if (r->kind == RK_RENAME || r->kind == RK_VOICES || r->kind == RK_CHAIN || r->kind == RK_SEQ_STEPS)
         return;
     v = cur < lo ? lo : cur > hi ? hi : cur;  /* a stored value out of range (flash) is pulled in first */
     while (n-- > 0) {
@@ -1044,6 +1043,48 @@ static void on_section(UIStateMachine *sm, uint8_t btn)
     }
 }
 
+/* SEQ (2026-10-21): from another page, lane 1 with steps 1..4 on the knobs; each press on the page, the next lane
+ * (1 -> 2 -> 3 -> 4 -> 1), the same steps on the knobs and the cursor where it was */
+static void on_seq(UIStateMachine *sm)
+{
+    if (sm->page != UIPAGE_SEQ) {
+        sm->s.active_seq_lane = 0u;
+        sm->seq_step0 = 0u;
+        enter_page(sm, UIPAGE_SEQ);
+        return;
+    }
+    sm->s.active_seq_lane = (uint8_t)((sm->s.active_seq_lane + 1u) % SEQ_NLANE);
+}
+
+/* SEQ's Select Encoder (2026-10-21): on STEPS each detent moves the knob window to the next group of 4 (1..4, 5..8,
+ * 9..12, 13..16; a window a step key left between them goes to the group after it, or back to the one it starts in);
+ * past 13..16 the cursor goes on through the footer's fields (SEQ_ROWS), and past the last back to 1..4. Turning back
+ * walks the same ring the other way, onto STEPS at 13..16. */
+static void seq_cursor_move(UIStateMachine *sm, int16_t delta)
+{
+    int16_t dir = delta > 0 ? 1 : -1, n = delta > 0 ? delta : (int16_t)-delta;
+    uint8_t f, g;
+    cursor_snap(sm);
+    if (sm->s.current_param_focus == UI_FOCUS_NONE)
+        return;
+    while (n-- > 0) {
+        f = sm->s.current_param_focus;
+        g = sm->seq_step0;
+        if (f == 0u && dir > 0 && g < UISEQ_STEP0_MAX) {
+            sm->seq_step0 = (uint8_t)((g / 4u + 1u) * 4u);
+        } else if (f == 0u && dir < 0 && g > 0u) {
+            sm->seq_step0 = (uint8_t)(g % 4u ? g / 4u * 4u : g - 4u);
+        } else {
+            f = cursor_seek(sm, (int16_t)(f + dir), dir);
+            if (f == UI_FOCUS_NONE)          /* past either end: round to the other */
+                f = dir > 0 ? 0u : cursor_seek(sm, (int16_t)(vis_count(sm) - 1u), -1);
+            if (f == 0u)                     /* onto STEPS: at its first group going on, its last coming back */
+                sm->seq_step0 = dir > 0 ? 0u : (uint8_t)UISEQ_STEP0_MAX;
+            sm->s.current_param_focus = f;
+        }
+    }
+}
+
 /* -------------------------------------------------------------- SEQ --- */
 uint8_t ui_sm_seq_recording(const UIStateMachine *sm) { return (uint8_t)(sm->seq != 0 && maq_recording(sm->seq)); }
 
@@ -1071,9 +1112,9 @@ void ui_sm_seq_knob_target(const UIStateMachine *sm, uint8_t knob, uint8_t *lane
     if (ui_sm_seq_recording(sm)) {                   /* 7.2: knob n = lane n at the record step */
         *lane = knob;
         *step = maq_rec_step(sm->seq);
-    } else {                                         /* 7.1: knob n = step n of the active lane's group */
+    } else {                                         /* 7.1: knob n = the window's step n in the active lane */
         *lane = sm->s.active_seq_lane < SEQ_NLANE ? sm->s.active_seq_lane : (uint8_t)0u;
-        *step = (uint8_t)((sm->seq_group % UISEQ_NGROUP) * 4u + knob);
+        *step = (uint8_t)((sm->seq_step0 <= UISEQ_STEP0_MAX ? sm->seq_step0 : 0u) + knob);
     }
 }
 
@@ -1248,10 +1289,10 @@ uint8_t ui_sm_seq_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t dow
             ln->loop_start = w;                      /* 7.1: OCT- + white key n: step n is the first */
         } else if (mods & UISEQ_MOD_OCT_UP) {
             ln->loop_end = w;                        /* OCT+ + white key n: the last */
-        } else {
-            sm->s.active_seq_lane = (uint8_t)(w >> 2);   /* block b of 4 white keys: lane b, */
-            sm->seq_group = (uint8_t)(w & 3u);           /* its key k: steps 4k + 1 .. 4k + 4 on the knobs */
-            ui_sm_enforce(sm);                       /* the new lane's TARGET may be hidden under the cursor */
+        } else {                                     /* (2026-10-21) white key n: steps n .. n + 3 on the
+                                                      * knobs, held to 13..16 at the end; the cursor on STEPS */
+            sm->seq_step0 = w < UISEQ_STEP0_MAX ? w : (uint8_t)UISEQ_STEP0_MAX;
+            sm->s.current_param_focus = 0u;
         }
     }
     return 1u;
@@ -1589,7 +1630,7 @@ static void ui_led_put(uint8_t *lv, uint8_t key, uint8_t level)
         lv[key] = level;
 }
 
-/* SEQ (7.1, 7.2): the selectors live, the active lane's steps with OCT held, the record step's notes in step record */
+/* SEQ (7.1, 7.2): the active lane's steps live, its loop lane's steps with OCT held, the record step's notes in step record */
 static void ui_seq_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8_t mods, uint8_t *lv)
 {
     const SequencerLane *ln = cur_lane(sm);
@@ -1624,9 +1665,15 @@ static void ui_seq_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8
             ui_led_put(lv, wk[pos], LV_LIT);
         return;
     }
-    for (i = 0u; i < UISEQ_SELECTOR_KEYS; i += 4u)
-        ui_led_put(lv, wk[i], LV_DIM);                  /* each block's first key: the lanes' landmarks */
-    ui_led_put(lv, wk[(sm->s.active_seq_lane * 4u + sm->seq_group) & (UISEQ_SELECTOR_KEYS - 1u)], LV_LIT);
+    maq_loop_window(ln, &lo, &hi);                   /* (2026-10-21) the active lane's steps: the ones that play */
+    for (i = lo; i <= hi; i++)                       /* dim, the knob window mid, the playhead lit */
+        if (!(ln->steps[i].flags & (SEQ_FLAG_MUTE | SEQ_FLAG_SKIP)))
+            ui_led_put(lv, wk[i], LV_DIM);
+    for (i = 0u; i < 4u; i++)
+        ui_led_put(lv, wk[(sm->seq_step0 + i) & (UISEQ_SELECTOR_KEYS - 1u)], LV_MID);
+    pos = sm->seq != 0 && maq_playing(sm->seq) ? maq_lane_pos(sm->seq, sm->s.active_seq_lane) : (uint8_t)MAQ_POS_NONE;
+    if (pos < SEQ_NSTEP)
+        ui_led_put(lv, wk[pos], LV_LIT);
 }
 
 /* ARP (8.1): the step keys, the function keys among them, and the chord key of the transposition */
@@ -1777,7 +1824,7 @@ void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *
     sm->lanes = lanes;
     sm->arp = arp;
     sm->seq = 0;
-    sm->seq_group = 0u;
+    sm->seq_step0 = 0u;
     sm->carp = 0;
     sm->arp_knob[0] = ARP_RATE_DEFAULT;
     sm->arp_knob[1] = 0u;
@@ -1921,6 +1968,9 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
             confirm_register(sm);
     } else if (type == UIEV_SELECT_ENC && sm->page == UIPAGE_SEQ && ui_sm_seq_recording(sm)) {
         maq_rec_nav(sm->seq, sm->s.active_seq_lane, arg);   /* 7.2: the encoder walks the record step */
+    } else if (type == UIEV_SELECT_ENC && sm->page == UIPAGE_SEQ) {
+        seq_cursor_move(sm, arg);
+        sm->rowpop = 0u;
     } else if (type == UIEV_SELECT_ENC) {
         cursor_move(sm, arg);
         sm->rowpop = 0u;             /* (2026-10-17) the cursor moves in the page's own list: no popup */
@@ -1933,7 +1983,7 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         sm->save_slot = (uint8_t)(v < 0 ? 0 : v > top ? top : v);   /* the slot (the stones and the moon follow it) */
     } else if (type == UIEV_ALGO_ENC) {
         r = sm->s.current_param_focus != UI_FOCUS_NONE ? vis_row(sm, sm->s.current_param_focus) : NULL;
-        if (r != NULL) {
+        if (r != NULL && r->kind != RK_SEQ_STEPS) {   /* (STEPS has no value: no popup either) */
             mod_claim(sm, r);            /* a MOD page: an unrouted destination is routed here first */
             row_step(sm, r, arg);
             sm->rowpop = 1u;         /* (2026-10-17) the parameter, large, only while its value turns */
@@ -1943,6 +1993,8 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         on_home(sm);
     } else if (arg == BTN_SAVE) {
         on_save(sm);
+    } else if (arg == BTN_SEQ) {
+        on_seq(sm);
     } else {
         on_section(sm, (uint8_t)arg);
     }
@@ -1956,8 +2008,8 @@ void ui_sm_enforce(UIStateMachine *sm)
         sm->s.active_synth_layer = 0u;
     if (sm->s.active_seq_lane >= SEQ_NLANE)
         sm->s.active_seq_lane = 0u;
-    if (sm->seq_group >= UISEQ_NGROUP)
-        sm->seq_group = 0u;
+    if (sm->seq_step0 > UISEQ_STEP0_MAX)
+        sm->seq_step0 = UISEQ_STEP0_MAX;
     if (sm->save_target >= UISAVE_COUNT)
         sm->save_target = UISAVE_WHOLE_PERF;
     if (sm->save_slot >= ui_sm_bank_slots(sm->save_target))   /* a TARGET with a smaller bank (2026-10-17) */

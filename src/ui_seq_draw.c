@@ -301,13 +301,14 @@ static int32_t sq_text_fit(int32_t x, int32_t y, const aafont_t *f, const char *
  * a label: each reads by its value alone. SCALE shows on a NOTE lane only, ROOT with a scale that takes one (not OFF,
  * not Genr: the genre brings its own) (2026-10-16). */
 enum { SQF_P, SQF_EV, SQF_TGT, SQF_SC, SQF_RT, SQF_MD, SQF_COUNT };
-#define SQF_LANE SQF_COUNT           /* the cursor on LANE: the knob group's stones light paler, no field */
+#define SQF_STEPS SQF_COUNT          /* the cursor on STEPS: the knob window's stones lit, no field (on a field they
+                                      * light paler: the knobs still edit them) */
 #define SQF_NONE (SQF_COUNT + 1)
 static const int16_t SQF_X[SQF_COUNT] = {2, 50, 82, 128, 160, 208};
 static const int16_t SQF_W[SQF_COUNT] = {44, 28, 42, 28, 16, 30};
 static const char *const SQF_LABEL[SQF_COUNT] = {"", "", "", "", "", ""};
-/* the SEQ page's rows (UIStateMachine.c SEQ_ROWS: LANE EV TARGET SCALE ROOT MD P) -> the field the cursor lights */
-static const uint8_t SQ_ROW_FIELD[7] = {SQF_LANE, SQF_EV, SQF_TGT, SQF_SC, SQF_RT, SQF_MD, SQF_P};
+/* the SEQ page's rows (UIStateMachine.c SEQ_ROWS: STEPS P EV TARGET SCALE ROOT MD) -> the field the cursor lights */
+static const uint8_t SQ_ROW_FIELD[7] = {SQF_STEPS, SQF_P, SQF_EV, SQF_TGT, SQF_SC, SQF_RT, SQF_MD};
 #define SQ_POS_X (SQF_X[SQF_P] - 1)  /* the P: field's own region (its n changes every step): its chip and text */
 #define SQ_POS_W (SQF_W[SQF_P] + 2)
 
@@ -441,10 +442,21 @@ static void sq_draw_head(const UIStateMachine *sm, const MaqSeq *q)
 }
 
 /* ------------------------------------------------------------- knobs --- */
-static void sq_knob_card(uint32_t k, uint32_t oy, const char *label, const char *val, uint16_t grass);
+static void sq_knob_card(uint32_t k, uint32_t oy, const char *label, const char *val, uint16_t grass, uint16_t rim);
 
-/* section 3's knob frame: what knobs 1..4 edit now (7.1 the group's steps, 7.2 the four lanes at the record step) */
-static void sq_draw_knobs(UIStateMachine *sm)
+/* knob k edits the step the playhead is on (live only: in step record the knobs are the lanes at the record step) */
+static uint8_t sq_knob_head(const UIStateMachine *sm, const MaqSeq *q, uint8_t k)
+{
+    uint8_t l, st;
+    if (maq_recording(q) || !maq_playing(q))
+        return 0u;
+    ui_sm_seq_knob_target(sm, k, &l, &st);
+    return (uint8_t)(maq_lane_pos(q, l) == st);
+}
+
+/* section 3's knob frame: what knobs 1..4 edit now (7.1 the window's steps, 7.2 the four lanes at the record step).
+ * The card of the step the playhead is on is framed in ACCENT, as the ARP frames its playing step (2026-10-21). */
+static void sq_draw_knobs(UIStateMachine *sm, const MaqSeq *q)
 {
     char b[8];
     uint8_t k, l, st;
@@ -454,7 +466,7 @@ static void sq_draw_knobs(UIStateMachine *sm)
         ui_sm_knob(sm, UIPAGE_SEQ, 0, k, &info);     /* (the label only: SEQ knobs have no plain byte) */
         ui_sm_seq_knob_target(sm, k, &l, &st);
         sq_knob_card(k, SQ_KNOB_Y, info.label, sq_value_text(sm->lanes[l].event_type, ui_sm_seq_knob_get(sm, k), b),
-                     SQC(MID));
+                     SQC(MID), sq_knob_head(sm, q, k) ? SQC(ACCENT) : 0u);
     }
     cv_blit(0, SQ_KNOB_Y);
 }
@@ -728,20 +740,21 @@ static void sq_grass(int32_t x0, int32_t x1, int32_t yb, int32_t hmax, uint16_t 
 
 /* knob k's tablet, h tall, at canvas x (screen sx, oy: the grain hangs off the screen), cut the same on every page that
  * has one, its name along the top and a strip of grass under it (yb = h + 3): MID, as the grass of the lanes not being
- * edited (THEME when the page marks the card live). The caller writes the value. */
-static void sq_knob_tablet(int32_t x, int32_t sx, int32_t h, uint32_t k, uint32_t oy, const char *label, uint16_t grass)
+ * edited (THEME when the page marks the card live). rim: its outline's colour, 0 for none. The caller writes the value. */
+static void sq_knob_tablet(int32_t x, int32_t sx, int32_t h, uint32_t k, uint32_t oy, const char *label, uint16_t grass,
+                           uint16_t rim)
 {
     sq_tab_shape(SQ_KNOB_W, h, 4201u + k * 13u);
-    sq_tablet(x, 0, SQTAB_ROCK, 0u, (uint32_t)sx, oy);
+    sq_tablet(x, 0, SQTAB_ROCK, rim, (uint32_t)sx, oy);
     sq_text_in(x, 1, SQ_KNOB_W, &AF_S, label, SQC(MID), SQC(SURF));
     sq_grass(x + 4, x + SQ_KNOB_W - 4, h + 3, 2, grass, 50 + (int32_t)k, 0, 0, 0, 0, 0);
 }
 
 /* knob k's card on the SEQ and ARP knob row (at screen row oy): its tablet, the value under the name */
-static void sq_knob_card(uint32_t k, uint32_t oy, const char *label, const char *val, uint16_t grass)
+static void sq_knob_card(uint32_t k, uint32_t oy, const char *label, const char *val, uint16_t grass, uint16_t rim)
 {
     int32_t x = SQ_KNOB_X0 + (int32_t)k * (SQ_KNOB_W + SQ_KNOB_GAP);
-    sq_knob_tablet(x, x, SQ_KNOB_H - 3, k, oy, label, grass);
+    sq_knob_tablet(x, x, SQ_KNOB_H - 3, k, oy, label, grass, rim);
     sq_text_in(x, 14, SQ_KNOB_W, &AF_S, val, SQC(TEXT), SQC(SURF));
 }
 
@@ -868,8 +881,8 @@ static void sq_lintel(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c, ui
 
 /* one step as a stone (7.4): its outline, then a stone inside it growing with the value (0 none, 127 filling it). In the
  * loop window the outline is MID, outside it DIM (7.4: steps outside the line drop their border brightness); the
- * playhead's step is ACCENT. lit: one of the knob group's four (SQLIT_GROUP), brighter, outline and stone a step up;
- * SQLIT_LANE with the cursor on LANE, its outline paler still. A skipped step is gone (the playhead steps over it), a muted one crumbles, a tie is an
+ * playhead's step is ACCENT. lit: one of the knob window's four (SQLIT_GROUP), brighter, outline and stone a step up;
+ * SQLIT_LANE with the cursor on a footer field, its outline paler still. A skipped step is gone (the playhead steps over it), a muted one crumbles, a tie is an
  * empty stone with a capstone laid on it from the stone before (a dolmen: ties in a row share one long capstone). The
  * stone's grain is its lane's and step's own. */
 enum { SQLIT_OFF, SQLIT_GROUP, SQLIT_LANE };
@@ -945,19 +958,19 @@ static void sq_draw_grid(const UIStateMachine *sm, const MaqSeq *q, uint8_t l)
 {
     const SequencerLane *ln = &sm->lanes[l];
     uint8_t lo, hi, i, rec = maq_recording(q), pos = maq_lane_pos(q, l), active = (uint8_t)(l == sm->s.active_seq_lane);
-    uint8_t g = (uint8_t)((sm->seq_group % UISEQ_NGROUP) * 4u), lit = SQLIT_OFF;
+    uint8_t g = (uint8_t)(sm->seq_step0 <= UISEQ_STEP0_MAX ? sm->seq_step0 : 0u), lit = SQLIT_OFF;
     int32_t fx = sq_box_x(g) - 2, fw = sq_box_x(g + 3u) + SQ_BOX_W + 2 - fx, x0, x1;
     uint16_t gc = active ? SQC(THEME) : SQC(MID);
     maq_loop_window(ln, &lo, &hi);
-    if (active && !rec)                              /* the knob group (7.4): its stones and its grass lit */
-        lit = sq_cursor_field(sm, l) == SQF_LANE ? (uint8_t)SQLIT_LANE : (uint8_t)SQLIT_GROUP;
+    if (active && !rec)                              /* the knob window (7.4): its stones and its grass lit */
+        lit = sq_cursor_field(sm, l) == SQF_STEPS ? (uint8_t)SQLIT_GROUP : (uint8_t)SQLIT_LANE;
     cv_begin(240, SQ_GRID_H, SQC(BG));
     for (i = 0; i < SEQ_NSTEP; i++)
         sq_draw_step(sm, ln, l, i, (uint8_t)(i >= lo && i <= hi), (uint8_t)(i == pos),
                      i >= g && i < g + 4u ? lit : (uint8_t)SQLIT_OFF);
     /* the loop range (7.4): grass from the first step's stone to the last step's, along the grid's foot, its blades
-     * up round the stones' feet; under the knob group ACCENT (as under the knob cards it ties to), paler with the
-     * cursor on LANE */
+     * up round the stones' feet; under the knob window ACCENT (as under the knob cards it ties to), paler with the
+     * cursor on a footer field */
     x0 = sq_box_x(lo);
     x1 = sq_box_x(hi) + SQ_BOX_W;
     if (lit)
@@ -1087,22 +1100,23 @@ static void seq_draw(UIStateMachine *sm, const MaqSeq *q, uint32_t force)
                          (uint32_t)sm->perf->int_tempo << 16 | (uint32_t)sm->perf->clock_source << 24);
     if (sq_dirty(SQR_HEAD, h, force))
         sq_draw_head(sm, q);
-    h = sq_mix(base, (uint32_t)rec | (uint32_t)sm->seq_group << 8 | (uint32_t)sm->s.active_seq_lane << 16 |
+    h = sq_mix(base, (uint32_t)rec | (uint32_t)sm->seq_step0 << 8 | (uint32_t)sm->s.active_seq_lane << 16 |
                          (uint32_t)maq_rec_step(q) << 24);
     for (k = 0; k < 4u; k++) {
         ui_sm_seq_knob_target(sm, k, &lane, &st);
-        h = sq_mix(h, (uint32_t)ui_sm_seq_knob_get(sm, k) | (uint32_t)sm->lanes[lane].event_type << 8);
+        h = sq_mix(h, (uint32_t)ui_sm_seq_knob_get(sm, k) | (uint32_t)sm->lanes[lane].event_type << 8 |
+                          (uint32_t)sq_knob_head(sm, q, k) << 16);
     }
     if (sq_dirty(SQR_KNOBS, h, force))
-        sq_draw_knobs(sm);
+        sq_draw_knobs(sm, q);
     for (l = 0; l < SEQ_NLANE; l++) {
         const SequencerLane *ln = &sm->lanes[l];
         uint8_t active = (uint8_t)(l == sm->s.active_seq_lane), cur = sq_cursor_field(sm, l);
         h = sq_mix_bytes(base, (const uint8_t *)ln->steps, sizeof ln->steps);
         h = sq_mix(h, (uint32_t)ln->loop_start | (uint32_t)ln->loop_end << 8 | (uint32_t)ln->event_type << 16 |
                           (uint32_t)maq_lane_pos(q, l) << 24);
-        h = sq_mix(h, (uint32_t)active | (uint32_t)rec << 1 | (uint32_t)(cur == SQF_LANE) << 2 |
-                          (uint32_t)maq_rec_step(q) << 8 | (uint32_t)(active ? sm->seq_group : 0u) << 16);
+        h = sq_mix(h, (uint32_t)active | (uint32_t)rec << 1 | (uint32_t)(cur == SQF_STEPS) << 2 |
+                          (uint32_t)maq_rec_step(q) << 8 | (uint32_t)(active ? sm->seq_step0 : 0u) << 16);
         h = sq_mix(h, (uint32_t)ln->scale | (uint32_t)ln->scale_root << 8 |   /* the stones stand as the scale plays */
                           (uint32_t)(sm->arp ? sm->arp->current_genre_bank : 0u) << 16);
         if (sq_dirty(SQR_GRID0 + l, h, force))

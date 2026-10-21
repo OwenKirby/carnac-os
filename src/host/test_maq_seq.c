@@ -263,40 +263,52 @@ int main(void)
     run(STEP_FRAMES + 10u);
     CHECK(!ui_sm_seq_recording(&sm) && maq_lane_pos(&q, 0) == 6, "REC off: plays on from the record step (%u)", maq_lane_pos(&q, 0));
 
-    /* ---- live play (7.1): the 16 white selector keys in 4 blocks (lane, step group), OCT- / OCT+ loop ---- */
-    /* the keyboard from C3 (key 0 = note 48): white keys C3 D3 E3 F3 | G3 A3 B3 C4 | D4 E4 F4 G4 | A4 B4 C5 D5 */
-    reset();
-    ui_sm_goto(&sm, UIPAGE_SEQ);
-    { UiKeyLeds kl;
-      CHECK(ui_sm_key_leds(&sm, 48, 0, &kl) && kl.lit == 1u << 0 && kl.dim == (1u << 7 | 1u << 14 | 1u << 21) && kl.mid == 0,
-            "key LEDs from C3: lane 1 group 1 lit, the other blocks' first keys G3 D4 A4 dim (%08x %08x)", (unsigned)kl.lit, (unsigned)kl.dim);
-      ui_sm_key_leds(&sm, 53, 0, &kl);
-      CHECK(kl.lit == 1u << 0 && kl.dim == (1u << 7 | 1u << 14 | 1u << 21), "from F3 (FM1): F3 lit, C4 G4 D5 dim");
-      ui_sm_key_leds(&sm, 49, 0, &kl);
-      CHECK(kl.lit == 1u << 1 && kl.dim == (1u << 8 | 1u << 15 | 1u << 22), "from a black key: the white keys counted from it"); }
-    CHECK(ui_sm_seq_key(&sm, 4, 52, 1, 0) == 1 && sm.s.active_seq_lane == 0 && sm.seq_group == 2,
-          "E3 (block 1, key 3) -> lane 1, steps 9..12 on the knobs");
-    { UiKnobInfo info; ui_sm_knob(&sm, UIPAGE_SEQ, 0, 3, &info); CHECK(strcmp(info.label, "STEP 12") == 0, "live: knob 4 = STEP 12 (%s)", info.label); }
-    ui_sm_seq_knob_turn(&sm, 0, 5);
-    CHECK(lanes[0].steps[8].note_buffer[0] == 53, "knob 1 turns step 9's note C3 + 5");
-    CHECK(ui_sm_seq_key(&sm, 1, 49, 1, 0) == 1 && sm.s.active_seq_lane == 0 && sm.seq_group == 2,
-          "C#3, a black key among the selectors: taken, does nothing");
-    CHECK(ui_sm_seq_key(&sm, 9, 57, 1, 0) == 1 && sm.s.active_seq_lane == 1 && sm.seq_group == 1,
-          "A3 (block 2, key 2) -> lane 2, steps 5..8 (%u %u)", sm.s.active_seq_lane, sm.seq_group);
-    CHECK(ui_sm_seq_key(&sm, 14, 62, 1, 0) == 1 && sm.s.active_seq_lane == 2 && sm.seq_group == 0, "D4 -> lane 3, steps 1..4");
-    CHECK(ui_sm_seq_key(&sm, 26, 74, 1, 0) == 1 && sm.s.active_seq_lane == 3 && sm.seq_group == 3, "D5 -> lane 4, steps 13..16");
-    CHECK(ui_sm_seq_key(&sm, 26, 74, 0, 0) == 1, "a selector's release is taken too");
-    CHECK(ui_sm_seq_key(&sm, 4, 52, 1, UISEQ_MOD_OCT_DOWN) == 1 && lanes[3].loop_start == 2, "OCT- + white key 3: loop start step 3");
-    CHECK(ui_sm_seq_key(&sm, 23, 71, 1, UISEQ_MOD_OCT_UP) == 1 && lanes[3].loop_end == 13, "OCT+ + white key 14: loop end step 14");
-    CHECK(sm.s.active_seq_lane == 3 && sm.seq_group == 3, "OCT+key moves neither the lane nor the knob group");
-    {   /* key LEDs with OCT held: lane 4's steps on the white keys, loop window 3..14 dim, the boundary lit */
+    /* ---- live play (7.1, 2026-10-21): the 16 white keys are the active lane's steps, SEQ picks the lane, the Select
+     * Encoder walks the steps in groups of 4 and then the footer, OCT- / OCT+ set the loop ---- */
+    /* the keyboard from C3 (key 0 = note 48): white keys C3 D3 E3 F3 G3 A3 B3 C4 D4 E4 F4 G4 A4 B4 C5 D5 = steps 1..16 */
+    {
         static const uint8_t WK48[16] = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24, 26};
         UiKeyLeds kl;
-        uint32_t win = 0;
-        uint8_t p;
-        for (i = 2; i <= 13; i++) win |= 1u << WK48[i];
+        UiKnobInfo info;
+        uint32_t all = 0, win = 0, w4;
+        uint8_t p, n0, le, f, last;
+        reset();
+        ui_sm_goto(&sm, UIPAGE_SEQ);
+        for (i = 0; i < 16; i++) all |= 1u << WK48[i];
+        for (i = 0, w4 = 0; i < 4; i++) w4 |= 1u << WK48[i];
+        CHECK(ui_sm_key_leds(&sm, 48, 0, &kl) && kl.lit == 0 && kl.mid == w4 && kl.dim == (all & ~w4),
+              "key LEDs from C3, stopped: steps 1..4 (the knobs) mid, the other 12 dim (%08x %08x)", (unsigned)kl.mid,
+              (unsigned)kl.dim);
+        ui_sm_key_leds(&sm, 53, 0, &kl);
+        CHECK(kl.mid == (1u << 0 | 1u << 2 | 1u << 4 | 1u << 6), "from F3 (FM1): F3 G3 A3 B3 mid");
+        le = lanes[0].loop_end;
+        lanes[0].steps[9].flags = SEQ_FLAG_MUTE; lanes[0].steps[10].flags = SEQ_FLAG_SKIP; lanes[0].loop_end = 13;
         ui_sm_key_leds(&sm, 48, 0, &kl);
-        CHECK(kl.lit == 1u << WK48[15] && (kl.dim & (1u << WK48[12])), "live: lane 4 group 4 (D5) lit, A4 dim");
+        CHECK(kl.dim == (all & ~w4 & ~(1u << WK48[9] | 1u << WK48[10] | 1u << WK48[14] | 1u << WK48[15])),
+              "a muted, a skipped and the out-of-loop steps dark (%08x)", (unsigned)kl.dim);
+        lanes[0].steps[9].flags = 0; lanes[0].steps[10].flags = 0; lanes[0].loop_end = le;
+
+        CHECK(ui_sm_seq_key(&sm, 4, 52, 1, 0) == 1 && sm.s.active_seq_lane == 0 && sm.seq_step0 == 2,
+              "E3 (white key 3) -> steps 3..6 on the knobs (%u)", sm.seq_step0);
+        ui_sm_knob(&sm, UIPAGE_SEQ, 0, 3, &info);
+        CHECK(strcmp(info.label, "STEP 06") == 0, "live: knob 4 = STEP 06 (%s)", info.label);
+        n0 = lanes[0].steps[2].note_buffer[0];
+        ui_sm_seq_knob_turn(&sm, 0, 5);
+        CHECK(lanes[0].steps[2].note_buffer[0] == n0 + 5, "knob 1 turns step 3's note + 5");
+        for (i = 2, win = 0; i < 6; i++) win |= 1u << WK48[i];
+        ui_sm_key_leds(&sm, 48, 0, &kl);
+        CHECK(kl.mid == win && kl.dim == (all & ~win), "the LEDs follow: steps 3..6 mid");
+        CHECK(ui_sm_seq_key(&sm, 1, 49, 1, 0) == 1 && sm.seq_step0 == 2, "C#3, a black key among the steps: taken, does nothing");
+        CHECK(ui_sm_seq_key(&sm, 24, 72, 1, 0) == 1 && sm.seq_step0 == 12, "C5 (step 15): held to steps 13..16 (%u)", sm.seq_step0);
+        CHECK(ui_sm_seq_key(&sm, 26, 74, 1, 0) == 1 && sm.seq_step0 == 12 && sm.s.active_seq_lane == 0,
+              "D5 (step 16): 13..16, the lane stays");
+        CHECK(ui_sm_seq_key(&sm, 26, 74, 0, 0) == 1, "a step key's release is taken too");
+        CHECK(ui_sm_seq_key(&sm, 4, 52, 1, UISEQ_MOD_OCT_DOWN) == 1 && lanes[0].loop_start == 2, "OCT- + white key 3: loop start step 3");
+        CHECK(ui_sm_seq_key(&sm, 23, 71, 1, UISEQ_MOD_OCT_UP) == 1 && lanes[0].loop_end == 13, "OCT+ + white key 14: loop end step 14");
+        CHECK(sm.s.active_seq_lane == 0 && sm.seq_step0 == 12, "OCT+key moves neither the lane nor the knob window");
+
+        /* key LEDs with OCT held: lane 1's steps, loop window 3..14 dim, the boundary lit */
+        for (i = 2, win = 0; i <= 13; i++) win |= 1u << WK48[i];
         ui_sm_key_leds(&sm, 48, UISEQ_MOD_OCT_DOWN, &kl);
         CHECK(kl.lit == 1u << WK48[2] && kl.dim == (win & ~(1u << WK48[2])) && kl.mid == 0,
               "OCT- held, stopped: the loop start E3 lit, the window dim (%08x %08x)", (unsigned)kl.lit, (unsigned)kl.dim);
@@ -304,22 +316,83 @@ int main(void)
         CHECK(kl.lit == 1u << WK48[13] && kl.dim == (win & ~(1u << WK48[13])), "OCT+ held, stopped: the loop end B4 lit");
         ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
         run(STEP_FRAMES * 3u + 10u);
-        p = maq_lane_pos(&q, 3);
+        p = maq_lane_pos(&q, 0);
         ui_sm_key_leds(&sm, 48, UISEQ_MOD_OCT_DOWN, &kl);
         CHECK(p > 2 && p <= 13 && kl.lit == 1u << WK48[p] && kl.mid == 1u << WK48[2] &&
               kl.dim == (win & ~(1u << WK48[p] | 1u << WK48[2])),
               "OCT- held, playing: the playhead (step %u) lit, the loop start mid, the rest of the window dim", p + 1u);
+        sm.seq_step0 = p > 1 ? (uint8_t)(p - 1u) : 0u;    /* the playhead inside the knob window */
+        for (i = 0, w4 = 0; i < 4; i++) w4 |= 1u << WK48[sm.seq_step0 + i];
+        ui_sm_key_leds(&sm, 48, 0, &kl);
+        CHECK(kl.lit == 1u << WK48[p] && kl.mid == (w4 & ~(1u << WK48[p])) && kl.dim == (win & ~w4),
+              "live, playing: the playhead lit over the knob window's mid, the loop's other steps dim (%08x %08x %08x)",
+              (unsigned)kl.lit, (unsigned)kl.mid, (unsigned)kl.dim);
         ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
         run(2);
         ui_sm_goto(&sm, UIPAGE_HOME1);
         CHECK(!ui_sm_key_leds(&sm, 48, UISEQ_MOD_OCT_DOWN, &kl) && !kl.lit && !kl.mid && !kl.dim, "off the SEQ / ARP pages: nothing");
         ui_sm_goto(&sm, UIPAGE_SEQ);
+        CHECK(ui_sm_seq_key(&sm, 27, 75, 1, 0) == 0 && ui_sm_seq_key(&sm, 28, 76, 1, 0) == 0, "keys above the 16th white key play");
+        /* the FM1 keybed starts on F3 (key 0 = note 53): steps 1..16 are F3 .. G5 */
+        CHECK(ui_sm_seq_key(&sm, 7, 60, 1, 0) == 1 && sm.seq_step0 == 4, "from F3: C4 (step 5) -> steps 5..8");
+        CHECK(ui_sm_seq_key(&sm, 1, 54, 1, 0) == 1 && sm.seq_step0 == 4, "from F3: F#3 does nothing");
+
+        /* the SEQ button: lane 1 from another page, the next lane on the page, the knob window kept */
+        reset();
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);
+        CHECK(sm.page == UIPAGE_SEQ && sm.s.active_seq_lane == 0 && sm.seq_step0 == 0 && sm.s.current_param_focus == 0,
+              "SEQ from ARP: lane 1, steps 1..4, the cursor on STEPS");
+        ui_sm_seq_key(&sm, 9, 57, 1, 0);
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);
+        CHECK(sm.s.active_seq_lane == 1 && sm.seq_step0 == 5, "SEQ again: lane 2, the same steps 6..9 (%u %u)",
+              sm.s.active_seq_lane, sm.seq_step0);
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);
+        CHECK(sm.s.active_seq_lane == 3, "lane 4");
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);
+        CHECK(sm.s.active_seq_lane == 0 && sm.page == UIPAGE_SEQ, "and round to lane 1");
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_HOME);
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);
+        CHECK(sm.s.active_seq_lane == 0 && sm.seq_step0 == 0, "back from HOME: lane 1, steps 1..4 again");
+
+        /* the Select Encoder: STEPS 1..4 -> 5..8 -> 9..12 -> 13..16, the footer's fields, round to 1..4 */
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        CHECK(sm.s.current_param_focus == 0 && sm.seq_step0 == 4, "Select +1: steps 5..8 (%u)", sm.seq_step0);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);
+        CHECK(sm.s.current_param_focus == 0 && sm.seq_step0 == 12, "Select +2: steps 13..16");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        CHECK(sm.s.current_param_focus == 1 && strcmp(ui_sm_row_label(&sm, 1), "PRESCALE") == 0 && sm.seq_step0 == 12,
+              "past 13..16: the footer's first field, g (PRESCALE); the knobs stay on 13..16");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        CHECK(strcmp(ui_sm_row_label(&sm, sm.s.current_param_focus), "EVENT TYPE") == 0, "then the event");
+        for (i = 0, last = 0; i < 10 && sm.s.current_param_focus != 0; i++) {
+            last = sm.s.current_param_focus;
+            ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        }
+        CHECK(sm.s.current_param_focus == 0 && sm.seq_step0 == 0 && strcmp(ui_sm_row_label(&sm, last), "PLAY MODE") == 0,
+              "past PLAY MODE (the last field): round to steps 1..4");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);
+        CHECK(sm.s.current_param_focus == last, "back from 1..4: PLAY MODE");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        CHECK(sm.s.current_param_focus == 0 && sm.seq_step0 == 0, "on again: 1..4");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 4);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);
+        CHECK(sm.s.current_param_focus == 0 && sm.seq_step0 == 12, "back from g: STEPS on 13..16");
+        ui_sm_seq_key(&sm, 9, 57, 1, 0);                 /* A3: steps 6..9, between the groups */
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        CHECK(sm.seq_step0 == 8, "from 6..9, Select +1 snaps on to 9..12 (%u)", sm.seq_step0);
+        ui_sm_seq_key(&sm, 9, 57, 1, 0);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);
+        CHECK(sm.seq_step0 == 4, "from 6..9, Select -1 snaps back to 5..8 (%u)", sm.seq_step0);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 3);
+        f = sm.s.current_param_focus;
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        ui_sm_seq_key(&sm, 4, 52, 1, 0);
+        CHECK(f == 1 && sm.s.current_param_focus == 0 && sm.seq_step0 == 2, "a step key from the footer: the cursor back on STEPS");
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+        CHECK(sm.seq_step0 == 2 && !sm.rowpop, "the Algorithm Encoder on STEPS: nothing, no popup");
     }
-    CHECK(ui_sm_seq_key(&sm, 27, 75, 1, 0) == 0 && ui_sm_seq_key(&sm, 28, 76, 1, 0) == 0, "keys above the 16th white key play");
-    /* the FM1 keybed starts on F3 (key 0 = note 53): the blocks are F3..B3, C4..F4, G4..C5, D5..G5 */
-    CHECK(ui_sm_seq_key(&sm, 7, 60, 1, 0) == 1 && sm.s.active_seq_lane == 1 && sm.seq_group == 0, "from F3: C4 -> lane 2, steps 1..4");
-    CHECK(ui_sm_seq_key(&sm, 26, 79, 1, 0) == 1 && sm.s.active_seq_lane == 3 && sm.seq_group == 3, "from F3: G5 -> lane 4, steps 13..16");
-    CHECK(ui_sm_seq_key(&sm, 1, 54, 1, 0) == 1 && sm.s.active_seq_lane == 3, "from F3: F#3 does nothing");
 
     /* ---- TARGET (7.4, 7.5): 4 slots for a lane target, filtered, hidden with one option ---- */
     { char b[13];
@@ -336,18 +409,19 @@ int main(void)
       ui_sm_enforce(&sm);
       CHECK(lanes[2].target_mask == 0, "one option left: the hidden TARGET is pointed at it (%u)", lanes[2].target_mask);
       sm.s.active_seq_lane = 2;
-      CHECK(ui_sm_row_state(&sm, 2) == UIROW_HIDDEN, "TARGET hidden with one option");
-      ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);
-      CHECK(sm.s.current_param_focus == 5, "the cursor skips the hidden TARGET, SCALE, ROOT (LANE -> EV -> MD): %u",
+      CHECK(ui_sm_row_state(&sm, 3) == UIROW_HIDDEN, "TARGET hidden with one option");
+      sm.s.current_param_focus = 2;                  /* EV */
+      ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+      CHECK(sm.s.current_param_focus == 6, "the cursor skips the hidden TARGET, SCALE, ROOT (EV -> MD): %u",
             sm.s.current_param_focus);
       lanes[3].event_type = SEQEV_NOTE;                /* a second NOTE lane: two options, TARGET back */
       ui_sm_enforce(&sm);
-      CHECK(ui_sm_row_state(&sm, 2) == UIROW_ACTIVE && ui_sm_seq_target_count(&sm, 2) == 2, "two NOTE lanes: TARGET shown");
+      CHECK(ui_sm_row_state(&sm, 3) == UIROW_ACTIVE && ui_sm_seq_target_count(&sm, 2) == 2, "two NOTE lanes: TARGET shown");
       ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);
-      CHECK(sm.s.current_param_focus == 2, "the cursor reaches TARGET again");
+      CHECK(sm.s.current_param_focus == 3, "the cursor reaches TARGET again");
       ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
       CHECK(lanes[2].target_mask == 3, "the Algorithm Encoder steps over lanes 2 and 3 (GATE, itself) to lane 4 (%u)", lanes[2].target_mask);
-      CHECK(strcmp(ui_sm_row_text(&sm, 2), "[ ][-][-][X]") == 0, "TARGET row text: %s", ui_sm_row_text(&sm, 2));
+      CHECK(strcmp(ui_sm_row_text(&sm, 3), "[ ][-][-][X]") == 0, "TARGET row text: %s", ui_sm_row_text(&sm, 3));
       lanes[2].event_type = SEQEV_LAYER; lanes[2].target_mask = 1;       /* lane 2 is GATE: plays on no layer */
       CHECK(strcmp(ui_sm_seq_target_text(&sm, 2, b), "[ ][X][-][ ]") == 0, "LAYER offers the layer lanes: %s", b);
       /* a layer target: text, and under SINGL one option (L1), so hidden */
@@ -355,10 +429,10 @@ int main(void)
             "NOTE lane: [L1] as text");
       sm.s.active_seq_lane = 0;
       ui_sm_enforce(&sm);
-      CHECK(ui_sm_row_state(&sm, 2) == UIROW_HIDDEN, "SINGL: a NOTE lane's TARGET is hidden");
+      CHECK(ui_sm_row_state(&sm, 3) == UIROW_HIDDEN, "SINGL: a NOTE lane's TARGET is hidden");
       perf_state.perf_mode = PERF_DUAL_SYNTH;
-      CHECK(ui_sm_row_state(&sm, 2) == UIROW_ACTIVE && ui_sm_seq_target_count(&sm, 0) == 3, "DUAL: L1 / L2 / BOTH");
-      CHECK(strcmp(ui_sm_row_label(&sm, 2), "TARGET") == 0, "the row reads TARGET");
+      CHECK(ui_sm_row_state(&sm, 3) == UIROW_ACTIVE && ui_sm_seq_target_count(&sm, 0) == 3, "DUAL: L1 / L2 / BOTH");
+      CHECK(strcmp(ui_sm_row_label(&sm, 3), "TARGET") == 0, "the row reads TARGET");
       CHECK(strcmp(ui_sm_seq_ev_name(SEQEV_NOTE), "Note") == 0 && strcmp(ui_sm_seq_mode_name(SEQ_MODE_FORWARD), "FOr") == 0, "EV / MD names");
       CHECK(strcmp(ui_sm_note_name(48, b), "C3") == 0 && strcmp(ui_sm_note_name(1, b), "C#-1") == 0 &&
             strcmp(ui_sm_note_name(127, b), "TIE") == 0, "note names"); }
@@ -458,14 +532,14 @@ int main(void)
       run(2); }
     reset();
     ui_sm_goto(&sm, UIPAGE_SEQ);
-    CHECK(ui_sm_row_state(&sm, 3) == UIROW_ACTIVE && ui_sm_row_state(&sm, 4) == UIROW_HIDDEN,
+    CHECK(ui_sm_row_state(&sm, 4) == UIROW_ACTIVE && ui_sm_row_state(&sm, 5) == UIROW_HIDDEN,
           "NOTE lane: SCALE shown, ROOT hidden under OFF");
     lanes[0].scale = SEQSCALE_GENRE;
-    CHECK(ui_sm_row_state(&sm, 4) == UIROW_HIDDEN, "ROOT hidden under GENRE (the genre's own)");
+    CHECK(ui_sm_row_state(&sm, 5) == UIROW_HIDDEN, "ROOT hidden under GENRE (the genre's own)");
     lanes[0].scale = SEQSCALE_MAJOR;
-    CHECK(ui_sm_row_state(&sm, 4) == UIROW_ACTIVE, "ROOT shown with MAJOR");
+    CHECK(ui_sm_row_state(&sm, 5) == UIROW_ACTIVE, "ROOT shown with MAJOR");
     sm.s.active_seq_lane = 1;                        /* GATE */
-    CHECK(ui_sm_row_state(&sm, 3) == UIROW_HIDDEN && ui_sm_row_state(&sm, 4) == UIROW_HIDDEN, "GATE lane: no SCALE, ROOT");
+    CHECK(ui_sm_row_state(&sm, 4) == UIROW_HIDDEN && ui_sm_row_state(&sm, 5) == UIROW_HIDDEN, "GATE lane: no SCALE, ROOT");
     sm.s.active_seq_lane = 0;
     lanes[0].steps[0].note_buffer[0] = 60;
     ui_sm_seq_knob_turn(&sm, 0, 1);

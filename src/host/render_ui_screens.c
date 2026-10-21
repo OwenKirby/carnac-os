@@ -550,7 +550,7 @@ int main(int argc, char **argv)
     shot(dir, "arp");
     go(UIPAGE_SEQ);
     shot(dir, "seq");
-    ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, 5);           /* STEPS 1..4 .. 13..16, g, then EVENT TYPE */
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     shot(dir, "rowpop_seq");

@@ -546,7 +546,7 @@ static void pu_draw_knob_tablet(UIStateMachine *sm, const PuKnob *o, uint8_t k)
     int32_t n, i, j;
     uint8_t st;
     cv_begin((uint32_t)(c1 - c0), PU_KNOB_H, SQC(BG));
-    sq_knob_tablet(x, sx, PU_KNOB_H - 3, k, PU_KNOB_Y, o->label, SQC(MID));
+    sq_knob_tablet(x, sx, PU_KNOB_H - 3, k, PU_KNOB_Y, o->label, SQC(MID), 0u);
     if (!o->none && o->text) {                       /* "088", as the menu and the dolmen show a slot */
         for (n = 0; o->text[n] && n < 3; n++) {}
         for (i = 0; i < 3 - n; i++) nm[i] = '0';

@@ -38,8 +38,9 @@ enum {                               /* the FM1's transport buttons, outside spe
 /* ui_sm_seq_key mods: the FM1's octave buttons held with a selector key (7.1 loop boundaries) */
 #define UISEQ_MOD_OCT_DOWN (1u << 0)
 #define UISEQ_MOD_OCT_UP (1u << 1)
-#define UISEQ_SELECTOR_KEYS 16u      /* 7.1: the bottom 16 white keys: 4 blocks of 4 = lane, then step group */
+#define UISEQ_SELECTOR_KEYS 16u      /* 7.1: the bottom 16 white keys: the active lane's steps 1..16 (2026-10-21) */
 #define UISEQ_NGROUP (SEQ_NSTEP / 4u)
+#define UISEQ_STEP0_MAX (SEQ_NSTEP - 4u)   /* the knob window's last start: steps 13..16 */
 #define UI_QUEUE_LEN 16u             /* power of 2; one slot stays empty, so 15 events in flight */
 
 /* ------------------------------------------------------------ pages --- */
@@ -178,7 +179,9 @@ typedef struct {
     SequencerLane *lanes;            /* SEQ_NLANE of them */
     ArpState *arp;
     MaqSeq *seq;                     /* the sequencer engine (ui_sm_attach_seq); NULL: no transport, no step record */
-    uint8_t seq_group;               /* 7.1: the 4-step group of the active lane on knobs 1..4, 0..3 (a white key's place in its block) */
+    uint8_t seq_step0;               /* 7.1: the active lane's step on knob 1, 0..UISEQ_STEP0_MAX; knobs 2..4 the next
+                                      * three (the Select Encoder moves it a group of 4 at a time, a step key to that
+                                      * step, 2026-10-21) */
     uint8_t seq_cap_held;            /* 7.2 chord capture: keys still down since the chord began */
     uint8_t seq_cap_n;               /* .. and the notes written into it so far */
     CarpSeq *carp;                   /* the ARP engine (ui_sm_attach_arp); NULL: chord keys capture but sound nothing */
@@ -288,8 +291,9 @@ const char *ui_sm_name_text(const uint8_t name[NAME_LEN], char *buf);
 void ui_sm_attach_seq(UIStateMachine *sm, MaqSeq *seq);
 
 /* A note key, on the SEQ page. key: 0 = the lowest key; note: its MIDI note; down: press 1 / release 0; mods:
- * UISEQ_MOD_*. Live (7.1): the bottom UISEQ_SELECTOR_KEYS white keys, counted from the lowest key, are four blocks of
- * four: block b selects lane b, the key's place in it the step group (key 1: steps 1..4 .. key 4: 13..16). With OCT- /
+ * UISEQ_MOD_*. Live (7.1, 2026-10-21): the bottom UISEQ_SELECTOR_KEYS white keys, counted from the lowest key, are the
+ * active lane's steps 1..16: white key n puts steps n .. n + 3 on the knobs (from key 13 on, 13..16) and the Select
+ * Encoder cursor on STEPS (the lane itself is the SEQ button's: each press on the page, the next lane). With OCT- /
  * OCT+ held, white key n (0..15) sets the active lane's loop start / end to step n instead. The black keys among them
  * do nothing. Returns 1 for every key of that span (the caller must not play it); keys above it play. Step record
  * (7.2): the key plays as normal (returns 0) and its note is written into every NOTE lane at the record step; keys
@@ -297,7 +301,7 @@ void ui_sm_attach_seq(UIStateMachine *sm, MaqSeq *seq);
 uint8_t ui_sm_seq_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t down, uint8_t mods);
 
 
-/* SEQ knob k (0..3): live, step (group * 4 + k) of the active lane; step record, lane k at the record step. The value
+/* SEQ knob k (0..3): live, step seq_step0 + k of the active lane; step record, lane k at the record step. The value
  * is the step's data byte, or a NOTE lane's first pitch (127 = TIE). Setting a NOTE lane's pitch moves the step's
  * other notes by the same amount (7.2: a chord is transposed). _turn: relative, as the FM1's knob encoders give it. */
 uint8_t ui_sm_seq_knob_get(const UIStateMachine *sm, uint8_t knob);
@@ -363,8 +367,9 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob);
  * is lowest_note: F3 on the FM1). Three levels; a key is in one mask at most: lit (bright), mid, dim (a glow). The FM1
  * maps them onto its own levels (lit, fm1_led_mid, the dim glow), so MENU > LEDS keeps working. mods: UISEQ_MOD_* held
  * now. Keys held are not in it: the caller lights those as it always does.
- *   SEQ live      the first white key of each block of four dim (the lanes' landmarks), the key of the active lane
- *                 and knob group lit.
+ *   SEQ live      the 16 white keys are the active lane's steps (2026-10-21): the playhead lit while playing, the
+ *                 four steps on the knobs mid, the other steps that play (in the loop window, not muted or skipped)
+ *                 dim.
  *   SEQ, OCT held the 16 white keys are the active lane's steps: its loop window dim, the boundary the next key
  *                 sets (OCT-: start, OCT+: end) lit while stopped, mid under the lit playhead while playing.
  *   SEQ record    the notes of the record step lit (the chord being built; 7.2, the keyboard plays as normal).

@@ -126,7 +126,7 @@ static void ar_draw_knobs(UIStateMachine *sm)
             ar_num(b, sm->arp_knob[k]);
             t = b;
         }
-        sq_knob_card(k, AR_KNOB_Y, info.label, t, sm->arp_held ? SQC(THEME) : SQC(MID));
+        sq_knob_card(k, AR_KNOB_Y, info.label, t, sm->arp_held ? SQC(THEME) : SQC(MID), 0u);
     }
     cv_blit(0, AR_KNOB_Y);
 }
