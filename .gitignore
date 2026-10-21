@@ -17,3 +17,7 @@ mvave_fm1_master_specification.txt
 sys_config.dat
 tui_after.txt
 .claude/
+
+# Python bytecode
+__pycache__/
+*.pyc

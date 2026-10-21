@@ -262,13 +262,13 @@ static void seq_slot(void)
     for (i = 0; i < ARP_NSTEP; i++) {               /* every step a chord, strummed across 4 octaves */
         ArpChordStep *st = &arp_state.steps[i];
         st->chord_root = (uint8_t)(55 + (i * 5) % 12);
-        st->gate_length = 90;
+        st->rate = ARPDIV_1_32;
         st->octave_range = ARP_NOCT - 1u;
         st->style = (uint8_t)(ARPSTYLE_UP + i % 7u);
         st->variation = (uint8_t)(i * 3u);
     }
     arp_state.sequence_length = ARP_NSTEP;
-    arp_state.time_division = ARPDIV_1_32;
+    arp_state.gate_length = 90;
     arp_state.target_layer = ARPLAYER_BOTH;
 }
 
@@ -305,6 +305,7 @@ static void setup(const PtScen *s)
             synth_midi_3(0x90, (uint8_t)(48 + i * 3), (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
     } else if (s->kind == K_SEQ) {
         maq_set_playing(synth_seq(), 1);
+        carp_set_playing(synth_arp(), 1);           /* (the ARP has its own transport since 2026-10-17) */
     }
 }
 

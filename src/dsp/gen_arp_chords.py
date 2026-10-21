@@ -6,7 +6,7 @@
 A chord key plays a 4-voice chord built on the key itself: the key's note is the bass, and the genre names the chord
 quality for each of the 12 pitch classes (C .. B, as in 8.3's table, whose rows climb C3, C#3, D3, D#3). The stored form
 is 4 intervals above that bass, so the same table serves every octave and the FM1's OCT buttons move chords with the
-keys. 83 genres x 12 pitch classes x 4 bytes = 3,984 B of const.
+keys. 84 genres (spec 8.2's 83, then Phrygian) x 12 pitch classes x 4 bytes = 4,032 B of const.
 
 Spec 8.3 lists only 10 genres x 4 keys, some garbled (Pop 1's third chord doubles C4 and has no D). Its sane voicings
 are kept where they are distinctive (Trad Maj, Trad Min 1 / 2, Pop Min 1, Jazz 1 / 2's first keys); every other
@@ -130,7 +130,11 @@ GENRES = [
     ("Classical_4", row("maj 7 m6 maj 7 m6 dim7 7b9 maj min 7 dim7"), "open", 55),
     ("Modern_1", row("M7#11 9sus4 sus2 M7#11 sus2 M7#11 9sus4 sus4 M7#11 sus2 M7#11 9sus4"), "open", 57),
     ("Modern_2", row("add9 madd9 madd9 add9 madd9 add9 mM7 add9 add9 madd9 add9 madd9"), "close", 64),
+    # added after spec 8.2's list (2026-10-17, the default genre): C Phrygian's seventh chords on its keys (i, bII maj7,
+    # bIII7, iv7, v half-diminished, bVI maj7, bvii7), a diminished seventh on the five keys outside it
+    ("Phrygian", row("min M7 dim7 7 dim7 m7 dim7 m7b5 M7 dim7 m7 dim7"), "close", 55),
 ]
+EXTRA_NAMES = ["Phrygian"]           # genres after spec 8.2's, in this order
 
 # spec 8.3 rows kept as written (intervals from the bass, read off the C3 .. D#3 rows)
 SPEC = {
@@ -182,7 +186,7 @@ def voice(q, how, w, pc):
 
 def build():
     names = [g[0] for g in GENRES]
-    assert names == SPEC_NAMES, "genre order must be spec 8.2's"
+    assert names == SPEC_NAMES + EXTRA_NAMES, "genre order must be spec 8.2's, then the additions"
     table = []
     for name, quals, how, w in GENRES:
         chords = []
@@ -208,7 +212,7 @@ SCALE_PICK = {
     "Utility_Min": ("MINOR", 0), "Utility_m7": ("MINOR", 0), "Utility_m9": ("MINOR", 0), "Utility_m9_11": ("MINOR", 0),
     "Techno_1": ("MINOR", 0), "Techno_2": ("MINOR", 0),
     "House_1": ("DORIAN", 0), "House_2": ("DORIAN", 0), "House_3": ("DORIAN", 0), "Neo_Soul_2": ("DORIAN", 0),
-    "Funk_1": ("MIXOLYDIAN", 0), "Neo_Soul_7": ("MIXOLYDIAN", 0),
+    "Funk_1": ("MIXOLYDIAN", 0), "Neo_Soul_7": ("MIXOLYDIAN", 0), "Phrygian": ("PHRYGIAN", 0),
 }
 
 

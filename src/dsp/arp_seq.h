@@ -4,16 +4,23 @@
  *
  * Every carp_ name: on the FM1 this file is #included into Felucca's unity build, whose seq.c has its own arp_* statics.
  *
- * Timing: carp_frame() runs once per audio frame inside the render, right after maq_frame(), on the same transport:
- * PLAY runs the MAQ and the ARP together, and both take their first step on the same 24 PPQN pulse. A step lasts one
- * TIME DIVISION (2 .. 1/32) and is split into the cells of its rhythm (8.3 rhythm_variation_table: 4 cells, or 3 for a
- * triplet B column). o strikes, ~ holds the strike before it, _ rests. Cells, gates and strums are scheduled in frames
- * from the pulse period, so they stay sample-accurate at any tempo.
+ * Timing: carp_frame() runs once per audio frame inside the render, right after maq_frame(), on the same clock. The
+ * ARP has its own transport (2026-10-17; carp_set_playing): PLAY on the ARP page starts and stops it alone, on the
+ * SEQ page the MAQ alone, on any other page both. Started together, both take their first step on the same 24 PPQN
+ * pulse; one started while the other plays waits for the other's next bar (MAQ_SYNC_PULSES from its first step), so
+ * the two stay on one grid. Under CLOCK SOURCE MIDI, MIDI Start starts it from the top and MIDI Stop stops it, as
+ * the MAQ. A step lasts its own RATE (knob 1, ARPDIV_*: 2 .. 1/32) and is split into the cells of its rhythm (8.3
+ * rhythm_variation_table: 4 cells, or 3 for a triplet B column). o strikes, ~ holds the strike before it, _ rests.
+ * Cells, gates and strums are scheduled in frames from the pulse period, so they stay sample-accurate at any tempo.
  *
  * A strike plays the step's chord as its STYLE orders it: BLOCK the whole chord, UP / DOWN / UP-DN / DN-UP / RANDOM one
  * note of the chord spread over OCTAVE RANGE octaves (the order runs on across steps, from the transport start), STRUM UP
  * / DN the whole chord with its notes staggered over the first half of the cell. BLOCK and STRUM move up an octave per
- * strike within the range. A strike lasts its cells (the o and the ~ after it) x (GATE + 1) / 128; GATE 127 is legato.
+ * strike within the range. A strike lasts its cells (the o and the ~ after it) x (GATE + 1) / 128 (the pattern's GATE);
+ * GATE 127 is legato. HOLD strikes the chord once at the step's start and holds it to the step's end, whatever the
+ * GATE; a HOLD step whose chord is the one already sounding (struck in full) holds it on, unstruck, so a chord repeated
+ * step after step is never retriggered by the clock. Its RHYTHM is the strike's strum instead (carp_hold_strum): none,
+ * or the notes upward / downward, 1 .. 12 96ths of a beat apart (5 .. 63 ms at 120 BPM: slower with the tempo).
  * An accented step's first strike plays at ACCENT VEL instead of the base velocity.
  *
  * A TIE step (ARP_CHORD_TIE) carries on the chord before it with that step's knobs: a one-note style runs its rhythm again
@@ -22,10 +29,10 @@
  * the transport start, rests.
  *
  * A chord key held outside a capture (carp_hold) arpeggiates its own chord live, while the captured pattern is not playing
- * (transport stopped, or no chord in the pattern's SEQ LENGTH steps): TIME DIVISION steps of the live knob values
- * (carp_set_knobs: GATE, OCTAVE, STYLE, RHYTHM) at the key's velocity, the first step on the key's own frame (stopped) or
- * at once inside the running step (playing). Gate, octave and style changes take effect on the next strike, the rhythm
- * on the next step. With the captured pattern playing, a held chord key sounds its chord as a block, as a capture does.
+ * (transport stopped, or no chord in the pattern's SEQ LENGTH steps): steps of the live knob values (carp_set_knobs:
+ * RATE, OCTAVE, STYLE, RHYTHM; the pattern's GATE) at the key's velocity, the first step on the key's own frame (stopped) or
+ * at once inside the running step (playing). Gate, octave and style changes take effect on the next strike, the rate
+ * and the rhythm on the next step. With the captured pattern playing, a held chord key sounds its chord as a block, as a capture does.
  *
  * The UI never sends notes itself: a chord key is a request (carp_audition / carp_hold) and so is its transposition
  * (carp_set_transpose); the engine applies both on its next frame, in the audio context, so no menu navigation can
@@ -64,7 +71,8 @@ typedef struct {
     MaqMidiOut out;
     /* the running step */
     uint8_t pos;                     /* step on the playhead, CARP_POS_NONE stopped */
-    uint8_t ticks_left;              /* clock pulses until the next step (TIME DIVISION 2 = 192 at most) */
+    uint8_t ticks_left;              /* clock pulses until the next step (RATE 2 = 192 at most, a bar's wait 96) */
+    uint8_t step_ticks;              /* the running step's length in pulses (its RATE) */
     uint8_t cells[CARP_NCELL], ncell, cell;   /* the step's rhythm and the next cell to fire */
     uint8_t ncell_var;               /* the rhythm's cell count (a tied step runs it again) */
     uint8_t gate, oct, style;        /* the step's knob values, range-checked */
@@ -79,6 +87,7 @@ typedef struct {
     uint8_t on_ch[2];
     uint8_t ch[2], vel;              /* where and how loud the step strikes */
     uint8_t accent, strike_vel;      /* the step's first strike is still to come accented; the running strike's velocity */
+    uint8_t hold_strum;              /* a HOLD step's strum (its RHYTHM, carp_hold_strum) */
     uint8_t tie_hold;                /* a BLOCK / strum chord sustains into the TIE step after it */
     /* a chord key's chord, sounding while the key is held */
     uint8_t aud_on[ARP_CHORD_NOTES], aud_ch[2];
@@ -87,7 +96,7 @@ typedef struct {
     /* a chord key held outside a capture: arpeggiated live (carp_hold) */
     uint8_t live_root, live_vel;     /* the held key (CARP_NOTE_NONE: none) and its velocity */
     uint8_t live;                    /* the running step is the held key's, not the pattern's */
-    volatile uint32_t req_knobs;     /* UI: the live knob values, one store: gate | oct << 8 | style << 16 | var << 24 */
+    volatile uint32_t req_knobs;     /* UI: the live knob values, one store: rate | oct << 8 | style << 16 | var << 24 */
     volatile int8_t req_transpose;   /* UI request: semitones from the chord zone's first key */
     int8_t transpose;
     int8_t follow;                   /* TRANSPOSE MAQ: the next pulse's step root, from the first sounding step's */
@@ -95,7 +104,9 @@ typedef struct {
     uint8_t shown[ARP_CHORD_NOTES], nshown;
     uint8_t shown_oct, shown_style;  /* .. and how it plays: octaves 1..ARP_NOCT, ARPSTYLE_* (a chord key's block: 1, BLOCK) */
     /* transport */
-    uint8_t running;
+    volatile uint8_t req_play;       /* UI request (carp_set_playing); MIDI Start / Stop write it too */
+    uint8_t running, ext_running_seen;
+    uint32_t origin;                 /* the pulse count the pattern's first step played on (or will) */
     uint32_t pulse_seen, start_seen;
     uint32_t frame;
     uint32_t rng;                    /* xorshift32, never 0 */
@@ -104,19 +115,23 @@ typedef struct {
 /* st: the live pattern; out: where notes go (synth_midi_3). Stopped, nothing sounding. */
 void carp_init(CarpSeq *a, ArpState *st, const MasterPerformancePreset *perf, MaqMidiOut out);
 
-/* audio context: once per frame, after maq_frame(). run: the shared transport is free running (maq_free_running). */
-void carp_frame(CarpSeq *a, uint32_t frame, uint8_t run);
+/* audio context: once per frame, after maq_frame(). q: the MAQ, whose grid a start while it plays waits for (NULL: none) */
+void carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q);
 
 /* main-loop context: requests applied on the next frame */
 void carp_audition(CarpSeq *a, uint8_t root, uint8_t vel);   /* sound root's chord; vel 0 releases it (or a hold) */
 void carp_hold(CarpSeq *a, uint8_t root, uint8_t vel);       /* arpeggiate root's chord live while held; vel 0 releases */
 void carp_set_knobs(CarpSeq *a, const uint8_t knobs[4]);     /* the live knob values a held key plays (2.2) */
+void carp_set_playing(CarpSeq *a, uint8_t on);               /* the ARP's transport: start from step 1 / stop */
 void carp_set_transpose(CarpSeq *a, int8_t semitones);
 void carp_latch_up(CarpSeq *a, uint8_t root);    /* LATCH: the held key's block chord off, its hold kept */
 
 /* for the MAQ (through the render) and the display */
 int8_t carp_maq_transpose(const CarpSeq *a);       /* the MAQ NOTE lanes' offset: transposition + chord root, 0 with TRANSPOSE MAQ off */
 int8_t carp_transpose(const CarpSeq *a);           /* the requested transposition */
+uint8_t carp_playing(const CarpSeq *a);            /* requested state: the UI shows it at once */
+uint8_t carp_running(const CarpSeq *a);            /* applied state (the MAQ's sync reads it, with carp_origin) */
+uint32_t carp_origin(const CarpSeq *a);            /* the pulse count of the pattern's first step */
 uint8_t carp_pos(const CarpSeq *a);                /* step on the playhead, CARP_POS_NONE stopped */
 uint8_t carp_shown(const CarpSeq *a, uint8_t out[ARP_CHORD_NOTES]);   /* the chord sounding last, ascending; its size */
 uint8_t carp_shown_shape(const CarpSeq *a, uint8_t *style);  /* .. its octave range 1..ARP_NOCT, and its style */
@@ -129,6 +144,8 @@ uint8_t carp_rec_step(const CarpSeq *a);
 uint8_t carp_chord_notes(uint8_t genre, uint8_t root, uint8_t out[ARP_CHORD_NOTES]);
 uint8_t carp_rhythm(uint8_t variation, uint8_t cells[CARP_NCELL]);
 uint16_t carp_div_ticks(uint8_t division);
+/* a HOLD step's RHYTHM as its strum: the gap between notes in 96ths of a beat (0: all at once), *up 1 / 0 */
+uint8_t carp_hold_strum(uint8_t variation, uint8_t *up);
 
 #ifdef __cplusplus
 }

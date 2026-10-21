@@ -35,6 +35,7 @@ extern "C" {
 #define MAQ_POS_NONE 0xFFu           /* a lane before its first step */
 #define MAQ_GATE_DEFAULT 64u         /* no GATE lane on it: half the step */
 #define MAQ_PULSES_PER_FRAME_MAX 4u  /* a MIDI clock burst catches up at most this many pulses in one frame */
+#define MAQ_SYNC_PULSES 96u          /* a bar of 4/4: the MAQ or the ARP started while the other plays waits for its next */
 
 /* where a lane's events go: a channel message, as synth_midi_3 takes it (2-byte messages carry data2 = 0) */
 typedef void (*MaqMidiOut)(uint8_t status, uint8_t data1, uint8_t data2);
@@ -72,9 +73,13 @@ typedef struct {
     volatile uint8_t req_rec_step;
     volatile int8_t ext_transpose;   /* the ARP's chord-key transposition (8.2 TRANSPOSE MAQ), set by the render */
     volatile uint8_t genre;          /* the ARP's GENRE BANK, for a NOTE lane on SCALE = GENRE (seq_scale.h) */
+    volatile uint8_t sync_run;       /* the ARP's transport, set by the render (maq_set_sync): running .. */
+    volatile uint32_t sync_origin;   /* .. and the pulse count of its first step */
     /* what maq_frame has applied */
     uint8_t playing, rec, rec_step;
     uint8_t ext_running_seen;
+    uint32_t origin;                 /* the pulse count the lanes' first steps played on (or will) */
+    uint32_t pulse_base;             /* the pulse count before this frame's pulses */
     uint32_t pulse_seen, start_seen;
     uint32_t frame;
     uint32_t rng;                    /* xorshift32, never 0 */
@@ -87,7 +92,8 @@ void maq_init(MaqSeq *q, SequencerLane *lanes, const MasterPerformancePreset *pe
 void maq_frame(MaqSeq *q, uint32_t frame);
 
 /* main-loop context: requests the engine applies on its next frame. Under CLOCK SOURCE MIDI, MIDI Start also starts
- * the sequencer from the top and MIDI Stop stops it. */
+ * the sequencer from the top and MIDI Stop stops it. A start plays every lane's first step on the next pulse or, the ARP
+ * playing (maq_set_sync), on the ARP's next bar (MAQ_SYNC_PULSES from its first step). */
 void maq_set_playing(MaqSeq *q, uint8_t on);
 void maq_set_record(MaqSeq *q, uint8_t on);        /* 7.2: lanes lock to the record step (playing: retriggered) */
 void maq_set_rec_step(MaqSeq *q, uint8_t step);    /* the record step 0..15 (auditioned when it changes) */
@@ -101,7 +107,10 @@ uint8_t maq_playing(const MaqSeq *q);              /* requested state: the UI sh
 uint8_t maq_recording(const MaqSeq *q);
 uint8_t maq_rec_step(const MaqSeq *q);
 uint8_t maq_lane_pos(const MaqSeq *q, uint8_t lane);   /* MAQ_POS_NONE when stopped */
-uint8_t maq_free_running(const MaqSeq *q);         /* applied state: playing and not in step record (the ARP follows it) */
+uint8_t maq_free_running(const MaqSeq *q);         /* applied state: playing and not in step record (the ARP syncs to it) */
+uint32_t maq_origin(const MaqSeq *q);              /* the pulse count of the lanes' first steps */
+/* the ARP's transport, for a start's bar sync (set by the render after the ARP's frame, so a frame late) */
+void maq_set_sync(MaqSeq *q, uint8_t arp_running, uint32_t arp_origin);
 
 /* 8.2 TRANSPOSE MAQ: semitones added to every NOTE lane's pitches from the next step struck. The render sets it after
  * the ARP's frame, so it lands one frame later (8.4's 1-cycle mask). */
@@ -116,6 +125,9 @@ void maq_loop_window(const SequencerLane *lane, uint8_t *lo, uint8_t *hi);
 uint8_t maq_value_to_layer(uint8_t value);         /* LAYER lane value -> SEQ_TGT_* */
 uint8_t maq_timing_ticks(uint8_t value);           /* TIMING lane value -> ticks, 0 = skip */
 uint8_t maq_ratchet_count(uint8_t value);          /* RATCHET lane value -> 1..4 */
+/* a start's wait in pulses (1..MAQ_SYNC_PULSES): to the next bar of the other transport, whose first step played on
+ * pulse count `origin`, from `base` (the count before this frame's pulses: the next one is base + 1) */
+uint32_t maq_sync_wait(uint32_t origin, uint32_t base);
 
 #ifdef __cplusplus
 }

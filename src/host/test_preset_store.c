@@ -2,9 +2,11 @@
  * program: clears bits only), with X0X's storage.c hooks stood in: a fresh store over the old wavetable image reads
  * empty; every bank saves and loads back (the last, part-filled chunk too); saves take the two copies in turn; a save
  * cut off at any point (after the erase, during the payload, before the header) leaves the save before it; a chunk of
- * another layout version, or with a damaged payload, is left out.
- *   gcc -O1 -Wall -Wextra -Isrc -Isrc/dsp -Isrc/hardware src/host/test_preset_store.c src/dsp/wavetables_image.c \
- *       -o test_preset_store && ./test_preset_store
+ * another layout version, or with a damaged payload, is left out. The performances (2026-10-17: whole, in flash only)
+ * read back slot by slot and a save keeps the chunk's others; the 128-slot layout's sequence chunks are left out. Then
+ * the factory bank (src/hardware/factory_presets.c): every sequence, arp pattern and performance in range and in key.
+ *   gcc -O1 -Wall -Wextra -Isrc -Isrc/dsp -Isrc/hardware src/host/test_preset_store.c src/dsp/preset.c \
+ *       src/dsp/seq_scale.c src/dsp/arp_chords.c src/dsp/wavetables_image.c -o test_preset_store && ./test_preset_store
  * Exit status: the number of failed checks. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +16,9 @@
 #include "dsp/preset.h"
 #include "dsp/flash_record.h"
 #include "dsp/wavetables.h"
+#include "dsp/midi_clock.h"
+#include "dsp/seq_scale.h"
+#include "dsp/arp_chords.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
@@ -53,13 +58,11 @@ static uint32_t st_crc32(const void *p, uint32_t n)  /* storage.c's, zlib CRC-32
     return ~c;
 }
 
-/* ---- the glue's pieces the fragment uses */
-#define SYN_SLOTS 128u
-EngineState patch_bank[PATCH_SLOTS];
-static MasterPerformancePreset syn_perf_bank[SYN_SLOTS];
-static SequencerLane syn_seq_bank[SYN_SLOTS][SEQ_NLANE];
-static ArpState syn_arp_bank[SYN_SLOTS];
-static uint8_t syn_used[UISAVE_COUNT][SYN_SLOTS / 8u];
+/* ---- the glue's pieces the fragments use (patch_bank: preset.c's) */
+static SequencerLane syn_seq_bank[BANK_SLOTS][SEQ_NLANE];
+static ArpState syn_arp_bank[BANK_SLOTS];
+static uint8_t syn_perf_name[BANK_SLOTS][NAME_LEN];
+static uint8_t syn_used[UISAVE_COUNT][PATCH_SLOTS / 8u];
 static UIStateMachine sm;
 static uint8_t flash_ok = 1;
 static int done_calls, done_ok;
@@ -72,16 +75,38 @@ static uint8_t syn_slot_used(uint8_t target, uint8_t slot)
 }
 
 #include "preset_store_fm1.c"
+#include "factory_presets.c"
 
 extern const uint8_t wavetable_image_host[WT_STORE_IMAGE_LEN];
 
+#define PERF UISAVE_WHOLE_PERF
 static uint8_t *slot_ptr(uint32_t k, uint32_t s) { return PS_KIND[k].bank + s * PS_KIND[k].size; }
-static void fill(uint32_t k, uint32_t s, uint8_t v) { memset(slot_ptr(k, s), v, PS_KIND[k].size); }
+static void fill(uint32_t k, uint32_t s, uint8_t v)
+{
+    if (k == PERF) memset(&ps_perf_save, v, sizeof ps_perf_save);
+    else memset(slot_ptr(k, s), v, PS_KIND[k].size);
+}
+/* a performance of v in every byte as it comes back from flash (its patches packed and unpacked) */
+static void perf_expect(uint8_t v, WholePerformance *w)
+{
+    static uint8_t rec[WHOLE_PERF_STORED_SIZE];
+    memset(w, v, sizeof *w);
+    whole_perf_pack(w, rec);
+    whole_perf_unpack(rec, w);
+}
 /* slot s of bank k holds v in every byte; a patch that came back from flash: as v packed and unpacked (its two unread
- * bytes 0, its name 6 bits a character) */
+ * bytes 0, its name 6 bits a character); a performance: read from flash, and its name known */
 static int holds(uint32_t k, uint32_t s, uint8_t v)
 {
     uint32_t i;
+    if (k == PERF) {
+        WholePerformance got, want;
+        uint8_t name[NAME_LEN];
+        memset(name, v, sizeof name);
+        perf_expect(v, &want);
+        return ps_perf_read(s, &got) == 0 && memcmp(&got, &want, sizeof got) == 0 &&
+               memcmp(syn_perf_name[s], name, NAME_LEN) == 0;
+    }
     for (i = 0; i < PS_KIND[k].size && slot_ptr(k, s)[i] == v; i++) {}
     if (i == PS_KIND[k].size) return 1;
     if (k != UISAVE_PATCH_PRESET) return 0;
@@ -95,13 +120,20 @@ static int holds(uint32_t k, uint32_t s, uint8_t v)
 static void wipe_ram(void)                           /* a power cycle: the banks back to a known filler */
 {
     for (uint32_t k = 0; k < UISAVE_COUNT; k++)
-        for (uint32_t s = 0; s < SYN_SLOTS; s++) fill(k, s, 0xEE);
+        if (k != PERF)
+            for (uint32_t s = 0; s < PS_KIND[k].slots; s++) fill(k, s, 0xEE);
+    memset(syn_perf_name, 0xEE, sizeof syn_perf_name);
+    memset(&ps_perf_save, 0xEE, sizeof ps_perf_save);
     memset(syn_used, 0, sizeof syn_used);
 }
 /* a SAVE as syn_commit makes it, then the main loop's write: commit_done's ok */
 static int save(uint32_t k, uint32_t s, uint8_t v)
 {
     fill(k, s, v);
+    if (k == PERF) {
+        ps_perf_save_slot = (uint8_t)s;
+        memcpy(syn_perf_name[s], ps_perf_save.perf.name, NAME_LEN);
+    }
     syn_used[k][s >> 3] |= (uint8_t)(1u << (s & 7u));
     ps_dirty |= 1u << (PS_KIND[k].first + s / PS_PER(PS_KIND[k].stored));
     ps_commit_wait = 1;
@@ -114,8 +146,95 @@ static int used_count(void)
 {
     int n = 0;
     for (uint32_t k = 0; k < UISAVE_COUNT; k++)
-        for (uint32_t s = 0; s < SYN_SLOTS; s++) n += syn_slot_used((uint8_t)k, (uint8_t)s);
+        for (uint32_t s = 0; s < PS_KIND[k].slots; s++) n += syn_slot_used((uint8_t)k, (uint8_t)s);
     return n;
+}
+/* a chunk header as a firmware wrote it, over an erased chunk (copy 0) with the payload pay */
+static void put_chunk(uint32_t chunk, uint8_t kind, uint8_t c, uint8_t ver, const uint8_t *pay, uint32_t len)
+{
+    PsHdr h;
+    st_erase(ps_sector(chunk, 0u));
+    st_erase(ps_sector(chunk, 1u));
+    memcpy(nor + ps_sector(chunk, 0u) + PS_PAYLOAD_OFF, pay, len);
+    memset(&h, 0xFF, sizeof h);
+    h.magic = PS_MAGIC;
+    h.kind = kind;
+    h.chunk = c;
+    h.ver = ver;
+    h.seq = 1u;
+    h.len = len;
+    h.crc = st_crc32(pay, len);
+    h.hcrc = st_crc32(&h, sizeof h - 4u);
+    memcpy(nor + ps_sector(chunk, 0u), &h, sizeof h);
+}
+
+/* the factory bank: every slot in range, in key, and whole */
+static void test_factory(void)
+{
+    static const struct { uint8_t g; const char *name; } G[] = {
+        {FG_TRAD_MAJ, "Trad_Maj"}, {FG_TRAD_MIN_1, "Trad_Min_1"}, {FG_TRAD_MIN_2, "Trad_Min_2"}, {FG_OCT, "Oct_Stack"},
+        {FG_4TH, "4th_Stack"}, {FG_5TH, "5th_Stack"}, {FG_MIN, "Utility_Min"}, {FG_M7, "Utility_M7"},
+        {FG_MIN7, "Utility_m7"}, {FG_MIN9, "Utility_m9"}, {FG_POP_INV, "Pop_Inversions"}, {FG_CINE_1, "Cinematic_1"},
+        {FG_CINE_2, "Cinematic_2"}, {FG_CINE_3, "Cinematic_3"}, {FG_CINE_5, "Cinematic_5"}, {FG_CINE_6, "Cinematic_6"},
+        {FG_CLASSICAL_1, "Classical_1"}, {FG_MODERN_1, "Modern_1"}};
+    uint32_t s, l, i, arp_led = 0;
+    for (i = 0; i < sizeof G / sizeof G[0]; i++)
+        CHECK(strcmp(arp_genre_names[G[i].g], G[i].name) == 0, "genre %u is %s, not %s", G[i].g,
+              arp_genre_names[G[i].g], G[i].name);
+    memset(syn_used, 0, sizeof syn_used);
+    factory_install();
+    CHECK(used_count() == 4 * (int)FP_N, "factory_install marked %d slots, not %u", used_count(), 4u * FP_N);
+    for (s = 0; s < FP_N; s++) {
+        WholePerformance w, back;
+        static uint8_t rec[WHOLE_PERF_STORED_SIZE];
+        const FactoryArp *fa = &FA_TAB[s];
+        CHECK(factory_perf(s, &w) == 0, "factory_perf %u", s);
+        CHECK(memcmp(&w.engine[0], &patch_bank[s], sizeof(EngineState)) == 0 &&
+              memcmp(w.seq, syn_seq_bank[s], sizeof w.seq) == 0, "performance %u: not its patch and sequence", s);
+        CHECK(memcmp(w.perf.name, syn_perf_name[s], NAME_LEN) == 0 && memcmp(w.perf.name, patch_bank[s].name, NAME_LEN) == 0,
+              "performance %u: its name", s);
+        CHECK(fa->maq ? memcmp(&w.arp, &syn_arp_bank[s], sizeof w.arp) == 0 && w.perf.arp_link == s
+                      : w.arp.steps[0].chord_root == ARP_CHORD_EMPTY && w.perf.arp_link == 127u,
+              "performance %u: its arp pattern (ARP-led %u)", s, fa->maq);
+        CHECK((FS_TAB[s].prescale == 0u) == (fa->maq != 0u), "slot %u: an ARP-led performance has an arp bass", s);
+        CHECK(w.perf.int_tempo + MIDI_CLOCK_BPM_BASE == fa->bpm && fa->bpm >= 60u && fa->bpm <= 130u, "slot %u tempo", s);
+        arp_led += fa->maq;
+        whole_perf_pack(&w, rec);
+        whole_perf_unpack(rec, &back);
+        whole_perf_pack(&back, rec);
+        whole_perf_unpack(rec, &w);
+        CHECK(memcmp(&w, &back, sizeof w) == 0, "performance %u: not the same through flash twice", s);
+        /* the sequence: every lane in range; lane 1's notes in its scale (the genre's, as the MAQ reads it) */
+        for (l = 0; l < SEQ_NLANE; l++) {
+            const SequencerLane *ln = &syn_seq_bank[s][l];
+            CHECK(ln->event_type < SEQEV_COUNT && ln->target_mask <= seq_target_max(ln->event_type) &&
+                  ln->prescale >= SEQ_PRESCALE_MIN && ln->prescale <= SEQ_PRESCALE_MAX &&
+                  ln->playback_mode < SEQ_MODE_COUNT && ln->scale < SEQSCALE_COUNT && ln->loop_end == SEQ_NSTEP - 1u,
+                  "sequence %u lane %u out of range", s, l);
+            CHECK((l == 0u) == (ln->event_type == SEQEV_NOTE), "sequence %u lane %u: NOTE only on lane 1", s, l);
+            for (i = 0; i < SEQ_NSTEP; i++) {
+                const SequencerStep *st = &ln->steps[i];
+                uint8_t n = st->note_buffer[0];
+                uint16_t mask = seq_lane_scale_mask(ln, syn_arp_bank[s].current_genre_bank);
+                CHECK(st->value <= VAL_MAX && (n <= VAL_MAX || n == SEQ_NOTE_TIE), "sequence %u lane %u step %u", s, l, i);
+                if (l == 0u && n != SEQ_NOTE_TIE && !(st->flags & SEQ_FLAG_MUTE))
+                    CHECK(seq_scale_snap(n, mask) == n, "sequence %u step %u: note %u not in its scale", s, i, n);
+            }
+        }
+        /* the arp pattern */
+        const ArpState *a = &syn_arp_bank[s];
+        CHECK(a->current_genre_bank < ARP_GENRE_COUNT && a->gate_length <= VAL_MAX && a->sequence_length == ARP_NSTEP &&
+              a->target_layer == ARPLAYER_L1 && a->transpose_maq_option == fa->maq, "arp %u out of range", s);
+        CHECK(ARP_ROOT_IS_CHORD(a->steps[0].chord_root), "arp %u starts on a chord", s);
+        for (i = 0; i < ARP_NSTEP; i++) {
+            const ArpChordStep *c = &a->steps[i];
+            CHECK((ARP_ROOT_IS_CHORD(c->chord_root) || c->chord_root == ARP_CHORD_TIE) && c->octave_range < ARP_NOCT &&
+                  c->style < ARPSTYLE_COUNT && c->variation < ARP_NVAR && c->accent <= 1u && c->rate < ARPDIV_COUNT,
+                  "arp %u step %u out of range", s, i);
+        }
+    }
+    printf("factory: %u performances, %u ARP-led, %u SEQ-led\n", FP_N, arp_led, FP_N - arp_led);
+    CHECK(factory_perf(FP_N, &(WholePerformance){0}) == -1, "factory_perf past the bank");
 }
 
 int main(void)
@@ -123,53 +242,76 @@ int main(void)
     /* the flash as an FM1 left by the old firmware: the wavetable image at 0xA0000, the rest erased */
     memset(nor, 0xFF, sizeof nor);
     memcpy(nor + WT_STORE_BASE, wavetable_image_host, WT_STORE_IMAGE_LEN);
-    printf("chunks: arp %u, seq %u, patch %u, perf %u = %u (%u KiB)\n", (unsigned)PS_N_ARP, (unsigned)PS_N_SEQ,
-           (unsigned)PS_N_PATCH, (unsigned)PS_N_PERF, (unsigned)PS_NCHUNK, (unsigned)(PS_NCHUNK * 8u));
+    printf("chunks: arp %u, seq %u, perf %u, patch %u in %u (%u KiB)\n", (unsigned)PS_N_ARP, (unsigned)PS_N_SEQ,
+           (unsigned)PS_N_PERF, (unsigned)PS_N_PATCH, (unsigned)PS_NCHUNK, (unsigned)(PS_NCHUNK * 8u));
     wipe_ram();
     ps_load();
     CHECK(used_count() == 0 && holds(UISAVE_PATCH_PRESET, 0, 0xEE), "the old wavetable image read as presets");
 
     /* every bank: its first slot, one in the middle, its last (the part-filled last chunk) */
-    static const uint8_t SL[3] = {0, 61, 127};
+    static const uint8_t SL[2][3] = {{0, 13, BANK_SLOTS - 1u}, {0, 61, PATCH_SLOTS - 1u}};
+#define SLOT(k, i) SL[(k) == UISAVE_PATCH_PRESET][i]
     for (uint32_t k = 0; k < UISAVE_COUNT; k++)
         for (int i = 0; i < 3; i++)
-            CHECK(save(k, SL[i], (uint8_t)(0x10 + k * 16 + i)), "save bank %u slot %u", (unsigned)k, SL[i]);
+            CHECK(save(k, SLOT(k, i), (uint8_t)(0x10 + k * 16 + i)), "save bank %u slot %u", (unsigned)k, SLOT(k, i));
     wipe_ram();
     ps_load();
     CHECK(used_count() == 12, "after a power cycle %d slots used, not 12", used_count());
     for (uint32_t k = 0; k < UISAVE_COUNT; k++)
         for (int i = 0; i < 3; i++)
-            CHECK(syn_slot_used((uint8_t)k, SL[i]) && holds(k, SL[i], (uint8_t)(0x10 + k * 16 + i)),
-                  "bank %u slot %u did not come back", (unsigned)k, SL[i]);
+            CHECK(syn_slot_used((uint8_t)k, SLOT(k, i)) && holds(k, SLOT(k, i), (uint8_t)(0x10 + k * 16 + i)),
+                  "bank %u slot %u did not come back", (unsigned)k, SLOT(k, i));
     CHECK(holds(UISAVE_PATCH_PRESET, 1, 0xEE), "a slot never saved was overwritten");
+    {
+        WholePerformance w;
+        CHECK(ps_perf_read(1, &w) == -1 && ps_perf_read(BANK_SLOTS, &w) == -1, "a performance never saved read back");
+    }
 
-    /* the two copies in turn: a chunk's headers' seq 1 and 2 after two saves, then 3 over the first */
+    /* the two copies in turn: the arp chunk's headers' seq 2 and 3 after three saves */
     uint32_t ch = PS_KIND[UISAVE_ARP_SEQ].first;
     PsHdr a, b;
     st_read(ps_sector(ch, 0), &a, sizeof a);
     st_read(ps_sector(ch, 1), &b, sizeof b);
-    CHECK(a.magic == PS_MAGIC && b.magic == PS_MAGIC && ((a.seq == 1 && b.seq == 2) || (a.seq == 2 && b.seq == 1)),
-          "arp chunk 0's copies after 2 saves: seq %u / %u", a.seq, b.seq);
+    CHECK(a.magic == PS_MAGIC && b.magic == PS_MAGIC && ((a.seq == 3 && b.seq == 2) || (a.seq == 2 && b.seq == 3)),
+          "the arp chunk's copies after 3 saves: seq %u / %u", a.seq, b.seq);
 
     /* a save cut off: after the erase, after part of the payload, before the header; each leaves the save before */
     for (int at = 0; at < 3; at++) {
         cut = 0;
         progs_left = at == 0 ? 0 : at == 1 ? 3 : (int)((PS_USED_BYTES + PS_PER(PS_KIND[UISAVE_SEQ_SETTINGS].size) *
                                                          PS_KIND[UISAVE_SEQ_SETTINGS].size + 255u) / 256u);
-        CHECK(!save(UISAVE_SEQ_SETTINGS, 61, 0x77), "a save cut off (case %d) reported SAVED", at);
+        CHECK(!save(UISAVE_SEQ_SETTINGS, 13, 0x77), "a save cut off (case %d) reported SAVED", at);
         progs_left = -1;
         cut = 0;
         wipe_ram();
         ps_load();
-        CHECK(syn_slot_used(UISAVE_SEQ_SETTINGS, 61) && holds(UISAVE_SEQ_SETTINGS, 61, 0x10 + 16 + 1),
+        CHECK(syn_slot_used(UISAVE_SEQ_SETTINGS, 13) && holds(UISAVE_SEQ_SETTINGS, 13, 0x10 + 16 + 1),
               "a save cut off (case %d) lost the save before it", at);
         CHECK(used_count() == 12, "a save cut off (case %d): %d slots used", at, used_count());
     }
     /* .. and the next save goes through */
-    CHECK(save(UISAVE_SEQ_SETTINGS, 61, 0x78), "the save after the cut");
+    CHECK(save(UISAVE_SEQ_SETTINGS, 13, 0x78), "the save after the cut");
     wipe_ram();
     ps_load();
-    CHECK(holds(UISAVE_SEQ_SETTINGS, 61, 0x78), "the save after the cut did not land");
+    CHECK(holds(UISAVE_SEQ_SETTINGS, 13, 0x78), "the save after the cut did not land");
+
+    /* a performance save cut off before its header: the performance before it, and its chunk's others, stay */
+    CHECK(save(PERF, 12, 0x41), "a second performance in a chunk");
+    cut = 0;
+    progs_left = (int)((PS_USED_BYTES + PS_PER(WHOLE_PERF_STORED_SIZE) * WHOLE_PERF_STORED_SIZE + 255u) / 256u);
+    CHECK(!save(PERF, 13, 0x42), "a performance save cut off reported SAVED");
+    progs_left = -1;
+    cut = 0;
+    wipe_ram();
+    ps_load();
+    CHECK(holds(PERF, 13, 0x10 + PERF * 16 + 1) && holds(PERF, 12, 0x41), "a performance save cut off lost the ones before");
+    /* .. a save keeps the chunk's others (it writes over the copy before), many times */
+    for (int i = 0; i < 10; i++)
+        CHECK(save(PERF, 14, (uint8_t)(0x50 + i)), "performance save %d", i);
+    wipe_ram();
+    ps_load();
+    CHECK(holds(PERF, 12, 0x41) && holds(PERF, 13, 0x10 + PERF * 16 + 1) && holds(PERF, 14, 0x59) &&
+          !syn_slot_used(PERF, 15) && used_count() == 14, "a performance save lost its chunk's others (%d used)", used_count());
 
     /* many saves of one chunk: always the last one back */
     for (int i = 0; i < 40; i++)
@@ -180,20 +322,40 @@ int main(void)
           "after 40 saves: the last one, and its chunk's other slot, back");
 
     /* another layout version: the chunk is left out (its slots empty, not misread) */
-    uint32_t pch = PS_KIND[UISAVE_WHOLE_PERF].first;
+    uint32_t pch = PS_KIND[PERF].first;
     for (uint32_t c = 0; c < 2; c++) {
         PsHdr h;
         st_read(ps_sector(pch, c), &h, sizeof h);
         if (h.magic != PS_MAGIC) continue;
         memset(nor + ps_sector(pch, c), 0xFF, 32);  /* (a header rewritten as an old firmware would have it) */
-        h.ver = (uint8_t)(FREC_VER_PERF - 1u);
+        h.ver = (uint8_t)(FREC_VER_PERF - 2u);       /* (v6 migrates: below) */
         h.hcrc = st_crc32(&h, sizeof h - 4u);
         memcpy(nor + ps_sector(pch, c), &h, sizeof h);
     }
     wipe_ram();
     ps_load();
-    CHECK(!syn_slot_used(UISAVE_WHOLE_PERF, 0) && !syn_slot_used(UISAVE_WHOLE_PERF, 61) &&
-          syn_slot_used(UISAVE_WHOLE_PERF, 127), "a chunk of another layout loaded (or the next chunk lost)");
+    {
+        WholePerformance w;
+        CHECK(!syn_slot_used(PERF, 0) && ps_perf_read(0, &w) == -1 && syn_slot_used(PERF, 13) &&
+              syn_slot_used(PERF, BANK_SLOTS - 1u), "a chunk of another layout loaded (or the next chunk lost)");
+    }
+    /* .. and a save into it starts it again: the slot saved, the others in it empty */
+    CHECK(save(PERF, 1, 0x61), "a performance save into a chunk of another layout");
+    wipe_ram();
+    ps_load();
+    CHECK(holds(PERF, 1, 0x61) && !syn_slot_used(PERF, 0), "a performance save into a chunk of another layout");
+
+    /* the 128-slot layout's sequence chunks (FREC_VER_SEQ 2, 9 slots a chunk, where today's sit) are left out */
+    {
+        static uint8_t pay[4096];
+        uint32_t len = PS_USED_BYTES + 9u * sizeof syn_seq_bank[0];
+        memset(pay, 0x23, len);
+        put_chunk(PS_KIND[UISAVE_SEQ_SETTINGS].first, UISAVE_SEQ_SETTINGS, 0u, 2u, pay, len);
+        wipe_ram();
+        ps_load();
+        CHECK(!syn_slot_used(UISAVE_SEQ_SETTINGS, 0) && !syn_slot_used(UISAVE_SEQ_SETTINGS, 5) &&
+              syn_slot_used(UISAVE_SEQ_SETTINGS, 13), "an old sequence chunk loaded (or the next chunk lost)");
+    }
 
     /* a damaged payload in the newest copy: the copy before it is used */
     uint32_t sch = PS_KIND[UISAVE_PATCH_PRESET].first;
@@ -215,26 +377,13 @@ int main(void)
         uint32_t c = ver - 4u, chunk = PS_KIND[UISAVE_PATCH_PRESET].first + c, first, n = ps_slots(&PS_KIND[UISAVE_PATCH_PRESET], c, &first);
         uint32_t size = ver == 5u ? ENGINE_V5_SIZE : (ver == 6u ? ENGINE_V6_SIZE : ENGINE_STORED_SIZE), len = PS_USED_BYTES + n * size, i, j;
         static uint8_t pay[4096];
-        PsHdr h;
         memset(pay, 0, sizeof pay);
         pay[0] = 0x01u;                                  /* the chunk's first and last slots used */
         pay[(n - 1u) >> 3] |= (uint8_t)(1u << ((n - 1u) & 7u));
         for (i = 0; i < n; i++)
             for (j = 0; j < size; j++)
                 pay[PS_USED_BYTES + i * size + j] = (uint8_t)(j * 7u + i);
-        st_erase(ps_sector(chunk, 0u));
-        st_erase(ps_sector(chunk, 1u));
-        memcpy(nor + ps_sector(chunk, 0u) + PS_PAYLOAD_OFF, pay, len);
-        memset(&h, 0xFF, sizeof h);
-        h.magic = PS_MAGIC;
-        h.kind = UISAVE_PATCH_PRESET;
-        h.chunk = (uint8_t)c;
-        h.ver = (uint8_t)ver;
-        h.seq = 1u;
-        h.len = len;
-        h.crc = st_crc32(pay, len);
-        h.hcrc = st_crc32(&h, sizeof h - 4u);
-        memcpy(nor + ps_sector(chunk, 0u), &h, sizeof h);
+        put_chunk(chunk, UISAVE_PATCH_PRESET, (uint8_t)c, (uint8_t)ver, pay, len);
         wipe_ram();
         ps_load();
         uint32_t last = first + n - 1u;
@@ -283,10 +432,73 @@ int main(void)
               "v%u chunk: the save did not write the current version", (unsigned)ver);
     }
 
-    /* no flash: a SAVE reports failure (the slot stays in RAM) */
+    /* an arp chunk of FREC_VER_ARP 3 and a performance chunk of FREC_VER_PERF 6 (before 2026-10-17's RATE: each step's
+     * byte its gate, the pattern's TIME DIVISION where GATE is now) load through arp_from_v3; a performance saved into
+     * the v6 chunk keeps the others, converted, and writes the chunk as v7 */
+    {
+        static uint8_t pay[4096];
+        ArpState v3, want;
+        WholePerformance w, got, exp;
+        uint32_t first, n, len, i, ok;
+        arp_defaults(&v3);                           /* (the v3 bytes, in today's field names) */
+        v3.steps[1].chord_root = 60;
+        v3.steps[1].rate = 77;                       /* v3: step 2's gate, the first chord step's */
+        v3.steps[4].chord_root = 65;
+        v3.steps[4].rate = 12;
+        v3.gate_length = ARPDIV_1_8;                 /* v3: TIME DIVISION */
+        want = v3;
+        arp_from_v3(&want);
+        CHECK(want.gate_length == 77 && want.steps[0].rate == ARPDIV_1_8 && want.steps[4].rate == ARPDIV_1_8 &&
+              want.steps[1].chord_root == 60 && want.current_genre_bank == v3.current_genre_bank, "arp_from_v3");
+        n = ps_slots(&PS_KIND[UISAVE_ARP_SEQ], 0u, &first);
+        len = PS_USED_BYTES + n * sizeof(ArpState);
+        memset(pay, 0, len);
+        pay[0] = 1u << 3;
+        memcpy(pay + PS_USED_BYTES + 3u * sizeof v3, &v3, sizeof v3);
+        put_chunk(PS_KIND[UISAVE_ARP_SEQ].first, UISAVE_ARP_SEQ, 0u, 3u, pay, len);
+        wipe_ram();
+        ps_load();
+        CHECK(syn_slot_used(UISAVE_ARP_SEQ, 3) && !syn_slot_used(UISAVE_ARP_SEQ, 0) &&
+              memcmp(slot_ptr(UISAVE_ARP_SEQ, 3), &want, sizeof want) == 0, "a v3 arp chunk: loaded, migrated");
+
+        n = ps_slots(&PS_KIND[PERF], 0u, &first);
+        len = PS_USED_BYTES + n * WHOLE_PERF_STORED_SIZE;
+        memset(pay, 0, len);
+        pay[0] = 1u << 0 | 1u << 2;
+        for (i = 0; i < 3; i += 2) {
+            memset(&w, (int)(0x40 + i), sizeof w);
+            w.arp = v3;
+            whole_perf_pack(&w, pay + PS_USED_BYTES + i * WHOLE_PERF_STORED_SIZE);
+        }
+        put_chunk(PS_KIND[PERF].first, PERF, 0u, 6u, pay, len);
+        wipe_ram();
+        ps_load();
+        whole_perf_unpack(pay + PS_USED_BYTES + 2u * WHOLE_PERF_STORED_SIZE, &exp);
+        exp.arp = want;
+        CHECK(syn_slot_used(PERF, 0) && syn_slot_used(PERF, 2) && !syn_slot_used(PERF, 1) && syn_perf_name[2][0] == 0x42 &&
+              ps_perf_read(2, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0, "a v6 performance chunk: loaded, migrated");
+        CHECK(save(PERF, 1, 0x61), "a performance save into a v6 chunk");
+        wipe_ram();
+        ps_load();
+        ok = ps_perf_read(2, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0;
+        whole_perf_unpack(pay + PS_USED_BYTES, &exp);
+        exp.arp = want;
+        ok = ok && ps_perf_read(0, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0;
+        CHECK(ok && holds(PERF, 1, 0x61), "the v6 chunk's others kept, migrated, after a save into it");
+        PsHdr h3;
+        CHECK(ps_current(PS_KIND[PERF].first, PERF, 0u, &h3) >= 0 && h3.ver == FREC_VER_PERF, "the save wrote v7");
+    }
+
+    /* no flash: a SAVE reports failure (the slot stays in RAM), and no performance reads */
     flash_ok = 0;
     CHECK(!save(UISAVE_ARP_SEQ, 3, 0x55), "no flash reported SAVED");
+    {
+        WholePerformance w;
+        CHECK(ps_perf_read(1, &w) == -1, "a performance read without flash");
+    }
     flash_ok = 1;
+
+    test_factory();
 
     printf(failures ? "%d preset store checks failed\n" : "preset store tests: all passed\n", failures);
     return failures;

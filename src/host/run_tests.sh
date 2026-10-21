@@ -49,7 +49,8 @@ if python src/hardware/wt_store_upload.py syx src/dsp/wavetables_image.bin "$OUT
     build wt_store src/host/test_wt_store.c src/dsp/wavetable_attach.c src/dsp/wavetables.c src/dsp/wavetables_image.c \
         && run wt_store "$OUT/wt_store.exe" "$OUT/upload.syx"
 fi
-build preset_store src/host/test_preset_store.c src/dsp/wavetables_image.c && run preset_store "$OUT/preset_store.exe"
+build preset_store src/host/test_preset_store.c src/dsp/preset.c src/dsp/seq_scale.c src/dsp/arp_chords.c src/dsp/wavetables_image.c && run preset_store "$OUT/preset_store.exe"
+build factory_perfs $DSP src/host/render_factory_perfs.c && mkdir -p "$OUT/factory_wav"     && run factory_perfs sh -c "'$OUT/factory_perfs.exe' '$OUT/factory_wav' && echo 'all 32 factory performances sound'"
 build perf_test $DSP src/hardware/perf_test.c src/host/perf_test_host.c && run perf_test "$OUT/perf_test.exe"
 run perf_test_guard "$OUT/perf_test.exe" --guard
 build perf_test_prof -DSYNTH_PROF $DSP src/hardware/perf_test.c src/host/perf_test_host.c \

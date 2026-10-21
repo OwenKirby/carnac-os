@@ -99,13 +99,13 @@ static uint8_t *knob_slot(uint32_t page, uint32_t layer, uint32_t knob, uint32_t
 
 
 /* The emulator's store (6.2.3): no flash, so a confirmed save lands in RAM for the page's lifetime. Patches go to
- * preset.c's patch_bank, the rest to the banks below; web_used marks the slots written, so a never-written slot reads
- * EMPTY as an erased flash record would, and the overwrite warning has something to warn about. */
-#define WEB_SLOTS 128u
-static MasterPerformancePreset web_perf_bank[WEB_SLOTS];
-static SequencerLane web_seq_bank[WEB_SLOTS][SEQ_NLANE];
-static ArpState web_arp_bank[WEB_SLOTS];
-static uint8_t web_used[UISAVE_COUNT][WEB_SLOTS / 8u];
+ * preset.c's patch_bank (128), sequences, arps and whole performances to the banks below (32 each, as on the FM1 since
+ * 2026-10-17); web_used marks the slots written, so a never-written slot reads EMPTY as an erased flash record would,
+ * and the overwrite warning has something to warn about. */
+static WholePerformance web_perf_bank[BANK_SLOTS];
+static SequencerLane web_seq_bank[BANK_SLOTS][SEQ_NLANE];
+static ArpState web_arp_bank[BANK_SLOTS];
+static uint8_t web_used[UISAVE_COUNT][PATCH_SLOTS / 8u];
 
 static uint8_t web_slot_used(uint8_t target, uint8_t slot)
 {
@@ -115,18 +115,20 @@ static uint8_t web_slot_used(uint8_t target, uint8_t slot)
 static uint8_t web_slot_query(void *ctx, uint8_t target, uint8_t slot, uint8_t name[NAME_LEN])
 {
     (void)ctx;
-    if (target >= UISAVE_COUNT || slot >= WEB_SLOTS || !web_slot_used(target, slot))
+    if (target >= UISAVE_COUNT || slot >= ui_sm_bank_slots(target) || !web_slot_used(target, slot))
         return UISLOT_EMPTY;
     if (target == UISAVE_PATCH_PRESET) memcpy(name, patch_bank[slot].name, NAME_LEN);
-    else if (target == UISAVE_WHOLE_PERF) memcpy(name, web_perf_bank[slot].name, NAME_LEN);
+    else if (target == UISAVE_WHOLE_PERF) memcpy(name, web_perf_bank[slot].perf.name, NAME_LEN);
     return UISLOT_USED;
 }
 
-/* the core's commit_pending: write save_target to save_slot, then report it done */
+/* the core's commit_pending: write save_target to save_slot, then report it done. A performance: the live one and
+ * everything it plays */
 static void web_commit(void)
 {
     uint8_t t = web_ui.save_target, s = web_ui.save_slot;
-    if (t >= UISAVE_COUNT || s >= WEB_SLOTS) {
+    WholePerformance *w;
+    if (t >= UISAVE_COUNT || s >= ui_sm_bank_slots(t)) {
         ui_sm_commit_done(&web_ui, 0u);
         return;
     }
@@ -134,32 +136,38 @@ static void web_commit(void)
     case UISAVE_PATCH_PRESET: patch_store(web_ui.s.active_synth_layer, s); break;
     case UISAVE_SEQ_SETTINGS: memcpy(web_seq_bank[s], seq_lanes, sizeof web_seq_bank[s]); break;
     case UISAVE_ARP_SEQ: web_arp_bank[s] = arp_state; break;
-    default: web_perf_bank[s] = perf_state; break;
+    default:
+        w = &web_perf_bank[s];
+        w->perf = perf_state;
+        w->engine[0] = engine_state[0];
+        w->engine[1] = engine_state[1];
+        memcpy(w->seq, seq_lanes, sizeof w->seq);
+        w->arp = arp_state;
+        break;
     }
     web_used[t][s >> 3] |= (uint8_t)(1u << (s & 7u));
     ui_sm_commit_done(&web_ui, 1u);
 }
 
 /* the core's load_pending (the Preset Encoder): load_target from load_slot into the live state. A performance brings
- * the patches, SEQ and ARP it links; a link to a slot never saved leaves that part playing as it is */
+ * everything it saved: its settings, both layers' patches, the sequence and the arp pattern */
 static void web_load(void)
 {
-    uint8_t t = web_ui.load_target, s = web_ui.load_slot, l, ok;
-    ok = (uint8_t)(t < UISAVE_COUNT && s < WEB_SLOTS && web_slot_used(t, s));
+    uint8_t t = web_ui.load_target, s = web_ui.load_slot, ok;
+    const WholePerformance *w;
+    ok = (uint8_t)(t < UISAVE_COUNT && s < ui_sm_bank_slots(t) && web_slot_used(t, s));
     if (ok) {
         switch (t) {
         case UISAVE_PATCH_PRESET: patch_load(web_ui.load_layer, s); break;
         case UISAVE_SEQ_SETTINGS: memcpy(seq_lanes, web_seq_bank[s], sizeof seq_lanes); break;
         case UISAVE_ARP_SEQ: arp_state = web_arp_bank[s]; break;
         default:
-            perf_state = web_perf_bank[s];
-            for (l = 0u; l < NLAYER; l++)
-                if (web_slot_used(UISAVE_PATCH_PRESET, perf_state.layer_patch[l] & 0x7Fu))
-                    patch_load(l, perf_state.layer_patch[l]);
-            if (web_slot_used(UISAVE_SEQ_SETTINGS, perf_state.seq_link & 0x7Fu))
-                memcpy(seq_lanes, web_seq_bank[perf_state.seq_link & 0x7Fu], sizeof seq_lanes);
-            if (web_slot_used(UISAVE_ARP_SEQ, perf_state.arp_link & 0x7Fu))
-                arp_state = web_arp_bank[perf_state.arp_link & 0x7Fu];
+            w = &web_perf_bank[s];
+            perf_state = w->perf;
+            engine_state[0] = w->engine[0];
+            engine_state[1] = w->engine[1];
+            memcpy(seq_lanes, w->seq, sizeof seq_lanes);
+            arp_state = w->arp;
             break;
         }
     }
@@ -404,5 +412,5 @@ EXPORT uint32_t web_key_leds(uint32_t lowest, uint32_t mods, uint32_t which)
     return which == 0u ? kl.lit : which == 1u ? kl.mid : kl.dim;
 }
 
-EXPORT uint32_t web_seq_playing(void) { return web_ready ? maq_playing(synth_seq()) : 0u; }
+EXPORT uint32_t web_seq_playing(void) { return web_ready ? ui_sm_play_lit(&web_ui) : 0u; }   /* the PLAY light */
 EXPORT uint32_t web_seq_recording(void) { return web_ready ? (uint32_t)(maq_recording(synth_seq()) || web_ui.arp_rec) : 0u; }   /* the REC light: SEQ step record or ARP record */

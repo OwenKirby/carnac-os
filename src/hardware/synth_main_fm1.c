@@ -182,7 +182,7 @@ static void clock_out(void)
         clk_play = 0;
         return;
     }
-    play = (uint8_t)(maq_playing(synth_seq()) != 0);
+    play = (uint8_t)(maq_playing(synth_seq()) || carp_playing(synth_arp()));   /* (either transport) */
     if (play && !clk_play)
         plat_midi_out(0x0Fu | 0xFAu << 8);
     else if (!play && clk_play)
@@ -416,14 +416,16 @@ static void settings_tick(void)
         set_changed_ms = fm1_ms;
 }
 
-/* The banks a SAVE writes and a load reads: patches in preset.c's patch_bank, the rest below, all in .pool; syn_used
- * marks the slots written, so a never-written slot reads EMPTY. Kept in flash by the preset store below (2026-10-16;
- * before, RAM only, as the browser emulator's store still is: web_entry.c). */
-#define SYN_SLOTS 128u
-static MasterPerformancePreset syn_perf_bank[SYN_SLOTS] SYNTH_POOL;
-static SequencerLane syn_seq_bank[SYN_SLOTS][SEQ_NLANE] SYNTH_POOL;
-static ArpState syn_arp_bank[SYN_SLOTS] SYNTH_POOL;
-static uint8_t syn_used[UISAVE_COUNT][SYN_SLOTS / 8u];
+/* The banks a SAVE writes and a load reads: patches in preset.c's patch_bank (128), sequences and arps below (32 each
+ * since 2026-10-17), all in .pool; the 32 performances are whole snapshots (WholePerformance) kept in flash only, their
+ * names here. syn_used marks the slots written (or the factory's), so a never-written slot reads EMPTY. Kept in flash
+ * by the preset store below (2026-10-16; before, RAM only, as the browser emulator's store still is: web_entry.c). */
+static SequencerLane syn_seq_bank[BANK_SLOTS][SEQ_NLANE] SYNTH_POOL;
+static ArpState syn_arp_bank[BANK_SLOTS] SYNTH_POOL;
+static uint8_t syn_perf_name[BANK_SLOTS][NAME_LEN];
+static uint8_t syn_used[UISAVE_COUNT][PATCH_SLOTS / 8u];
+static WholePerformance syn_perf_load SYNTH_POOL;   /* a performance being loaded: read outside syn_lock, taken inside */
+static uint8_t syn_perf_req;                        /* 1: a performance load waits for the main loop (syn_perf_tick) */
 
 static UIStateMachine sm;
 
@@ -438,21 +440,21 @@ static uint8_t syn_slot_used(uint8_t target, uint8_t slot)
 static uint8_t syn_slot_query(void *ctx, uint8_t target, uint8_t slot, uint8_t name[NAME_LEN])
 {
     (void)ctx;
-    if (target >= UISAVE_COUNT || slot >= SYN_SLOTS || !syn_slot_used(target, slot))
+    if (target >= UISAVE_COUNT || slot >= ui_sm_bank_slots(target) || !syn_slot_used(target, slot))
         return UISLOT_EMPTY;
     if (target == UISAVE_PATCH_PRESET) memcpy(name, patch_bank[slot].name, NAME_LEN);
-    else if (target == UISAVE_WHOLE_PERF) memcpy(name, syn_perf_bank[slot].name, NAME_LEN);
+    else if (target == UISAVE_WHOLE_PERF) memcpy(name, syn_perf_name[slot], NAME_LEN);
     return UISLOT_USED;
 }
 
 /* the machine's commit_pending: save_target into save_slot, its chunk marked for the preset store (inside syn_lock);
- * ps_tick reports it done once it is in flash */
+ * ps_tick reports it done once it is in flash. A performance: the live one and everything it plays, staged whole */
 static void syn_commit(void)
 {
     uint8_t t = sm.save_target, s = sm.save_slot;
     if (ps_commit_wait)
         return;                                     /* (the one before is still being written) */
-    if (t >= UISAVE_COUNT || s >= SYN_SLOTS) {
+    if (t >= UISAVE_COUNT || s >= ui_sm_bank_slots(t)) {
         ui_sm_commit_done(&sm, 0u);
         return;
     }
@@ -460,37 +462,61 @@ static void syn_commit(void)
     case UISAVE_PATCH_PRESET: patch_store(sm.s.active_synth_layer, s); break;
     case UISAVE_SEQ_SETTINGS: memcpy(syn_seq_bank[s], seq_lanes, sizeof syn_seq_bank[s]); break;
     case UISAVE_ARP_SEQ: syn_arp_bank[s] = arp_state; break;
-    default: syn_perf_bank[s] = perf_state; break;
+    default:
+        ps_perf_save.perf = perf_state;
+        ps_perf_save.engine[0] = engine_state[0];
+        ps_perf_save.engine[1] = engine_state[1];
+        memcpy(ps_perf_save.seq, seq_lanes, sizeof ps_perf_save.seq);
+        ps_perf_save.arp = arp_state;
+        ps_perf_save_slot = s;
+        memcpy(syn_perf_name[s], perf_state.name, NAME_LEN);
+        break;
     }
     syn_used[t][s >> 3] |= (uint8_t)(1u << (s & 7u));
     ps_dirty |= 1u << (PS_KIND[t].first + s / PS_PER(PS_KIND[t].stored));
     ps_commit_wait = 1;
 }
 
-/* the machine's load_pending (the Preset Encoder): load_target from load_slot into the live state; a performance
- * brings the patches, SEQ and ARP it links, a link to a slot never saved leaves that part as it is (inside syn_lock) */
+/* the machine's load_pending (the Preset Encoder): load_target from load_slot into the live state (inside syn_lock). A
+ * performance waits for the main loop (syn_perf_tick): it is read from flash */
 static void syn_load(void)
 {
-    uint8_t t = sm.load_target, s = sm.load_slot, l, ok;
-    ok = (uint8_t)(t < UISAVE_COUNT && s < SYN_SLOTS && syn_slot_used(t, s));
+    uint8_t t = sm.load_target, s = sm.load_slot, ok;
+    ok = (uint8_t)(t < UISAVE_COUNT && s < ui_sm_bank_slots(t) && syn_slot_used(t, s));
+    if (ok && t == UISAVE_WHOLE_PERF) {
+        syn_perf_req = 1;
+        return;
+    }
     if (ok) {
         switch (t) {
         case UISAVE_PATCH_PRESET: patch_load(sm.load_layer, s); break;
         case UISAVE_SEQ_SETTINGS: memcpy(seq_lanes, syn_seq_bank[s], sizeof seq_lanes); break;
-        case UISAVE_ARP_SEQ: arp_state = syn_arp_bank[s]; break;
-        default:
-            perf_state = syn_perf_bank[s];
-            for (l = 0u; l < NLAYER; l++)
-                if (syn_slot_used(UISAVE_PATCH_PRESET, perf_state.layer_patch[l] & 0x7Fu))
-                    patch_load(l, perf_state.layer_patch[l]);
-            if (syn_slot_used(UISAVE_SEQ_SETTINGS, perf_state.seq_link & 0x7Fu))
-                memcpy(seq_lanes, syn_seq_bank[perf_state.seq_link & 0x7Fu], sizeof seq_lanes);
-            if (syn_slot_used(UISAVE_ARP_SEQ, perf_state.arp_link & 0x7Fu))
-                arp_state = syn_arp_bank[perf_state.arp_link & 0x7Fu];
-            break;
+        default: arp_state = syn_arp_bank[s]; break;
         }
     }
     ui_sm_load_done(&sm, ok);
+}
+
+/* the main loop's: the performance load syn_load left. Its slot from flash, outside syn_lock (a factory slot never
+ * saved over: made, factory_perf), then the live state takes it whole inside the lock: the performance's settings, both
+ * layers' patches, the sequence and the arp pattern. (The Preset Encoder waits: load_pending holds load_slot.) */
+static void syn_perf_tick(void)
+{
+    uint8_t ok;
+    if (!syn_perf_req)
+        return;
+    ok = (uint8_t)(ps_perf_read(sm.load_slot, &syn_perf_load) == 0 || factory_perf(sm.load_slot, &syn_perf_load) == 0);
+    syn_lock();
+    if (ok) {
+        perf_state = syn_perf_load.perf;
+        engine_state[0] = syn_perf_load.engine[0];
+        engine_state[1] = syn_perf_load.engine[1];
+        memcpy(seq_lanes, syn_perf_load.seq, sizeof seq_lanes);
+        arp_state = syn_perf_load.arp;
+    }
+    ui_sm_load_done(&sm, ok);
+    syn_unlock();
+    syn_perf_req = 0;
 }
 
 /* ------------------------------------------------------------ editor --- */
@@ -946,7 +972,7 @@ static void panel_leds(void)
     UiKeyLeds kl;
     uint32_t b = page_button(sm.page), rec = maq_recording(synth_seq()) || sm.arp_rec;
     uint8_t mods = (uint8_t)((oct_held[0] ? UISEQ_MOD_OCT_DOWN : 0u) | (oct_held[1] ? UISEQ_MOD_OCT_UP : 0u));
-    if (maq_playing(synth_seq()) || rec)
+    if (ui_sm_play_lit(&sm) || rec)
         b |= 1u << B_PLAY;
     if (rec)
         b |= 1u << B_REC;
@@ -1228,6 +1254,7 @@ static void fm1_main(void)
         usb_retry(fm1_ms);
         settings_tick();
         ps_tick();
+        syn_perf_tick();                            /* (after ps_tick: a SAVE before it is in flash) */
         if (fm1_ms > 30000u && bootguard.pending) { /* a crash or hang in the first 30 s counts */
             bootguard.pending = 0;
             bootguard.failed = 0;
@@ -1272,6 +1299,7 @@ static void fm1_main(void)
             usb.ota_req = 0;
             syn_lock();
             maq_set_playing(synth_seq(), 0u);
+            carp_set_playing(synth_arp(), 0u);
             keys_release();
             syn_unlock();
             if (flash_ok)

@@ -5,7 +5,9 @@
 #include <stdint.h>
 #include "PresetStructures.h"            /* SEQSCALE_* */
 
-#define ARP_GENRE_COUNT 83u          /* 8.2's list, in its order */
+#define ARP_GENRE_COUNT 84u          /* 8.2's list, in its order, then Phrygian (2026-10-17) */
+#define ARP_GENRE_PHRYGIAN 83u
+PS_STATIC_ASSERT(ARP_GENRE_DEFAULT == ARP_GENRE_PHRYGIAN, "arp_defaults' genre is Phrygian");
 #define ARP_CHORD_NOTES 4u           /* 8.1: a 4-voice chord array */
 
 extern const char *const arp_genre_names[ARP_GENRE_COUNT];

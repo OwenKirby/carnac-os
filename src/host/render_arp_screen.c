@@ -47,19 +47,21 @@ static void run(uint32_t frames)
     while (frames--) {
         midi_clock_frame(now);
         maq_frame(&q, now);
-        carp_frame(&a, now, maq_free_running(&q));
+        carp_frame(&a, now, &q);
         now++;
     }
 }
 
-/* a captured pattern: 6 of 8 steps (one a rest, one a TIE, two accented), mixed styles and rhythms, Neo_Soul_1 */
+/* a captured pattern: 6 of 8 steps (one a rest, one a TIE, two accented), mixed styles (a HOLD strummed down),
+ * rhythms and rates, Neo_Soul_1 */
 static void pattern(void)
 {
     static const uint8_t root[8] = {53, 58, 55, ARP_CHORD_EMPTY, 60, ARP_CHORD_TIE, 62, 65};
-    static const uint8_t style[8] = {ARPSTYLE_UP, ARPSTYLE_BLOCK, ARPSTYLE_UPDN, 0, ARPSTYLE_STRUM_UP, ARPSTYLE_RANDOM,
+    static const uint8_t style[8] = {ARPSTYLE_UP, ARPSTYLE_BLOCK, ARPSTYLE_HOLD, 0, ARPSTYLE_STRUM_UP, ARPSTYLE_RANDOM,
                                      ARPSTYLE_DOWN, ARPSTYLE_STRUM_DN};
     static const uint8_t var[8] = {1, 8, 13, 0, 3, 19, 10, 22};
-    static const uint8_t gate[8] = {96, 127, 40, 0, 70, 110, 20, 64};
+    static const uint8_t rate[8] = {ARPDIV_1_4, ARPDIV_1_8, ARPDIV_1_4T, ARPDIV_1_4, ARPDIV_1_2, ARPDIV_1_4,
+                                    ARPDIV_1_16, ARPDIV_1_8T};
     int i;
     preset_defaults();
     midi_clock_init();
@@ -69,11 +71,12 @@ static void pattern(void)
         arp_state.steps[i].chord_root = root[i];
         arp_state.steps[i].style = style[i];
         arp_state.steps[i].variation = var[i];
-        arp_state.steps[i].gate_length = gate[i];
+        arp_state.steps[i].rate = rate[i];
         arp_state.steps[i].octave_range = (uint8_t)(i % 3);
         arp_state.steps[i].accent = (uint8_t)(i == 0 || i == 4);
     }
     arp_state.sequence_length = 6;
+    arp_state.gate_length = 80;
     arp_state.current_genre_bank = 66;               /* Neo_Soul_1 */
     maq_init(&q, lanes, &perf_state, sink);
     carp_init(&a, &arp_state, &perf_state, sink);
@@ -133,7 +136,7 @@ int main(int argc, char **argv)
     printf("  one step later: %d regions, %ld px (%ld%% of the screen)\n", blits, blit_px, blit_px * 100 / (240 * 240));
     if (blits == 0 || blits > 4) { printf("FAIL: a step redrew %d regions\n", blits); fails = 1; }
 
-    /* stopped, RED, DUAL with LAYER BOTH, the cursor on TIME DIVISION */
+    /* stopped, RED, DUAL with LAYER BOTH, the cursor on GATE */
     seq_palette_set(SQPAL_RED);
     pattern();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
@@ -141,10 +144,14 @@ int main(int argc, char **argv)
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
     fails |= shot(dir, "stopped");
 
-    /* stopped, ORANGE: REC armed (step entry, two chords in: the cursor on step 3), LATCH on, the cursor on ACCENT VEL */
+    /* stopped, ORANGE: REC armed (step entry, two chords in: the cursor on step 3), LATCH on, the cursor on ACCENT VEL,
+     * the knobs RATE 1/16T and HOLD strummed UP 5 */
     seq_palette_set(SQPAL_ORANGE);
     pattern();
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 5);
+    sm.arp_knob[0] = ARPDIV_1_16T;                   /* the knobs: RATE 1/16T, STYLE HOLD (knob 4 then STRUM) */
+    sm.arp_knob[2] = ARPSTYLE_HOLD;
+    sm.arp_knob[3] = 5;
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
     ui_sm_arp_key(&sm, 15, 68, 1, 100);              /* G#4: LATCH */
     ui_sm_arp_key(&sm, 15, 68, 0, 0);

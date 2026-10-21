@@ -138,7 +138,9 @@
     <button id="octup" type="button" aria-pressed="false">OCT+</button>
   </div>
   <p class="hint">
-    PLAY (or <span class="kbd">Space</span>) starts and stops the MAQ sequencer from any page; navigating never stops it.
+    PLAY (or <span class="kbd">Space</span>) starts and stops the MAQ sequencer on the SEQ page, the ARP on the ARP page,
+    and both on any other page (if either plays, it stops it); navigating never stops them. One started while the other
+    plays waits for the other's next bar.
     On the SEQ page the 16 white keys (marked lane:step) are four blocks of four: C D E F lane 1, G A B C lane 2, D E F G
     lane 3, A B C D lane 4 (each block's first key glows; the active lane and step group's key is lit), and a key's place in its block puts steps 1&ndash;4, 5&ndash;8, 9&ndash;12 or 13&ndash;16 of that
     lane on the knobs. The black keys do nothing there. Hold OCT&minus; or OCT+ (or <span class="kbd">Z</span> /
@@ -153,8 +155,10 @@
     ARP (spec 8): the 13 keys C&ndash;C (marked underneath) are chord keys: each plays a 4-voice chord from the GENRE BANK.
     The 8 white keys above them are step keys 1&ndash;8 (marked on top); steps up to SEQ LENGTH glow (rests stay dark), the playing step's key
     is lit, and while playing the chord key of the transposition is half lit. Hold step keys
-    and strike a chord key to capture that chord into them, with the four knobs (GATE, OCTAVE, STYLE, RHYTHM) as they are;
-    a knob turned while step keys are held edits those steps. PLAY runs the pattern with the MAQ; while it plays, a chord
+    and strike a chord key to capture that chord into them, with the four knobs (RATE: the step's length, OCTAVE, STYLE,
+    RHYTHM) as they are; GATE is the pattern's, in the menu. STYLE HOLD strikes the chord once and holds it (a chord
+    repeated is not struck again), RHYTHM then its strum. A knob turned while step keys are held edits those steps.
+    PLAY on the ARP page runs the pattern; while it plays, a chord
     key transposes it by its distance from the first chord key (and the MAQ too with TRANSPOSE MAQ on).
     The black keys among the step keys are functions (marked on top): LAT toggles latch (the chord's arpeggio plays on
     after you let go); hold TIE, CLR or ACC and tap step keys (or hold step keys and tap them) to make a tie (the chord
@@ -227,7 +231,7 @@
     { name: "EFFECTS", knobs: [["Delay Time", "raw"], ["Delay Feedback", "raw"], ["Reverb Decay", "raw"], ["Reverb Damping", "raw"]] },
     { name: "HOME", knobs: [["Keyboard Velocity", "raw", "vel"], ["Pitch Bend", "bip", "bend", true], ["Mod Wheel", "raw", "mod"], ["Portamento Time", "raw"]] },
     { name: "SEQ", knobs: [["Step 1", "seq"], ["Step 2", "seq"], ["Step 3", "seq"], ["Step 4", "seq"]] },
-    { name: "ARP", knobs: [["Gate Length", "raw"], ["Octave Range", "list"], ["Style", "list"], ["Rhythm", "list"]] },
+    { name: "ARP", knobs: [["Rate", "list"], ["Octave Range", "list"], ["Style", "list"], ["Rhythm", "list"]] },
     { name: "GLOBAL", knobs: [["", "none"], ["", "none"], ["", "none"], ["Int Tempo", "bpm"]] },
     { name: "HOME (SPLIT)", knobs: [["Keyboard Velocity", "raw", "vel"], ["Pitch Bend", "bip", "bend", true], ["Mod Wheel", "raw", "mod"], ["Portamento Time", "raw"]] },
     { name: "PRESET", knobs: [["L1 Patch", "raw"], ["L2 Patch", "raw"], ["Seq Link", "raw"], ["Arp Link", "raw"]] },

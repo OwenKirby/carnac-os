@@ -31,7 +31,7 @@ enum {                               /* what an ISR posts */
     UIEV_COUNT
 };
 enum {                               /* the FM1's transport buttons, outside spec 2's 10 section buttons */
-    UITR_PLAY,                       /* start / stop the MAQ sequencer, from any page */
+    UITR_PLAY,                       /* from any page: SEQ starts / stops the MAQ, ARP the ARP, any other page both */
     UITR_REC,                        /* 7.2: SEQ page, enter / leave single-step record; ARP page, arm / disarm record */
     UITR_COUNT
 };
@@ -119,17 +119,17 @@ enum {
 /* The store's answer for one slot of a save target (UISAVE_*): UISLOT_EMPTY / UISLOT_USED. For a used PATCH_PRESET or
  * WHOLE_PERF slot it fills name with the stored record's name (char_map indices); it leaves name alone otherwise. */
 typedef uint8_t (*UiSlotQuery)(void *ctx, uint8_t target, uint8_t slot, uint8_t name[NAME_LEN]);
+/* the slots a save target's bank has: PATCH_SLOTS patches, BANK_SLOTS of the rest (2026-10-17) */
+static inline uint8_t ui_sm_bank_slots(uint8_t target)
+{
+    return (uint8_t)(target == UISAVE_PATCH_PRESET ? PATCH_SLOTS : BANK_SLOTS);
+}
 /* 6.2.3 the clipboard: one item of the kind COPY took (clip_kind) */
 typedef union {
     EngineState patch;               /* PATCH_PRESET: the focused layer's patch */
     SequencerLane seq[SEQ_NLANE];    /* SEQ_SETTINGS: the live sequencer slot */
     ArpState arp;                    /* ARP_SEQ: the live arp pattern */
-    struct {                         /* WHOLE_PERF: the performance and everything it plays */
-        MasterPerformancePreset perf;
-        EngineState engine[NLAYER];
-        SequencerLane seq[SEQ_NLANE];
-        ArpState arp;
-    } whole;
+    WholePerformance whole;          /* WHOLE_PERF: the performance and everything it plays */
 } UiClipboard;
 PS_STATIC_ASSERT(sizeof(UiClipboard) == 883u, "the clipboard's RAM (spec 6.2.3)");   /* 883: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD) */
 /* spec 1: the name characters; MasterPerformancePreset.name holds indices into it (0 = space) */
@@ -141,13 +141,13 @@ enum { UIPERF_VELOCITY, UIPERF_BEND, UIPERF_MODWHEEL, UIPERF_CC1, UIPERF_CC2, UI
 typedef struct {
     UIState s;                       /* the PresetStructures.h registers, kept in step with page */
     uint8_t page;                    /* UIPAGE_* */
-    uint8_t perf_slot;               /* SAVE submenu 1: PERF PRESET POINTER, 0..127 */
+    uint8_t perf_slot;               /* SAVE submenu 1: PERF PRESET POINTER, 0..BANK_SLOTS - 1 */
     uint8_t save_action;             /* SAVE submenu 2: ACTION row, UIACT_* */
     uint8_t dialog;                  /* UIDLG_* */
     uint8_t dialog_choice;           /* ARE YOU SURE?: 0 NO / 1 YES */
     uint8_t commit_pending;          /* 1: the caller must write flash, then call ui_sm_commit_done */
     uint8_t save_target;             /* SAVE submenu 2 knob 1: UISAVE_*, what the commit writes */
-    uint8_t save_slot;               /* .. knob 2 / the Algorithm Encoder: the slot it writes to, 0..127 */
+    uint8_t save_slot;               /* .. knob 2 / the Algorithm Encoder: the slot it writes to, below ui_sm_bank_slots */
     uint8_t save_from;               /* the page SAVE was pressed on: SAVED returns there */
     uint8_t name_cursor;             /* .. knob 3 (RENAME focused): the name character knob 4 edits, 0..NAME_LEN-1 */
     uint8_t clip_kind;               /* UISAVE_* COPY last took, UICLIP_EMPTY before the first */
@@ -155,7 +155,7 @@ typedef struct {
     UiClipboard clip;
     uint8_t load_pending;            /* 1: the Preset Encoder picked a slot; the caller loads it, then ui_sm_load_done */
     uint8_t load_target;             /* .. what to load: UISAVE_* (ui_sm_preset_target when it turned) */
-    uint8_t load_slot;               /* .. from which slot, 0..127 */
+    uint8_t load_slot;               /* .. from which slot, below ui_sm_bank_slots */
     uint8_t load_layer;              /* .. into which layer (PATCH_PRESET: the layer in focus when it turned) */
     uint8_t browse;                  /* 1: the preset list is up (the Preset Encoder turned; any other control or
                                       * UI_BROWSE_MS without a detent puts it away) */
@@ -182,7 +182,7 @@ typedef struct {
     uint8_t seq_cap_held;            /* 7.2 chord capture: keys still down since the chord began */
     uint8_t seq_cap_n;               /* .. and the notes written into it so far */
     CarpSeq *carp;                   /* the ARP engine (ui_sm_attach_arp); NULL: chord keys capture but sound nothing */
-    uint8_t arp_knob[4];             /* 2.2 ARP knobs, live: GATE 0..127, OCTAVE 0..3, STYLE ARPSTYLE_*, RHYTHM 0..23 */
+    uint8_t arp_knob[4];             /* 2.2 ARP knobs, live: RATE ARPDIV_*, OCTAVE 0..3, STYLE ARPSTYLE_*, RHYTHM 0..23 */
     uint8_t arp_held;                /* 8.1: step keys held, bit n = step n */
     uint8_t arp_chord_key;           /* the chord key sounding or latched (its note), CARP_NOTE_NONE */
     uint8_t arp_chord_down;          /* the chord key physically down (its note), CARP_NOTE_NONE */
@@ -213,6 +213,8 @@ void ui_sm_process(UIStateMachine *sm);
 
 /* apply one event directly (main-loop context only; also what ui_sm_process calls) */
 void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg);
+/* the PLAY light: what PLAY here would stop is playing (SEQ page the MAQ, ARP page the ARP, any other page either) */
+uint8_t ui_sm_play_lit(const UIStateMachine *sm);
 
 /* re-apply the mode rules after the caller changes perf or a patch from outside (a preset load, MIDI): SINGL forces
  * layer focus to LAYER1 and HOME back to View 1, a page the architecture hides falls back to its section's first
@@ -337,10 +339,10 @@ void ui_sm_attach_arp(UIStateMachine *sm, CarpSeq *carp);
 /* A note key, on the ARP page (8.1). key: 0 = the lowest key; note: its MIDI note; down: press 1 / release 0; vel: its
  * velocity. Keys 0..12 (CARP_ZONE_KEYS, chromatic) are chord keys: a press sounds the key's chord in the GENRE BANK
  * while held; with step keys held it is captured into each of them instead (the key's note plus the four ARP knobs);
- * while the transport plays, a press without step keys also transposes the pattern by the key's distance from key 0
- * (and the MAQ with TRANSPOSE MAQ on, which also moves the MAQ with each step's chord root). With TRANSPOSE MAQ on and
- * no chord in the pattern, the MAQ follows the chord keys stopped as well, and PLAY keeps the key last played (with a
- * pattern, PLAY starts it untransposed). The next 8 white keys are step keys 1..8 (held: bit n of arp_held).
+ * while the ARP plays, a press without step keys also transposes the pattern by the key's distance from key 0
+ * (and the MAQ with TRANSPOSE MAQ on, which also moves the MAQ with each step's chord root; with it on, the key
+ * transposes the MAQ while the MAQ alone plays too). With TRANSPOSE MAQ on and no chord in the pattern, the MAQ follows
+ * the chord keys stopped as well, and PLAY keeps the key last played (with a pattern, the ARP starts untransposed). The next 8 white keys are step keys 1..8 (held: bit n of arp_held).
  * The black keys among them are function keys (ARPFN_*): LATCH toggles the latch (a chord key's live arpeggio plays on
  * after the key, until another chord key or LATCH off); TIE, CLEAR and ACCENT act on the step keys held, or on the step
  * keys tapped while they are held (TIE: the chord before carries on; CLEAR: a rest; ACCENT: toggled); COPY held, the

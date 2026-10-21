@@ -70,18 +70,25 @@ int main(void)
         }
         for (int s = 0; s < 3; s++) {
             ArpChordStep *st = &arp_state.steps[s];
-            st->chord_root = (uint8_t)(55 + s * 2); st->gate_length = 90; st->octave_range = 1;
+            st->chord_root = (uint8_t)(55 + s * 2); st->rate = (uint8_t)(ARPDIV_1_4 + s * 2); st->octave_range = 1;
             st->style = (uint8_t)(ARPSTYLE_UP + s); st->variation = (uint8_t)(s * 3);
         }
         arp_state.sequence_length = 3;
+        arp_state.steps[2].style = ARPSTYLE_HOLD;
+        arp_state.steps[2].variation = 15;           /* (HOLD, strummed down) */
         MaqSeq *q = synth_seq();
         CarpSeq *a = synth_arp();
 
         synth_midi_3(0x90, 60, 100); synth_midi_3(0x90, 64, 90);
         run(9000);                                   phase("idle, notes held");
         synth_midi_3(0x80, 60, 0); synth_midi_3(0x80, 64, 0);
-        maq_set_playing(q, 1); run(30011);           phase("play");
-        maq_set_playing(q, 0); run(5003);            phase("stop");
+        maq_set_playing(q, 1); carp_set_playing(a, 1); run(30011);   phase("play");
+        maq_set_playing(q, 0); carp_set_playing(a, 0); run(5003);    phase("stop");
+        carp_set_playing(a, 1); run(9001);
+        maq_set_playing(q, 1); run(30011);                           phase("arp first, MAQ on its bar");
+        carp_set_playing(a, 0); run(4000);
+        carp_set_playing(a, 1); run(20000);                          phase("MAQ first, ARP on its bar");
+        maq_set_playing(q, 0); carp_set_playing(a, 0); run(5003);
         maq_set_record(q, 1); run(3001);
         maq_set_rec_step(q, 5); run(2999);
         maq_set_record(q, 0); run(4000);             phase("rec while stopped");
@@ -92,12 +99,12 @@ int main(void)
         carp_audition(a, 57, 100); run(5000);
         carp_audition(a, 57, 0); run(3000);          phase("arp audition");
         carp_hold(a, 59, 90); run(20000);
-        { uint8_t k[4] = {80, 2, ARPSTYLE_DOWN, 0}; carp_set_knobs(a, k); } run(7000);
+        { uint8_t k[4] = {ARPDIV_1_8, 2, ARPSTYLE_DOWN, 0}; carp_set_knobs(a, k); } run(7000);
         carp_hold(a, 59, 0); run(6000);              phase("arp live chord");
         arp_state.transpose_maq_option = 1;
         carp_set_transpose(a, 3); run(5000);
-        maq_set_playing(q, 1); run(15000);
-        maq_set_playing(q, 0); run(5000);
+        maq_set_playing(q, 1); carp_set_playing(a, 1); run(15000);
+        maq_set_playing(q, 0); carp_set_playing(a, 0); run(5000);
         carp_set_transpose(a, -2); run(3000);        phase("transpose maq");
         perf_state.clock_source = CLKSRC_MIDI;
         ext_clock = 1;

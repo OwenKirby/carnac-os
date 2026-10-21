@@ -1,4 +1,5 @@
 
+#include <stddef.h>          // NULL (emscripten's clang does not get it through the headers below)
 #include "voice_allocator.h"
 #include "preset.h"          // perf_state and engine_state: the voice limits come from the live patches
 

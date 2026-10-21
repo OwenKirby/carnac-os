@@ -111,16 +111,23 @@ PS_STATIC_ASSERT(sizeof(SAVE_TARGET_NAMES) / sizeof(SAVE_TARGET_NAMES[0]) == UIS
 PS_STATIC_ASSERT(sizeof(NAME_POS_NAMES) / sizeof(NAME_POS_NAMES[0]) == NAME_LEN, "one name per name position");
 PS_STATIC_ASSERT(sizeof(CHAR_NAMES) / sizeof(CHAR_NAMES[0]) == CHAR_MAP_LEN && sizeof(UI_CHAR_MAP) == CHAR_MAP_LEN + 1u,
                  "one name per character");
-/* 2.2 ARP knobs 2..4: OCTAVE RANGE, STYLE (arp_seq.h), RHYTHM (8.3 row and column: A / B, T for the triplet B column) */
+/* 2.2 ARP knobs: RATE (ARPDIV_NAMES), OCTAVE RANGE, STYLE (arp_seq.h), RHYTHM (8.3 row and column: A / B, T for the
+ * triplet B column; a HOLD step's strum, carp_hold_strum, under STYLE HOLD) */
 static const char *const ARPOCT_NAMES[] = {"1 OCT", "2 OCT", "3 OCT", "4 OCT"};
-static const char *const ARPSTYLE_NAMES[] = {"BLOCK", "UP", "DOWN", "UP-DN", "DN-UP", "RANDOM", "STRUM UP", "STRUM DN"};
+static const char *const ARPSTYLE_NAMES[] = {"BLOCK", "UP", "DOWN", "UP-DN", "DN-UP", "RANDOM", "STRUM UP", "STRUM DN",
+                                             "HOLD"};
 static const char *const ARPVAR_NAMES[] = {
     "01A", "01B", "02A", "02B", "03A", "03B", "04A", "04B", "05A", "05B", "06A", "06B",
     "07A", "07T", "08A", "08T", "09A", "09T", "10A", "10T", "11A", "11T", "12A", "12T",
 };
 PS_STATIC_ASSERT(sizeof(ARPOCT_NAMES) / sizeof(ARPOCT_NAMES[0]) == ARP_NOCT, "one name per octave range");
 PS_STATIC_ASSERT(sizeof(ARPSTYLE_NAMES) / sizeof(ARPSTYLE_NAMES[0]) == ARPSTYLE_COUNT, "one name per ARPSTYLE_*");
+static const char *const ARPSTRUM_NAMES[] = {
+    "NONE", "UP 1", "UP 2", "UP 3", "UP 4", "UP 5", "UP 6", "UP 7", "UP 8", "UP 9", "UP 10", "UP 11",
+    "UP 12", "DN 1", "DN 2", "DN 3", "DN 4", "DN 5", "DN 6", "DN 7", "DN 8", "DN 9", "DN 10", "DN 11",
+};
 PS_STATIC_ASSERT(sizeof(ARPVAR_NAMES) / sizeof(ARPVAR_NAMES[0]) == ARP_NVAR, "one name per variation");
+PS_STATIC_ASSERT(sizeof(ARPSTRUM_NAMES) / sizeof(ARPSTRUM_NAMES[0]) == ARP_NVAR, "one strum per variation");
 /* 7.4 footer: EV: and MD: (MAQ-style short names), LANE as 1..4 */
 static const char *const SEQEV_NAMES[] = {
     "Note", "Dyn", "Trns", "Time", "Gate", "Rtch", "PSkp", "PMut", "MW", "AT", "CC1", "CC2", "PC", "Layr",
@@ -269,7 +276,7 @@ static const UiRow EFFECTS_ROWS[] = {
     {"DELAY SYNC", PERF(delay_sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
     {"REVERB TYPE", PERF(reverb_type), 0, REVTYPE_COUNT - 1, RK_BYTE, 0, REVTYPE_NAMES, A_ALL},
     {"REVERB PREDELAY", PERF(reverb_predelay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"TAPE DEGRADE", PERF(delay_degrade), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"DEGRADE", PERF(delay_degrade), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"PING PONG", PERF(delay_pingpong), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
 };
 #define INST(member) OFS(InstrumentSettings, member)
@@ -315,7 +322,7 @@ static const UiRow HOME3_ROWS[] = {
     {"VEL FADE", PERF(vel_fade), 0, VAL_MAX, RK_BYTE, RF_LAYER2, NULL, A_ALL},
 };
 static const UiRow PERF_ROWS[] = {          /* HOME's first page: the performance browser (6.1) */
-    {"PERF PRESET", 0, 0, VAL_MAX, RK_PERF_SLOT, RF_SLOT, NULL, A_ALL},
+    {"PERF PRESET", 0, 0, BANK_SLOTS - 1u, RK_PERF_SLOT, RF_SLOT, NULL, A_ALL},
     {"PERF MODE", PERF(perf_mode), 0, PERF_COUNT - 1, RK_BYTE, 0, PERF_NAMES, A_ALL},
     {"LAYER1 PATCH", PERF(layer_patch), 0, VAL_MAX, RK_BYTE, RF_SLOT, NULL, A_ALL},
     {"LAYER2 PATCH", (uint8_t)(PERF(layer_patch) + 1u), 0, VAL_MAX, RK_BYTE, RF_LAYER2 | RF_SLOT, NULL, A_ALL},
@@ -327,7 +334,7 @@ static const UiRow SAVE_COMMIT_ROWS[] = {
 };
 static const UiRow ARP_ROWS[] = {
     {"LAYER", OFS(ArpState, target_layer), 0, ARPLAYER_COUNT - 1, RK_ARP_LAYER, 0, ARPLAYER_NAMES, A_ALL},
-    {"TIME DIVISION", OFS(ArpState, time_division), 0, ARPDIV_COUNT - 1, RK_BYTE, 0, ARPDIV_NAMES, A_ALL},
+    {"GATE", OFS(ArpState, gate_length), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"SEQ LENGTH", OFS(ArpState, sequence_length), 1, ARP_NSTEP, RK_BYTE, 0, NULL, A_ALL},
     {"TRANSPOSE MAQ", OFS(ArpState, transpose_maq_option), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
     {"GENRE BANK", OFS(ArpState, current_genre_bank), 0, ARP_GENRE_COUNT - 1, RK_BYTE, 0, arp_genre_names, A_ALL},
@@ -486,7 +493,7 @@ static const UiKnob EFFECTS_KNOBS[4] = {
 };
 /* 2.2 ARP (chord page): the live dial values a capture copies into a step (UIStateMachine.arp_knob, by index) */
 static const UiKnob ARP_KNOBS[4] = {
-    UIK("GATE", 0, UIKNOB_RAW), {"OCTAVE", 1, UIKNOB_LIST, ARP_NOCT, ARPOCT_NAMES},
+    {"RATE", 0, UIKNOB_LIST, ARPDIV_COUNT, ARPDIV_NAMES}, {"OCTAVE", 1, UIKNOB_LIST, ARP_NOCT, ARPOCT_NAMES},
     {"STYLE", 2, UIKNOB_LIST, ARPSTYLE_COUNT, ARPSTYLE_NAMES}, {"RHYTHM", 3, UIKNOB_LIST, ARP_NVAR, ARPVAR_NAMES},
 };
 /* LAYER (2026-10-17): the play controllers. VELOCITY is the keys' own; MOD WHEEL goes out as CC 1; CC1 / CC2 set
@@ -957,7 +964,7 @@ static void save_open(UIStateMachine *sm)
     sm->save_from = sm->page;
     enter_page(sm, UIPAGE_SAVE_COMMIT);
     sm->save_target = target;
-    sm->save_slot = slot < PATCH_SLOTS ? slot : 0u;
+    sm->save_slot = slot < ui_sm_bank_slots(target) ? slot : 0u;
 }
 
 /* rule 2 (6, 2026-10-17): from another page SAVE opens the save page on what that page saves (a sound page: the
@@ -1329,7 +1336,7 @@ static void arp_capture(UIStateMachine *sm, uint8_t i, uint8_t note)
 {
     ArpChordStep *s = &sm->arp->steps[i];
     s->chord_root = note;
-    s->gate_length = sm->arp_knob[0];
+    s->rate = sm->arp_knob[0];
     s->octave_range = sm->arp_knob[1];
     s->style = sm->arp_knob[2];
     s->variation = sm->arp_knob[3];
@@ -1349,7 +1356,7 @@ static void arp_step_fn(UIStateMachine *sm, uint8_t fn, uint8_t i)
     }
 }
 
-static uint8_t arp_playing(const UIStateMachine *sm) { return (uint8_t)(sm->seq != 0 && maq_playing(sm->seq)); }
+static uint8_t arp_playing(const UIStateMachine *sm) { return (uint8_t)(sm->carp != 0 && carp_playing(sm->carp)); }
 
 /* TRANSPOSE MAQ over an empty pattern (no chord in its SEQ LENGTH steps): nothing to follow but the keybed, so the
  * chord keys transpose the MAQ stopped as well as playing, and a start keeps the key last played */
@@ -1491,7 +1498,8 @@ uint8_t ui_sm_arp_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t dow
                     arp_capture(sm, i, note);
         } else if (rec) {
             arp_capture(sm, arp_rec_take(sm), note);     /* REC: into the nearest step, or the next in turn */
-        } else if (sm->carp != 0 && (arp_playing(sm) || arp_keys_lead_maq(sm))) {
+        } else if (sm->carp != 0 && (arp_playing(sm) || arp_keys_lead_maq(sm) ||
+                                     (sm->arp->transpose_maq_option == 1u && sm->seq != 0 && maq_playing(sm->seq)))) {
             carp_set_transpose(sm->carp, (int8_t)key);   /* playing: the key transposes the pattern (and the MAQ) */
         }
         sm->arp_chord_key = note;
@@ -1519,7 +1527,7 @@ uint8_t ui_sm_arp_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t dow
 
 void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
 {
-    static const uint8_t lim[4] = {VAL_MAX, ARP_NOCT - 1u, ARPSTYLE_COUNT - 1u, ARP_NVAR - 1u};
+    static const uint8_t lim[4] = {ARPDIV_COUNT - 1u, ARP_NOCT - 1u, ARPSTYLE_COUNT - 1u, ARP_NVAR - 1u};
     uint8_t i, v, held;
     if (page == UIPAGE_SAVE_COMMIT && knob == 0u) {
         ui_sm_enforce(sm);           /* a new TARGET: RENAME greys or returns, PASTE may lose its clipboard */
@@ -1532,8 +1540,8 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         return;
     }
     if (page == UIPAGE_SAVE_COMMIT) {
-        if (sm->save_slot >= PATCH_SLOTS)
-            sm->save_slot = PATCH_SLOTS - 1u;
+        if (sm->save_slot >= ui_sm_bank_slots(sm->save_target))
+            sm->save_slot = (uint8_t)(ui_sm_bank_slots(sm->save_target) - 1u);
         if (knob >= 2u)
             sm->kb_ms = UI_KB_MS;    /* the name knobs: the keyboard up while they turn */
         return;
@@ -1552,7 +1560,7 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         if (!((held >> i) & 1u))
             continue;
         switch (knob) {
-        case 0: s->gate_length = v; break;
+        case 0: s->rate = v; break;
         case 1: s->octave_range = v; break;
         case 2: s->style = v; break;
         default: s->variation = v; break;
@@ -1688,7 +1696,7 @@ uint8_t ui_sm_preset_slot(const UIStateMachine *sm)
     }
 }
 
-/* one detent = the next used slot that way; the walk stops at 0 / 127, on the last used slot it passed */
+/* one detent = the next used slot that way; the walk stops at the bank's ends, on the last used slot it passed */
 static void ui_preset_step(UIStateMachine *sm, int8_t detents)
 {
     uint8_t target = ui_sm_preset_target(sm), name[NAME_LEN];
@@ -1698,7 +1706,7 @@ static void ui_preset_step(UIStateMachine *sm, int8_t detents)
         return;
     while (n > 0) {
         s = (int16_t)(s + dir);
-        if (s < 0 || s > (int16_t)VAL_MAX)
+        if (s < 0 || s >= (int16_t)ui_sm_bank_slots(target))
             break;
         if (sm->slot_query == 0 || sm->slot_query(sm->slot_ctx, target, (uint8_t)s, name) != UISLOT_EMPTY) {
             to = s;
@@ -1771,7 +1779,7 @@ void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *
     sm->seq = 0;
     sm->seq_group = 0u;
     sm->carp = 0;
-    sm->arp_knob[0] = ARP_GATE_DEFAULT;
+    sm->arp_knob[0] = ARP_RATE_DEFAULT;
     sm->arp_knob[1] = 0u;
     sm->arp_knob[2] = ARPSTYLE_UP;
     sm->arp_knob[3] = 0u;
@@ -1850,6 +1858,34 @@ void ui_sm_process(UIStateMachine *sm)
     }
 }
 
+/* PLAY (2026-10-17): on the SEQ page the MAQ alone, on the ARP page the ARP alone, on any other page both: stopped
+ * (both), start both; otherwise stop whichever plays. A start plays the ARP pattern as captured (untransposed), unless
+ * the chord keys lead the MAQ (arp_keys_lead_maq). */
+static void ui_sm_play(UIStateMachine *sm)
+{
+    uint8_t seq = (uint8_t)(sm->seq != 0 && maq_playing(sm->seq)), arp = arp_playing(sm);
+    uint8_t want_seq = seq, want_arp = arp;
+    if (sm->page == UIPAGE_SEQ)
+        want_seq = (uint8_t)!seq;
+    else if (sm->page == UIPAGE_ARP)
+        want_arp = (uint8_t)!arp;
+    else
+        want_seq = want_arp = (uint8_t)!(seq || arp);
+    if (sm->carp != 0) {
+        if (want_arp && !arp && !arp_keys_lead_maq(sm))
+            carp_set_transpose(sm->carp, 0);
+        carp_set_playing(sm->carp, want_arp);
+    }
+    if (sm->seq != 0)
+        maq_set_playing(sm->seq, want_seq);
+}
+
+uint8_t ui_sm_play_lit(const UIStateMachine *sm)
+{
+    uint8_t seq = (uint8_t)(sm->seq != 0 && maq_playing(sm->seq)), arp = arp_playing(sm);
+    return sm->page == UIPAGE_SEQ ? seq : sm->page == UIPAGE_ARP ? arp : (uint8_t)(seq || arp);
+}
+
 void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
 {
     const UiRow *r;
@@ -1857,11 +1893,7 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
                                type == UIEV_TRANSPORT ? (uint8_t)arg >= UITR_COUNT : arg == 0))
         return;
     if (type == UIEV_TRANSPORT && arg == UITR_PLAY) {   /* the transport is the music: it works on every page, */
-        if (sm->seq != 0) {                             /* through every dialog, and never touches the UI state */
-            if (!maq_playing(sm->seq) && sm->carp != 0 && !arp_keys_lead_maq(sm))
-                carp_set_transpose(sm->carp, 0);        /* a start plays the ARP pattern as captured */
-            maq_set_playing(sm->seq, (uint8_t)!maq_playing(sm->seq));
-        }
+        ui_sm_play(sm);                                 /* through every dialog, and never touches the UI state */
         return;
     }
     if (type != UIEV_PRESET_ENC)
@@ -1897,8 +1929,8 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         sm->browse = 1u;             /* the list opens on (or follows) the slot it lands on */
         sm->browse_ms = UI_BROWSE_MS;
     } else if (type == UIEV_ALGO_ENC && sm->page == UIPAGE_SAVE_COMMIT) {
-        int16_t v = (int16_t)(sm->save_slot + arg);  /* the slot (the stones and the moon follow it) */
-        sm->save_slot = (uint8_t)(v < 0 ? 0 : v > (int16_t)(PATCH_SLOTS - 1u) ? (int16_t)(PATCH_SLOTS - 1u) : v);
+        int16_t v = (int16_t)(sm->save_slot + arg), top = (int16_t)(ui_sm_bank_slots(sm->save_target) - 1u);
+        sm->save_slot = (uint8_t)(v < 0 ? 0 : v > top ? top : v);   /* the slot (the stones and the moon follow it) */
     } else if (type == UIEV_ALGO_ENC) {
         r = sm->s.current_param_focus != UI_FOCUS_NONE ? vis_row(sm, sm->s.current_param_focus) : NULL;
         if (r != NULL) {
@@ -1928,6 +1960,10 @@ void ui_sm_enforce(UIStateMachine *sm)
         sm->seq_group = 0u;
     if (sm->save_target >= UISAVE_COUNT)
         sm->save_target = UISAVE_WHOLE_PERF;
+    if (sm->save_slot >= ui_sm_bank_slots(sm->save_target))   /* a TARGET with a smaller bank (2026-10-17) */
+        sm->save_slot = (uint8_t)(ui_sm_bank_slots(sm->save_target) - 1u);
+    if (sm->perf_slot >= BANK_SLOTS)
+        sm->perf_slot = BANK_SLOTS - 1u;
     if (sm->save_action >= UIACT_COUNT || (sm->save_action == UIACT_PASTE && !ui_sm_paste_ok(sm)))
         sm->save_action = sm->page == UIPAGE_SAVE_COMMIT ? (uint8_t)UIACT_SAVE : (uint8_t)UIACT_NO;
                                      /* a new TARGET can leave PASTE with nothing of its kind to paste */
@@ -2059,6 +2095,10 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     info->kind = k->kind;
     info->n_enum = k->kind == UIKNOB_SRC ? (uint8_t)MSRC_COUNT : k->kind == UIKNOB_FN ? (uint8_t)MFN_COUNT : k->n_enum;
     info->names = k->kind == UIKNOB_SRC ? MSRC_NAMES : k->kind == UIKNOB_FN ? MFN_NAMES : k->names;
+    if (page == UIPAGE_ARP && knob == 3u && sm->arp_knob[2] == ARPSTYLE_HOLD) {
+        info->label = "STRUM";                       /* HOLD: RHYTHM is the strike's strum */
+        info->names = ARPSTRUM_NAMES;
+    }
     if (k->kind == UIKNOB_NONE)
         return 0;
     if (k->kind == UIKNOB_PERF)

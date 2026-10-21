@@ -27,6 +27,7 @@
 #include "dsp/oscillators.h"
 #include "dsp/lfo.h"
 #include "dsp/wavetables.h"
+#include "dsp/preset.h"                /* engine_defaults, seq_defaults (ui_page_draw.c's PRESET fill) */
 #include "felucca_canvas_shim.h"
 
 #define EXPORT __attribute__((used, visibility("default")))

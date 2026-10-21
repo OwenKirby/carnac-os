@@ -31,6 +31,8 @@
 #define NAME_LEN 16u                 /* 6.2.1: character cursor 0..15 */
 #define CHAR_MAP_LEN 41u             /* char_map[42]: " A..Z0..9.-_/" and its NUL */
 #define PATCH_SLOTS 128u             /* stored EngineState patches; each layer plays one via layer_patch */
+#define BANK_SLOTS 32u               /* stored sequences, arp patterns and performances (2026-10-17: was 128, like the
+                                      * patches; a performance is now a whole snapshot, WholePerformance) */
 
 /* -------------------------------------------------- shared value lists --- */
 enum {                               /* mod_source_list (4) */
@@ -209,13 +211,15 @@ enum {                               /* style (knob 3, "phrase category"): the o
     ARPSTYLE_BLOCK,                  /* the whole chord on every strike */
     ARPSTYLE_UP, ARPSTYLE_DOWN, ARPSTYLE_UPDN, ARPSTYLE_DNUP, ARPSTYLE_RANDOM,   /* one note per strike */
     ARPSTYLE_STRUM_UP, ARPSTYLE_STRUM_DN,                                       /* the chord, spread across the cell */
+    ARPSTYLE_HOLD,                   /* the chord struck once at the step and held (not again on the clock); RHYTHM is
+                                      * its strum then (2026-10-17): 0 none, 1..12 up, 13..23 down, faster to slower */
     ARPSTYLE_COUNT
 };
 
 /* 8.1: one step key's capture: the chord struck plus the 4 ARP knob values at that moment (2.2) */
 typedef struct {
     uint8_t chord_root;              /* the chord key's MIDI note 0..125 (the chord's bass), ARP_CHORD_TIE, ARP_CHORD_EMPTY */
-    uint8_t gate_length;             /* knob 1: strike length = its cells x (value + 1) / 128, 127 = legato */
+    uint8_t rate;                    /* knob 1: ARPDIV_*, the step's length (FREC_VER_ARP 4, 2026-10-17: was its GATE) */
     uint8_t octave_range;            /* knob 2: 0..ARP_NOCT - 1 */
     uint8_t style;                   /* knob 3: ARPSTYLE_* */
     uint8_t variation;               /* knob 4: 0..ARP_NVAR - 1 */
@@ -227,7 +231,8 @@ PS_STATIC_ASSERT(sizeof(ArpChordStep) == 6u, "ArpChordStep flash layout");
 typedef struct {
     ArpChordStep steps[ARP_NSTEP];
     uint8_t target_layer;            /* ARPLAYER_* */
-    uint8_t time_division;           /* ARPDIV_*: one step's length */
+    uint8_t gate_length;             /* GATE: a strike's length = its cells x (value + 1) / 128, 127 = legato (FREC_VER_ARP
+                                      * 4, 2026-10-17: where TIME DIVISION was, before each step had its own RATE) */
     uint8_t sequence_length;         /* 1..8 */
     uint8_t transpose_maq_option;    /* 0 / 1: the MAQ NOTE lanes follow each step's chord root and the chord key */
     uint8_t current_genre_bank;      /* arp_chords.h genre, 0..ARP_GENRE_COUNT - 1 */
@@ -236,25 +241,27 @@ typedef struct {
 PS_STATIC_ASSERT(sizeof(ArpState) == 54u, "ArpState flash layout");
 
 /* the factory arp slot: every step empty (captured steps start from the default knob values), 1/4 steps (8.3's
- * rhythm cells are then the 16ths its table names), 8 steps, layer 1, no MAQ transpose, the first genre, no accents */
+ * rhythm cells are then the 16ths its table names), 8 steps, layer 1, no MAQ transpose, Phrygian, no accents */
 #define ARP_GATE_DEFAULT 96u
+#define ARP_RATE_DEFAULT ARPDIV_1_4
 #define ARP_ACCENT_DEFAULT 120u
+#define ARP_GENRE_DEFAULT 83u        /* arp_chords.h ARP_GENRE_PHRYGIAN (asserted there) */
 static inline void arp_defaults(ArpState *a)
 {
     uint8_t i;
     for (i = 0u; i < ARP_NSTEP; i++) {
         a->steps[i].chord_root = ARP_CHORD_EMPTY;
-        a->steps[i].gate_length = ARP_GATE_DEFAULT;
+        a->steps[i].rate = ARP_RATE_DEFAULT;
         a->steps[i].octave_range = 0u;
         a->steps[i].style = ARPSTYLE_UP;
         a->steps[i].variation = 0u;
         a->steps[i].accent = 0u;
     }
     a->target_layer = ARPLAYER_L1;
-    a->time_division = ARPDIV_1_4;
+    a->gate_length = ARP_GATE_DEFAULT;
     a->sequence_length = ARP_NSTEP;
     a->transpose_maq_option = 0u;
-    a->current_genre_bank = 0u;
+    a->current_genre_bank = ARP_GENRE_DEFAULT;
     a->accent_velocity = ARP_ACCENT_DEFAULT;
 }
 
@@ -493,11 +500,13 @@ static inline int varch_unison_pan(int i, int n)
 }
 
 /* ------------------------------------------- master performance --- */
-/* WHOLE_PERF: the performance file. Its components are child indices (6.3), not copies, so a patch,
- * a sequence or an arp pattern can be swapped without rewriting the performance */
+/* The performance's own settings. Since 2026-10-17 WHOLE_PERF saves a WholePerformance (below): these plus copies of
+ * both layers' patches, the sequence and the arp pattern, so a performance plays the same whatever is saved later. The
+ * links now only say which slot each part was last loaded from (the PERF page shows them); loading a performance
+ * never reads them */
 typedef struct {
     uint8_t name[NAME_LEN];          /* char_map indices (0 = space), not ASCII */
-    /* links (6.1), 0..127 each */
+    /* where the parts came from (6.1): patch slots 0..127, sequence and arp slots 0..BANK_SLOTS - 1 (127: none) */
     uint8_t layer_patch[NLAYER];     /* EngineState slots for Engine A / B */
     uint8_t seq_link;                /* 4-lane MAQ sequencer slot */
     uint8_t arp_link;                /* 8-step arp / chord slot */
@@ -533,6 +542,17 @@ typedef struct {
     uint8_t int_tempo;               /* INT TEMPO when CLOCK SOURCE is INTERNAL: BPM = 40 + value (default 80 = 120 BPM) */
 } MasterPerformancePreset;
 PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 51u, "MasterPerformancePreset flash layout");
+
+/* WHOLE_PERF (2026-10-17): a performance and everything it plays, as SAVE took it. The FM1 keeps these in flash only
+ * (preset_store_fm1.c, both patches packed there: WHOLE_PERF_STORED_SIZE) and reads one when it is loaded; the
+ * clipboard holds one for COPY / PASTE */
+typedef struct {
+    MasterPerformancePreset perf;
+    EngineState engine[NLAYER];
+    SequencerLane seq[SEQ_NLANE];
+    ArpState arp;
+} WholePerformance;
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 883u, "WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */

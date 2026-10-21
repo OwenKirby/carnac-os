@@ -1987,10 +1987,10 @@ static void pu_save_moon(int32_t cx, int32_t cy, int32_t r, uint8_t over, int32_
 }
 
 /* 6.2.2 / 2026-10-17: the bottom of the save page. While knobs 3 / 4 turn, the name a cell a letter and the keyboard;
- * otherwise the bank on the plain: all 128 slots left to right, a short mark for each used one; the chosen slot a
+ * otherwise the bank on the plain: all its slots left to right (128 patches, 32 of the rest), a short mark for each used one; the chosen slot a
  * standing stone (an outline in the theme when empty, solid in the accent when a save would overwrite it) with its
  * number at its foot, and right above it on the arch the moon, full over an empty slot, a crescent over a used one. */
-#define PU_SLOT_X(s) (10 + (int32_t)(s) * 220 / 127)   /* slot 0 .. 127 along the plain */
+#define PU_SLOT_X(s, n) (10 + (int32_t)(s) * 220 / ((int32_t)(n) - 1))   /* slot 0 .. n - 1 along the plain */
 
 static void pu_viz_commit(const UIStateMachine *sm)
 {
@@ -2002,7 +2002,7 @@ static void pu_viz_commit(const UIStateMachine *sm)
     if (!kb) {
         enum { YH = 56, RX = 112, RY = 42, MR = 7 };
         uint8_t tgt = sm->save_target < UISAVE_COUNT ? sm->save_target : (uint8_t)UISAVE_WHOLE_PERF;
-        uint8_t here = ui_sm_slot_state(sm, n) == UISLOT_USED;
+        uint8_t here = ui_sm_slot_state(sm, n) == UISLOT_USED, ns = ui_sm_bank_slots(tgt);
         int32_t k, mx, my, dx, q, r2;
         for (x = 120 - RX + 2; x < 120 + RX; x += 3) {   /* the arch, faint dots */
             dx = x - 120;
@@ -2010,7 +2010,7 @@ static void pu_viz_commit(const UIStateMachine *sm)
             for (r2 = 0; (r2 + 1) * (r2 + 1) <= q; r2++) {}
             cv_pset(x, YH - r2, PUC_STONE);
         }
-        mx = PU_SLOT_X(sm->save_slot);               /* the moon on it, right over the chosen slot */
+        mx = PU_SLOT_X(sm->save_slot, ns);               /* the moon on it, right over the chosen slot */
         dx = mx - 120;
         q = RY * RY - RY * RY * dx * dx / (RX * RX);
         for (r2 = 0; (r2 + 1) * (r2 + 1) <= q; r2++) {}
@@ -2019,12 +2019,12 @@ static void pu_viz_commit(const UIStateMachine *sm)
             my = YH - 20 - MR - 3;
         pu_save_moon(mx, my, MR, here, YH);
         pu_ground(YH, PUC_STONE);
-        for (k = 0; k < (int32_t)PATCH_SLOTS; k++) {  /* the bank: a mark for each used slot */
+        for (k = 0; k < (int32_t)ns; k++) {          /* the bank: a mark for each used slot */
             if (k == sm->save_slot || ui_sm_slot_query(sm, tgt, (uint8_t)k, n) != UISLOT_USED)
                 continue;
-            cv_rect(PU_SLOT_X(k), YH - 5, 1, 5, SQC(MID));
+            cv_rect(PU_SLOT_X(k, ns), YH - 5, 1, 5, SQC(MID));
         }
-        x = PU_SLOT_X(sm->save_slot);                /* the chosen slot, a stone in front of the moon */
+        x = PU_SLOT_X(sm->save_slot, ns);            /* the chosen slot, a stone in front of the moon */
         sq_stone(x - 3, YH, 7, 20, 20, here ? SQC(ACCENT) : SQC(THEME), (uint32_t)(sm->save_slot * 7 + 3), here ? 0u : 1u, 0u);
         pu_num(b, sm->save_slot, 0u, 3u);
         x = x - 16 < 0 ? 0 : x + 16 > 240 ? 208 : x - 16;

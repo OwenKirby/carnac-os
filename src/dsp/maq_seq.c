@@ -486,6 +486,7 @@ static void maq_transport(MaqSeq *q)
         if (starts != q->start_seen) {
             q->start_seen = starts;
             maq_rewind(q);
+            q->origin = q->pulse_base + 1u;
             q->req_play = 1u;
         } else if (q->ext_running_seen && !ext) {
             q->req_play = 0u;
@@ -514,8 +515,16 @@ static void maq_transport(MaqSeq *q)
     }
     if ((q->req_play ? 1u : 0u) != q->playing) {
         q->playing = q->req_play ? 1u : 0u;
-        if (!q->rec)
+        if (!q->rec) {
             maq_rewind(q);                           /* start: from the top; stop: every note off */
+            q->origin = q->pulse_base + 1u;
+            if (q->playing && q->sync_run) {         /* the ARP plays: wait for its next bar */
+                uint32_t wait = maq_sync_wait(q->sync_origin, q->pulse_base);
+                for (l = 0u; l < SEQ_NLANE; l++)
+                    q->run[l].ticks_left = (uint8_t)wait;
+                q->origin = q->pulse_base + wait;
+            }
+        }
         q->rng ^= q->frame * 0x9E3779B9u;            /* random modes differ from run to run */
         if (q->rng == 0u) q->rng = 0x9E3779B9u;
     }
@@ -546,9 +555,12 @@ void maq_init(MaqSeq *q, SequencerLane *lanes, const MasterPerformancePreset *pe
     q->req_rec_step = 0u;
     q->ext_transpose = 0;
     q->genre = 0;
+    q->sync_run = 0u;
+    q->sync_origin = 0u;
+    q->origin = 0u;
     q->playing = q->rec = q->rec_step = 0u;
     q->ext_running_seen = midi_clock_ext_running();
-    q->pulse_seen = midi_clock_pulse_count();
+    q->pulse_seen = q->pulse_base = midi_clock_pulse_count();
     q->start_seen = midi_clock_start_count();
     q->frame = 0u;
     q->rng = 0x2545F491u;
@@ -582,6 +594,7 @@ void maq_frame(MaqSeq *q, uint32_t frame)
     uint8_t l;
     q->frame = frame;
     q->pulse_seen = pulses;
+    q->pulse_base = pulses - n;
 #if !defined(SYNTH_SEQ_NO_IDLE)                     /* test_seq_idle.c builds it both ways */
     if (maq_idle_frame(q))
         return;
@@ -629,5 +642,16 @@ uint8_t maq_recording(const MaqSeq *q) { return q->req_rec ? 1u : 0u; }
 uint8_t maq_rec_step(const MaqSeq *q) { return q->req_rec_step < SEQ_NSTEP ? q->req_rec_step : (uint8_t)0u; }
 uint8_t maq_lane_pos(const MaqSeq *q, uint8_t lane) { return lane < SEQ_NLANE ? q->run[lane].pos : (uint8_t)MAQ_POS_NONE; }
 uint8_t maq_free_running(const MaqSeq *q) { return (uint8_t)(q->playing && !q->rec); }
+uint32_t maq_origin(const MaqSeq *q) { return q->origin; }
+uint32_t maq_sync_wait(uint32_t origin, uint32_t base)
+{
+    int32_t d = (int32_t)(origin - base - 1u) % (int32_t)MAQ_SYNC_PULSES;   /* signed: 2^32 is no multiple of 96 */
+    return 1u + (uint32_t)(d < 0 ? d + (int32_t)MAQ_SYNC_PULSES : d);
+}
+void maq_set_sync(MaqSeq *q, uint8_t arp_running, uint32_t arp_origin)
+{
+    q->sync_origin = arp_origin;
+    q->sync_run = arp_running ? 1u : 0u;
+}
 void maq_set_ext_transpose(MaqSeq *q, int8_t semitones) { q->ext_transpose = semitones; }
 void maq_set_genre(MaqSeq *q, uint8_t genre) { q->genre = genre; }

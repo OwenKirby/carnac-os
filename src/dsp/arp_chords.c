@@ -16,7 +16,7 @@ const char *const arp_genre_names[ARP_GENRE_COUNT] = {
     "Gospel_RB_2", "Gospel_RB_3", "Lofi_RB_1", "Lofi_RB_2", "Funk_1", "Funk_2",
     "Neo_Soul_1", "Neo_Soul_2", "Neo_Soul_3", "Neo_Soul_4", "Neo_Soul_5", "Neo_Soul_6",
     "Neo_Soul_7", "Neo_Soul_8", "Neo_Soul_9", "Bossa_Nova_1", "Bossa_Nova_2", "Classical_1",
-    "Classical_2", "Classical_3", "Classical_4", "Modern_1", "Modern_2",
+    "Classical_2", "Classical_3", "Classical_4", "Modern_1", "Modern_2", "Phrygian",
 };
 
 const uint8_t arp_chord_iv[ARP_GENRE_COUNT][12][ARP_CHORD_NOTES] = {
@@ -269,6 +269,9 @@ const uint8_t arp_chord_iv[ARP_GENRE_COUNT][12][ARP_CHORD_NOTES] = {
     /* Modern_2 */
     {{0,16,19,26},{0,15,19,26},{0,14,15,19},{0,14,16,19},{0,14,15,19},{0,14,16,19},
      {0,11,15,19},{0,14,16,19},{0,14,16,19},{0,7,14,15},{0,7,14,16},{0,7,14,15}},
+    /* Phrygian */
+    {{0,7,12,15},{0,7,11,16},{0,6,9,15},{0,4,7,10},{0,3,6,9},{0,3,7,10},
+     {0,3,6,9},{0,3,6,10},{0,4,7,11},{0,3,6,9},{0,3,7,10},{0,3,6,9}},
 };
 
 /* each genre's scale for a SEQ NOTE lane on SCALE = GENRE: SEQSCALE_* | root << 4 (root: pitch class) */
@@ -356,4 +359,5 @@ const uint8_t arp_genre_scale[ARP_GENRE_COUNT] = {
     SEQSCALE_HARM_MINOR | 9 << 4,  /* Classical_4 */
     SEQSCALE_LYDIAN | 0 << 4,      /* Modern_1 */
     SEQSCALE_MAJOR | 0 << 4,       /* Modern_2 */
+    SEQSCALE_PHRYGIAN | 0 << 4,    /* Phrygian */
 };

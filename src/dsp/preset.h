@@ -35,6 +35,7 @@ void preset_defaults(void);
  * keep what was saved (the FM1's PERF TEST) */
 void live_defaults(void);
 void engine_defaults(EngineState *e);   /* one layer's factory patch (the HOME browser measures a patch against it) */
+void perf_defaults(MasterPerformancePreset *p);   /* the performance's own settings as live_defaults sets them */
 
 /* live layer -> patch slot. The layer keeps playing its live sound; the slot holds a copy */
 void patch_store(uint8_t layer, uint8_t slot);

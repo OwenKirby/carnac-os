@@ -43,14 +43,16 @@ static CarpSeq a;
 static SequencerLane lanes[SEQ_NLANE];
 static UIStateMachine sm;
 
-/* the render's order (synth_runtime.c): clock, MAQ, ARP on the MAQ's transport, then the 1-frame-late MAQ transpose */
+/* the render's order (synth_runtime.c): clock, MAQ, ARP (its own transport, synced to the MAQ's bar), then the
+ * 1-frame-late MAQ transpose and the ARP's bar for the MAQ */
 static void run(uint32_t frames)
 {
     while (frames--) {
         midi_clock_frame(now);
         maq_frame(&q, now);
-        carp_frame(&a, now, maq_free_running(&q));
+        carp_frame(&a, now, &q);
         maq_set_ext_transpose(&q, carp_maq_transpose(&a));
+        maq_set_sync(&q, carp_running(&a), carp_origin(&a));
         now++;
     }
 }
@@ -74,11 +76,24 @@ static int count(const Log *g, uint8_t kind) { int i, n = 0; for (i = 0; i < g->
 static int nth(const Log *g, uint8_t kind, int k) { int i; for (i = 0; i < g->n; i++) if ((g->ev[i].st & 0xF0u) == kind && k-- == 0) return i; return -1; }
 static int all_off(const Log *g) { int c, n; for (c = 0; c < 16; c++) for (n = 0; n < 128; n++) if (g->sounding[c][n]) return 0; return 1; }
 
-/* one captured step: root's chord with these knob values */
+/* one captured step: root's chord with these knob values, 1/4 long (gate: the pattern's GATE) */
 static void step(uint8_t i, uint8_t root, uint8_t gate, uint8_t oct, uint8_t style, uint8_t var)
 {
     ArpChordStep *s = &arp_state.steps[i];
-    s->chord_root = root; s->gate_length = gate; s->octave_range = oct; s->style = style; s->variation = var;
+    s->chord_root = root; s->rate = ARPDIV_1_4; s->octave_range = oct; s->style = style; s->variation = var;
+    arp_state.gate_length = gate;
+}
+
+/* both transports, as PLAY off the SEQ and ARP pages does */
+static void play(uint8_t on) { maq_set_playing(&q, on); carp_set_playing(&a, on); }
+
+/* PLAY pressed on another page (the page kept) */
+static void play_on(uint8_t page)
+{
+    uint8_t p = sm.page;
+    ui_sm_goto(&sm, page);
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    ui_sm_goto(&sm, p);
 }
 
 /* the frame of the k-th ARP note-on and its note */
@@ -98,8 +113,15 @@ int main(void)
             CHECK(iv[0] == 0 && iv[1] > 0 && iv[2] > iv[1] && iv[3] > iv[2] && iv[3] <= 40,
                   "%s pc %d: %u %u %u %u", arp_genre_names[g], p, iv[0], iv[1], iv[2], iv[3]);
         }
-    CHECK(strcmp(arp_genre_names[0], "Pop_1") == 0 && strcmp(arp_genre_names[ARP_GENRE_COUNT - 1u], "Modern_2") == 0 &&
+    CHECK(strcmp(arp_genre_names[0], "Pop_1") == 0 && strcmp(arp_genre_names[ARP_GENRE_COUNT - 2u], "Modern_2") == 0 &&
           strcmp(arp_genre_names[G_UTIL_MAJ], "Utility_Maj") == 0, "8.2 genre order");
+    CHECK(strcmp(arp_genre_names[ARP_GENRE_PHRYGIAN], "Phrygian") == 0 && (arp_genre_scale[ARP_GENRE_PHRYGIAN] & 15u) ==
+          SEQSCALE_PHRYGIAN, "Phrygian after the spec's list, on the Phrygian scale");
+    { ArpState d; arp_defaults(&d);
+      CHECK(d.current_genre_bank == ARP_GENRE_PHRYGIAN && d.steps[3].rate == ARPDIV_1_4 && d.gate_length == ARP_GATE_DEFAULT,
+            "the default pattern: Phrygian, 1/4 steps, the default GATE"); }
+    n = carp_chord_notes(ARP_GENRE_PHRYGIAN, 49, c);
+    CHECK(n == 4 && c[1] - c[0] == 7 && c[2] - c[0] == 11 && c[3] - c[0] == 16, "Phrygian's bII: a major seventh");
     n = carp_chord_notes(G_TRAD_MAJ, 48, c);
     CHECK(n == 4 && c[0] == 48 && c[1] == 64 && c[2] == 67 && c[3] == 72, "Trad_Maj C3 = spec {C3, E4, G4, C5}");
     n = carp_chord_notes(G_TRAD_MAJ, 120, c);
@@ -119,7 +141,7 @@ int main(void)
     arp_state.sequence_length = 1;
     arp_state.current_genre_bank = G_UTIL_MAJ;
     carp_chord_notes(G_UTIL_MAJ, 48, c);
-    maq_set_playing(&q, 1);
+    play(1);
     run(QUARTER * 2u + 10u);
     CHECK(count(&la, 0x90) == 5, "2 strikes x 2 steps + the third step's first, got %d", count(&la, 0x90));
     CHECK(on_frame(0) == 0 && on_note(0) == c[0] && on_note(1) == c[1] && on_note(2) == c[2] && on_note(3) == c[3] &&
@@ -129,8 +151,8 @@ int main(void)
     CHECK(k >= 0 && near(la.ev[k].frame, (CELL * 97u) >> 7), "GATE 96: off at 97/128 of the cell, got %u",
           k >= 0 ? la.ev[k].frame : 0);
     CHECK(la.ev[0].d2 == perf_state.base_velocity && (la.ev[0].st & 0x0Fu) == perf_state.midi_ch[0], "base velocity, L1");
-    CHECK(count(&lm, 0x90) > 0, "the MAQ plays alongside on the same transport");
-    maq_set_playing(&q, 0);
+    CHECK(count(&lm, 0x90) > 0, "the MAQ plays alongside, started together");
+    play(0);
     run(2);
     CHECK(la.stuck == 0 && all_off(&la), "stop releases everything, no double on / orphan off (%d)", la.stuck);
 
@@ -142,21 +164,21 @@ int main(void)
         arp_state.sequence_length = 1;
         arp_state.current_genre_bank = G_UTIL_MAJ;
         carp_chord_notes(G_UTIL_MAJ, 48, c);
-        maq_set_playing(&q, 1);
+        play(1);
         run(QUARTER * 2u + 10u);
         for (i = 0; i < 5; i++) CHECK(on_note(i) == c[want_dn[i]], "DOWN strike %d: %u", i, on_note(i));
         reset();
         step(0, 48, 64, 0, ARPSTYLE_UPDN, 1);
         arp_state.sequence_length = 1;
         arp_state.current_genre_bank = G_UTIL_MAJ;
-        maq_set_playing(&q, 1);
+        play(1);
         run(QUARTER * 4u - 10u);
         for (i = 0; i < 8; i++) CHECK(on_note(i) == c[want_ud[i]], "UP-DN strike %d: %u", i, on_note(i));
         reset();
         step(0, 48, 64, 1, ARPSTYLE_UP, 1);          /* 2 octaves: 8 notes */
         arp_state.sequence_length = 1;
         arp_state.current_genre_bank = G_UTIL_MAJ;
-        maq_set_playing(&q, 1);
+        play(1);
         run(QUARTER * 4u + 10u);
         CHECK(on_note(4) == c[0] + 12 && on_note(7) == c[3] + 12 && on_note(8) == c[0], "UP over 2 octaves: %u %u %u",
               on_note(4), on_note(7), on_note(8));
@@ -169,7 +191,7 @@ int main(void)
     arp_state.sequence_length = 1;
     arp_state.current_genre_bank = G_UTIL_MAJ;
     carp_chord_notes(G_UTIL_MAJ, 48, c);
-    maq_set_playing(&q, 1);
+    play(1);
     run(CELL + 10u);
     CHECK(count(&la, 0x90) == 8 && on_frame(3) == 0 && on_note(3) == c[3] && on_note(4) == c[0] + 12 &&
           near(on_frame(4), CELL), "BLOCK: the chord, then an octave up (%d on)", count(&la, 0x90));
@@ -177,7 +199,7 @@ int main(void)
     step(0, 48, 64, 0, ARPSTYLE_STRUM_UP, 0);
     arp_state.sequence_length = 1;
     arp_state.current_genre_bank = G_UTIL_MAJ;
-    maq_set_playing(&q, 1);
+    play(1);
     run(CELL);
     CHECK(count(&la, 0x90) == 4 && on_note(0) == c[0] && on_note(3) == c[3] && near(on_frame(1), CELL / 8u) &&
           near(on_frame(3), 3u * (CELL / 8u)), "STRUM UP: cell / 8 apart, %u %u", on_frame(1), on_frame(3));
@@ -185,7 +207,7 @@ int main(void)
     step(0, 48, 64, 0, ARPSTYLE_STRUM_DN, 0);
     arp_state.sequence_length = 1;
     arp_state.current_genre_bank = G_UTIL_MAJ;
-    maq_set_playing(&q, 1);
+    play(1);
     run(CELL);
     CHECK(on_note(0) == c[3] && on_note(3) == c[0], "STRUM DN: top first");
 
@@ -194,7 +216,7 @@ int main(void)
     step(0, 48, 64, 0, ARPSTYLE_UP, 8);              /* 05A: o ~ o _ */
     arp_state.sequence_length = 1;
     arp_state.current_genre_bank = G_UTIL_MAJ;
-    maq_set_playing(&q, 1);
+    play(1);
     run(QUARTER - 10u);
     k = nth(&la, 0x80, 0);
     CHECK(count(&la, 0x90) == 2 && near(on_frame(1), 2u * CELL + 1u), "05A strikes on cells 1 and 3: %u", on_frame(1));
@@ -204,7 +226,7 @@ int main(void)
     step(0, 48, 64, 0, ARPSTYLE_UP, 19);             /* 10T: o o _ (triplet) */
     arp_state.sequence_length = 1;
     arp_state.current_genre_bank = G_UTIL_MAJ;
-    maq_set_playing(&q, 1);
+    play(1);
     run(QUARTER - 10u);
     CHECK(count(&la, 0x90) == 2 && near(on_frame(1), QUARTER / 3u), "triplet cells: a third of the step, %u", on_frame(1));
     reset();
@@ -213,7 +235,7 @@ int main(void)
     step(3, 60, 64, 0, ARPSTYLE_UP, 0);
     arp_state.sequence_length = 3;
     arp_state.current_genre_bank = G_UTIL_MAJ;
-    maq_set_playing(&q, 1);
+    play(1);
     for (i = 0; i < 4; i++) { run(1); n = carp_pos(&a); CHECK(n == (uint8_t)(i % 3), "playhead %d: %u", i, n); run(QUARTER - 1u); }
     {                                                /* UP runs on across steps: strikes 0, 1, 2 of the order */
         uint8_t c50[ARP_CHORD_NOTES];
@@ -281,16 +303,21 @@ int main(void)
         ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 0, 0);
         CHECK(arp_state.steps[2].chord_root == FM1_LOW + 4u && arp_state.steps[4].chord_root == FM1_LOW + 4u &&
               arp_state.steps[2].style == ARPSTYLE_DOWN && arp_state.steps[4].variation == 13 &&
-              arp_state.steps[2].gate_length == ARP_GATE_DEFAULT && arp_state.steps[0].chord_root == ARP_CHORD_EMPTY,
+              arp_state.steps[2].rate == ARP_RATE_DEFAULT && arp_state.steps[0].chord_root == ARP_CHORD_EMPTY,
               "A3 + the dials captured into steps 3 and 5 only");
         kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 0, &info);
-        *kb = 30; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
-        CHECK(arp_state.steps[2].gate_length == 30 && arp_state.steps[4].gate_length == 30 &&
-              arp_state.steps[3].gate_length == ARP_GATE_DEFAULT, "a knob turned with step keys held edits those steps");
+        CHECK(info.kind == UIKNOB_LIST && info.n_enum == ARPDIV_COUNT && strcmp(info.label, "RATE") == 0, "knob 1: RATE");
+        *kb = ARPDIV_1_8; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/8") == 0 && arp_state.steps[2].rate == ARPDIV_1_8 &&
+              arp_state.steps[4].rate == ARPDIV_1_8 && arp_state.steps[3].rate == ARP_RATE_DEFAULT,
+              "a knob turned with step keys held edits those steps");
         ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
         ui_sm_arp_key(&sm, 21, FM1_LOW + 21u, 0, 0);
-        *kb = 31; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
-        CHECK(arp_state.steps[2].gate_length == 30, "released: the knob edits only the live value");
+        *kb = ARPDIV_1_16; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        CHECK(arp_state.steps[2].rate == ARPDIV_1_8, "released: the knob edits only the live value");
+        *kb = 99; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        CHECK(sm.arp_knob[0] == ARPDIV_COUNT - 1u, "RATE held to its list");
+        *kb = ARPDIV_1_4; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
         run(4);
         carp_chord_notes(arp_state.current_genre_bank, FM1_LOW + 4u, c);
         CHECK(count(&la, 0x90) == 4 && count(&la, 0x80) == 4 && on_note(0) == c[0] && la.ev[0].d2 == 90 && all_off(&la),
@@ -311,7 +338,7 @@ int main(void)
     arp_state.sequence_length = 1;
     arp_state.current_genre_bank = G_UTIL_MAJ;
     arp_state.transpose_maq_option = 1;
-    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    play_on(UIPAGE_HOME1);                           /* both */
     run(QUARTER - 100u);
     ui_sm_arp_key(&sm, 2, FM1_LOW + 2u, 1, 100);     /* the zone's third key: +2 */
     run(4);
@@ -330,9 +357,9 @@ int main(void)
     for (i = 0; i < lm.n; i++)
         if ((lm.ev[i].st & 0xF0u) == 0x90u && lm.ev[i].frame >= QUARTER - 1u) { k = i; break; }
     CHECK(k >= 0 && lm.ev[k].d1 == 50, "the MAQ's C3 moves with it (TRANSPOSE MAQ), got %d", k >= 0 ? lm.ev[k].d1 : -1);
-    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);   /* stop */
+    play_on(UIPAGE_HOME1);                           /* stop */
     run(2);
-    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);   /* start again: as captured */
+    play_on(UIPAGE_HOME1);                           /* start again: as captured */
     run(2);
     CHECK(carp_transpose(&a) == 0 && all_off(&lm) && lm.stuck == 0, "a new start drops the transposition");
 
@@ -344,7 +371,7 @@ int main(void)
     run(4);
     ui_sm_arp_key(&sm, 5, FM1_LOW + 5u, 0, 0);
     CHECK(carp_transpose(&a) == 5, "empty pattern, stopped: the chord key transposes the MAQ (%d)", carp_transpose(&a));
-    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    play_on(UIPAGE_HOME1);
     run(QUARTER + 100u);
     k = nth(&lm, 0x90, 0);
     CHECK(carp_transpose(&a) == 5 && k >= 0 && lm.ev[k].d1 == 53, "a start keeps it: the MAQ's C3 plays F3, got %d",
@@ -357,7 +384,7 @@ int main(void)
     for (i = 0; i < lm.n; i++)
         if ((lm.ev[i].st & 0xF0u) == 0x90u && lm.ev[i].frame >= QUARTER + 200u) { k = i; break; }
     CHECK(k >= 0 && lm.ev[k].d1 == 48, "playing: the MAQ follows the key, got %d", k >= 0 ? lm.ev[k].d1 : -1);
-    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    play_on(UIPAGE_HOME1);
     run(2);
     arp_state.transpose_maq_option = 0;
     ui_sm_arp_key(&sm, 5, FM1_LOW + 5u, 1, 100);
@@ -377,7 +404,7 @@ int main(void)
             step(4, 45, 64, 0, ARPSTYLE_BLOCK, 0);  /* step 4 rests (keeps +5), step 5 A2: -3 */
             arp_state.sequence_length = 5;
             arp_state.transpose_maq_option = (uint8_t)(o == 0);
-            maq_set_playing(&q, 1);
+            play(1);
             run(4u * QUARTER + 10u);
             for (p = 0; p < 5; p++) {
                 k = -1;
@@ -387,7 +414,7 @@ int main(void)
                       "TRANSPOSE MAQ %s, MAQ note %d frames into step %d: got %d", o == 0 ? "on" : "off",
                       (int)(at[p] % QUARTER), (int)(at[p] / QUARTER) + 2, k >= 0 ? lm.ev[k].d1 : -1);
             }
-            maq_set_playing(&q, 0);
+            play(0);
             run(2);
             CHECK(all_off(&lm) && lm.stuck == 0, "no stuck MAQ notes with the root following");
         }
@@ -399,13 +426,13 @@ int main(void)
     arp_state.target_layer = ARPLAYER_BOTH;
     step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);
     arp_state.sequence_length = 1;
-    maq_set_playing(&q, 1);
+    play(1);
     run(10);
     CHECK(count(&la, 0x90) == 8 && (la.ev[0].st & 0x0Fu) == 0 && (la.ev[1].st & 0x0Fu) == 1, "BOTH: the chord on channels 1 and 2");
     perf_state.perf_mode = PERF_SINGL_SYNTH;
     ui_sm_enforce(&sm);
     CHECK(arp_state.target_layer == ARPLAYER_L1, "SINGL: LAYER back to L1");
-    maq_set_playing(&q, 0);
+    play(0);
     run(2);
     CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after a layer change");
 
@@ -468,12 +495,12 @@ int main(void)
     step(0, 48, 64, 0, ARPSTYLE_UP, 1);              /* o o _ _ */
     arp_state.steps[1].chord_root = ARP_CHORD_TIE;
     arp_state.sequence_length = 2;
-    maq_set_playing(&q, 1);
+    play(1);
     run(2u * QUARTER - 10u);
     CHECK(count(&la, 0x90) == 4 && on_note(2) == c[2] && on_note(3) == c[3] && near(on_frame(2), QUARTER) &&
           near(on_frame(3), QUARTER + CELL), "TIE, UP: the arpeggio carries on into step 2 (%d on, %u %u)",
           count(&la, 0x90), on_note(2), on_note(3));
-    maq_set_playing(&q, 0);
+    play(0);
     run(2);
     CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after a tied arpeggio");
 
@@ -483,7 +510,7 @@ int main(void)
     step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);           /* o _ _ _ at half gate: alone it would end within the first cell */
     arp_state.steps[1].chord_root = ARP_CHORD_TIE;
     arp_state.sequence_length = 3;                   /* step 3 rests */
-    maq_set_playing(&q, 1);
+    play(1);
     run(2u * QUARTER - 10u);
     CHECK(count(&la, 0x90) == 4 && count(&la, 0x80) == 0, "TIE, BLOCK: one strike, still sounding at the tie's end (%d on, %d off)",
           count(&la, 0x90), count(&la, 0x80));
@@ -491,7 +518,7 @@ int main(void)
     k = nth(&la, 0x80, 0);
     CHECK(count(&la, 0x80) == 4 && k >= 0 && near(la.ev[k].frame, 2u * QUARTER), "released as step 3 begins (%u)",
           k >= 0 ? la.ev[k].frame : 0u);
-    maq_set_playing(&q, 0);
+    play(0);
     run(2);
     CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after a tied chord");
 
@@ -500,10 +527,10 @@ int main(void)
     arp_state.steps[0].chord_root = ARP_CHORD_TIE;
     step(1, 48, 64, 0, ARPSTYLE_BLOCK, 0);
     arp_state.sequence_length = 2;
-    maq_set_playing(&q, 1);
+    play(1);
     run(QUARTER + 10u);
     CHECK(count(&la, 0x90) == 4 && near(on_frame(0), QUARTER), "a TIE on step 1 rests at the start (first on %u)", on_frame(0));
-    maq_set_playing(&q, 0);
+    play(0);
     run(2);
 
     /* ---- ACCENT: an accented step's first strike at ACCENT VEL, the rest at the base velocity ---- */
@@ -512,11 +539,11 @@ int main(void)
     arp_state.steps[0].accent = 1;
     arp_state.accent_velocity = 110;
     arp_state.sequence_length = 1;
-    maq_set_playing(&q, 1);
+    play(1);
     run(QUARTER - 10u);
     CHECK(count(&la, 0x90) == 8 && la.ev[nth(&la, 0x90, 0)].d2 == 110 && la.ev[nth(&la, 0x90, 3)].d2 == 110 &&
           la.ev[nth(&la, 0x90, 4)].d2 == perf_state.base_velocity, "ACCENT: first strike 110, second at the base velocity");
-    maq_set_playing(&q, 0);
+    play(0);
     run(2);
 
     /* ---- function keys (the black keys among the step keys): CLEAR, COPY, TIE, ACCENT ---- */
@@ -600,15 +627,134 @@ int main(void)
     {
         UiKnobInfo info;
         uint8_t *kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 0, &info);
-        *kb = 10; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        *kb = ARPDIV_1_16; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
     }
-    CHECK(carp_pos(&a) == 2 && arp_state.steps[2].gate_length == 10 && arp_state.steps[3].gate_length == 64,
+    CHECK(carp_pos(&a) == 2 && arp_state.steps[2].rate == ARPDIV_1_16 && arp_state.steps[3].rate == ARPDIV_1_4,
           "playing + REC: the knob overdubs the playing step (pos %d)", carp_pos(&a));
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
     run(4);
     CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after recording");
 #undef TAP
 #undef KEY
+
+    /* ---- PLAY (2026-10-17): SEQ page the MAQ, ARP page the ARP, any other page both ---- */
+    reset();
+    ui_sm_goto(&sm, UIPAGE_SEQ);
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    CHECK(maq_playing(&q) && !carp_playing(&a), "SEQ page: PLAY starts the MAQ alone");
+    ui_sm_goto(&sm, UIPAGE_ARP);
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    CHECK(maq_playing(&q) && carp_playing(&a), "ARP page: PLAY starts the ARP alone");
+    ui_sm_goto(&sm, UIPAGE_SEQ);
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    CHECK(!maq_playing(&q) && carp_playing(&a), "SEQ page: PLAY stops the MAQ, the ARP plays on");
+    ui_sm_goto(&sm, UIPAGE_HOME1);
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    CHECK(!maq_playing(&q) && !carp_playing(&a), "another page, one playing: PLAY stops it");
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    CHECK(maq_playing(&q) && carp_playing(&a), "another page, both stopped: PLAY starts both");
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    CHECK(!maq_playing(&q) && !carp_playing(&a), "another page, both playing: PLAY stops both");
+
+    /* ---- one started while the other plays waits for its next bar (96 pulses from its first step) ---- */
+    {
+        uint32_t bar = 4u * QUARTER, t0, f0;
+        reset();
+        arp_state.current_genre_bank = G_UTIL_MAJ;
+        step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);
+        arp_state.sequence_length = 1;
+        carp_set_playing(&a, 1);
+        run(QUARTER + QUARTER / 3u);                 /* the ARP alone, a beat and a third in */
+        t0 = now;
+        maq_set_playing(&q, 1);
+        run(bar);
+        f0 = lm.n ? lm.ev[nth(&lm, 0x90, 0)].frame : 0u;
+        CHECK(t0 < bar && f0 + 2u >= bar && f0 <= bar + 2u, "the MAQ started mid-bar plays its first step on the ARP's next bar (%u)", f0);
+        carp_set_playing(&a, 0);
+        run(QUARTER / 2u);
+        k = count(&la, 0x90);
+        carp_set_playing(&a, 1);
+        run(f0 + bar - now - 10u);                   /* to just before the MAQ's next bar .. */
+        CHECK(count(&la, 0x90) == k, "the ARP restarted mid-bar waits ..");
+        run(20u);
+        CHECK(count(&la, 0x90) == k + 4 && near(la.ev[nth(&la, 0x90, k)].frame, f0 + bar),
+              ".. for the MAQ's next bar (%u, the MAQ's first step %u)", la.ev[nth(&la, 0x90, k)].frame, f0);
+        play(0);
+        run(2);
+        CHECK(all_off(&la) && all_off(&lm) && la.stuck == 0 && lm.stuck == 0, "no stuck notes with two transports");
+    }
+
+    /* ---- each step its own RATE ---- */
+    reset();
+    arp_state.current_genre_bank = G_UTIL_MAJ;
+    step(0, 48, 64, 0, ARPSTYLE_BLOCK, 0);
+    step(1, 50, 64, 0, ARPSTYLE_BLOCK, 0);
+    step(2, 52, 64, 0, ARPSTYLE_BLOCK, 0);
+    arp_state.steps[0].rate = ARPDIV_1_8;
+    arp_state.steps[1].rate = ARPDIV_1_2;
+    arp_state.sequence_length = 3;
+    carp_set_playing(&a, 1);
+    run(QUARTER / 2u + 2u * QUARTER - 10u);
+    CHECK(count(&la, 0x90) == 8 && near(on_frame(4), QUARTER / 2u) && on_note(4) == 50,
+          "1/8 then 1/2: step 2 at an eighth (%u)", on_frame(4));
+    run(20u);
+    CHECK(count(&la, 0x90) == 12 && near(on_frame(8), QUARTER / 2u + 2u * QUARTER) && on_note(8) == 52,
+          "step 3 after the half (%u)", on_frame(8));
+    k = nth(&la, 0x80, 4);
+    CHECK(k >= 0 && near(la.ev[k].frame, QUARTER / 2u + ((2u * QUARTER / 4u) * 65u >> 7)),
+          "a 1/2 step's cells are an eighth long (gate end %u)", k >= 0 ? la.ev[k].frame : 0u);
+    play(0);
+    run(2);
+
+    /* ---- HOLD: struck once, held to the step's end; the same chord on is never struck again ---- */
+    reset();
+    arp_state.current_genre_bank = G_UTIL_MAJ;
+    step(0, 48, 20, 0, ARPSTYLE_HOLD, 3);            /* a short GATE and o o o o's rhythm: neither applies */
+    step(1, 48, 20, 0, ARPSTYLE_HOLD, 0);
+    step(2, 53, 20, 0, ARPSTYLE_HOLD, 0);
+    arp_state.sequence_length = 3;
+    carp_set_playing(&a, 1);
+    run(2u * QUARTER - 10u);
+    CHECK(count(&la, 0x90) == 4 && count(&la, 0x80) == 0, "HOLD, the same chord twice: struck once, held (%d on, %d off)",
+          count(&la, 0x90), count(&la, 0x80));
+    run(20u);
+    k = nth(&la, 0x80, 0);
+    CHECK(count(&la, 0x90) == 8 && count(&la, 0x80) == 4 && k >= 0 && near(la.ev[k].frame, 2u * QUARTER),
+          "a new chord: the held one off, the new one struck at the step");
+    play(0);
+    run(2);
+    CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after HOLD");
+    reset();                                         /* the rhythm is the strum: UP 2, DN 2 */
+    arp_state.current_genre_bank = G_UTIL_MAJ;
+    carp_chord_notes(G_UTIL_MAJ, 48, c);
+    step(0, 48, 64, 0, ARPSTYLE_HOLD, 2);
+    step(1, 53, 64, 0, ARPSTYLE_HOLD, 14);
+    arp_state.sequence_length = 2;
+    carp_set_playing(&a, 1);
+    run(QUARTER + 2000u);
+    {
+        uint32_t gap = (235200u * 2u) >> 10;         /* 918.75 frames a pulse, q8; 2 quarter pulses */
+        uint8_t c53[ARP_CHORD_NOTES];
+        carp_chord_notes(G_UTIL_MAJ, 53, c53);
+        CHECK(on_note(0) == c[0] && on_note(3) == c[3] && on_frame(1) - on_frame(0) == gap && on_frame(3) == 3u * gap,
+              "UP 2: bass first, %u frames apart (%u)", gap, on_frame(1) - on_frame(0));
+        CHECK(on_note(4) == c53[3] && on_note(7) == c53[0] && near(on_frame(4), QUARTER), "DN 2: the top first");
+    }
+    play(0);
+    run(2);
+    CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after a strummed HOLD");
+    {
+        UiKnobInfo info;
+        uint8_t *kb;
+        reset();
+        ui_sm_goto(&sm, UIPAGE_ARP);
+        kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 2, &info);
+        *kb = ARPSTYLE_HOLD; ui_sm_knob_written(&sm, UIPAGE_ARP, 2);
+        kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 3, &info);
+        *kb = 14; ui_sm_knob_written(&sm, UIPAGE_ARP, 3);
+        CHECK(strcmp(info.label, "STRUM") == 0 && strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 2), "HOLD") == 0 &&
+              strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 3), "DN 2") == 0, "STYLE HOLD: knob 4 reads STRUM");
+    }
 
     if (fails == 0)
         printf("all ARP checks passed\n");

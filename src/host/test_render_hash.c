@@ -157,10 +157,13 @@ int main(int argc, char **argv)
             }
             for (int s = 0; s < 3; s++) {
                 ArpChordStep *st = &arp_state.steps[s];
-                st->chord_root = (uint8_t)(55 + s * 2); st->gate_length = 90; st->octave_range = 1;
+                st->chord_root = (uint8_t)(55 + s * 2); st->octave_range = 1;
                 st->style = (uint8_t)(ARPSTYLE_UP + s); st->variation = (uint8_t)(s * 3);
             }
             arp_state.sequence_length = 3;
+            arp_state.gate_length = 90;              /* (each step's gate before 2026-10-17's RATE; 1/4 steps) */
+            arp_state.current_genre_bank = 0;        /* (Pop_1, the default before Phrygian) */
+            carp_set_playing(synth_arp(), 1);        /* (its own transport, started with the MAQ) */
             maq_set_playing(synth_seq(), 1);
             uint32_t block = bi == 0 ? 32u : (bi == 1 ? 7u : 128u);
             uint32_t acc = 0;
@@ -173,6 +176,7 @@ int main(int argc, char **argv)
                 hrender(block, block);
             }
             maq_set_playing(synth_seq(), 0);
+            carp_set_playing(synth_arp(), 0);
             hrender(44100, 32);
             snprintf(line, sizeof line, "seq ext %d block %u  %08x", ext, block, h);
             report(line);

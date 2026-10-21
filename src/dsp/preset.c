@@ -166,25 +166,30 @@ void live_defaults(void)
     for (unsigned l = 0; l < NLAYER; l++)
         engine_defaults(&engine_state[l]);
 
-    memset(&perf_state, 0, sizeof(perf_state));
-    perf_state.layer_patch[0] = 0;
-    perf_state.layer_patch[1] = 1;
-    perf_state.perf_mode = PERF_SINGL_SYNTH;
-    perf_state.voice_mode[0] = VMODE_POLY_REUSE;
-    perf_state.voice_mode[1] = VMODE_POLY_REUSE;
-    perf_state.unison_detune[0] = 48;    /* +-7 cents at the outer voices */
-    perf_state.unison_detune[1] = 48;
-    perf_state.split_note = 60;
-    perf_state.vel_split = 127;          /* every velocity is at or below it: layer 1 (no velocity split) */
-    perf_state.midi_ch[0] = 0;           /* channel 1 */
-    perf_state.midi_ch[1] = 1;           /* channel 2 */
-    perf_state.delay_degrade = 36;       /* tape echo character: the fixed wear before it was a parameter */
-    perf_state.delay_pingpong = 0;
-    perf_state.delay_type = DELAYTYPE_TAPE;
-    perf_state.reverb_type = REVTYPE_TOMB;   /* the old default, PLATE, played the ROOM network */
-    perf_state.base_velocity = 69;
-    perf_state.bend_range = 2;
-    perf_state.int_tempo = 80;           /* 120 BPM */
+    perf_defaults(&perf_state);
+}
+
+void perf_defaults(MasterPerformancePreset *p)
+{
+    memset(p, 0, sizeof(*p));
+    p->layer_patch[0] = 0;
+    p->layer_patch[1] = 1;
+    p->perf_mode = PERF_SINGL_SYNTH;
+    p->voice_mode[0] = VMODE_POLY_REUSE;
+    p->voice_mode[1] = VMODE_POLY_REUSE;
+    p->unison_detune[0] = 48;            /* +-7 cents at the outer voices */
+    p->unison_detune[1] = 48;
+    p->split_note = 60;
+    p->vel_split = 127;                  /* every velocity is at or below it: layer 1 (no velocity split) */
+    p->midi_ch[0] = 0;                   /* channel 1 */
+    p->midi_ch[1] = 1;                   /* channel 2 */
+    p->delay_degrade = 36;               /* tape echo character: the fixed wear before it was a parameter */
+    p->delay_pingpong = 0;
+    p->delay_type = DELAYTYPE_TAPE;
+    p->reverb_type = REVTYPE_TOMB;       /* the old default, PLATE, played the ROOM network */
+    p->base_velocity = 69;
+    p->bend_range = 2;
+    p->int_tempo = 80;                   /* 120 BPM */
 }
 
 void patch_store(uint8_t layer, uint8_t slot)

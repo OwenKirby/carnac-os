@@ -62,7 +62,7 @@ static struct { uint8_t st, d1, d2; } seq_q[SEQ_Q_MAX];
 static uint8_t seq_qn;
 static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2);
 static MaqSeq maq;                             /* the MAQ 16/4 sequencer (spec 7), clocked from the render below */
-static CarpSeq carp;                           /* the ARP chord pattern (spec 8), on the same transport */
+static CarpSeq carp;                           /* the ARP chord pattern (spec 8), on the same clock (its own transport) */
 
 static int32_t clamp_q15_64(int64_t value)
 {
@@ -674,8 +674,9 @@ static void render_pass(int32_t *out, uint32_t frames)
         midi_clock_frame(sample_clock);            /* the clock is stamped before the LFOs read it this frame */
         SPROF_LAP(SPROF_CLOCK);
         maq_frame(&maq, sample_clock);             /* sequencer events land on this frame (synth_midi_3 catches up) */
-        carp_frame(&carp, sample_clock, maq_free_running(&maq));   /* the ARP runs with the MAQ's transport */
+        carp_frame(&carp, sample_clock, &maq);     /* the ARP: its own transport, a start synced to the MAQ's bar */
         maq_set_ext_transpose(&maq, carp_maq_transpose(&carp));   /* 8.4: the MAQ reads it on the next frame */
+        maq_set_sync(&maq, carp_running(&carp), carp_origin(&carp));   /* (.. and the ARP's bar, for a start) */
         maq_set_genre(&maq, arp_state.current_genre_bank);       /* (SCALE = GENRE lanes follow it) */
         SPROF_LAP(SPROF_SEQ);
         if (layer_ctrl_left == 0) {

@@ -1,8 +1,10 @@
-/* The factory bank "STONE & FIRE" (2026-10-16): 32 patches (slots 0..31) and 32 matching performances (slots 0..31),
- * a unity-build fragment like preset_store_fm1.c. synth_main_fm1.c includes it after syn_used / syn_perf_bank and calls
- * factory_install() BEFORE ps_load(): the factory slots are marked used, then anything the user saved over them in flash
- * replaces them. A performance holds the patch's effects (delay and reverb are shared, performance-level), so loading
- * a PERF brings the whole sound; loading only the PATCH keeps the current effects.
+/* The factory bank "STONE & FIRE" (2026-10-16): 32 patches (slots 0..31), and since 2026-10-17 32 sequences, 32 arp
+ * patterns and 32 whole performances (every slot of those banks), a unity-build fragment like preset_store_fm1.c.
+ * synth_main_fm1.c includes it after syn_used / syn_perf_name and the store, and calls factory_install() BEFORE
+ * ps_load(): the factory slots are marked used, then anything the user saved over them in flash replaces them. A
+ * performance (factory_perf, made when it loads) holds the patch, its effects (delay and reverb are shared,
+ * performance-level), its tempo, its sequence and its arp pattern, so loading a PERF brings the whole piece; loading
+ * only the PATCH keeps the current effects.
  *
  * Wavebanks: 0 Menhir 1 Barrow 2 Trilithon 3 Ley Line 4 Solstice 5 Moonstone 6 Star Chart 7 Druid Chant
  *            8 Overtone Rite 9 Votive Choir 10 Bone Flute 11 Erosion 12 Frost Shatter 13 Dust
@@ -291,30 +293,273 @@ static void factory_mod(EngineState *e, const FactoryMod *m, const char *patch_n
     }
 }
 
-/* boot, before ps_load: the bank into patch_bank and syn_perf_bank, marked used */
+/* ------------------------------------------------------------------------ SEQUENCES AND ARPS --- *
+ * 2026-10-17: the 32 sequences and 32 arp patterns, one of each for each patch, and what each performance plays. A
+ * performance is led by one of them, so PLAY never runs two tunes over each other:
+ *  - an ARP-led one (pads, keys: FA_TAB's maq 1) plays its chord progression, and its sequence is a bass under it, root
+ *    and fifth (FS_BASS) or root alone (FS_ROOT), one note a chord: TRANSPOSE MAQ moves it to each chord's root;
+ *  - a SEQ-led one (drones, bells, plucks, bass, leads) plays its sequence; its arp pattern stays empty (arp_link 127),
+ *    so its arp slot is only in the ARP bank, for the ARP page.
+ * Notes: 16 steps, '0'..'9' then 'a'..'z' = 0..35 semitones over the root, '-' a TIE, '.' a rest (the root, muted).
+ * Every note sits in the lane's SCALE (test_preset_store checks it), so the knob and the keyboard stay in key. Lanes 2..4
+ * aim at lane 1 (a MOD WHEEL lane at layer 1): 16 values, '0'..'9' = 0..127. */
+#define FS_BASS "0--70--70--70--7"
+#define FS_ROOT "0---0---0---0---"
+typedef struct {
+    uint8_t root;                        /* the notes' MIDI base; an ARP-led one's: the first chord's root, an octave down */
+    const char *notes;                   /* NULL: an ARP-led one's bass, FS_BASS */
+    uint8_t prescale, mode, scale, sroot;
+    uint8_t ev[SEQ_NLANE - 1u];          /* lanes 2..4 */
+    const char *val[SEQ_NLANE - 1u];
+} FactorySeq;
+#define FS_SEQ(root, notes, p, mode, sc, sr, e2, v2, e3, v3, e4, v4) \
+    {root, notes, p, SEQ_MODE_##mode, SEQSCALE_##sc, sr, {SEQEV_##e2, SEQEV_##e3, SEQEV_##e4}, {v2, v3, v4}}
+#define FS_UNDER(notes) {0u, notes, 0u, SEQ_MODE_FORWARD, SEQSCALE_OFF, 0u, {SEQEV_GATE, SEQEV_DYNAMICS, SEQEV_RATCHET}, \
+    {"9999999999999999", "6666666666666666", "0000000000000000"}}
+
+/* arp_chords.c's genres used here (test_preset_store checks the names) */
+enum { FG_TRAD_MAJ = 6, FG_TRAD_MIN_1 = 7, FG_TRAD_MIN_2 = 8, FG_OCT = 13, FG_4TH = 14, FG_5TH = 15, FG_MIN = 17,
+       FG_M7 = 18, FG_MIN7 = 19, FG_MIN9 = 21, FG_POP_INV = 24, FG_CINE_1 = 32, FG_CINE_2 = 33, FG_CINE_3 = 34,
+       FG_CINE_5 = 36, FG_CINE_6 = 37, FG_CLASSICAL_1 = 77, FG_MODERN_1 = 81 };
+#define FA_T ARP_CHORD_TIE
+/* chord keys */
+enum { FA_F2 = 41, FA_G2 = 43, FA_AB2 = 44, FA_A2 = 45, FA_BB2 = 46, FA_B2 = 47, FA_C3 = 48, FA_D3 = 50, FA_EB3 = 51,
+       FA_E3 = 52 };
+typedef struct {
+    uint8_t genre, div, style, oct, gate;
+    uint8_t maq;                         /* 1: TRANSPOSE MAQ, and the performance is ARP-led */
+    uint8_t root[ARP_NSTEP];             /* chord keys, FA_T a TIE */
+    const char *var;                     /* 8 steps: 'a' + the RHYTHM variation (8.3: a = 01A, q = 09A 1 1 1 _, s = 10A
+                                          * 1 1 _ 1, u = 11A 1 _ 1 1) */
+    const char *acc;                     /* 8 steps: '1' accented */
+    uint8_t bpm;                         /* the performance's INT TEMPO */
+} FactoryArp;
+/* a pad's progression: four chords, each tied over the next step */
+#define FA_P(a, b, c, d) {a, FA_T, b, FA_T, c, FA_T, d, FA_T}
+#define FA_ARP(g, div, st, oct, gate, maq, roots, var, acc, bpm) \
+    {FG_##g, ARPDIV_##div, ARPSTYLE_##st, oct, gate, maq, roots, var, acc, bpm}
+#define FA_8(a, b, c, d) {a, a, b, b, c, c, d, d}
+#define FA_R(a, b, c, d, e, f, g, h) {a, b, c, d, e, f, g, h}
+#define FA_NOACC "00000000"
+
+static const FactoryArp FA_TAB[FP_N] = {
+ /* ---- drones and pads ---- */
+ FA_ARP(5TH,         1_2, BLOCK,    0, 127, 0, FA_P(FA_C3, FA_AB2, FA_F2, FA_G2),   "aaaaaaaa", FA_NOACC, 70),   /* MENHIR DRONE */
+ FA_ARP(TRAD_MIN_1,  1_2, STRUM_UP, 0, 127, 1, FA_P(FA_C3, FA_AB2, FA_EB3, FA_BB2), "aaaaaaaa", FA_NOACC, 72),   /* CARNAC DAWN */
+ FA_ARP(MIN9,        1_2, BLOCK,    0, 127, 1, FA_P(FA_C3, FA_F2, FA_C3, FA_G2),    "aaaaaaaa", FA_NOACC, 66),   /* FOG BANK */
+ FA_ARP(5TH,         1_4, UPDN,     1,  96, 1, FA_P(FA_D3, FA_C3, FA_BB2, FA_C3),   "qqqqqqqq", FA_NOACC, 84),   /* TRILITHON */
+ FA_ARP(TRAD_MAJ,    1_2, STRUM_UP, 0, 127, 1, FA_P(FA_C3, FA_A2, FA_F2, FA_G2),    "aaaaaaaa", FA_NOACC, 76),   /* SOLSTICE PAD */
+ FA_ARP(4TH,         1_4, UP,       1,  96, 1, FA_P(FA_E3, FA_D3, FA_A2, FA_G2),    "qqqqqqqq", FA_NOACC, 90),   /* STONE CIRCLE */
+ FA_ARP(CINE_6,      1_2, BLOCK,    0, 127, 1, FA_P(FA_C3, FA_AB2, FA_F2, FA_G2),   "aaaaaaaa", FA_NOACC, 70),   /* LEY LINE */
+ FA_ARP(CINE_5,      1_2, STRUM_UP, 0, 127, 1, FA_P(FA_C3, FA_D3, FA_C3, FA_G2),    "aaaaaaaa", FA_NOACC, 74),   /* MIDWINTER SUN */
+ FA_ARP(CLASSICAL_1, 1_2, BLOCK,    0, 127, 1, FA_P(FA_A2, FA_F2, FA_C3, FA_G2),    "aaaaaaaa", FA_NOACC, 72),   /* VOTIVE CHOIR */
+ FA_ARP(4TH,         1,   BLOCK,    0, 127, 0, FA_P(FA_D3, FA_C3, FA_D3, FA_A2),    "aaaaaaaa", FA_NOACC, 80),   /* DRUID CHANT */
+ FA_ARP(MIN,         1_8, UP,       1,  96, 0, FA_8(FA_A2, FA_D3, FA_E3, FA_A2),    "qqqqqqqq", FA_NOACC, 88),   /* BONE FLUTE */
+ FA_ARP(TRAD_MIN_2,  1_2, BLOCK,    0, 127, 1, FA_P(FA_C3, FA_AB2, FA_F2, FA_G2),   "aaaaaaaa", FA_NOACC, 68),   /* FORGOTTEN RITE */
+ /* ---- struck and plucked ---- */
+ FA_ARP(TRAD_MAJ,    1_8, UP,       1,  80, 0, FA_8(FA_C3, FA_A2, FA_F2, FA_G2),    "qqqqqqqq", FA_NOACC, 100),  /* BARROW BELLS */
+ FA_ARP(CINE_5,      1_4, UPDN,     2,  80, 0, FA_8(FA_C3, FA_D3, FA_C3, FA_G2),    "qqqqqqqq", FA_NOACC, 108),  /* STAR CHART */
+ FA_ARP(MIN,         1_4, RANDOM,   2,  64, 0, FA_8(FA_C3, FA_F2, FA_G2, FA_C3),    "qqqqqqqq", FA_NOACC, 116),  /* FROST SHATTER */
+ FA_ARP(POP_INV,     1_2, STRUM_DN, 0, 127, 0, FA_P(FA_A2, FA_F2, FA_C3, FA_G2),    "aaaaaaaa", FA_NOACC, 84),   /* DUST OF AGES */
+ FA_ARP(MIN7,        1_4, UP,       1,  96, 1, FA_P(FA_A2, FA_D3, FA_E3, FA_A2),    "uuuuuuuu", FA_NOACC, 92),   /* EROSION */
+ FA_ARP(MIN,         1_8, UP,       1,  80, 0, FA_8(FA_D3, FA_G2, FA_A2, FA_D3),    "qqqqqqqq", FA_NOACC, 112),  /* OGHAM */
+ FA_ARP(MIN7,        1_4, UPDN,     1,  80, 0, FA_8(FA_A2, FA_B2, FA_E3, FA_A2),    "qqqqqqqq", FA_NOACC, 96),   /* LUNAR GATE */
+ FA_ARP(OCT,         1,   BLOCK,    0, 127, 0, FA_P(FA_C3, FA_AB2, FA_EB3, FA_G2),  "aaaaaaaa", FA_NOACC, 64),   /* LAST STONE */
+ /* ---- low and lead ---- */
+ FA_ARP(OCT,         1_4, UP,       0,  64, 0, FA_R(FA_C3, FA_C3, FA_C3, FA_C3, FA_AB2, FA_AB2, FA_BB2, FA_BB2),
+        "qqqqqqqq", "10001000", 118),                                                                            /* CAIRN BASS */
+ FA_ARP(OCT,         1_2, BLOCK,    0, 127, 0, FA_P(FA_C3, FA_AB2, FA_F2, FA_G2),   "aaaaaaaa", FA_NOACC, 92),   /* DOLMEN SUB */
+ FA_ARP(MIN,         1_4, DNUP,     2,  96, 0, FA_8(FA_C3, FA_F2, FA_G2, FA_C3),    "qqqqqqqq", FA_NOACC, 100),  /* MONOLITH LEAD */
+ FA_ARP(TRAD_MAJ,    1_4, BLOCK,    0,  80, 1, FA_8(FA_C3, FA_A2, FA_F2, FA_G2),    "ssssssss", "10101010", 104),/* NEOLITH KEYS */
+ FA_ARP(M7,          1_2, STRUM_UP, 0, 127, 1, FA_P(FA_F2, FA_C3, FA_BB2, FA_C3),   "aaaaaaaa", FA_NOACC, 80),   /* HEARTH EMBER */
+ FA_ARP(CINE_1,      1_4, STRUM_UP, 0,  96, 1, FA_8(FA_C3, FA_AB2, FA_EB3, FA_BB2), "ssssssss", "10001000", 110),/* BONFIRE */
+ FA_ARP(TRAD_MIN_2,  1_4, UPDN,     1,  80, 0, FA_8(FA_C3, FA_F2, FA_G2, FA_C3),    "qqqqqqqq", FA_NOACC, 120),  /* STONE AND FIRE */
+ FA_ARP(5TH,         1_8, UP,       2,  96, 1, FA_P(FA_C3, FA_AB2, FA_F2, FA_BB2),  "qqqqqqqq", FA_NOACC, 96),   /* ALIGNMENT */
+ FA_ARP(CINE_3,      1_2, BLOCK,    0, 127, 1, FA_P(FA_C3, FA_AB2, FA_D3, FA_G2),   "aaaaaaaa", FA_NOACC, 66),   /* ECLIPSE */
+ FA_ARP(MODERN_1,    1_2, STRUM_UP, 0, 127, 1, FA_P(FA_C3, FA_A2, FA_F2, FA_G2),    "aaaaaaaa", FA_NOACC, 70),   /* TUMULUS HALL */
+ FA_ARP(MIN,         1_4, DNUP,     2,  80, 0, FA_8(FA_A2, FA_D3, FA_E3, FA_A2),    "qqqqqqqq", FA_NOACC, 124),  /* WICKER MAN */
+ FA_ARP(CINE_2,      1_2, BLOCK,    0, 127, 1, FA_P(FA_C3, FA_AB2, FA_EB3, FA_G2),  "aaaaaaaa", FA_NOACC, 64),   /* SAMHAIN MIST */
+};
+
+#define FS_V9 "9999999999999999"
+static const FactorySeq FS_TAB[FP_N] = {
+ FS_SEQ(60, "0-------3---7---", 24, FORWARD, MINOR, 0,
+        MODWHEEL, "0234567898765432", GATE, FS_V9, DYNAMICS, "7777777777777777"),                       /* MENHIR DRONE */
+ FS_UNDER(FS_BASS), FS_UNDER(FS_BASS), FS_UNDER(FS_BASS), FS_UNDER(FS_BASS), FS_UNDER(FS_BASS),
+ FS_UNDER(FS_BASS), FS_UNDER(FS_BASS), FS_UNDER(FS_BASS),                                                 /* 1..8 */
+ FS_SEQ(50, "0-2-3-5-3-2-0---", 12, FORWARD, DORIAN, 2,
+        GATE, FS_V9, DYNAMICS, "8686868686868686", MODWHEEL, "0123456789876543"),                        /* DRUID CHANT */
+ FS_SEQ(57, "0-3-5-7-5---3-0-", 12, FORWARD, MIN_PENTA, 9,
+        GATE, FS_V9, DYNAMICS, "8575857585758575", MODWHEEL, "0000001234567777"),                        /* BONE FLUTE */
+ FS_UNDER(FS_BASS),                                                                                       /* FORGOTTEN RITE */
+ FS_SEQ(60, "0479c974e9c7420.", 12, FORWARD, MAJ_PENTA, 0,
+        GATE, "4444444444444444", DYNAMICS, "9575957595759575", PROB_SKIP, "0000100000001000"),          /* BARROW BELLS */
+ FS_SEQ(60, "024679bcegb97420", 6, RANDOM, LYDIAN, 0,
+        GATE, "3333333333333333", DYNAMICS, "9596959695969596", PROB_SKIP, "2222222222222222"),          /* STAR CHART */
+ FS_SEQ(60, "0.3.7a.c.a7.53..", 6, FORWARD, MIN_PENTA, 0,
+        GATE, "3333333333333333", DYNAMICS, "9696969696969696", RATCHET, "0000300000060000"),            /* FROST SHATTER */
+ FS_SEQ(48, "0..7..3...a..5..", 12, FORWARD, MINOR, 0,
+        GATE, "6666666666666666", DYNAMICS, "7777777777777777", PROB_SKIP, "3333333333333333"),          /* DUST OF AGES */
+ FS_UNDER(FS_BASS),                                                                                       /* EROSION */
+ FS_SEQ(62, "07c70a7c0753a753", 6, FORWARD, MINOR, 2,
+        GATE, "3333333333333333", DYNAMICS, "9575957595759575", RATCHET, "0000000000000000"),            /* OGHAM */
+ FS_SEQ(57, "037acefjjfeca730", 12, FORWARD, DORIAN, 9,
+        GATE, "5555555555555555", DYNAMICS, "9686968696869686", PROB_SKIP, "0001000100010001"),          /* LUNAR GATE */
+ FS_SEQ(48, "0...7...3...5...", 24, FORWARD, MINOR, 0,
+        GATE, FS_V9, DYNAMICS, "9777977797779777", RATCHET, "0000000000000000"),                         /* LAST STONE */
+ FS_SEQ(60, "0.0c0.0a0.07.3.5", 6, FORWARD, MINOR, 0,
+        GATE, "3353335333533353", DYNAMICS, "9575957595759575", RATCHET, "0000000000000300"),            /* CAIRN BASS */
+ FS_SEQ(60, "0-----3-5---7-a-", 12, FORWARD, MINOR, 0,
+        GATE, FS_V9, DYNAMICS, "8888888888888888", RATCHET, "0000000000000000"),                         /* DOLMEN SUB */
+ FS_SEQ(60, "c-a-7-8-7-5-3-5-", 12, FORWARD, MINOR, 0,
+        GATE, FS_V9, DYNAMICS, "8787878787878787", MODWHEEL, "0000123456789999"),                        /* MONOLITH LEAD */
+ FS_UNDER(FS_BASS), FS_UNDER(FS_BASS), FS_UNDER(FS_BASS),                                                 /* 23..25 */
+ FS_SEQ(48, "0.3.7.b.c.b.8.7.", 6, FORWARD, HARM_MINOR, 0,
+        GATE, "4444444444444444", DYNAMICS, "9575957595759575", RATCHET, "0000000000003000"),            /* STONE AND FIRE */
+ FS_UNDER(FS_BASS),                                                                                       /* ALIGNMENT */
+ FS_UNDER(FS_ROOT),                                                                                       /* ECLIPSE: G7b9, Ddim */
+ FS_UNDER(FS_BASS),                                                                                       /* TUMULUS HALL */
+ FS_SEQ(57, "00c0a0c00073c0a7", 6, FORWARD, MINOR, 9,
+        GATE, "3333333333333333", DYNAMICS, "9555955595559555", RATCHET, "0000000300000006"),            /* WICKER MAN */
+ FS_UNDER(FS_BASS),                                                                                       /* SAMHAIN MIST */
+};
+#undef FS_SEQ
+#undef FS_UNDER
+#undef FA_ARP
+#undef FA_P
+#undef FA_8
+#undef FA_R
+
+static uint8_t fs_digit(char c) { return (uint8_t)((c - '0') * 127 / 9); }
+
+/* sequence slot s: lane 1 its notes, lanes 2..4 its value lanes; an ARP-led one's bass sits an octave under the first
+ * chord and steps two arp steps a note (8 arp steps = 16 of its own) */
+static void factory_seq(uint32_t s, SequencerLane lanes[SEQ_NLANE])
+{
+    static const uint8_t DIV_TICKS[ARPDIV_COUNT] = {192, 96, 48, 24, 16, 12, 8, 6, 4, 3};
+    const FactorySeq *f = &FS_TAB[s];
+    const FactoryArp *a = &FA_TAB[s];
+    uint8_t root = f->root, p = f->prescale, l, i;
+    char c;
+    if (a->maq) {
+        root = (uint8_t)(a->root[0] - 12u);
+        p = (uint8_t)(DIV_TICKS[a->div] / 2u);
+    }
+    seq_defaults(lanes);
+    for (l = 0; l < SEQ_NLANE; l++) {
+        SequencerLane *ln = &lanes[l];
+        ln->playback_mode = f->mode;
+        ln->prescale = p;
+        ln->loop_start = 0u;
+        ln->loop_end = SEQ_NSTEP - 1u;
+        ln->scale = SEQSCALE_OFF;
+        ln->scale_root = 0u;
+        for (i = 0; i < SEQ_NSTEP; i++) {
+            SequencerStep *st = &ln->steps[i];
+            st->note_buffer[0] = root;
+            st->note_buffer[1] = st->note_buffer[2] = st->note_buffer[3] = SEQ_NOTE_NULL;
+            st->flags = 0u;
+            if (l == 0u) {
+                c = f->notes[i];
+                if (c == '-')
+                    st->note_buffer[0] = SEQ_NOTE_TIE;
+                else if (c == '.')
+                    st->flags = SEQ_FLAG_MUTE;
+                else
+                    st->note_buffer[0] = (uint8_t)(root + (c <= '9' ? c - '0' : c - 'a' + 10));
+                st->value = 0u;
+            } else {
+                st->value = fs_digit(f->val[l - 1u][i]);
+            }
+        }
+        if (l == 0u) {
+            ln->event_type = SEQEV_NOTE;
+            ln->target_mask = SEQ_TGT_L1;
+            ln->scale = f->scale;
+            ln->scale_root = f->sroot;
+        } else {
+            ln->event_type = SEQEV_NOTE;                 /* (so seq_lane_set_event sets the new type's first target) */
+            seq_lane_set_event(ln, f->ev[l - 1u]);
+        }
+    }
+}
+
+/* arp slot s */
+static void factory_arp(uint32_t s, ArpState *st)
+{
+    const FactoryArp *f = &FA_TAB[s];
+    uint8_t i;
+    arp_defaults(st);
+    for (i = 0; i < ARP_NSTEP; i++) {
+        ArpChordStep *c = &st->steps[i];
+        c->chord_root = f->root[i];
+        c->rate = f->div;
+        c->octave_range = f->oct;
+        c->style = f->style;
+        c->variation = (uint8_t)(f->var[i] - 'a');
+        c->accent = (uint8_t)(f->acc[i] == '1');
+    }
+    st->gate_length = f->gate;
+    st->transpose_maq_option = f->maq;
+    st->current_genre_bank = f->genre;
+}
+
+/* performance slot s, whole: its patch on layer 1 (and the next one on layer 2, for DUAL / SPLIT), its effects and tempo,
+ * its sequence, and its arp pattern if it leads (factory_seq above): 0, or -1 for a slot past the factory bank */
+static int factory_perf(uint32_t s, WholePerformance *w)
+{
+    const FactoryPatch *f;
+    EngineState base;
+    MasterPerformancePreset *p = &w->perf;
+    uint32_t l;
+    if (s >= FP_N)
+        return -1;
+    f = &FP_TAB[s];
+    engine_defaults(&base);
+    for (l = 0; l < NLAYER; l++) {
+        uint32_t ps = (s + l) % FP_N;
+        factory_patch(&w->engine[l], &base, &FP_TAB[ps]);
+        factory_mod(&w->engine[l], &FM_TAB[ps], FP_TAB[ps].name);
+    }
+    perf_defaults(p);
+    factory_name(p->name, f->name);
+    p->layer_patch[0] = (uint8_t)s;
+    p->layer_patch[1] = (uint8_t)((s + 1u) % FP_N);
+    p->seq_link = (uint8_t)s;
+    p->arp_link = FA_TAB[s].maq ? (uint8_t)s : (uint8_t)127u;   /* SEQ-led: no arp pattern */
+    p->perf_mode = PERF_SINGL_SYNTH;
+    p->voice_mode[0] = p->voice_mode[1] = f->vmode;
+    p->porta_mode[0] = PORTA_CONST_TIME;
+    p->porta_time[0] = f->vmode == VMODE_MONO_LEGATO ? 20u : 0u;
+    p->reverb_type = f->rtype; p->reverb_decay = f->rdec; p->reverb_damp = f->rdmp; p->reverb_predelay = f->rpre;
+    p->delay_time = f->dtime; p->delay_feedback = f->dfb; p->delay_type = f->dtype; p->delay_pingpong = f->ping;
+    p->delay_degrade = 36u;
+    p->int_tempo = (uint8_t)(FA_TAB[s].bpm - MIDI_CLOCK_BPM_BASE);
+    factory_seq(s, w->seq);
+    if (FA_TAB[s].maq)
+        factory_arp(s, &w->arp);
+    else
+        arp_defaults(&w->arp);
+    return 0;
+}
+
+/* boot, before ps_load: the patches, sequences and arp patterns into their banks and the performances' names, all
+ * marked used (a factory performance is made whole when it loads: factory_perf) */
 static void factory_install(void)
 {
-    EngineState base = patch_bank[PATCH_SLOTS - 1u];     /* untouched: the defaults */
-    MasterPerformancePreset pb = perf_state;             /* the defaults (the live performance is not loaded yet) */
+    EngineState base;
     uint32_t s;
+    engine_defaults(&base);
     for (s = 0; s < FP_N; s++) {
-        const FactoryPatch *f = &FP_TAB[s];
-        MasterPerformancePreset *p = &syn_perf_bank[s];
-        factory_patch(&patch_bank[s], &base, f);
-        factory_mod(&patch_bank[s], &FM_TAB[s], f->name);
-        *p = pb;
-        factory_name(p->name, f->name);
-        p->layer_patch[0] = (uint8_t)s;
-        p->layer_patch[1] = (uint8_t)(s + 1u < FP_N ? s + 1u : 0u);
-        p->seq_link = 127u; p->arp_link = 127u;         /* a link to a slot never saved leaves SEQ and ARP alone */
-        p->perf_mode = PERF_SINGL_SYNTH;
-        p->voice_mode[0] = p->voice_mode[1] = f->vmode;
-        p->porta_mode[0] = PORTA_CONST_TIME;
-        p->porta_time[0] = f->vmode == VMODE_MONO_LEGATO ? 20u : 0u;
-        p->reverb_type = f->rtype; p->reverb_decay = f->rdec; p->reverb_damp = f->rdmp; p->reverb_predelay = f->rpre;
-        p->delay_time = f->dtime; p->delay_feedback = f->dfb; p->delay_type = f->dtype; p->delay_pingpong = f->ping;
-        p->delay_degrade = 36u;
+        factory_patch(&patch_bank[s], &base, &FP_TAB[s]);
+        factory_mod(&patch_bank[s], &FM_TAB[s], FP_TAB[s].name);
+        factory_seq(s, syn_seq_bank[s]);
+        factory_arp(s, &syn_arp_bank[s]);
+        factory_name(syn_perf_name[s], FP_TAB[s].name);
         syn_used[UISAVE_PATCH_PRESET][s >> 3] |= (uint8_t)(1u << (s & 7u));
+        syn_used[UISAVE_SEQ_SETTINGS][s >> 3] |= (uint8_t)(1u << (s & 7u));
+        syn_used[UISAVE_ARP_SEQ][s >> 3] |= (uint8_t)(1u << (s & 7u));
         syn_used[UISAVE_WHOLE_PERF][s >> 3] |= (uint8_t)(1u << (s & 7u));
     }
 }
+PS_STATIC_ASSERT(FP_N == BANK_SLOTS, "a factory sequence, arp and performance for every slot");

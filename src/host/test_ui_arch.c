@@ -20,11 +20,12 @@ static ArpState arp;
 
 static void press(uint8_t btn) { ui_sm_handle(&sm, UIEV_BUTTON, (int8_t)btn); }
 
-/* the Preset Encoder's store: slots 3, 7 and 40 of every kind are used */
+/* the Preset Encoder's store: slots 3, 7, 30 and 40 of every kind say used (40 is past the 32-slot banks: the walk
+ * must not reach it there) */
 static uint8_t used_slots(void *ctx, uint8_t target, uint8_t slot, uint8_t name[NAME_LEN])
 {
     (void)ctx; (void)target; (void)name;
-    return slot == 3u || slot == 7u || slot == 40u ? (uint8_t)UISLOT_USED : (uint8_t)UISLOT_EMPTY;
+    return slot == 3u || slot == 7u || slot == 30u || slot == 40u ? (uint8_t)UISLOT_USED : (uint8_t)UISLOT_EMPTY;
 }
 
 /* turn the Preset Encoder; the load (if any) is reported done. Returns what it asked for, 255 for nothing */
@@ -274,20 +275,21 @@ int main(void)
     ui_sm_enforce(&sm);
     CHECK(sm.page == UIPAGE_PERF && ui_sm_preset_target(&sm) == UISAVE_WHOLE_PERF, "HOME loads performances");
     CHECK(preset_turn(1) == 3u && sm.perf_slot == 3u, "HOME +1: perf 3 (%u)", sm.perf_slot);
-    CHECK(preset_turn(2) == 40u && sm.perf_slot == 40u, "HOME +2: perf 40 (%u)", sm.perf_slot);
-    CHECK(preset_turn(5) == 255u && sm.perf_slot == 40u, "HOME +5 past the last used slot: stays");
+    CHECK(preset_turn(2) == 30u && sm.perf_slot == 30u, "HOME +2: perf 30 (%u)", sm.perf_slot);
+    CHECK(preset_turn(5) == 255u && sm.perf_slot == 30u, "HOME +5 past the bank's last used slot: stays (not 40)");
     CHECK(preset_turn(-1) == 7u, "HOME -1: perf 7");
     press(BTN_SEQ);
     CHECK(ui_sm_preset_target(&sm) == UISAVE_SEQ_SETTINGS && preset_turn(1) == 3u && perf_state.seq_link == 3u,
           "SEQ loads sequencer slots (%u)", perf_state.seq_link);
     press(BTN_ARP);
-    CHECK(ui_sm_preset_target(&sm) == UISAVE_ARP_SEQ && preset_turn(3) == 40u && perf_state.arp_link == 40u,
-          "ARP loads arp patterns (%u)", perf_state.arp_link);
+    CHECK(ui_sm_preset_target(&sm) == UISAVE_ARP_SEQ && preset_turn(3) == 30u && perf_state.arp_link == 30u,
+          "ARP loads arp patterns, not past slot 31 (%u)", perf_state.arp_link);
     press(BTN_ENV);
     ui_sm_set_layer_focus(&sm, 1);
     CHECK(ui_sm_preset_target(&sm) == UISAVE_PATCH_PRESET && preset_turn(1) == 3u && perf_state.layer_patch[1] == 3u &&
           perf_state.layer_patch[0] == 0u, "ENV loads the focused layer's patch (L1 %u L2 %u)",
           perf_state.layer_patch[0], perf_state.layer_patch[1]);
+    CHECK(preset_turn(3) == 40u && preset_turn(-3) == 3u, "patches walk the 128-slot bank (to 40 and back)");
     ui_sm_handle(&sm, UIEV_PRESET_ENC, 1);
     ui_sm_handle(&sm, UIEV_PRESET_ENC, 1);   /* refused while the first load is pending */
     CHECK(sm.load_pending && sm.load_slot == 7u, "one load at a time");
@@ -393,6 +395,15 @@ int main(void)
     press(BTN_SAVE);
     CHECK(sm.save_target == UISAVE_SEQ_SETTINGS, "SAVE on SEQ saves the sequence (%u)", sm.save_target);
     CHECK(ui_sm_knob(&sm, UIPAGE_SAVE_COMMIT, 0, 3, &i) == NULL, "a sequence has no name: knob 4 off");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 100);
+    CHECK(sm.save_slot == BANK_SLOTS - 1u, "a sequence's slots end at 31 (%u)", sm.save_slot);
+    sm.save_target = UISAVE_PATCH_PRESET;
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 100);
+    CHECK(sm.save_slot == PATCH_SLOTS - 1u, "a patch's at 127 (%u)", sm.save_slot);
+    sm.save_target = UISAVE_ARP_SEQ;
+    ui_sm_enforce(&sm);
+    CHECK(sm.save_slot == BANK_SLOTS - 1u, "TARGET to ARP from patch slot 127: slot 31 (%u)", sm.save_slot);
+    sm.save_target = UISAVE_SEQ_SETTINGS;
     press(BTN_HOME);
     press(BTN_SAVE);
     CHECK(sm.save_target == UISAVE_WHOLE_PERF, "SAVE on HOME saves the performance (%u)", sm.save_target);
