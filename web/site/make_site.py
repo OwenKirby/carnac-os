@@ -139,8 +139,8 @@ def main():
                                                .replace("__VERSION__", version), encoding="utf-8")
 
     landing = (HERE / "index.html").read_text(encoding="utf-8")
-    tip_card = (f'    <a class="tablet" href="{html.escape(a.tip)}" target="_blank" rel="noopener"><strong>Tip me</strong>'
-                '<span>Carnac OS is free. If it makes your FM1 sing, a tip keeps it going.</span></a>\n') if a.tip else ""
+    tip_card = (f'    <a class="tablet tip" href="{html.escape(a.tip)}" target="_blank" rel="noopener"><strong>Tip me</strong>'
+                '<span>Buy me a beer? I could definitely use one!</span></a>\n') if a.tip else ""
     landing = (landing.replace("__EMU__", emu_card).replace("__TIP__", tip_card).replace("__VERSION__", version)
                .replace("__PKG__", name).replace("__REPO__", REPO))
     (out / "index.html").write_text(landing, encoding="utf-8")

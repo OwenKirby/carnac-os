@@ -793,6 +793,7 @@ static void fm1_main(void)
     factory_install();                              /* the factory bank (slots 0..31), under whatever is saved */
     ps_load();                                      /* the saved patches, performances, sequences, arps */
     pcm_boot();                                     /* the PCM waves uploaded to the free store flash */
+    syn_boot_perf();                                /* performance 0 (NEWGRANGE DAWN): what the first key plays */
     for (k = 0; k < NKEYS; k++)
         key_note[k] = NOTE_NONE;
     syn_dbg.stage = 4;

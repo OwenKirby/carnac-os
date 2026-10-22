@@ -109,11 +109,87 @@ What the host can't settle and has to be measured on a real FM1. Every number in
 - [ ] **Boot CRC** of the 229 KB wavetable image through XIP: estimated about 10 ms, never measured.
 - [ ] **Block-major render overhead** (src/dsp/synth_runtime.c `render_pass`, 2026-10-14). On the host it reads about 3–5 % slower than the old frame-major loop (SINGLE x 8: ~207 -> ~219 ns/sample, clock() resolution so noisy): a `midi_clock_frame_changes` check per frame and the per-frame sums going through a 4 KB bus. Read `cpu_pct` on one core; if it costs more than that, the bus can drop to int32 (the sums fit) and the check can fold into `midi_clock_frame`.
 - [ ] **Battery moon** (src/hardware/synth_main_fm1.c `carnac_battery_moon`, 2026-10-21, installed as synth_battmoon1). Empty is put at ADC 501 by extending the stock thresholds (531 / 561 / 591 = 1/3, 2/3, FULL) one more third down: unverified. On battery, note the moon's phase from full charge until the FM1 shuts down. If it switches off with the moon still showing a crescent, raise the floor. If it sits dark for a long time first, lower it. Also check: does the moon flicker between two phases (the hysteresis is a third of a step, ~1 ADC count)? Is it full with stars on a computer's USB? What does it show on a USB charger with no host (expected: a high reading, the cell charging)?
+- [ ] **Factory bank RITES OF STONE** (src/hardware/factory_presets.c, 2026-10-21, installed as synth_rites3). Measured on the device, each performance loaded with ED_DEBUG and played as an 8-note chord twice (each patch's voice cap applies): every peak at or under 75 % (ANCESTOR PULSE 75, DAWN PROCESSION / SKARA BRAE FIRE / CURSUS WIND 74), no late halves, nothing shed. NEWGRANGE DAWN (the power-on performance, STACK x 6 with PCM CHOIR and CELESTIAL) held: 64 % load, 69 % peak, after its noise was taken out (with noise level 8: 71 / 77). Not measured: the ARP-led pads with PLAY running (SEQ+ARP adds about 9 points). Levels balanced on the host only (a held chord within a few dB). Still to do by ear: every patch's MOD WHEEL job, the patches' levels against each other, the DUAL (SKY BURIAL) and SPLIT (MENEC ALIGNMENT) performances on the panel keys. This unit has its own saves in performance slots 0 and 30, which shadow NEWGRANGE DAWN and SKY BURIAL in the PERF browser (power-on always plays the factory NEWGRANGE DAWN).
 - [ ] **Dual core** (docs/dual-core-plan.md): X0X went from 115 % to 68 % with 2 cores. Measure only once the single-core numbers above are known. Device items for two cores: docs/dual-core-watchlist.md sections C and D (core-1 stack high-water, I-cache with mixed architectures, XIP contention, flash-write parking, load balance).
 
 ## PERF TEST runs (device)
 
 Written by src/hardware/fm1_perf.py. Pass: avg <= 70 %, peak < 90 %, no late halves. One core, factory patch + the scenario's settings (src/hardware/perf_test.c).
+
+### 2026-10-21 21:50, CARNAC OS DEV (2 cores), done
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 17.3 | 17.7 | 0 | 0 | 61.6 | 1 | pass |
+| SINGLE 1V | 24.4 | 25.3 | 0 | 1 | 61.3 | 3 | pass |
+| SINGLE | 44.0 | 44.7 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE HEAVY | 55.6 | 56.3 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC | 57.6 | 58.4 | 0 | 5 | 57.2 | 7 | pass |
+| SPREAD | 45.3 | 46.1 | 0 | 6 | 57.6 | 1 | pass |
+| DUAL FILTER | 57.4 | 58.3 | 0 | 7 | 57.5 | 7 | pass |
+| STACK | 59.9 | 60.9 | 0 | 6 | 56.2 | 8 | pass |
+| BINAURAL | 52.7 | 53.7 | 0 | 6 | 57.2 | 1 | pass |
+| DUAL OSC HEAVY | 63.7 | 64.5 | 0 | 5 | 51.9 | 8 | pass |
+| SPREAD HEAVY | 53.8 | 54.7 | 0 | 6 | 57.6 | 1 | pass |
+| DUAL FLT HEAVY | 66.6 | 67.6 | 0 | 7 | 49.2 | 8 | pass |
+| STACK HEAVY | 66.0 | 67.1 | 0 | 6 | 50.2 | 8 | pass |
+| BINAURAL HEAVY | 67.8 | 68.9 | 0 | 6 | 44.2 | 9 | pass |
+| SINGLE LADDER | 44.1 | 44.9 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE MS20 | 42.1 | 43.0 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE SH-2 | 49.1 | 49.9 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE FORMANT | 42.4 | 43.2 | 0 | 8 | 57.6 | 1 | pass |
+| DUAL FLT LADDER | 57.4 | 58.2 | 0 | 7 | 57.2 | 7 | pass |
+| SEQ+ARP HOME | 65.2 | 67.8 | 0 | 8 | 51.9 | 10 | pass |
+| SEQ+ARP AMP | 65.4 | 68.2 | 0 | 8 | 51.9 | 11 | pass |
+| SEQ+ARP SEQ | 64.6 | 67.8 | 0 | 8 | 12.4 | 127 | pass |
+| SEQ+ARP MOD1 | 65.2 | 69.1 | 0 | 8 | 14.3 | 70 | pass |
+| LADDER FILTER PG | 44.0 | 44.7 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 58.6 | 59.6 | 0 | 8 | 57.5 | 8 | pass |
+| HEAVY CELEST+PP | 60.4 | 61.3 | 0 | 8 | 55.9 | 8 | pass |
+| SEQ+ARP CELEST+PP | 70.3 | 72.9 | 0 | 8 | 43.6 | 10 | FAIL |
+| SINGLE MULTI H | 57.1 | 58.1 | 0 | 8 | 57.2 | 7 | pass |
+| DUALOSC MULTI H | 64.8 | 65.7 | 0 | 5 | 52.2 | 8 | pass |
+| SPREAD MULTI H | 55.1 | 56.0 | 0 | 6 | 57.6 | 1 | pass |
+| DUALFLT MULTI H | 70.3 | 71.4 | 0 | 7 | 42.9 | 1 | FAIL |
+| STACK MULTI H | 68.2 | 69.4 | 0 | 6 | 43.9 | 9 | pass |
+| BINAUR MULTI H | 70.5 | 71.6 | 0 | 6 | 42.9 | 1 | FAIL |
+| SPREAD H CEL+PP | 59.7 | 60.8 | 0 | 6 | 56.9 | 8 | pass |
+| DUALOSC H CEL+PP | 69.5 | 70.6 | 0 | 5 | 43.2 | 9 | pass |
+| SPREAD H TUM+PP | 57.5 | 58.6 | 0 | 6 | 57.2 | 7 | pass |
+| SEQ+ARP SPRD CEL | 81.9 | 84.9 | 0 | 6 | 42.9 | 2 | FAIL |
+| HEAVY SPRING+PP | 59.4 | 60.3 | 0 | 8 | 56.9 | 8 | pass |
+| HEAVY CEL+BBD PP | 60.4 | 61.5 | 0 | 8 | 55.2 | 8 | pass |
+| SEQ+ARP SPR+BBD | 69.0 | 72.0 | 0 | 8 | 44.6 | 10 | pass |
+| STRIKE | 44.9 | 46.0 | 0 | 8 | 57.6 | 1 | pass |
+| STRIKE HEAVY | 56.0 | 56.9 | 0 | 8 | 57.5 | 1 | pass |
+| SEQ+ARP STRIKE | 74.5 | 77.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| SEQ+ARP STRK FILT | 75.3 | 78.6 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE SH2 H | 62.2 | 63.4 | 0 | 8 | 53.2 | 8 | pass |
+| DUALOSC SH2 H | 68.6 | 69.6 | 0 | 5 | 45.6 | 9 | pass |
+| SPREAD SH2 H | 58.9 | 59.8 | 0 | 6 | 57.2 | 8 | pass |
+| DUALFLT SH2 H | 80.2 | 81.4 | 0 | 7 | 43.2 | 1 | FAIL |
+| STACK SH2 H | 75.7 | 76.8 | 0 | 6 | 43.2 | 1 | FAIL |
+| BINAUR SH2 H | 78.0 | 79.1 | 0 | 6 | 42.9 | 1 | FAIL |
+| STRIKE SH2 H | 62.6 | 63.7 | 0 | 8 | 52.8 | 8 | pass |
+| SPREAD SH2 CEL+PP | 63.7 | 64.7 | 0 | 6 | 51.9 | 8 | pass |
+| DUALFLT SH2 CEL | 85.0 | 86.2 | 0 | 7 | 43.2 | 1 | FAIL |
+| SEQ+ARP SH2 CEL | 76.5 | 79.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| DUALFLT SH2 HP | 80.2 | 81.4 | 0 | 7 | 43.2 | 1 | FAIL |
+| BINAUR SH2 HP | 78.0 | 79.2 | 0 | 6 | 42.9 | 1 | FAIL |
+| SINGLE PCM | 48.4 | 49.5 | 0 | 8 | 57.3 | 1 | pass |
+| DUAL OSC PCM | 55.9 | 56.8 | 0 | 5 | 57.5 | 1 | pass |
+| SPREAD PCM | 51.0 | 51.8 | 0 | 6 | 57.6 | 1 | pass |
+| DUAL FILTER PCM | 61.8 | 62.9 | 0 | 7 | 52.2 | 8 | pass |
+| STACK PCM | 65.8 | 66.8 | 0 | 6 | 50.5 | 8 | pass |
+| BINAURAL PCM | 60.4 | 61.4 | 0 | 6 | 54.6 | 8 | pass |
+| DUALOSC MULTI H PCM | 59.5 | 60.6 | 0 | 5 | 56.6 | 8 | pass |
+| DUALFLT MULTI H PCM | 74.9 | 76.0 | 0 | 7 | 42.9 | 1 | FAIL |
+| BINAUR MULTI H PCM | 78.1 | 79.4 | 0 | 6 | 42.9 | 1 | FAIL |
+| SINGLE RS | 44.1 | 45.7 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE RS PCM | 51.7 | 53.5 | 0 | 8 | 57.5 | 1 | pass |
+| DUALOSC RS | 57.6 | 59.1 | 0 | 5 | 57.5 | 7 | pass |
+| DUALOSC RS PCM | 59.4 | 61.0 | 0 | 5 | 56.5 | 8 | pass |
+| SEQ+ARP HOME PCM | 73.6 | 77.2 | 0 | 8 | 43.2 | 2 | FAIL |
 
 ### 2026-10-21 21:03, CARNAC OS 0.9.2 (2 cores), done
 

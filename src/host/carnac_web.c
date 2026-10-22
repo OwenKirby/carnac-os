@@ -233,6 +233,7 @@ static void boot(void)
         pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0);
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
     }
+    syn_boot_perf();                                /* performance 0, as the FM1 boots (after the PCM waves) */
     for (k = 0; k < NKEYS; k++)
         key_note[k] = NOTE_NONE;
     booted = 1;

@@ -64,6 +64,15 @@ nav.menu a:hover, nav.menu a:focus-visible { background-color: var(--lane); back
                                              color: var(--lane-text); outline: none; }
 nav.menu a:hover strong, nav.menu a:focus-visible strong { color: var(--lane-hi); }
 nav.menu a:hover code, nav.menu a:focus-visible code { color: var(--lane-hi); }
+/* the tip tablet: rimmed in THEME (the clip-path eats a border, so the face sits 2px inside a lit tablet) */
+nav.menu a.tip, nav.menu a.tip:hover, nav.menu a.tip:focus-visible { position: relative; background: var(--theme); }
+nav.menu a.tip::before { content: ""; position: absolute; inset: 2px; z-index: -1;
+                         background-color: var(--rock); background-image: var(--rock-tex, none); background-size: 128px 128px;
+                         clip-path: polygon(7px 0, calc(100% - 5px) 0, 100% 5px, 100% calc(100% - 7px), calc(100% - 7px) 100%,
+                                            5px 100%, 0 calc(100% - 5px), 0 7px); }
+nav.menu a.tip strong { color: var(--accent); }
+nav.menu a.tip:hover::before, nav.menu a.tip:focus-visible::before { background-color: var(--lane);
+                                                                     background-image: var(--lane-tex, none); }
 
 /* buttons: hewn tablets, THEME lit; the quiet one dark stone */
 button { font-size: 20px; line-height: 1.2; cursor: pointer; border: 0; padding: 12px 22px 11px;

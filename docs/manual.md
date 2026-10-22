@@ -317,6 +317,15 @@ The screen is mostly black, so the panel gives off little light when played outd
 
 **Installing and recovering.** Install Carnac from the web installer at [owenkirby.github.io/carnac-os](https://owenkirby.github.io/carnac-os/), in Chrome or Edge, with the FM-1 on USB. It writes the firmware, checks the version, then writes the PCM waves. If an install stops part-way, replug the cable and start again: the FM-1 stays in update mode and the installer carries on. If the FM-1 does not start after an update, switch it off and on twice; it then starts in safe mode, which keeps USB working. The same page can put M-VAVE's stock firmware back. Deeper recovery steps are in the source repository (docs/fm1-recovery.md).
 
+## In the works
+
+These features are in active development for future releases:
+
+- **MIDI Program Change**: receive program change messages to load patches and performances from external MIDI controllers and sequencers.
+- **Full CC implementation**: comprehensive MIDI CC support with the ability to map any CC number to any parameter, and record CC changes into sequences.
+- **Voice optimization**: further refinements to voice allocation and voice-stealing algorithms for smoother, more musical note handling in dense polyphonic situations.
+- **MFX (Multi-Effects)**: additional built-in effects and modulation processing pathways under development.
+
 ## Changelog
 
 Newest first. Features marked *in source* are written but not yet installed on the FM-1.

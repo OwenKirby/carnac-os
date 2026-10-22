@@ -206,6 +206,26 @@ static void syn_perf_tick(void)
 }
 
 
+/* power-on, after ps_load and before the audio starts (no lock: nothing else runs yet, and syn_unlock would turn the
+ * interrupts on early): the factory's performance 0 whole, NEWGRANGE DAWN, always (a performance saved in slot 0 stays
+ * there, loaded from the PERF page as before), so the first key played sounds the bank's opening patch with its
+ * effects instead of the bare defaults */
+static void syn_boot_perf(void)
+{
+    if (factory_perf(0u, &syn_perf_load) != 0)
+        return;
+    perf_state = syn_perf_load.perf;
+    engine_state[0] = syn_perf_load.engine[0];
+    engine_state[1] = syn_perf_load.engine[1];
+    engine_load_count[0]++;
+    engine_load_count[1]++;
+    memcpy(seq_lanes, syn_perf_load.seq, sizeof seq_lanes);
+    arp_state = syn_perf_load.arp;
+    sm.perf_slot = 0u;
+    ui_sm_enforce(&sm);                             /* the performance's mode, its patches' architectures */
+}
+
+
 /* ------------------------------------------------------------- panel --- */
 #define KEY_F3 53u                                  /* the lowest key at octave 0 */
 #define OCT_MIN (-3)

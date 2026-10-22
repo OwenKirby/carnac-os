@@ -18,6 +18,7 @@
 #include "dsp/wavetables.h"
 #include "dsp/midi_clock.h"
 #include "dsp/seq_scale.h"
+#include "dsp/attacks.h"         /* ATK_COUNT: the factory bank's attack sounds */
 #include "dsp/arp_chords.h"
 
 static int failures;
@@ -189,6 +190,28 @@ static void test_factory(void)
         static uint8_t rec[WHOLE_PERF_STORED_SIZE];
         const FactoryArp *fa = &FA_TAB[s];
         CHECK(factory_perf(s, &w) == 0, "factory_perf %u", s);
+        {   /* the patch's settings: each a byte of the patch, once, and the values in range */
+            const uint8_t *q = FV_TAB[s].set;
+            uint8_t seen[sizeof(EngineState)] = {0};
+            const EngineState *e = &patch_bank[s];
+            uint32_t k;
+            for (; q[0] != V_END; q += 2) {
+                CHECK(q[0] < sizeof(EngineState) && !seen[q[0]], "patch %u: offset %u twice or out of range", s, q[0]);
+                if (q[0] < sizeof(EngineState)) seen[q[0]] = 1;
+            }
+            CHECK(e->arch < VARCH_COUNT && e->filter[0].flavour < FLT_COUNT && e->filter[1].flavour < FLT_COUNT &&
+                  e->amp.drive_model < DRIVE_COUNT && e->oscmix.atk_sample < ATK_COUNT &&
+                  e->oscmix.atk_track < ATKTRK_COUNT && e->oscmix.xmod_type < XMOD_COUNT, "patch %u out of range", s);
+            for (k = 0; k < NOSC; k++)
+                CHECK(e->osc[k].wavebank < 16u || (e->osc[k].wavebank >= 32u && e->osc[k].wavebank < 32u + ATK_COUNT) ||
+                      (e->osc[k].wavebank >= 64u && e->osc[k].wavebank < 71u), "patch %u osc %u: wave %u", s, k,
+                      e->osc[k].wavebank);
+            for (k = 0; k < NMODSLOT; k++)
+                CHECK(e->mod[k].src_a < MSRC_COUNT && e->mod[k].src_b < MSRC_COUNT && e->mod[k].func < MFN_COUNT,
+                      "patch %u slot %u", s, k);
+            CHECK(memcmp(&w.engine[1], &patch_bank[w.perf.layer_patch[1]], sizeof(EngineState)) == 0 &&
+                  w.perf.perf_mode < PERF_COUNT, "performance %u: its layer 2", s);
+        }
         CHECK(memcmp(&w.engine[0], &patch_bank[s], sizeof(EngineState)) == 0 &&
               memcmp(w.seq, syn_seq_bank[s], sizeof w.seq) == 0, "performance %u: not its patch and sequence", s);
         CHECK(memcmp(w.perf.name, syn_perf_name[s], NAME_LEN) == 0 && memcmp(w.perf.name, patch_bank[s].name, NAME_LEN) == 0,
