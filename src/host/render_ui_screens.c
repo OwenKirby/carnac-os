@@ -270,6 +270,10 @@ int main(int argc, char **argv)
     shot(dir, "env1");
     go(UIPAGE_ENV2);
     shot(dir, "env2");
+    e->env[1].invert = 1;                            /* drawn upside down */
+    ui_sm_enforce(&sm);
+    shot(dir, "env2_inv");
+    e->env[1].invert = 0;
     run(20000);
     go(UIPAGE_LFO1);
     shot(dir, "lfo1");

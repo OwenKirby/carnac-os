@@ -1112,26 +1112,28 @@ static void pu_env_xs(const EnvParams *p, int32_t *xs)
     xs[4] = xs[3] + pu_env_w(p->release);
 }
 
-/* the barrow: attack rising fast then easing, decay and release falling as a curve, the sustain level held */
+/* the barrow: attack rising fast then easing, decay and release falling as a curve, the sustain level held; an
+ * inverted ENV2 / ENV3 drawn upside down, as the mod destinations read it (full at rest, dipping with the note) */
 static void pu_viz_env(const UIStateMachine *sm, uint8_t i)
 {
     const EnvParams *p = &sm->engine[sm->s.active_synth_layer]->env[i];
     int32_t xs[5], x, u, w, lv, s = ((int32_t)(p->sustain > VAL_MAX ? VAL_MAX : p->sustain) << 15) / 127;
+    uint8_t inv = (uint8_t)(i > 0u && p->invert);
     pu_env_xs(p, xs);
     for (x = 0; x < PV_W; x++) {
         int32_t sx = PV_X0 + x;
-        if (sx < xs[0] || sx >= xs[4]) { pu_ys[x] = PV_GROUND - 1; continue; }
+        if (sx < xs[0] || sx >= xs[4]) { pu_ys[x] = pu_env_y(inv ? 32767 : 0); continue; }
         if (sx < xs[1]) { w = xs[1] - xs[0]; u = ((sx - xs[0]) << 15) / w; lv = 32767 - (int32_t)(((int64_t)(32767 - u) * (32767 - u)) >> 15); }
         else if (sx < xs[2]) { w = xs[2] - xs[1]; u = 32767 - ((sx - xs[1]) << 15) / w; lv = s + (int32_t)(((int64_t)(32767 - s) * ((int64_t)u * u >> 15)) >> 15); }
         else if (sx < xs[3]) lv = s;
         else { w = xs[4] - xs[3]; u = 32767 - ((sx - xs[3]) << 15) / w; lv = (int32_t)(((int64_t)s * ((int64_t)u * u >> 15)) >> 15); }
-        pu_ys[x] = pu_env_y(lv);
+        pu_ys[x] = pu_env_y(inv ? 32767 - lv : lv);
     }
     pu_curve(pu_ys, SQC(THEME), 1u);
     for (x = 1; x < 4; x++)                          /* the stage boundaries, faint, under the curve only */
         if (xs[x] >= PV_X0 && xs[x] < PV_X0 + PV_W)
             pu_fog_col(xs[x], pu_ys[xs[x] - PV_X0] + 2, PV_GROUND, 3u, PUC_STONE, PU_VIZ_Y);
-    if (i > 0u && p->invert)
+    if (inv)
         sq_text_r(PV_X0 + PV_W, CAP_IN(S, 13), &AF_S, "INVERTED", SQC(MID), SQC(BG));
 }
 
