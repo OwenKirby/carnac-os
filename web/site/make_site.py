@@ -9,6 +9,9 @@
   install/index.html            the web installer (web/site/installer.html with X0X's fm1pkg.js and fm1ota.js
                                 and the package's metadata inlined; Chrome or Edge, Web MIDI)
   firmware/carnac-VER.fwsc      the package the installer writes; also the download (+ .sha256)
+  firmware/pcm_areaN.bin        the PCM waves (src/dsp/pcm_area0.bin, pcm_area1.bin), which the installer writes after
+                                the firmware (src/hardware/pcm_store_upload.py's protocol)
+  manual/index.html             the manual: docs/manual.md (the Claude Doc's export) in web/site/manual.html
   play/                         the browser synth (web/emu, built by web/emu/build.sh), unless --no-emu
 
   python3 web/site/make_site.py build/release-0.9.2/carnac-0.9.2.fwsc 0.9.2 build/site [--no-emu] [--tip URL]
@@ -25,7 +28,9 @@ import json
 import os
 import re
 import shutil
+import struct
 import sys
+import zlib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -33,11 +38,16 @@ REPO_DIR = HERE.parents[1]
 X0X_WEB = REPO_DIR / "x0x-firmware" / "web"
 sys.path.insert(0, str(X0X_WEB))
 from make_site import product_of, strip_module  # noqa: E402  (Felucca's: the package format)
+sys.path.insert(0, str(HERE))
+import manual_md  # noqa: E402
 
 REPO = "https://github.com/OwenKirby/carnac-os"
 TIP = "https://ko-fi.com/orbvorgis"
 LOOK_FILES = ("carnac.css", "stones.js", "carnac-rune.woff", "splash.png")   # the FM1's look, shared by both pages
 EMU_FILES = ("index.html", "worklet.js", "carnac.wasm")
+PCM_IMAGES = {0: REPO_DIR / "src" / "dsp" / "pcm_area0.bin", 1: REPO_DIR / "src" / "dsp" / "pcm_area1.bin"}
+PCM_AREA_SIZE = {0: 0x9000, 1: 0xE000}          # src/hardware/pcm_store_fm1.c PCM_AREA
+MANUAL = REPO_DIR / "docs" / "manual.md"
 EMU_CARD = ('    <a class="tablet" href="play/"><strong>Play it in the browser</strong><span>The same synth engine, with sound: '
             'mouse, touch or keyboard, no FM1 needed.</span></a>\n')
 
@@ -86,13 +96,22 @@ def main():
     for f in LOOK_FILES:
         shutil.copy(HERE / f, out / f)
     shutil.copy(pkg, out / "firmware" / name)
+    pcm = []
+    for area, src in PCM_IMAGES.items():
+        img = src.read_bytes()
+        magic, ver, count, n, crc = struct.unpack_from("<IHHII", img)
+        if magic != 0x57505243 or ver != 2 or n != len(img) or zlib.crc32(img[32:]) != crc or len(img) > PCM_AREA_SIZE[area]:
+            raise SystemExit(f"{src}: not a good version 2 PCM image for area {area} (src/dsp/gen_pcm_waves.py)")
+        shutil.copy(src, out / "firmware" / src.name)
+        pcm.append({"area": area, "file": "../firmware/" + src.name, "sha256": hashlib.sha256(img).hexdigest(),
+                    "count": count, "len": n})
     (out / "firmware" / (name + ".sha256")).write_text(f"{sha}  {name}\n", encoding="utf-8")
 
     page = (HERE / "installer.html").read_text(encoding="utf-8")
     lib = strip_module((X0X_WEB / "fm1pkg.js").read_text(encoding="utf-8")) + "\n" + \
         strip_module((X0X_WEB / "fm1ota.js").read_text(encoding="utf-8"))
     meta = json.dumps({"version": version, "product": product, "name": name, "sha256": sha, "tip": a.tip or None,
-                       "pkg": "../firmware/" + name})
+                       "pkg": "../firmware/" + name, "pcm": pcm})
     for mark in ("/*LIB*/", "/*META*/"):
         if page.count(mark) != 1:
             raise SystemExit(f"installer.html must contain {mark} once")
@@ -112,6 +131,13 @@ def main():
         emu_card = EMU_CARD
         print("  note  play/ is web/emu as built now: rebuild it from the release commit if the tree has moved on")
 
+    _, toc, body = manual_md.render(MANUAL.read_text(encoding="utf-8"))
+    toc_html = "\n".join(f'    <li><a href="#{i}">{html.escape(t)}</a></li>' for i, t in toc)
+    (out / "manual").mkdir(exist_ok=True)
+    (out / "manual" / "index.html").write_text((HERE / "manual.html").read_text(encoding="utf-8")
+                                               .replace("__TOC__", toc_html).replace("__BODY__", body)
+                                               .replace("__VERSION__", version), encoding="utf-8")
+
     landing = (HERE / "index.html").read_text(encoding="utf-8")
     tip_card = (f'    <a class="tablet" href="{html.escape(a.tip)}" target="_blank" rel="noopener"><strong>Tip me</strong>'
                 '<span>Carnac OS is free. If it makes your FM1 sing, a tip keeps it going.</span></a>\n') if a.tip else ""
@@ -120,7 +146,7 @@ def main():
     (out / "index.html").write_text(landing, encoding="utf-8")
     (out / ".nojekyll").write_text("")
     print(f"site: {out}: index.html, install/ ({product}), firmware/{name} ({len(raw)} B, sha256 {sha[:12]}...)"
-          + (", play/" if emu_card else "") + (f", tip {a.tip}" if a.tip else ", no tip link"))
+          + f", {len(pcm)} PCM images, manual/ ({len(toc)} sections)" + (", play/" if emu_card else "") + (f", tip {a.tip}" if a.tip else ", no tip link"))
 
 
 if __name__ == "__main__":

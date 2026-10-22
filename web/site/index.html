@@ -19,8 +19,9 @@
   <p>Synthesizer firmware for the M-VAVE FM1: wavetable and LA-style voices, two layers, filters, effects,
     a sequencer and an arpeggiator.</p>
   <nav class="menu">
-    <a class="tablet" href="install/"><strong>Install Carnac __VERSION__</strong><span>From Chrome or Edge on a computer, with the FM1 connected by USB. It updates from stock firmware or from any earlier Carnac, and keeps your saved sounds.</span></a>
-__EMU__    <a class="tablet" href="firmware/__PKG__"><strong>Download __PKG__</strong><span>For the command-line installer: <code>python3 tools/fm1_install.py __PKG__</code></span></a>
+    <a class="tablet" href="install/"><strong>Install Carnac __VERSION__</strong><span>From Chrome or Edge on a computer, with the FM1 connected by USB. It updates from stock firmware or from any earlier Carnac, keeps your saved patches, and writes the PCM waves.</span></a>
+    <a class="tablet" href="manual/"><strong>Manual</strong><span>The panel, voices and layers, oscillators and filters, modulation, effects, the sequencer and arpeggiator, presets, and what changed in each version.</span></a>
+__EMU__    <a class="tablet" href="firmware/__PKG__"><strong>Download __PKG__</strong><span>For the command-line installer: <code>python3 tools/fm1_install.py __PKG__</code>. The PCM waves are <code>firmware/pcm_area0.bin</code> and <code>pcm_area1.bin</code> beside it, for <code>src/hardware/pcm_store_upload.py</code>.</span></a>
 __TIP__    <a class="tablet" href="__REPO__"><strong>Source</strong><span>GitHub, GPL-3.0. Built on X0X and Felucca.</span></a>
   </nav>
   <footer>

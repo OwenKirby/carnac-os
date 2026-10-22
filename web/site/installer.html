@@ -5,7 +5,9 @@
      fm1pkg.js, unchanged. web/site/make_site.py inlines them and the package's metadata at the marks below.
      Added for Carnac: the FM1 is asked which Carnac it runs (editor INFO, F0 7D 46 4C 01 F7) before anything is
      written, an older package than the one on the FM1 needs a tick first, and the install is checked by that same
-     INFO answering "CARNAC OS <version>". -->
+     INFO answering "CARNAC OS <version>". Then the PCM waves (src/dsp/pcm_area*.bin) are written to their flash areas
+     with the editor's PCM commands (src/hardware/pcm_store_upload.py's protocol), each only when the FM1 does not
+     hold that image already. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -52,13 +54,14 @@
   <h1>Install Carnac <span id="ver"></span></h1>
   <canvas class="alignment" data-alignment="3" width="240" height="44" aria-hidden="true"></canvas>
   <p class="soft">Works in Chrome or Edge on a computer, with the FM1 connected by USB. Nothing to install on the computer.
-    Your saved patches, sequences and performances stay on the FM1.</p>
+    Your saved patches stay on the FM1. Coming from Carnac 0.9.1, sequences and performances saved with it do not carry over.</p>
 
   <div class="tablet steps">
     <div class="step"><b>1</b><span>Connect the FM1 straight to the computer with a USB data cable, switch it on,
       and close other apps that use MIDI.</span></div>
     <div class="step"><b>2</b><span>Press <em>Find my FM1</em>. The browser asks to allow MIDI: allow it.</span></div>
-    <div class="step"><b>3</b><span>Press <em>Install</em>. It takes about two minutes. Do not unplug the cable or close this page while it writes.</span></div>
+    <div class="step"><b>3</b><span>Press <em>Install</em>. It takes about three minutes: the firmware, then the PCM waves
+      (the FM1 goes quiet for moments while they are written). Do not unplug the cable or close this page while it writes.</span></div>
   </div>
 
   <div class="panel">
@@ -127,7 +130,7 @@ const ERR = {
   badreq: "The FM1 asked for something outside the package. Reload the page and try again.",
 };
 
-let image = null, midi = null, state = null, writing = false, stock = null;
+let image = null, midi = null, state = null, writing = false, stock = null, pcmImages = null;
 window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault(); e.returnValue = ""; } });
 
 /* "0.9.1" -> [0, 9, 1]; anything else (DEV, a suffix) -> null */
@@ -154,6 +157,61 @@ async function carnacVersion(link) {
   return null;
 }
 
+/* the PCM waves (src/hardware/pcm_store_fm1.c): 100 BEGIN [area], 101 WRITE [off x3, data], 102 END [header],
+   103 INFO [area, first] -> areas, area, entries, KiB x2, used x3, names; data in groups of 7 behind their top bits */
+const PCM_BEGIN = 100, PCM_WRITE = 101, PCM_END = 102, PCM_INFO = 103, PCM_HDR = 32, PCM_CHUNK = 256;
+const pcmPack = (b) => {
+  const o = [];
+  for (let i = 0; i < b.length; i += 7) {
+    const g = b.subarray(i, i + 7);
+    o.push(g.reduce((hi, x, j) => hi | ((x >> 7) << j), 0), ...Array.from(g, (x) => x & 0x7F));
+  }
+  return o;
+};
+const u21 = (v) => [v & 0x7F, (v >> 7) & 0x7F, (v >> 14) & 0x7F];
+async function edReq(link, cmd, args, ms = 5000) {
+  link.drain();
+  if (!link.send([0xF0, 0x7D, 0x46, 0x4C, cmd, ...args, 0xF7])) return null;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const p = await link.read(end - Date.now());
+    if (!p) break;
+    if (p[1] === 0x7D && p[2] === 0x46 && p[3] === 0x4C && p[4] === cmd) return p.slice(5, -1);
+  }
+  return null;
+}
+/* the areas whose image differs from the package's (entries or length); null when the FM1 has no PCM commands */
+async function pcmMissing(link) {
+  const out = [];
+  for (const a of meta.pcm) {
+    const r = await edReq(link, PCM_INFO, [a.area, 0], 1500);
+    if (!r || r.length < 8 || r[1] !== a.area) return null;
+    if (r[2] !== a.count || (r[5] | r[6] << 7 | r[7] << 14) !== a.len) out.push(a);
+  }
+  return out;
+}
+/* write the areas that need it -> "" or why not */
+async function pcmSync(link, onPart) {
+  const todo = await pcmMissing(link);
+  if (todo === null) return "the FM1 did not answer the PCM commands";
+  for (const [k, a] of todo.entries()) {
+    const img = pcmImages[a.area];
+    const frames = [[PCM_BEGIN, [a.area]]];
+    for (let off = PCM_HDR; off < img.length; off += PCM_CHUNK) frames.push([PCM_WRITE, [...u21(off), ...pcmPack(img.subarray(off, off + PCM_CHUNK))]]);
+    frames.push([PCM_END, pcmPack(img.subarray(0, PCM_HDR))]);
+    log(`PCM area ${a.area}: ${frames.length} frames`);
+    for (const [n, [cmd, args]] of frames.entries()) {
+      const r = await edReq(link, cmd, args);
+      if (!r) return `no answer at area ${a.area}, frame ${n + 1}`;
+      const rc = cmd === PCM_WRITE ? r[3] : cmd === PCM_BEGIN ? r[1] : r[0];
+      if (rc) return `area ${a.area} refused frame ${n + 1} (rc ${rc})`;
+      onPart(k, todo.length, (n + 1) / frames.length);
+    }
+  }
+  const left = await pcmMissing(link);
+  return left && left.length === 0 ? "" : "the FM1 does not show the PCM waves after writing them";
+}
+
 async function getMidi() {
   if (midi) return midi;
   try { midi = await navigator.requestMIDIAccess({ sysex: true }); }
@@ -169,8 +227,9 @@ async function probe() {
   log(`found ${dev.name}: ${dev.id.text}`);
   if (IS_LOADER(dev.id)) { dev.link.close(); return { kind: "loader" }; }
   const v = await carnacVersion(dev.link);
+  const pcm = v === meta.version && pcmImages ? await pcmMissing(dev.link) : null;
   dev.link.close();
-  return v !== null ? { kind: "carnac", version: v } : { kind: "other", text: dev.id.text };
+  return v !== null ? { kind: "carnac", version: v, pcmOnly: !!(pcm && pcm.length) } : { kind: "other", text: dev.id.text };
 }
 
 function refreshButtons() {
@@ -201,6 +260,9 @@ function showState() {
     } else if (cmpVer(pkg, on) < 0) {
       $("confirmtext").textContent = `${meta.version} is older than the ${state.version} on the FM1. Patches saved with ${state.version} may not load in ${meta.version}. Install the older version anyway.`;
       box.classList.add("show");
+    } else if (cmpVer(pkg, on) === 0 && state.pcmOnly) {
+      setDevice(`The FM1 runs Carnac OS ${state.version}, but its PCM waves are missing or out of date.`);
+      $("go").textContent = "Write the PCM waves";
     } else if (cmpVer(pkg, on) === 0) {
       setDevice(`The FM1 already runs Carnac OS ${state.version}. You can install it again.`);
     }
@@ -256,7 +318,7 @@ async function run(img, product, isStock) {
         const dev = await up.find((id) => !IS_LOADER(id));
         if (dev) { v = await carnacVersion(dev.link); dev.link.close(); }
       }
-      if (v === meta.version) { say(`Done. The FM1 runs Carnac OS ${v}.`); if (meta.tip) $("tip").hidden = false; }
+      if (v === meta.version) await finishPcm(up, v);
       else if (v !== null) say(`Written, but the FM1 reports Carnac OS ${v}, not ${meta.version}. Press Find my FM1 and install again.`, true);
       else say("Written, but the FM1 did not report its version. If it shows the Carnac splash, all is well; if not, switch it off and on.", true);
       state = v !== null ? { kind: "carnac", version: v } : null;
@@ -270,7 +332,41 @@ async function run(img, product, isStock) {
   showState();
 }
 
-$("go").addEventListener("click", () => { if (image) run(image, meta.product, false); });
+/* after a good install (or alone, when only the PCM waves are missing): the PCM waves, then the last word */
+async function finishPcm(up, v) {
+  let why = pcmImages ? "" : "their download failed";
+  if (!why) {
+    const dev = await up.find((id) => !IS_LOADER(id));
+    if (!dev) why = "the FM1 stopped answering";
+    else {
+      $("bar").value = 0;
+      why = await pcmSync(dev.link, (k, n, f) => {
+        say(`Writing the PCM waves${n > 1 ? ` (${k + 1} of ${n})` : ""}… do not unplug the cable.`);
+        $("bar").value = ((k + f) / n) * 100;
+      });
+      dev.link.close();
+      $("bar").value = 100;
+    }
+  }
+  if (why) { log("PCM: " + why); say(`Carnac OS ${v} is installed, but the PCM waves were not written (${why}). Press Find my FM1 to try again.`, true); return; }
+  say(`Done. The FM1 runs Carnac OS ${v}, with its PCM waves.`);
+  if (meta.tip) $("tip").hidden = false;
+}
+
+async function runPcmOnly() {
+  writing = true;
+  refreshButtons();
+  try { await finishPcm(new Updater(midi, log), state.version); }
+  catch (e) { say("Error: " + (e && e.message), true); log(String(e && e.stack || e)); }
+  state = { kind: "carnac", version: state.version, pcmOnly: false };
+  writing = false;
+  showState();
+}
+
+$("go").addEventListener("click", () => {
+  if (state && state.kind === "carnac" && state.pcmOnly) runPcmOnly();
+  else if (image) run(image, meta.product, false);
+});
 $("stockgo").addEventListener("click", () => { if (stock) run(stock.image, stock.product, true); });
 
 /* stock: M-VAVE's FM-1 V15, chosen by the user (M-VAVE's server allows no cross-site download), checked by SHA-256 */
@@ -296,6 +392,17 @@ $("stockfile").addEventListener("change", async (e) => {
     if ((await sha256(pkg)) !== meta.sha256 || productOf(pkg) !== meta.product) { say("The firmware download is damaged. Reload the page.", true); return; }
     image = logicalImage(pkg);
   } catch (e) { say("Could not load the firmware: " + e.message, true); return; }
+  try {
+    const imgs = {};
+    for (const a of meta.pcm) {
+      const r = await fetch(a.file);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const b = new Uint8Array(await r.arrayBuffer());
+      if ((await sha256(b)) !== a.sha256) throw new Error(`${a.file} is damaged`);
+      imgs[a.area] = b;
+    }
+    pcmImages = imgs;
+  } catch (e) { log("PCM waves: " + e.message); }
   refreshButtons();
 })();
 </script>

@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Carnac OS manual page; web/site/make_site.py fills the __MARKS__ from docs/manual.md (manual_md.py). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carnac OS Manual</title>
+<meta name="description" content="The Carnac OS user manual: the FM1's panel, voices, oscillators, filters, modulation, effects, sequencer, arpeggiator and presets.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="preload" href="../carnac-rune.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="../carnac.css">
+<style>
+  /* the manual's own pieces; the rest is ../carnac.css */
+  main.manual { max-width: 46rem; }
+  .manual h3 { font: 400 18px/1.3 var(--rune); color: var(--accent); margin: 1.8rem 0 .6rem; }
+  .manual h2 { scroll-margin-top: 1rem; }
+  .manual strong { color: var(--text); font-weight: 600; }
+  .manual li { margin: 0 0 .35rem; }
+  .manual ol li::marker { font-family: var(--rune); color: var(--theme); }
+  .manual ul li::marker { color: var(--theme); }
+  .toc { padding: 12px 18px 10px; margin: 0 0 1.6rem; }
+  .toc ol { columns: 2 14rem; column-gap: 2rem; margin: 0; padding-left: 1.6rem; }
+  .toc a { text-decoration: none; color: var(--soft); }
+  .toc a:hover, .toc a:focus-visible { color: var(--text); }
+  .table { overflow-x: auto; margin: 0 0 1.2rem; border: 2px solid var(--dim); }
+  .table table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.5; }
+  .table th { font: 400 16px/1.3 var(--rune); color: var(--text); text-align: left; background: var(--surf);
+              padding: 8px 10px; border-bottom: 2px solid var(--dim); white-space: nowrap; }
+  .table td { padding: 7px 10px; vertical-align: top; border-top: 1px solid var(--stone); }
+  .table td:first-child { color: var(--text); min-width: 6.5rem; }
+  blockquote { margin: 0 0 1.2rem; padding: 10px 16px; border-left: 3px solid var(--theme); background: var(--surf); }
+  blockquote p { margin: 0; }
+  .top { font: 400 16px var(--rune); color: var(--mid); text-decoration: none; }
+</style>
+</head>
+<body>
+<main class="manual">
+  <a class="home" href="../">CARNAC OS</a>
+  <h1>Manual</h1>
+  <p class="soft">For Carnac OS __VERSION__. The FM1's panel, sounds, sequencer and presets, as the firmware has them today.</p>
+  <nav class="tablet toc" aria-label="Contents"><ol>
+__TOC__
+  </ol></nav>
+__BODY__
+  <p><a class="top" href="#">Back to the top</a></p>
+  <footer><canvas class="alignment" data-alignment="5" width="240" height="44" aria-hidden="true"></canvas></footer>
+</main>
+<script src="../stones.js"></script>
+</body>
+</html>
