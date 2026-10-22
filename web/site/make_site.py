@@ -12,6 +12,7 @@
   firmware/pcm_areaN.bin        the PCM waves (src/dsp/pcm_area0.bin, pcm_area1.bin), which the installer writes after
                                 the firmware (src/hardware/pcm_store_upload.py's protocol)
   manual/index.html             the manual: docs/manual.md (the Claude Doc's export) in web/site/manual.html
+  guide/index.html              the button guide (web/site/guide.html, self-contained: its own rune font and drawing)
   play/                         the browser synth (web/emu, built by web/emu/build.sh), unless --no-emu
 
   python3 web/site/make_site.py build/release-0.9.2/carnac-0.9.2.fwsc 0.9.2 build/site [--no-emu] [--tip URL]
@@ -138,6 +139,9 @@ def main():
                                                .replace("__TOC__", toc_html).replace("__BODY__", body)
                                                .replace("__VERSION__", version), encoding="utf-8")
 
+    (out / "guide").mkdir(exist_ok=True)
+    shutil.copy(HERE / "guide.html", out / "guide" / "index.html")
+
     landing = (HERE / "index.html").read_text(encoding="utf-8")
     tip_card = (f'    <a class="tablet tip" href="{html.escape(a.tip)}" target="_blank" rel="noopener"><strong>Tip me</strong>'
                 '<span>Buy me a beer? I could definitely use one!</span></a>\n') if a.tip else ""
@@ -146,7 +150,7 @@ def main():
     (out / "index.html").write_text(landing, encoding="utf-8")
     (out / ".nojekyll").write_text("")
     print(f"site: {out}: index.html, install/ ({product}), firmware/{name} ({len(raw)} B, sha256 {sha[:12]}...)"
-          + f", {len(pcm)} PCM images, manual/ ({len(toc)} sections)" + (", play/" if emu_card else "") + (f", tip {a.tip}" if a.tip else ", no tip link"))
+          + f", {len(pcm)} PCM images, manual/ ({len(toc)} sections), guide/" + (", play/" if emu_card else "") + (f", tip {a.tip}" if a.tip else ", no tip link"))
 
 
 if __name__ == "__main__":

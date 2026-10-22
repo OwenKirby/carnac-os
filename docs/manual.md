@@ -86,7 +86,7 @@ The caps keep the FM-1 within its processing budget. Carnac uses both of the FM-
 
 **Voice mode** (L1 VOICE MODE, L2 VOICE MODE): MONO RETRIG, MONO LEGATO, POLY REUSE, POLY RESET or UNISON. In UNISON, UNISON DETUNE spreads the outer voices by up to 50 cents. In SPLIT, layer 2 uses layer 1's voice mode.
 
-**Glide.** PORTA MODE is CONST RATE, CONST TIME or LEGATO TIED, and PORTA TIME (a LAYER row) sets how long it takes. In polyphonic modes the glide starts from the last note played on that layer. A chord (notes within 30 ms of each other) fans out from the note played before it.
+**Glide.** PORTA MODE is CONST RATE, CONST TIME or LEGATO TIED, and PORTA TIME (knob 4 on the LAYER page; 0 is no glide) sets how long it takes. In polyphonic modes the glide starts from the last note played on that layer. A chord (notes within 30 ms of each other) fans out from the note played before it.
 
 **Layer focus.** The sound pages edit the focused layer. Switch with HOME + OCT- (layer 1) or HOME + OCT+ (layer 2). The screen uses one colour scheme for both layers, set by THEME.
 
@@ -174,7 +174,7 @@ The filter mixer (FLTMIX) appears in DUAL FILT (BALANCE, ROUTING from serial to 
 
 ## Modulation
 
-Almost every destination in Carnac has a MOD SRC row (which source drives it) and an amount. Sources are: none, velocity, keyboard, mod wheel, aftertouch, ENV1 to ENV3, LFO1 to LFO3, MODSLOT1 to MODSLOT3, and CUSTOMCC1 and CUSTOMCC2. The two custom CC numbers are set on the GLOBAL page; the CC1 and CC2 knobs on the LAYER page set the two sources directly, with no number needed.
+Almost every destination in Carnac has a MOD SRC row (which source drives it) and an amount. Sources are: none, velocity, keyboard, mod wheel, aftertouch, ENV1 to ENV3, LFO1 to LFO3, MODSLOT1 to MODSLOT3, and CUSTOMCC1 and CUSTOMCC2. The two custom CC numbers are set on the GLOBAL page; the CC1 knob on the LAYER page sets CUSTOMCC1 directly, with no number needed.
 
 **Envelopes (ENV button).** Knobs are ATTACK, DECAY, SUSTAIN and RELEASE. Extra rows: VEL > TIME and KEY > TIME (bipolar), RETRIG RATE, RETRIG SYNC, LEGATO, AUTO DECAY (a rapid repeat of a note shortens the release) and, on ENV2 and ENV3 only, INVERT. ENV1 is hardwired to the amplifier. An inverted envelope is drawn upside down in the display, as its destinations receive it: full at rest, dipping with the note (in source).
 
@@ -191,7 +191,7 @@ Almost every destination in Carnac has a MOD SRC row (which source drives it) an
 - Knobs: SOURCE A, FUNCTION, SOURCE B, AMOUNT.
 - Functions: a*b (with one source set, it passes that source), a+b, a-b, max, min, sample B on A, quantize B to A, |a-b|, lag and diode.
 
-**Pitch bend and mod wheel.** The LAYER page's knobs are VELOCITY (the keys' velocity), MOD WHEEL, CC1 and CC2. Pitch bend comes in over MIDI only. BEND RANGE is on the GLOBAL page.
+**Pitch bend and mod wheel.** The LAYER page's knobs are VELOCITY (the keys' velocity), MOD WHEEL, CC1 and PORTA TIME. Pitch bend comes in over MIDI only. BEND RANGE is on the GLOBAL page.
 
 ## Effects
 
