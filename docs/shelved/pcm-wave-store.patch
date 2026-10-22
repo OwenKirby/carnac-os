@@ -1,0 +1,1099 @@
+diff --git a/docs/fm1-measure-checklist.md b/docs/fm1-measure-checklist.md
+index 3863253..abaad60 100644
+--- a/docs/fm1-measure-checklist.md
++++ b/docs/fm1-measure-checklist.md
+@@ -2119,3 +2119,5 @@ Stage profile (24 MHz ticks a sample; one counter read costs 1, taken off once a
+ - [ ] MOD page radiating portal + destination rows (2026-10-16, build/fm1-modui/synth_modui1.fwsc; modui2: bent rings, destinations on the pillars, sealed at amount 0 -- the bent rings are 12 cv_line rings, re-time on device). Host-only (gcc -Os): the portal alone 4.8 us a band vs the spiral's 1.9 us, about 1 % of the whole tomb (~480 us, the stone textures). On device: the MOD page's frame rate and the SEQ+ARP MOD1 PERF TEST row against the spiral build; Select walks the destinations in the popup, Algorithm sets the amount, the chain row is skipped; the equation capstone fits for long sources (QUANTIZE TOUCH TO WHEEL drops to the small runes).
+ 
+ - [ ] Free-running oscillators + Roland envelope (2026-10-16, synth_voice.c voice_render_block silent path, envelopes.c). Host-only estimate: a silent voice now does ~3 adds and 2 osc_set_phase (10 stores) per block, well under 0.1 % for 8 idle voices; active voices unchanged. On device: PERF TEST a SINGLE x8 row against the last run to confirm no change; listen to decay-to-sustain feel, fast repeated notes (retrigger from the current level), unison stack at detune 0. Decay time constant is 2.5x the table (ENV_DECAY_SLOWING_Q10 = 410) to keep the old body after the attack; render_hash_golden.txt rewritten 2026-10-16 for this change.
++
++- [ ] PCM wave store (2026-10-21, src/dsp/pcm_store.c, src/hardware/pcm_store_fm1.c, pcm_store_upload.py; built to /tmp/fm1pcm in WSL, not installed). Flash layout change: the preset store now ends after chunk 22 (PS_NCHUNK 23); area 0 = 0x97000..0x9FFFF (36 KiB, X0X's old sound/pattern/song objects), area 1 = 0xCE000..0xDBFFF (56 KiB). Host-only: test_pcm_store (simulated NOR: uploads, reboots, cut-off uploads, bad images, nothing written outside an area). On device: saved patches / performances / seqs / arps still load after the install (the store's chunks did not move); `pcm_store_upload.py info` shows both areas empty (area 0 may hold X0X data: must read empty); upload the --demo image to each area, `info` lists DEMO SAW / DEMO TONE; power cycle, `info` again; `clear --area 1` empties it; boot time with a full 56 KiB area 1 (CRC through XIP at boot, estimated a few ms); audio drop-outs during the upload are expected (erases).
+diff --git a/src/dsp/pcm_store.c b/src/dsp/pcm_store.c
+new file mode 100644
+index 0000000..72078a7
+--- /dev/null
++++ b/src/dsp/pcm_store.c
+@@ -0,0 +1,98 @@
++/* PCM waves in the store flash: the image check and the wave list (pcm_store.h). */
++#include <stddef.h>
++#include "pcm_store.h"
++#include "wavetables.h"                     /* wavetable_crc32 */
++
++static const uint8_t *pcm_img[PCM_AREAS];
++static uint32_t pcm_n[PCM_AREAS];
++
++int pcm_store_check(const uint8_t *img, uint32_t size)
++{
++    const PcmHdr *h = (const PcmHdr *)(const void *)img;
++    uint32_t i, dir_end;
++    if (!img || ((uintptr_t)img & 3u) || size < PCM_HDR_SIZE)
++        return -1;
++    if (h->magic != PCM_MAGIC || h->hcrc != wavetable_crc32(0, h, PCM_HDR_SIZE - 4u))
++        return -1;
++    if (h->version != PCM_VERSION || h->count > PCM_MAX_WAVES || h->len > size ||
++        h->rsv[0] || h->rsv[1] || h->rsv[2])
++        return -2;
++    dir_end = PCM_HDR_SIZE + (uint32_t)h->count * PCM_ENTRY_SIZE;
++    if (h->len < dir_end)
++        return -2;
++    for (i = 0; i < h->count; i++) {
++        const PcmEntry *e = (const PcmEntry *)(const void *)(img + PCM_HDR_SIZE + i * PCM_ENTRY_SIZE);
++        uint32_t w = e->fmt == PCM_FMT_S16 ? 2u : 1u;
++        if (e->fmt > PCM_FMT_ULAW || (e->flags & ~(PCM_FLAG_LOOP | PCM_FLAG_CYCLE)) || e->root > 127u)
++            return -3;
++        if (e->len == 0u || e->off < dir_end || e->off > h->len || e->len > (h->len - e->off) / w ||
++            (w == 2u && (e->off & 1u)))
++            return -3;                              /* the samples inside the image, after the entries */
++        if (e->flags & PCM_FLAG_LOOP) {
++            if (e->loop_start >= e->loop_end || e->loop_end > e->len)
++                return -3;
++        } else if (e->loop_start || e->loop_end || (e->flags & PCM_FLAG_CYCLE)) {
++            return -3;
++        }
++        if ((e->flags & PCM_FLAG_CYCLE) ? (e->cycles == 0u || e->rate != 0u)
++                                        : (e->cycles != 0u || e->rate < 4000u || e->rate > 96000u))
++            return -3;
++    }
++    if (wavetable_crc32(0, img + PCM_HDR_SIZE, h->len - PCM_HDR_SIZE) != h->crc)
++        return -4;
++    return h->count;
++}
++
++int pcm_store_attach(uint32_t a, const uint8_t *img, uint32_t size)
++{
++    int n;
++    if (a >= PCM_AREAS)
++        return -1;
++    pcm_store_detach(a);
++    n = pcm_store_check(img, size);
++    if (n > 0) {
++        pcm_img[a] = img;
++        pcm_n[a] = (uint32_t)n;
++    }
++    return n;
++}
++
++void pcm_store_detach(uint32_t a)
++{
++    if (a < PCM_AREAS) {
++        pcm_n[a] = 0;
++        pcm_img[a] = NULL;
++    }
++}
++
++uint32_t pcm_area_count(uint32_t a) { return a < PCM_AREAS ? pcm_n[a] : 0u; }
++
++uint32_t pcm_area_used(uint32_t a)
++{
++    return a < PCM_AREAS && pcm_img[a] ? ((const PcmHdr *)(const void *)pcm_img[a])->len : 0u;
++}
++
++uint32_t pcm_wave_count(void)
++{
++    uint32_t a, n = 0;
++    for (a = 0; a < PCM_AREAS; a++)
++        n += pcm_n[a];
++    return n;
++}
++
++const PcmEntry *pcm_wave(uint32_t i, const uint8_t **data)
++{
++    uint32_t a;
++    for (a = 0; a < PCM_AREAS; a++) {
++        if (i < pcm_n[a]) {
++            const PcmEntry *e = (const PcmEntry *)(const void *)(pcm_img[a] + PCM_HDR_SIZE + i * PCM_ENTRY_SIZE);
++            if (data)
++                *data = pcm_img[a] + e->off;
++            return e;
++        }
++        i -= pcm_n[a];
++    }
++    if (data)
++        *data = NULL;
++    return NULL;
++}
+diff --git a/src/dsp/pcm_store.h b/src/dsp/pcm_store.h
+new file mode 100644
+index 0000000..9d9ca04
+--- /dev/null
++++ b/src/dsp/pcm_store.h
+@@ -0,0 +1,66 @@
++/* PCM waves in the store flash (2026-10-21): uploaded over USB-MIDI into flash the firmware leaves free, read in place.
++ *
++ * The app slot is nearly full (wavetables + attacks), so PCM-style waves (single cycles, or looped samples) live in the
++ * FM1's data area instead, in "areas" the preset store does not use (src/hardware/pcm_store_fm1.c lists them). Each area
++ * holds one image of its own, so uploading one never touches another:
++ *
++ *   +0      PcmHdr      32 B, written last: an upload cut off leaves the area empty, never half a wave
++ *   +32     PcmEntry    x count, 36 B each
++ *   +off    the samples each entry names (int16 little-endian, 2-byte aligned; or 8-bit mu-law)
++ *
++ * The header's CRC-32 covers everything after it, up to len. pcm_store_check range-checks every entry before an area is
++ * attached, so a consumer can trust off / len / loop points without checking them again.
++ * Samples: PCM_FMT_S16 Q15; PCM_FMT_ULAW the attacks' 8-bit mu-law (mu 255, int8 -127..127, attack_mulaw decodes it).
++ * Pitch: a PCM_FLAG_CYCLE wave holds `cycles` whole cycles between its loop points (rate is not used: it plays at
++ * any pitch by stepping through the loop); other waves play at `rate` Hz with `root` as their MIDI note.
++ * The tool: src/hardware/pcm_store_upload.py (build an image from WAVs, upload, info). Nothing plays the waves yet. */
++#ifndef PCM_STORE_H
++#define PCM_STORE_H
++#include <stdint.h>
++
++#define PCM_MAGIC 0x57505243u               /* "CRPW" */
++#define PCM_VERSION 1u
++#define PCM_AREAS 2u
++#define PCM_NAME_LEN 12u                    /* NUL-padded; a full 12 has no NUL */
++#define PCM_MAX_WAVES 64u                   /* in one area */
++#define PCM_HDR_SIZE 32u
++#define PCM_ENTRY_SIZE 36u
++
++enum { PCM_FMT_S16 = 0, PCM_FMT_ULAW = 1 };
++#define PCM_FLAG_LOOP 1u                    /* loop_start..loop_end repeats; without it the wave plays once */
++#define PCM_FLAG_CYCLE 2u                   /* the loop is `cycles` whole cycles (needs LOOP) */
++
++typedef struct {
++    uint32_t magic;                         /* PCM_MAGIC */
++    uint16_t version, count;                /* PCM_VERSION; the entries */
++    uint32_t len;                           /* the whole image, header included */
++    uint32_t crc;                           /* CRC-32 of bytes 32..len */
++    uint32_t rsv[3];                        /* 0 */
++    uint32_t hcrc;                          /* CRC-32 of the 28 bytes before it */
++} PcmHdr;
++
++typedef struct {
++    char name[PCM_NAME_LEN];
++    uint8_t fmt, flags, root, cycles;       /* PCM_FMT_*; PCM_FLAG_*; MIDI note at rate; cycles in the loop (CYCLE) */
++    uint32_t rate;                          /* Hz (4000..96000), 0 for a CYCLE wave */
++    uint32_t off;                           /* first sample, from the image start */
++    uint32_t len;                           /* samples */
++    uint32_t loop_start, loop_end;          /* samples, loop_start < loop_end <= len (LOOP); else 0, 0 */
++} PcmEntry;
++
++_Static_assert(sizeof(PcmHdr) == PCM_HDR_SIZE && sizeof(PcmEntry) == PCM_ENTRY_SIZE, "the stored layout");
++
++/* the image at img, in an area of size bytes: its wave count (0..PCM_MAX_WAVES), or < 0: -1 no image (erased or
++ * other data), -2 header, -3 entry, -4 data CRC */
++int pcm_store_check(const uint8_t *img, uint32_t size);
++/* check the image and, if it holds, use its waves for area a; else the area is empty. Returns as pcm_store_check. */
++int pcm_store_attach(uint32_t a, const uint8_t *img, uint32_t size);
++void pcm_store_detach(uint32_t a);          /* before the area is erased or written */
++uint32_t pcm_area_count(uint32_t a);        /* the waves area a holds now */
++uint32_t pcm_area_used(uint32_t a);         /* its image's bytes (0: empty) */
++/* the waves in order: area 0's, then area 1's */
++uint32_t pcm_wave_count(void);
++/* wave i's entry, and its first sample in *data (both in flash); NULL when there is no wave i */
++const PcmEntry *pcm_wave(uint32_t i, const uint8_t **data);
++
++#endif
+diff --git a/src/hardware/pcm_store_fm1.c b/src/hardware/pcm_store_fm1.c
+new file mode 100644
+index 0000000..d94346f
+--- /dev/null
++++ b/src/hardware/pcm_store_fm1.c
+@@ -0,0 +1,205 @@
++/* PCM waves in the store flash on the FM1 (2026-10-21, src/dsp/pcm_store.h): a unity-build fragment, like
++ * preset_store_fm1.c. synth_main_fm1.c includes it after the preset store and the editor helpers (ed_b, ed_str);
++ * X0X's storage.c gives st_erase / st_prog; syn_lock / syn_unlock and flash_ok are the glue's.
++ *
++ * The areas: flash in X0X's data area (0x97000..0xDFFFF, writable, read as plaintext through XIP) that nothing of
++ * Carnac's uses:
++ *   0  0x97000..0x9FFFF  36 KiB  X0X's sound / pattern / song objects (Carnac never reads them; a unit that ran X0X
++ *                                has its old objects there, which read as no image)
++ *   1  0xCE000..0xDBFFF  56 KiB  the preset store's tail: its chunks 23 and 24 (free since 2026-10-17, PS_NCHUNK 23
++ *                                now) and the 40 KiB after them, up to X0X's panel calibration (OBJ_PANEL, 0xDC000)
++ * Left alone: OBJ_PANEL 0xDC000 (the panel calibration), 0xDE000 (X0X's motion object: free, 8 KiB, kept spare),
++ * 0xE0000.. (the update loader's staging) and the preset store's free chunks 1 and 14..16 (its room to grow).
++ *
++ * The editor's commands (SysEx F0 7D 46 4C cmd args F7, as the old wavetable upload; src/hardware/pcm_store_upload.py):
++ *   100 PCM_BEGIN [area]                 the area is detached and its first sector erased: it reads empty from now on
++ *                                        -> area, rc
++ *   101 PCM_WRITE [off x3, data packed]  image bytes from offset 32, in order; each sector is erased as the writes
++ *                                        reach it -> off x3, rc
++ *   102 PCM_END   [header packed]        the 32-byte header, programmed last; the image is checked (pcm_store_check)
++ *                                        and attached, or its magic is zeroed (the area reads empty) -> rc, waves
++ *   103 PCM_INFO  [area, first]          -> areas, area, waves, size KiB x2, used bytes x3, then up to 16 names
++ *                                        from wave `first` of the area
++ * rc: 0 ok, 1 arguments, 2 flash, 3 order (no BEGIN, or not the next offset), 4 too big for the area, 5 refused on
++ * the check (the reply then carries pcm_store_check's reason + 8 as the wave count).
++ * The erases stop the audio for tens of ms each (st_erase silences it first): an upload is a studio job. */
++#include "pcm_store.h"
++
++#ifndef PCM_XIP
++#define PCM_XIP(off) ((const uint8_t *)FM1_XIP(off))
++#endif
++#define PCM_SECTOR 4096u
++enum { ED_PCM_BEGIN = 100, ED_PCM_WRITE, ED_PCM_END, ED_PCM_INFO };
++static const struct { uint32_t base, size; } PCM_AREA[PCM_AREAS] = {
++    {0x97000u, 0x9000u},
++    {0xCE000u, 0xE000u},
++};
++#ifdef PS_NCHUNK                                    /* (the firmware: the preset store comes first; not in the host test) */
++PS_STATIC_ASSERT(0x97000u + 0x9000u <= PS_BASE, "area 0 ends below the preset store");
++PS_STATIC_ASSERT(PS_BASE + PS_NCHUNK * 2u * PS_SECTOR <= 0xCE000u, "area 1 starts after the preset store's chunks");
++#endif
++_Static_assert(0xCE000u + 0xE000u <= 0xDC000u, "area 1 ends below X0X's panel calibration (OBJ_PANEL)");
++
++static struct {
++    uint8_t on, area;                               /* an upload since PCM_BEGIN, into area */
++    uint32_t next;                                  /* the offset the next PCM_WRITE must start at */
++    uint32_t erased;                                /* the area's bytes erased so far (whole sectors) */
++} pcm_up;
++static uint8_t pcm_buf[256] __attribute__((aligned(4)));   /* a write's bytes, in RAM for the flash driver */
++
++static void pcm_boot(void)                          /* after ps_load: attach whatever the areas hold */
++{
++    uint32_t a;
++    for (a = 0; a < PCM_AREAS; a++)
++        if (flash_ok)
++            pcm_store_attach(a, PCM_XIP(PCM_AREA[a].base), PCM_AREA[a].size);
++}
++
++/* 7-bit packed bytes (groups of up to 7, each after their top bits) -> out; their count, or -1 when over max */
++static int pcm_unpack7(const uint8_t *a, uint32_t na, uint8_t *out, uint32_t max)
++{
++    uint32_t n = 0, i, j;
++    for (i = 0; i < na; i += 8u) {
++        uint32_t top = a[i], k = na - i - 1u > 7u ? 7u : na - i - 1u;
++        for (j = 0; j < k; j++) {
++            if (n >= max)
++                return -1;
++            out[n++] = (uint8_t)(a[i + 1u + j] | (((top >> j) & 1u) << 7));
++        }
++    }
++    return (int)n;
++}
++
++static uint32_t pcm_u21(const uint8_t *a) { return (uint32_t)a[0] | (uint32_t)a[1] << 7 | (uint32_t)a[2] << 14; }
++
++static uint32_t pcm_begin(uint32_t area)
++{
++    if (area >= PCM_AREAS)
++        return 1;
++    pcm_up.on = 0;
++    syn_lock();
++    pcm_store_detach(area);                         /* nothing may read the area while it changes */
++    syn_unlock();
++    if (!flash_ok || st_erase(PCM_AREA[area].base))
++        return 2;
++    pcm_up.on = 1;
++    pcm_up.area = (uint8_t)area;
++    pcm_up.next = PCM_HDR_SIZE;
++    pcm_up.erased = PCM_SECTOR;
++    return 0;
++}
++
++static uint32_t pcm_write(uint32_t off, const uint8_t *a, uint32_t na)
++{
++    int n = pcm_unpack7(a, na, pcm_buf, sizeof pcm_buf);
++    uint32_t base, size;
++    if (n <= 0)
++        return 1;
++    if (!pcm_up.on || off != pcm_up.next)
++        return 3;
++    base = PCM_AREA[pcm_up.area].base;
++    size = PCM_AREA[pcm_up.area].size;
++    if ((uint32_t)n > size - off)
++        return 4;
++    while (off + (uint32_t)n > pcm_up.erased) {
++        if (st_erase(base + pcm_up.erased)) {
++            pcm_up.on = 0;
++            return 2;
++        }
++        pcm_up.erased += PCM_SECTOR;
++    }
++    if (st_prog(base + off, pcm_buf, (uint32_t)n)) {
++        pcm_up.on = 0;
++        return 2;
++    }
++    pcm_up.next = off + (uint32_t)n;
++    return 0;
++}
++
++/* -> rc; *waves: the area's waves, or the check's reason + 8 when refused */
++static uint32_t pcm_end(const uint8_t *a, uint32_t na, uint32_t *waves)
++{
++    static const uint32_t zero = 0;
++    const PcmHdr *h = (const PcmHdr *)(const void *)pcm_buf;
++    uint32_t area = pcm_up.area, base = PCM_AREA[area].base;
++    int n;
++    *waves = 0;
++    if (!pcm_up.on)
++        return 3;
++    pcm_up.on = 0;
++    if (pcm_unpack7(a, na, pcm_buf, sizeof pcm_buf) != (int)PCM_HDR_SIZE)
++        return 1;
++    if (h->len != pcm_up.next)
++        return 3;                                   /* not every byte the header covers was written */
++    if (st_prog(base, pcm_buf, PCM_HDR_SIZE))
++        return 2;
++    n = pcm_store_check(PCM_XIP(base), PCM_AREA[area].size);
++    if (n < 0) {
++        st_prog(base, &zero, 4u);                   /* the magic -> 0: the area reads empty */
++        *waves = (uint32_t)(8 - n);
++        return 5;
++    }
++    syn_lock();
++    pcm_store_attach(area, PCM_XIP(base), PCM_AREA[area].size);
++    syn_unlock();
++    *waves = (uint32_t)n;
++    return 0;
++}
++
++/* the editor's PCM commands: handled (reply built) -> 1 */
++static int ed_pcm_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
++{
++    uint32_t rc, w, i, area, first, n, used;
++    switch (cmd) {
++    case ED_PCM_BEGIN:
++        area = na ? a[0] : PCM_AREAS;
++        rc = pcm_begin(area);
++        ed_b(area);
++        ed_b(rc);
++        return 1;
++    case ED_PCM_WRITE:
++        w = na >= 3u ? pcm_u21(a) : 0u;
++        rc = na > 3u ? pcm_write(w, a + 3, na - 3u) : 1u;
++        ed_b(w);
++        ed_b(w >> 7);
++        ed_b(w >> 14);
++        ed_b(rc);
++        return 1;
++    case ED_PCM_END:
++        rc = pcm_end(a, na, &w);
++        ed_b(rc);
++        ed_b(w);
++        return 1;
++    case ED_PCM_INFO:
++        area = na ? a[0] : 0u;
++        first = na > 1u ? a[1] : 0u;
++        ed_b(PCM_AREAS);
++        ed_b(area);
++        if (area >= PCM_AREAS) {
++            ed_b(0);
++            return 1;
++        }
++        n = pcm_area_count(area);
++        used = pcm_area_used(area);
++        ed_b(n);
++        ed_b(PCM_AREA[area].size / 1024u);
++        ed_b((PCM_AREA[area].size / 1024u) >> 7);
++        ed_b(used);
++        ed_b(used >> 7);
++        ed_b(used >> 14);
++        for (w = 0, i = 0; i < area; i++)
++            w += pcm_area_count(i);                 /* the area's first wave in the whole list */
++        for (i = first; i < n && i < first + 16u; i++) {
++            const PcmEntry *e = pcm_wave(w + i, NULL);
++            char s[PCM_NAME_LEN + 1];
++            uint32_t k;
++            for (k = 0; k < PCM_NAME_LEN; k++)
++                s[k] = e->name[k];
++            s[PCM_NAME_LEN] = 0;
++            ed_str(s, PCM_NAME_LEN);
++        }
++        return 1;
++    default:
++        return 0;
++    }
++}
+diff --git a/src/hardware/pcm_store_upload.py b/src/hardware/pcm_store_upload.py
+new file mode 100644
+index 0000000..118f575
+--- /dev/null
++++ b/src/hardware/pcm_store_upload.py
+@@ -0,0 +1,316 @@
++#!/usr/bin/env python3
++"""PCM waves for the FM1 (2026-10-21): build an image from WAV files and upload it to one of the free flash areas the
++firmware reads PCM waves from (src/dsp/pcm_store.h, src/hardware/pcm_store_fm1.c), over USB-MIDI.
++
++  pcm_store_upload.py build OUT.bin [options] WAV...   make an image (no device needed)
++      --ulaw          store 8-bit mu-law (the attacks' codec: half the flash, a little hiss) instead of 16-bit
++      --cycle N       every WAV is N whole cycles of one wave (single-cycle: N = 1); it loops end to end and plays
++                      at any pitch. Otherwise the WAV's 'smpl' chunk gives its loop and root note (no chunk: one-shot,
++                      root --root, default 60)
++      --demo          two made-up waves instead of WAVs (a 16-bit saw cycle, a looped mu-law tone): for the tests
++  pcm_store_upload.py info                             what each area holds
++  pcm_store_upload.py upload IMAGE --area A            write IMAGE to area A (0: 36 KiB, 1: 56 KiB)
++  pcm_store_upload.py clear --area A                   empty area A
++  pcm_store_upload.py syx IMAGE OUT.syx --area A       no device: the upload's SysEx frames, for
++                                                       src/host/test_pcm_store.c
++
++Names come from the file names (12 characters, upper case). WAVs: PCM 8/16/24/32-bit or float32, any rate from 4 kHz
++to 96 kHz, stereo is mixed to mono. Nothing in the firmware plays the waves yet: this only fills the flash. Needs mido
++and a backend such as python-rtmidi for the device commands.
++"""
++import argparse
++import math
++import struct
++import sys
++import time
++import zlib
++from pathlib import Path
++
++HDR = [0x7D, 0x46, 0x4C]
++PCM_BEGIN, PCM_WRITE, PCM_END, PCM_INFO = 100, 101, 102, 103
++MAGIC, VERSION = 0x57505243, 1
++HDR_SIZE, ENTRY_SIZE, NAME_LEN, MAX_WAVES = 32, 36, 12, 64
++FMT_S16, FMT_ULAW = 0, 1
++FLAG_LOOP, FLAG_CYCLE = 1, 2
++AREA_SIZE = {0: 0x9000, 1: 0xE000}
++CHUNK = 256
++RC = {1: "arguments", 2: "flash", 3: "order", 4: "too big for the area", 5: "refused by the image check"}
++CHECK = {-1: "no image", -2: "header", -3: "an entry", -4: "data CRC"}
++
++
++# ---------------------------------------------------------------------------------------------------- WAV files ---
++def read_wav(path):
++    """-> (samples as floats -1..1, mono; rate; smpl chunk as (root, loop_start, loop_end) or None)"""
++    b = Path(path).read_bytes()
++    if b[:4] != b"RIFF" or b[8:12] != b"WAVE":
++        sys.exit(f"{path}: not a WAV file")
++    fmt = data = smpl = None
++    i = 12
++    while i + 8 <= len(b):
++        cid, n = b[i:i + 4], struct.unpack_from("<I", b, i + 4)[0]
++        body = b[i + 8:i + 8 + n]
++        if cid == b"fmt ":
++            fmt = struct.unpack_from("<HHIIHH", body)
++            if fmt[0] == 0xFFFE and len(body) >= 26:            # WAVE_FORMAT_EXTENSIBLE: the sub-format's tag
++                fmt = (struct.unpack_from("<H", body, 24)[0],) + fmt[1:]
++        elif cid == b"data":
++            data = body
++        elif cid == b"smpl" and len(body) >= 36:
++            root = struct.unpack_from("<I", body, 12)[0]
++            loops = struct.unpack_from("<I", body, 28)[0]
++            lp = struct.unpack_from("<II", body, 36 + 8) if loops and len(body) >= 60 else None
++            smpl = (root, lp[0], lp[1] + 1) if lp else (root, None, None)   # smpl's loop end is inclusive
++        i += 8 + n + (n & 1)
++    if not fmt or data is None:
++        sys.exit(f"{path}: no fmt / data chunk")
++    tag, ch, rate, _, _, bits = fmt
++    w = bits // 8
++    if (tag, bits) not in ((1, 8), (1, 16), (1, 24), (1, 32), (3, 32)):
++        sys.exit(f"{path}: {bits}-bit format {tag} is not supported (PCM 8/16/24/32-bit or float32)")
++    frames = len(data) // (w * ch)
++    out = []
++    for f in range(frames):
++        acc = 0.0
++        for c in range(ch):
++            o = (f * ch + c) * w
++            if tag == 3:
++                v = struct.unpack_from("<f", data, o)[0]
++            elif bits == 8:
++                v = (data[o] - 128) / 128.0
++            else:
++                v = int.from_bytes(data[o:o + w], "little", signed=True) / float(1 << (bits - 1))
++            acc += v
++        out.append(max(-1.0, min(1.0, acc / ch)))
++    return out, rate, smpl
++
++
++def ulaw(x):
++    """the attacks' 8-bit mu-law (src/dsp/gen_attacks.py mulaw_encode): int8 -127..127 as a byte"""
++    y = math.copysign(math.log1p(255.0 * abs(x)) / math.log1p(255.0), x)
++    return max(-127, min(127, round(y * 127.0))) & 0xFF
++
++
++def s16(x):
++    return max(-32768, min(32767, round(x * 32768.0)))
++
++
++# -------------------------------------------------------------------------------------------------------- image ---
++def make_image(waves):
++    """waves: dicts name, fmt, flags, root, cycles, rate, samples (floats), loop (start, end) or None -> bytes"""
++    if len(waves) > MAX_WAVES:
++        sys.exit(f"{len(waves)} waves: an area holds at most {MAX_WAVES}")
++    off = HDR_SIZE + ENTRY_SIZE * len(waves)
++    entries, blobs = [], []
++    for w in waves:
++        off = (off + 3) & ~3
++        blob = bytes(ulaw(x) for x in w["samples"]) if w["fmt"] == FMT_ULAW else \
++            b"".join(struct.pack("<h", s16(x)) for x in w["samples"])
++        ls, le = w["loop"] if w["loop"] else (0, 0)
++        name = w["name"].upper().encode("ascii", "replace")[:NAME_LEN].ljust(NAME_LEN, b"\0")
++        entries.append(struct.pack("<12sBBBBIIIII", name, w["fmt"], w["flags"], w["root"], w["cycles"],
++                                   w["rate"], off, len(w["samples"]), ls, le))
++        blobs.append((off, blob))
++        off += len(blob)
++    body = bytearray(off - HDR_SIZE)
++    body[:ENTRY_SIZE * len(waves)] = b"".join(entries)
++    for o, blob in blobs:
++        body[o - HDR_SIZE:o - HDR_SIZE + len(blob)] = blob
++    h = struct.pack("<IHHII12x", MAGIC, VERSION, len(waves), off, zlib.crc32(body))
++    return h + struct.pack("<I", zlib.crc32(h)) + bytes(body)
++
++
++def parse_image(img):
++    """-> (count, len, [(name, fmt, flags, root, cycles, rate, off, len, ls, le)]); SystemExit when not an image"""
++    if len(img) < HDR_SIZE:
++        sys.exit("too short for a PCM image")
++    magic, ver, count, n, crc = struct.unpack_from("<IHHII", img)
++    if magic != MAGIC or ver != VERSION or zlib.crc32(img[:28]) != struct.unpack_from("<I", img, 28)[0]:
++        sys.exit("not a PCM wave image (pcm_store_upload.py build)")
++    if n != len(img) or zlib.crc32(img[HDR_SIZE:]) != crc:
++        sys.exit("damaged PCM image (length or data CRC)")
++    ents = [struct.unpack_from("<12sBBBBIIIII", img, HDR_SIZE + i * ENTRY_SIZE) for i in range(count)]
++    return count, n, [(e[0].rstrip(b"\0").decode("ascii", "replace"),) + e[1:] for e in ents]
++
++
++def demo_waves():
++    saw = [2.0 * i / 600 - 1.0 for i in range(600)]                 # one cycle, 600 samples
++    tone = [0.5 * math.sin(2 * math.pi * 440.0 * i / 22050) * min(1.0, i / 200) for i in range(2205)]
++    return [dict(name="DEMO SAW", fmt=FMT_S16, flags=FLAG_LOOP | FLAG_CYCLE, root=60, cycles=1, rate=0,
++                 samples=saw, loop=(0, 600)),
++            dict(name="DEMO TONE", fmt=FMT_ULAW, flags=FLAG_LOOP, root=69, cycles=0, rate=22050,
++                 samples=tone, loop=(1103, 2205))]
++
++
++def build(a):
++    if a.demo:
++        waves = demo_waves()
++    else:
++        if not a.wavs:
++            sys.exit("build: name some WAV files (or --demo)")
++        waves = []
++        for p in a.wavs:
++            x, rate, smpl = read_wav(p)
++            if not x:
++                sys.exit(f"{p}: no samples")
++            fmt = FMT_ULAW if a.ulaw else FMT_S16
++            name = Path(p).stem.replace("_", " ")
++            if a.cycle:
++                waves.append(dict(name=name, fmt=fmt, flags=FLAG_LOOP | FLAG_CYCLE, root=60, cycles=a.cycle,
++                                  rate=0, samples=x, loop=(0, len(x))))
++                continue
++            if not 4000 <= rate <= 96000:
++                sys.exit(f"{p}: {rate} Hz, outside 4..96 kHz")
++            root, ls, le = smpl if smpl else (a.root, None, None)
++            loop = (ls, min(le, len(x))) if ls is not None and ls < min(le, len(x)) else None
++            waves.append(dict(name=name, fmt=fmt, flags=FLAG_LOOP if loop else 0, root=min(127, root), cycles=0,
++                              rate=rate, samples=x, loop=loop))
++    img = make_image(waves)
++    Path(a.out).write_bytes(img)
++    fits = [str(k) for k, s in AREA_SIZE.items() if len(img) <= s]
++    print(f"wrote {a.out}: {len(waves)} waves, {len(img)} bytes; "
++          + (f"fits area {' and '.join(fits)}" if fits else f"TOO BIG for any area (largest {max(AREA_SIZE.values())})"))
++    for w in parse_image(img)[2]:
++        kind = f"{w[4]} cycle loop" if w[2] & FLAG_CYCLE else (f"{w[5]} Hz, root {w[3]}" +
++                                                             (", looped" if w[2] & FLAG_LOOP else ", one-shot"))
++        print(f"  {w[0]:<12} {'mu-law' if w[1] else '16-bit'} {w[7]:6d} samples  {kind}")
++
++
++# ------------------------------------------------------------------------------------------------------ the link ---
++def pack7(b):
++    """groups of up to 7 bytes, each preceded by their top bits (pcm_store_fm1.c pcm_unpack7)"""
++    out = []
++    for i in range(0, len(b), 7):
++        g = b[i:i + 7]
++        out.append(sum(((x >> 7) & 1) << j for j, x in enumerate(g)))
++        out += [x & 0x7F for x in g]
++    return out
++
++
++def u21(v):
++    return [v & 0x7F, (v >> 7) & 0x7F, (v >> 14) & 0x7F]
++
++
++def frames(img, area):
++    """the upload as (cmd, args): BEGIN, the bytes after the header in order, then the header (END)"""
++    yield PCM_BEGIN, [area]
++    for off in range(HDR_SIZE, len(img), CHUNK):
++        yield PCM_WRITE, u21(off) + pack7(img[off:off + CHUNK])
++    yield PCM_END, pack7(img[:HDR_SIZE])
++
++
++class Link:
++    def __init__(self):
++        try:
++            import mido
++        except ImportError:
++            sys.exit("needs mido: pip install mido python-rtmidi")
++        self.mido = mido
++        fm1 = lambda n: any(k in n for k in ("FM-1", "X0X", "Felucca"))    # X0X's platform names it "X0X FM-1"
++        outs = [n for n in mido.get_output_names() if fm1(n)]
++        ins = [n for n in mido.get_input_names() if fm1(n)]
++        if not outs or not ins:
++            sys.exit("no FM1 MIDI port (X0X FM-1): connect the FM1 by USB")
++        self.o = mido.open_output(outs[0])
++        self.i = mido.open_input(ins[0])
++
++    def req(self, cmd, args, timeout=3.0):
++        for _ in self.i.iter_pending():
++            pass
++        self.o.send(self.mido.Message("sysex", data=HDR + [cmd] + list(args)))
++        end = time.monotonic() + timeout
++        while time.monotonic() < end:
++            for m in self.i.iter_pending():
++                d = list(m.data) if m.type == "sysex" else []
++                if d[:4] == HDR + [cmd]:
++                    return d[4:]
++            time.sleep(0.002)
++        raise TimeoutError(f"no reply to command {cmd}: is Carnac OS 0.9.2 or later on the FM1?")
++
++
++def area_info(link, area):
++    """-> (waves, size bytes, used bytes, names)"""
++    r = link.req(PCM_INFO, [area, 0])
++    if len(r) < 3 or r[1] != area or len(r) < 8:
++        sys.exit(f"area {area}: no such area on the device")
++    n, size, used = r[2], (r[3] | r[4] << 7) * 1024, r[5] | r[6] << 7 | r[7] << 14
++    names, i, first = [], 8, 0
++    while True:
++        while len(names) < n and i < len(r):
++            j = r.index(0, i)
++            names.append(bytes(r[i:j]).decode("ascii", "replace"))
++            i = j + 1
++        if len(names) >= n:
++            return n, size, used, names
++        first = len(names)
++        r, i = link.req(PCM_INFO, [area, first]), 8
++
++
++def info(link):
++    areas = link.req(PCM_INFO, [0, 0])[0]
++    for a in range(areas):
++        n, size, used, names = area_info(link, a)
++        print(f"area {a}: {size // 1024} KiB, {'empty' if not used else f'{used} bytes used, {n} waves'}")
++        for k, nm in enumerate(names):
++            print(f"  {k:2d} {nm}")
++
++
++def run(link, reqs):
++    for k, (cmd, args) in enumerate(reqs):
++        r = link.req(cmd, args, timeout=5.0)
++        rc = r[3] if cmd == PCM_WRITE else r[1] if cmd == PCM_BEGIN else r[0]
++        if rc:
++            why = RC.get(rc, "?")
++            if cmd == PCM_END and rc == 5:
++                why += f" ({CHECK.get(8 - r[1], '?')})"
++            sys.exit(f"\ncommand {cmd} failed: rc {rc} ({why})")
++        print(f"\r{k + 1}/{len(reqs)}", end="", flush=True)
++    print()
++
++
++def main(argv):
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    sp = ap.add_subparsers(dest="cmd", required=True)
++    b = sp.add_parser("build")
++    b.add_argument("out")
++    b.add_argument("wavs", nargs="*")
++    b.add_argument("--ulaw", action="store_true")
++    b.add_argument("--cycle", type=int, default=0)
++    b.add_argument("--root", type=int, default=60)
++    b.add_argument("--demo", action="store_true")
++    sp.add_parser("info")
++    for name in ("upload", "syx"):
++        p = sp.add_parser(name)
++        p.add_argument("image")
++        if name == "syx":
++            p.add_argument("out")
++        p.add_argument("--area", type=int, required=True, choices=sorted(AREA_SIZE))
++    c = sp.add_parser("clear")
++    c.add_argument("--area", type=int, required=True, choices=sorted(AREA_SIZE))
++    a = ap.parse_args(argv)
++    if a.cmd == "build":
++        if a.cycle < 0 or a.cycle > 255:
++            sys.exit("--cycle: 1..255")
++        return build(a)
++    if a.cmd in ("upload", "syx"):
++        img = Path(a.image).read_bytes()
++        parse_image(img)
++        if len(img) > AREA_SIZE[a.area]:
++            sys.exit(f"{a.image}: {len(img)} bytes, area {a.area} holds {AREA_SIZE[a.area]}")
++        reqs = list(frames(img, a.area))
++        if a.cmd == "syx":
++            out = b"".join(bytes([0xF0] + HDR + [cmd] + args + [0xF7]) for cmd, args in reqs)
++            Path(a.out).write_bytes(out)
++            print(f"wrote {a.out}: {len(reqs)} frames, {len(out)} bytes")
++            return
++        link = Link()
++        run(link, reqs)
++        info(link)
++        return
++    link = Link()
++    if a.cmd == "clear":
++        run(link, [(PCM_BEGIN, [a.area])])
++    info(link)
++
++
++if __name__ == "__main__":
++    main(sys.argv[1:])
+diff --git a/src/hardware/preset_store_fm1.c b/src/hardware/preset_store_fm1.c
+index 9755969..938b822 100644
+--- a/src/hardware/preset_store_fm1.c
++++ b/src/hardware/preset_store_fm1.c
+@@ -12,8 +12,9 @@
+  * under another layout is left out, its slots empty, until a migration exists), so the old wavetable image there, and
+  * a chunk of the 128-slot layout before 2026-10-17 where another bank's chunk sits now, read as nothing.
+  * The payload: the chunk's used bits (PS_USED_BYTES), then its slots. Chunks: arp 0, sequences 2..5, performances
+- * 6..13, patches 17..22 (where they always were: the patches outlive the change); 1, 14..16, 23 and 24 are free, all in
+- * the 200 KiB the 128-slot banks took.
++ * 6..13, patches 17..22 (where they always were: the patches outlive the change); 1 and 14..16 are free. Since
++ * 2026-10-21 the store ends after chunk 22 (PS_NCHUNK 23): its old chunks 23 and 24 and the flash after them are PCM
++ * wave area 1 (pcm_store_fm1.c).
+  * A SAVE copies into the bank at once (syn_commit, inside syn_lock) and marks its chunk; the main loop writes it
+  * (ps_tick, outside the lock: the erase stops the flash, and the audio with it, for tens of ms), then reports the save
+  * done, so SAVED means it is in flash. The boot loads every chunk (ps_load). Patches are stored packed (engine_store_pack,
+@@ -56,7 +57,7 @@ typedef struct {
+ #define PS_FIRST_SEQ 2u
+ #define PS_FIRST_PERF 6u
+ #define PS_FIRST_PATCH 17u                          /* the 128-slot layout's: the saved patches stay */
+-#define PS_NCHUNK 25u                               /* the chunks the store spans (some free) */
++#define PS_NCHUNK 23u                               /* the chunks the store spans (1, 14..16 free); PCM waves after */
+ PS_STATIC_ASSERT(UISAVE_ARP_SEQ == 0 && UISAVE_SEQ_SETTINGS == 1 && UISAVE_PATCH_PRESET == 2 && UISAVE_WHOLE_PERF == 3,
+                  "PS_KIND is in UISAVE_* order");
+ PS_STATIC_ASSERT(PS_N_ARP == 1u && PS_N_SEQ == 4u && PS_N_PERF == 8u && PS_N_PATCH == 6u, "the chunk counts above");
+diff --git a/src/hardware/synth_main_fm1.c b/src/hardware/synth_main_fm1.c
+index 8b22654..e54febb 100644
+--- a/src/hardware/synth_main_fm1.c
++++ b/src/hardware/synth_main_fm1.c
+@@ -567,6 +567,7 @@ static void ed_send(void)
+ static void keys_release(void);
+ 
+ #include "wt_store_fm1.c"                          /* (the upload commands, refused: the image is in the firmware) */
++#include "pcm_store_fm1.c"                         /* PCM waves in the free store flash: upload, attach */
+ 
+ static void ed_handle(const uint8_t *f, uint32_t n)
+ {
+@@ -574,7 +575,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
+     const uint8_t *a = f + 4;
+     uint32_t na = n - 4u;
+     ed_begin(cmd);
+-    if (ed_wt_handle(cmd, a, na)) {
++    if (ed_wt_handle(cmd, a, na) || ed_pcm_handle(cmd, a, na)) {
+         ed_send();
+         return;
+     }
+@@ -718,7 +719,7 @@ static void ed_service(void)
+     uint32_t n;
+     if (!ota_frame_get(&p, &n) || n < 4u || p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2)
+         return;                                     /* not an editor frame: ota_service() reads it */
+-    if ((p[3] >= ED_SMP_BEGIN && p[3] <= ED_SMP_READ) || (p[3] >= ED_WT_BEGIN && p[3] <= ED_WT_INFO)) {
++    if ((p[3] >= ED_SMP_BEGIN && p[3] <= ED_SMP_READ) || (p[3] >= ED_WT_BEGIN && p[3] <= ED_PCM_INFO)) {
+         ed_handle(p, n);                            /* long frames (data): handled in place */
+         ota_frame_done();
+         return;
+@@ -1218,6 +1219,7 @@ static void fm1_main(void)
+     settings_load();                                /* the THEME of the last session */
+     factory_install();                              /* the factory bank (slots 0..31), under whatever is saved */
+     ps_load();                                      /* the saved patches, performances, sequences, arps */
++    pcm_boot();                                     /* the PCM waves uploaded to the free store flash */
+     for (k = 0; k < NKEYS; k++)
+         key_note[k] = NOTE_NONE;
+     syn_dbg.stage = 4;
+@@ -1293,7 +1295,7 @@ static void fm1_main(void)
+                 enter_uboot("UBOOT");
+             }
+         }
+-        ed_service();                               /* the wavetable upload SysEx */
++        ed_service();                               /* the editor SysEx (PCM wave upload, STATS, PERF TEST) */
+         ota_service();                              /* M-UPGRADE handshake */
+         if (usb.ota_req) {
+             usb.ota_req = 0;
+diff --git a/src/host/run_tests.sh b/src/host/run_tests.sh
+index d155af9..bf58744 100644
+--- a/src/host/run_tests.sh
++++ b/src/host/run_tests.sh
+@@ -49,6 +49,12 @@ if python src/hardware/wt_store_upload.py syx src/dsp/wavetables_image.bin "$OUT
+     build wt_store src/host/test_wt_store.c src/dsp/wavetable_attach.c src/dsp/wavetables.c src/dsp/wavetables_image.c \
+         && run wt_store "$OUT/wt_store.exe" "$OUT/upload.syx"
+ fi
++if python src/hardware/pcm_store_upload.py build "$OUT/pcm_demo.bin" --demo >/dev/null 2>&1     && python src/hardware/pcm_store_upload.py syx "$OUT/pcm_demo.bin" "$OUT/pcm_demo.syx" --area 1 >/dev/null 2>&1; then
++    build pcm_store src/host/test_pcm_store.c src/dsp/pcm_store.c src/dsp/wavetable_attach.c src/dsp/wavetables.c         src/dsp/wavetables_image.c && run pcm_store "$OUT/pcm_store.exe" "$OUT/pcm_demo.syx" "$OUT/pcm_demo.bin"
++else
++    total=$((total + 1)); printf '  FAIL  %-22s (pcm_store_upload.py build / syx)
++' pcm_store
++fi
+ build preset_store src/host/test_preset_store.c src/dsp/preset.c src/dsp/seq_scale.c src/dsp/arp_chords.c src/dsp/wavetables_image.c && run preset_store "$OUT/preset_store.exe"
+ build factory_perfs $DSP src/host/render_factory_perfs.c && mkdir -p "$OUT/factory_wav"     && run factory_perfs sh -c "'$OUT/factory_perfs.exe' '$OUT/factory_wav' && echo 'all 32 factory performances sound'"
+ build perf_test $DSP src/hardware/perf_test.c src/host/perf_test_host.c && run perf_test "$OUT/perf_test.exe"
+diff --git a/src/host/test_pcm_store.c b/src/host/test_pcm_store.c
+new file mode 100644
+index 0000000..ca48961
+--- /dev/null
++++ b/src/host/test_pcm_store.c
+@@ -0,0 +1,285 @@
++/* Host test of the PCM wave store (2026-10-21: src/dsp/pcm_store.c, src/hardware/pcm_store_fm1.c) on a simulated 1 MiB
++ * NOR (erase: 0xFF; program: clears bits only), with X0X's storage.c hooks stood in: fresh or foreign flash reads empty;
++ * an upload through the editor commands attaches and survives a reboot; the waves read back byte for byte; a cut-off
++ * upload, a damaged byte, writes out of order or past the area, and images with a bad entry leave the area empty; an
++ * upload never writes outside its area; then the .syx pcm_store_upload.py makes from its --demo image replays.
++ *   python src/hardware/pcm_store_upload.py build demo.bin --demo
++ *   python src/hardware/pcm_store_upload.py syx demo.bin demo.syx --area 1
++ *   gcc -O1 -Wall -Wextra -Isrc -Isrc/dsp -Isrc/hardware src/host/test_pcm_store.c src/dsp/pcm_store.c \
++ *       src/dsp/wavetable_attach.c src/dsp/wavetables.c src/dsp/wavetables_image.c -o test_pcm_store \
++ *       && ./test_pcm_store demo.syx demo.bin
++ * Exit status: the number of failed checks. */
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include "PresetStructures.h"
++#include "pcm_store.h"
++#include "wavetables.h"
++
++static int failures;
++#define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
++
++/* ---- the flash and X0X's storage.c hooks */
++static uint8_t nor[0x100000] __attribute__((aligned(4096)));
++static int progs_left = -1;                          /* >= 0: the power is cut after that many more programs */
++static int cut;
++static int in_store(uint32_t off, uint32_t n) { return off >= 0x97000u && off + n <= 0xE0000u; }
++static int st_erase(uint32_t off)
++{
++    if ((off & 0xFFFu) || !in_store(off, 0x1000u)) return -8;
++    if (cut) return -1;
++    memset(nor + off, 0xFF, 0x1000u);
++    return 0;
++}
++static int st_prog(uint32_t off, const void *src, uint32_t n)
++{
++    if (!in_store(off, n)) return -8;
++    if (cut || progs_left == 0) { cut = 1; return -1; }
++    if (progs_left > 0) progs_left--;
++    for (uint32_t i = 0; i < n; i++) nor[off + i] &= ((const uint8_t *)src)[i];
++    return 0;
++}
++
++/* ---- the glue's pieces */
++static uint8_t flash_ok = 1;
++static void syn_lock(void) {}
++static void syn_unlock(void) {}
++static uint8_t reply[600];
++static uint32_t reply_n;
++static void ed_b(uint32_t v) { if (reply_n < sizeof reply) reply[reply_n++] = (uint8_t)(v & 0x7Fu); }
++static void ed_str(const char *s, uint32_t max)
++{
++    for (uint32_t i = 0; s && s[i] && i < max; i++) ed_b((uint8_t)s[i] & 0x7Fu);
++    ed_b(0);
++}
++#define PCM_XIP(off) ((const uint8_t *)nor + (off))
++
++#include "pcm_store_fm1.c"
++
++/* ---- an image, as pcm_store_upload.py makes it */
++static uint8_t img[0xE000] __attribute__((aligned(4)));
++static uint32_t img_len;
++static PcmEntry *ent(uint32_t i) { return (PcmEntry *)(void *)(img + PCM_HDR_SIZE + i * PCM_ENTRY_SIZE); }
++static void seal(uint32_t count, uint32_t len)
++{
++    PcmHdr *h = (PcmHdr *)(void *)img;
++    memset(h, 0, sizeof *h);
++    h->magic = PCM_MAGIC;
++    h->version = PCM_VERSION;
++    h->count = (uint16_t)count;
++    h->len = len;
++    h->crc = wavetable_crc32(0, img + PCM_HDR_SIZE, len - PCM_HDR_SIZE);
++    h->hcrc = wavetable_crc32(0, h, PCM_HDR_SIZE - 4u);
++    img_len = len;
++}
++/* n waves: even ones a 16-bit single cycle of 512 samples, odd ones a looped mu-law sample of 3000 at 22050 Hz */
++static void make(uint32_t n)
++{
++    uint32_t off = PCM_HDR_SIZE + n * PCM_ENTRY_SIZE, i, k;
++    memset(img, 0, sizeof img);
++    for (i = 0; i < n; i++) {
++        PcmEntry *e = ent(i);
++        off = (off + 3u) & ~3u;
++        snprintf(e->name, sizeof e->name, "WAVE %u", (unsigned)(i % 100u));
++        e->off = off;
++        if (i & 1u) {
++            e->fmt = PCM_FMT_ULAW; e->flags = PCM_FLAG_LOOP; e->root = 57; e->rate = 22050;
++            e->len = 3000; e->loop_start = 1000; e->loop_end = 3000;
++            for (k = 0; k < e->len; k++) img[off + k] = (uint8_t)(k * 7u + i);
++            off += e->len;
++        } else {
++            e->fmt = PCM_FMT_S16; e->flags = PCM_FLAG_LOOP | PCM_FLAG_CYCLE; e->root = 60; e->cycles = 1;
++            e->len = 512; e->loop_start = 0; e->loop_end = 512;
++            for (k = 0; k < e->len; k++) ((int16_t *)(void *)(img + off))[k] = (int16_t)(k * 128u - 32768u + i);
++            off += 2u * e->len;
++        }
++    }
++    seal(n, off);
++}
++
++/* ---- the editor commands */
++static uint32_t pack7(const uint8_t *b, uint32_t n, uint8_t *out)
++{
++    uint32_t o = 0;
++    for (uint32_t i = 0; i < n; i += 7u) {
++        uint32_t k = n - i > 7u ? 7u : n - i, top = 0;
++        for (uint32_t j = 0; j < k; j++) top |= (uint32_t)(b[i + j] >> 7) << j;
++        out[o++] = (uint8_t)top;
++        for (uint32_t j = 0; j < k; j++) out[o++] = b[i + j] & 0x7Fu;
++    }
++    return o;
++}
++static uint8_t args[400];
++static int cmd(uint32_t c, const uint8_t *a, uint32_t na)   /* -> rc */
++{
++    reply_n = 0;
++    if (!ed_pcm_handle(c, a, na)) return -1;
++    return reply[c == ED_PCM_WRITE ? 3 : c == ED_PCM_BEGIN ? 1 : 0];
++}
++static int begin(uint32_t area) { args[0] = (uint8_t)area; return cmd(ED_PCM_BEGIN, args, 1); }
++static int write_at(uint32_t off, uint32_t n)
++{
++    args[0] = off & 0x7Fu; args[1] = (off >> 7) & 0x7Fu; args[2] = (off >> 14) & 0x7Fu;
++    return cmd(ED_PCM_WRITE, args, 3u + pack7(img + off, n, args + 3));
++}
++static int end(void) { return cmd(ED_PCM_END, args, pack7(img, PCM_HDR_SIZE, args)); }
++/* the whole upload of img into area: the first failing rc, or 0 */
++static int upload(uint32_t area)
++{
++    int rc = begin(area);
++    for (uint32_t off = PCM_HDR_SIZE; !rc && off < img_len; off += 256u)
++        rc = write_at(off, img_len - off > 256u ? 256u : img_len - off);
++    return rc ? rc : end();
++}
++static void reboot(void) { for (uint32_t a = 0; a < PCM_AREAS; a++) pcm_store_detach(a); pcm_boot(); }
++
++/* every wave of img is wave first + i, with the same entry and samples */
++static void same_waves(uint32_t first, uint32_t n, const char *what)
++{
++    for (uint32_t i = 0; i < n; i++) {
++        const uint8_t *d;
++        const PcmEntry *e = pcm_wave(first + i, &d);
++        CHECK(e && !memcmp(e, ent(i), sizeof *e), "%s: wave %u's entry", what, (unsigned)i);
++        if (e)
++            CHECK(!memcmp(d, img + e->off, e->len * (e->fmt == PCM_FMT_S16 ? 2u : 1u)), "%s: wave %u's samples",
++                  what, (unsigned)i);
++    }
++}
++
++static int replay(const char *syx, const char *bin)
++{
++    FILE *f = fopen(syx, "rb");
++    static uint8_t s[1 << 18];
++    size_t n = f ? fread(s, 1, sizeof s, f) : 0;
++    int frames = 0, bad = 0;
++    if (f) fclose(f);
++    CHECK(n > 0, "%s: no SysEx", syx);
++    for (size_t i = 0; i < n;) {
++        size_t j = i;
++        while (j < n && s[j] != 0xF7) j++;
++        if (j >= n || s[i] != 0xF0 || s[i + 1] != 0x7D || s[i + 2] != 0x46 || s[i + 3] != 0x4C) { bad++; break; }
++        int rc = cmd(s[i + 4], s + i + 5, (uint32_t)(j - i - 5));
++        if (rc) { bad++; printf("FAIL: replay frame %d (cmd %u): rc %d\n", frames, s[i + 4], rc); }
++        frames++;
++        i = j + 1;
++    }
++    CHECK(!bad, "%s replays", syx);
++    f = fopen(bin, "rb");
++    img_len = f ? (uint32_t)fread(img, 1, sizeof img, f) : 0u;
++    if (f) fclose(f);
++    CHECK(img_len > PCM_HDR_SIZE, "%s: the image", bin);
++    return frames;
++}
++
++int main(int argc, char **argv)
++{
++    static uint8_t ref[sizeof nor];
++    uint32_t a, i;
++    int rc;
++
++    /* fresh flash, then X0X's objects in area 0 and the old preset chunks in area 1: no image anywhere */
++    memset(nor, 0xFF, sizeof nor);
++    reboot();
++    CHECK(pcm_wave_count() == 0 && !pcm_wave(0, NULL), "erased flash: no waves");
++    for (i = 0; i < 0x9000u; i++) nor[0x97000u + i] = (uint8_t)(i * 31u);
++    memcpy(nor + 0xCE000u, "CRNP", 4);
++    reboot();
++    CHECK(pcm_wave_count() == 0, "foreign data: no waves");
++
++    /* an upload to each area; nothing outside the area changes; the waves come back after a reboot */
++    for (i = 0; i < sizeof nor; i++) nor[i] = (uint8_t)(i * 13u + 5u);
++    memcpy(ref, nor, sizeof nor);
++    make(5);
++    rc = upload(1);
++    CHECK(rc == 0 && reply[1] == 5u, "area 1 upload: rc %d, %u waves", rc, (unsigned)reply[1]);
++    CHECK(!memcmp(nor, ref, 0xCE000u) && !memcmp(nor + 0xDC000u, ref + 0xDC000u, sizeof nor - 0xDC000u),
++          "area 1 upload writes inside 0xCE000..0xDBFFF only");
++    CHECK(!memcmp(nor + 0xCE000u, img, img_len), "area 1 holds the image");
++    same_waves(0, 5, "area 1, attached");
++    reboot();
++    CHECK(pcm_wave_count() == 5, "area 1 after a reboot: %u waves", (unsigned)pcm_wave_count());
++    same_waves(0, 5, "area 1, after a reboot");
++    memcpy(ref, nor, sizeof nor);
++    make(3);
++    rc = upload(0);
++    CHECK(rc == 0 && reply[1] == 3u, "area 0 upload: rc %d", rc);
++    CHECK(!memcmp(nor, ref, 0x97000u) && !memcmp(nor + 0xA0000u, ref + 0xA0000u, sizeof nor - 0xA0000u),
++          "area 0 upload writes inside 0x97000..0x9FFFF only");
++    reboot();
++    CHECK(pcm_wave_count() == 8 && pcm_area_count(0) == 3 && pcm_area_count(1) == 5, "both areas: 3 + 5 waves");
++    same_waves(0, 3, "area 0 first in the list");
++
++    /* PCM_INFO: the names */
++    args[0] = 1; args[1] = 0;
++    reply_n = 0;
++    ed_pcm_handle(ED_PCM_INFO, args, 2);
++    CHECK(reply[0] == PCM_AREAS && reply[1] == 1 && reply[2] == 5 && reply[3] == 56 && !strcmp((char *)reply + 8, "WAVE 0"),
++          "PCM_INFO area 1: 5 waves, 56 KiB, WAVE 0 first");
++
++    /* the biggest image an area holds, and one byte too many */
++    memset(img, 0, sizeof img);
++    ent(0)->fmt = PCM_FMT_ULAW; ent(0)->rate = 8000; ent(0)->off = PCM_HDR_SIZE + PCM_ENTRY_SIZE;
++    ent(0)->len = 0x9000u - ent(0)->off;
++    strcpy(ent(0)->name, "FULL");
++    seal(1, 0x9000u);
++    CHECK(upload(0) == 0 && pcm_area_count(0) == 1, "a full 36 KiB image fits area 0");
++    ent(0)->len++;
++    seal(1, 0x9001u);
++    CHECK(upload(0) == 4 && pcm_area_count(0) == 0, "36 KiB + 1 is refused (rc 4), area 0 empty");
++
++    /* an upload cut off before each of its first programs, then every 7th, up to the header: the area reads empty, before and after a reboot */
++    make(4);
++    for (int at = 0; at < (int)((img_len - PCM_HDR_SIZE + 255u) / 256u) + 1; at += at < 3 ? 1 : 7) {
++        cut = 0; progs_left = at;
++        upload(1);
++        cut = 0; progs_left = -1;
++        reboot();
++        CHECK(pcm_area_count(1) == 0, "upload cut after %d programs: area 1 empty", at);
++    }
++    CHECK(upload(1) == 0 && pcm_area_count(1) == 4, "a whole upload after the cuts");
++
++    /* one damaged byte in the samples: refused at boot */
++    nor[0xCE000u + img_len - 1u] ^= 0x01u;
++    reboot();
++    CHECK(pcm_area_count(1) == 0, "a flipped data bit: area 1 empty (CRC)");
++
++    /* out of order, no BEGIN, a short image, past the area */
++    CHECK(begin(1) == 0 && write_at(PCM_HDR_SIZE + 256u, 64) == 3, "a write that skips bytes: rc 3");
++    CHECK(begin(1) == 0 && write_at(PCM_HDR_SIZE, 64) == 0 && end() == 3, "an END before every byte: rc 3");
++    CHECK(end() == 3, "an END with no upload: rc 3");
++    CHECK(begin(2) == 1, "no area 2: rc 1");
++    reboot();
++    CHECK(pcm_area_count(1) == 0, "after the refused uploads: area 1 empty");
++
++    /* images with a bad entry: refused at END (rc 5) and the area reads empty */
++    static const char *const bad[] = {"samples past the image", "odd 16-bit offset", "loop end past the wave",
++                                      "CYCLE without LOOP", "rate 0 on a sample", "samples over the entries"};
++    for (i = 0; i < sizeof bad / sizeof bad[0]; i++) {
++        make(2);
++        switch (i) {
++        case 0: ent(1)->len += 1; break;
++        case 1: ent(0)->off += 1; break;
++        case 2: ent(1)->loop_end = ent(1)->len + 1; break;
++        case 3: ent(0)->flags = PCM_FLAG_CYCLE; ent(0)->loop_end = 0; break;
++        case 4: ent(1)->rate = 0; break;
++        case 5: ent(0)->off = PCM_HDR_SIZE; break;
++        }
++        seal(2, img_len);
++        rc = upload(1);
++        CHECK(rc == 5 && reply[1] == 8u + 3u, "%s: rc %d (5), reason %u (entry)", bad[i], rc, (unsigned)reply[1]);
++        reboot();
++        CHECK(pcm_area_count(1) == 0, "%s: area 1 empty after a reboot", bad[i]);
++    }
++
++    /* the tool's own upload */
++    if (argc > 2) {
++        int frames = replay(argv[1], argv[2]);
++        a = pcm_area_count(1);
++        CHECK(a == ((const PcmHdr *)(const void *)img)->count && a > 0, "the tool's image: %u waves", (unsigned)a);
++        same_waves(pcm_area_count(0), a, "the tool's image");
++        printf("replayed %d frames of %s\n", frames, argv[1]);
++    }
++
++    printf(failures ? "%d FAILED\n" : "PCM store: uploads, reboots, cuts and bad images all hold\n", failures);
++    return failures;
++}

@@ -89,18 +89,27 @@ static inline uint8_t frec_stored_version(const uint8_t *rec) { return rec[0]; }
 /* ---- a patch in flash (v8, v9): ENGINE_STORED_SIZE bytes. Every EngineState byte in order, but for the name, the two
  * bytes nothing reads (OSC1's SYNC: only OSC2 syncs; ENV1's INVERT: ENV1 is never inverted) and the three LFOs' CLOCK
  * SYNC and KEY RESET (0 / 1 each), then those six as bits of one byte, then the name at 6 bits a character
- * (UI_CHAR_MAP has 41), then 0s. Unpacked, the two unread bytes are 0. */
+ * (UI_CHAR_MAP has 41), then 0s, ANALOG in the last byte (v9 left it 0: a v9 patch reads ANALOG 0, so it kept the version).
+ * Each filter's KEY TRACK (2026-10-21) rides in the high nibbles of its MOD SRC (bits 0..3) and MORPH MOD SRC (bits
+ * 4..7) bytes, which v9 left 0 (a source fits 4 bits): a v9 patch reads KEY TRACK 0, as it played.
+ * Unpacked, the two unread bytes are 0. */
 #define ENG_OFS_NAME ((uint32_t)offsetof(EngineState, name))
 #define ENG_OFS_UNREAD1 ((uint32_t)offsetof(EngineState, osc[0].sync))
 #define ENG_OFS_UNREAD2 ((uint32_t)offsetof(EngineState, env[0].invert))
 #define ENG_OFS_BEND ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_bend))
 #define ENG_OFS_LFO ((uint32_t)offsetof(EngineState, lfo))
+#define ENG_OFS_ANALOG ((uint32_t)offsetof(EngineState, analog))
+#define ENG_OFS_FKT ((uint32_t)offsetof(EngineState, filter_key_track))
+#define ENG_OFS_FMSRC(i) ((uint32_t)offsetof(EngineState, filter[i].mod_src))
+#define ENG_OFS_FMMSRC(i) ((uint32_t)offsetof(EngineState, filter[i].morph_mod_src))
 #define ENG_NAME_PACKED ((NAME_LEN * 6u + 7u) / 8u)
 #define ENG_NFLAG (2u * NLFO)
 PS_STATIC_ASSERT(CHAR_MAP_LEN <= 64u, "a name character fits 6 bits");
 PS_STATIC_ASSERT(ENG_NFLAG <= 8u, "the LFO flags fit a byte");
-PS_STATIC_ASSERT(sizeof(EngineState) - 2u - ENG_NFLAG - NAME_LEN + 1u + ENG_NAME_PACKED <= ENGINE_STORED_SIZE,
-                 "the packed patch fits ENGINE_STORED_SIZE");
+PS_STATIC_ASSERT(MSRC_COUNT <= 16u, "a mod source fits 4 bits: the filters' KEY TRACK has the high nibbles");
+PS_STATIC_ASSERT(NFILTER == 2u && ENG_OFS_FKT + NFILTER == sizeof(EngineState), "KEY TRACK ends the patch");
+PS_STATIC_ASSERT(sizeof(EngineState) - 3u - NFILTER - ENG_NFLAG - NAME_LEN + 1u + ENG_NAME_PACKED < ENGINE_STORED_SIZE,
+                 "the packed patch fits ENGINE_STORED_SIZE, ANALOG's byte after it");
 /* flag f (0..5): LFO f / 2's CLOCK SYNC (even) or KEY RESET (odd) */
 static inline uint32_t engine_flag_ofs(uint32_t f)
 {
@@ -110,7 +119,8 @@ static inline uint32_t engine_flag_ofs(uint32_t f)
 static inline int engine_byte_stored(uint32_t i)
 {
     uint32_t f;
-    if (i == ENG_OFS_UNREAD1 || i == ENG_OFS_UNREAD2 || (i >= ENG_OFS_NAME && i < ENG_OFS_NAME + NAME_LEN))
+    if (i == ENG_OFS_UNREAD1 || i == ENG_OFS_UNREAD2 || i == ENG_OFS_ANALOG || i >= ENG_OFS_FKT ||
+        (i >= ENG_OFS_NAME && i < ENG_OFS_NAME + NAME_LEN))
         return 0;
     for (f = 0; f < ENG_NFLAG; f++)
         if (i == engine_flag_ofs(f))
@@ -122,8 +132,14 @@ static inline void engine_store_pack(const EngineState *e, uint8_t *out)
     const uint8_t *d = (const uint8_t *)e;
     uint32_t i, j = 0, acc = 0, bits = 0, fl = 0;
     for (i = 0; i < sizeof(EngineState); i++)
-        if (engine_byte_stored(i))
-            out[j++] = d[i];
+        if (engine_byte_stored(i)) {
+            uint8_t b = d[i];
+            if (i == ENG_OFS_FMSRC(0) || i == ENG_OFS_FMSRC(1))
+                b = (uint8_t)((b & 15u) | (e->filter_key_track[i == ENG_OFS_FMSRC(1)] & 15u) << 4);
+            else if (i == ENG_OFS_FMMSRC(0) || i == ENG_OFS_FMMSRC(1))
+                b = (uint8_t)((b & 15u) | (e->filter_key_track[i == ENG_OFS_FMMSRC(1)] >> 4) << 4);
+            out[j++] = b;
+        }
     for (i = 0; i < ENG_NFLAG; i++)
         fl |= (d[engine_flag_ofs(i)] ? 1u : 0u) << i;
     out[j++] = (uint8_t)fl;
@@ -138,8 +154,9 @@ static inline void engine_store_pack(const EngineState *e, uint8_t *out)
     }
     if (bits)
         out[j++] = (uint8_t)acc;
-    while (j < ENGINE_STORED_SIZE)
+    while (j < ENGINE_STORED_SIZE - 1u)
         out[j++] = 0u;
+    out[j] = e->analog;
 }
 static inline void engine_name_unpack(const uint8_t *in, uint8_t *name)
 {
@@ -163,6 +180,14 @@ static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
     for (i = 0; i < ENG_NFLAG; i++)
         d[engine_flag_ofs(i)] = (uint8_t)((in[j] >> i) & 1u);
     engine_name_unpack(in + j + 1u, e->name);
+    e->analog = in[ENGINE_STORED_SIZE - 1u] <= VAL_MAX ? in[ENGINE_STORED_SIZE - 1u] : (uint8_t)0u;
+    for (i = 0; i < NFILTER; i++) {
+        FilterParams *f = &e->filter[i];
+        uint8_t kt = (uint8_t)(f->mod_src >> 4 | (f->morph_mod_src >> 4) << 4);
+        e->filter_key_track[i] = kt <= VAL_MAX ? kt : (uint8_t)0u;
+        f->mod_src &= 15u;
+        f->morph_mod_src &= 15u;
+    }
 }
 
 /* ---- v8 -> v9 (2026-10-21): each FilterParams gained DRIVE, its last byte; the SVF became the SH-2 and MS-20 LOW /
@@ -175,7 +200,7 @@ static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
 #define ENG_OFS_DRIVE1 ((uint32_t)offsetof(EngineState, filter[1].drive))
 #define ENG_V8_OFS_UNREAD2 (ENG_OFS_UNREAD2 - 2u)
 #define ENG_V8_OFS_NAME (ENG_OFS_NAME - 2u)
-PS_STATIC_ASSERT(sizeof(EngineState) == ENGINE_V8_RAM + 2u && ENG_OFS_DRIVE1 == ENG_OFS_DRIVE0 + sizeof(FilterParams) &&
+PS_STATIC_ASSERT(sizeof(EngineState) == ENGINE_V8_RAM + 3u + NFILTER && ENG_OFS_ANALOG == ENGINE_V8_RAM + 2u && ENG_OFS_DRIVE1 == ENG_OFS_DRIVE0 + sizeof(FilterParams) &&
                  ENG_OFS_DRIVE0 + 1u == (uint32_t)offsetof(EngineState, filter[1]) &&
                  ENG_OFS_UNREAD1 < ENG_OFS_DRIVE0 && ENG_OFS_UNREAD2 > ENG_OFS_DRIVE1 && ENG_OFS_LFO > ENG_OFS_DRIVE1 &&
                  ENG_OFS_NAME > ENG_OFS_DRIVE1, "v9: DRIVE ends each FilterParams, before the bytes the store leaves out");
@@ -214,7 +239,7 @@ static inline void engine_filters_from_v8(EngineState *e)
         }
     }
 }
-/* a v8 RAM image -> today's */
+/* a v8 RAM image -> today's (ANALOG and KEY TRACK, after it, 0) */
 static inline void engine_from_v8_ram(const uint8_t *v8, EngineState *e)
 {
     uint8_t *d = (uint8_t *)e;
@@ -223,6 +248,8 @@ static inline void engine_from_v8_ram(const uint8_t *v8, EngineState *e)
     memcpy(d + ENG_OFS_DRIVE0 + 1u, v8 + ENG_OFS_DRIVE0, sizeof(FilterParams) - 1u);
     d[ENG_OFS_DRIVE1] = 0u;
     memcpy(d + ENG_OFS_DRIVE1 + 1u, v8 + ENG_OFS_DRIVE1 - 1u, ENGINE_V8_RAM - (ENG_OFS_DRIVE1 - 1u));
+    e->analog = 0u;
+    memset(e->filter_key_track, 0, sizeof e->filter_key_track);
     engine_filters_from_v8(e);
 }
 /* a stored v8 patch -> today's stored form (both ENGINE_STORED_SIZE), in place: the two DRIVE bytes go in where the

@@ -13,7 +13,12 @@ splits and zones, and presets saved in the instrument's flash. It runs on both o
 
 ## Install
 
-Download the `.fwsc` package from [Releases](../../releases), plug in the FM-1 over USB, then:
+The easy way: open the [web installer](https://owenkirby.github.io/carnac-os/install/) in Chrome or Edge, with
+the FM-1 connected by USB.
+
+Carnac OS is free. If you enjoy it, you can [tip me on Ko-fi](https://ko-fi.com/orbvorgis).
+
+From the command line: download the `.fwsc` package from [Releases](../../releases), plug in the FM-1 over USB, then:
 
 ```
 python x0x-firmware/tools/fm1_install.py carnac-0.9.0.fwsc
@@ -40,6 +45,9 @@ git clone --recursive https://github.com/<you>/carnac-os.git
   [x0x-firmware/BUILDING.md](x0x-firmware/BUILDING.md); X0X's tree needs LF line endings):
   `python3 src/hardware/build_fm1.py --x0x x0x-firmware --release 0.9.0`
 - Browser emulator (Emscripten): `sh web/emu/build.sh`
+- Website with the web installer (GitHub Pages): `python3 web/site/make_site.py PACKAGE VERSION build/site`,
+  tested with `python3 web/site/test_installer.py build/site` (headless Edge or Chrome, simulated FM-1);
+  `sh web/site/publish_site.sh VERSION` pushes it to the `gh-pages` branch
 
 The `x0x-firmware` submodule is pinned to the exact X0X commit the release was built with.
 

@@ -41,15 +41,15 @@ float parallel;         // routing: 0 = serial (1 into 2), ~1 = parallel
 float bal2;             // balance: FILTER2's share of the output
 } DualFilterMatrix;
 void dual_filter_init(DualFilterMatrix *dfm);
-/* Control rate: cutoffs in Q8 knob units, res / morph / drive / routing / balance 0..127, flavour FLT_* per core. The
+/* Control rate: cutoffs, res and morph in Q8 knob units (0..127 << 8, res to 115 << 8), drive / routing / balance 0..127, flavour FLT_* per core. The
  * coefficients ramp to the new values over the 2^shift samples of the tick; snap = 1 jumps at once (a new note). */
-void dual_filter_prepare(DualFilterMatrix *dfm,int cutoff1_q8,int res1,int morph1,int drive1,int flavor1,int cutoff2_q8,int res2,int morph2,int drive2,int flavor2,int routing_morph,int balance_morph,uint8_t shift,int snap);
+void dual_filter_prepare(DualFilterMatrix *dfm,int cutoff1_q8,int res1_q8,int morph1_q8,int drive1,int flavor1,int cutoff2_q8,int res2_q8,int morph2_q8,int drive2,int flavor2,int routing_morph,int balance_morph,uint8_t shift,int snap);
 /* Audio rate: one sample through both cores, routed and balanced (DUAL FILTER). */
 int32_t dual_filter_render(DualFilterMatrix *dfm,int32_t input_sample_q15);
 /* One core on its own, for the architectures that run each filter as a separate path (SINGLE, STACK, BINAURAL...).
- * morph is the knob's (with its mod): SH-2 and MS-20 0 = LP .. 64 = BP .. 127 = HP, MULTI 0 = LP24 .. 127 = NOTCH,
+ * res_q8 and morph_q8 are the knobs' (with their mod) in Q8 knob units, as cutoff_q8. morph: SH-2 and MS-20 0 = LP .. 64 = BP .. 127 = HP, MULTI 0 = LP24 .. 127 = NOTCH,
  * FORMANT 0 = the bands close (about 2/3 octave) .. 127 = far apart (about 3 octaves). drive 0 = clean .. 127. */
-void filter_core_prepare(SvfCore *k,int cutoff_q8,int raw_res,int morph,int drive,int flavor,uint8_t shift,int snap);
+void filter_core_prepare(SvfCore *k,int cutoff_q8,int res_q8,int morph_q8,int drive,int flavor,uint8_t shift,int snap);
 int32_t filter_core_render(SvfCore *k,int32_t input_q15);
 /* The same two renders with the output left in float, Q15 units inside +-32768 (the knee holds it): the voice's
  * float amp takes it as it is, without the round trip through int (~11 cycles a sample on the FM1). */
@@ -65,6 +65,11 @@ void dual_filter_render_block(DualFilterMatrix *dfm,const float *x,float *y,int 
  * knob's own 0..127. */
 /* FORMANT: the second band's distance above the cutoff in knob steps (13.4 an octave): 2/3 octave .. 3 octaves */
 static inline int32_t filter_formant_gap(int knob_morph){return 9+(knob_morph*31)/127;}
+/* the same in Q8 knob steps for a morph in Q8 knob units: filter_formant_gap's steps, interpolated between the knob's */
+static inline int32_t filter_formant_gap_q8(int32_t morph_q8){
+int32_t i=morph_q8>>8,f=morph_q8&255,a=filter_formant_gap(i)<<8;
+return f==0?a:a+(((filter_formant_gap(i+1)<<8)-a)*f>>8);
+}
 /* MULTI / MS-20: the feedback (Q12) for resonance 0..115. Up to 105 it climbs on 1 - (1 - r)^2 to the loop's edge
  * (4, 2) on 1 - (x + x^2) / 2 (x the distance to 105): half straight, so the Q climbs through the knob's upper half
  * instead of piling up just below the edge (squared alone put 90 .. 105 within 1 % of it, every input clipped to one
@@ -90,14 +95,15 @@ return t<=0?0.f:t>=42*256?1.f:(float)t*(1.f/(42.f*256.f));
  * H (1 - H) a bandpass, so LP24 .. LP6 H^4 .. H, BP 2 H (1 - H) (x2: unity peak), HP12 (1 - H)^2, HP24 (1 - H)^4 and
  * the notch 1 - 2H + 2H^2 (zero at the cutoff). The knob (0..127) walks LP24 -> .. -> NOTCH, crossfading neighbours. */
 #define FILTER_MULTI_MODES 8
-static inline void filter_multi_taps(int knob_morph,int16_t *tap){
+static inline void filter_multi_taps_q8(int32_t morph_q8,int16_t *tap){   /* morph in Q8 knob units */
 static const int16_t M[FILTER_MULTI_MODES][5]={
 {0,0,0,0,128},{0,0,0,128,0},{0,0,128,0,0},{0,128,0,0,0},
 {0,256,-256,0,0},{128,-256,128,0,0},{128,-512,768,-512,128},{128,-256,256,0,0}};
-int32_t pos=knob_morph*(FILTER_MULTI_MODES-1),i=pos/127,fr=((pos-i*127)*128)/127;
+int32_t pos=morph_q8*(FILTER_MULTI_MODES-1),i=pos/(127*256),fr=((pos-i*(127*256))*128)/(127*256);
 if(i>=FILTER_MULTI_MODES-1){i=FILTER_MULTI_MODES-2;fr=128;}
 for(int j=0;j<5;j++)tap[j]=(int16_t)((M[i][j]*(128-fr)+M[i+1][j]*fr)/128);
 }
+static inline void filter_multi_taps(int knob_morph,int16_t *tap){filter_multi_taps_q8((int32_t)knob_morph<<8,tap);}
 static inline const char *filter_multi_mode_name(int knob_morph){
 static const char *const N[FILTER_MULTI_MODES]={"LP24","LP18","LP12","LP6","BP","HP12","HP24","NOTCH"};
 return N[(knob_morph*(FILTER_MULTI_MODES-1)+63)/127];

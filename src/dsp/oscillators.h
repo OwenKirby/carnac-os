@@ -3,6 +3,7 @@
 #define OSCILLATORS_H
 
 #include <stdint.h>
+#include "pcm_osc.h"
 
 #define NUM_TABLES  32
 #define NUM_FRAMES  8
@@ -28,6 +29,7 @@ typedef struct {
     uint16_t rd_off[5];
     uint16_t rd_mask[5];
     uint8_t rd_shift[5];
+    PcmOsc pcm;                  // a PCM wave instead of the bank (pcm.on, set by osc_select_wave): pcm_osc.h
 } WavetableOsc;
 
 /* One sample of two frames at a cycle phase: linear within each frame (the level at off, its index shift and mask),
@@ -57,12 +59,16 @@ static inline int scan_q8_to_morph_q12(int32_t scan_q8) { return (int)(((uint32_
 #define SPREAD_XFADE 24
 
 void osc_init(WavetableOsc *osc);
+/* the wave a patch names (OscParams.wavebank, pcm_osc.h): a bank, or a PCM wave / attack (osc->pcm.on) */
+void osc_select_wave(WavetableOsc *osc, uint8_t code);
 /* One sample at a frequency given per sample (audio-rate FM): works out the steps and mip levels itself. */
 int16_t osc_process_skulpt_spread_fixed(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread);
 
 /* Control rate: the steps, mip levels and spread crossfade for this pitch and spread, held until the next tick. */
 void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread);
-/* Audio rate: one sample from what osc_prepare set. The same sound as osc_process_skulpt_spread_fixed. */
+/* Audio rate: one sample from what osc_prepare set. The same sound as osc_process_skulpt_spread_fixed. Neither
+ * plays a PCM wave (osc->pcm.on): the per-sample paths stay as they were (2026-10-21: a PCM test in them cost DUAL OSC
+ * and STACK 5 points on the FM1); osc_render_block and osc_mixer_osc2_block (oscmixer.h) play PCM. */
 int16_t osc_render(WavetableOsc *osc);
 /* n samples of osc_render into out (int16 values), the same ones in the same order: the undetuned playhead with its
  * reads held in registers across the block; SPREAD's detuned playheads sample by sample. */

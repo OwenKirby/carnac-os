@@ -67,7 +67,7 @@ REF_HZ = 110.0                # formant frequencies are placed against this refe
 SR = 44100
 SEED_BASE = 1000              # bank b uses seed SEED_BASE + b, so every run is identical
 DITHER_SEED = 0x46554C        # "FUL"
-DITHER_BANKS = 14             # banks 0..13 share the first dither stream; later banks use DITHER_SEED + 1 (main)
+DITHER_BANKS = 14             # banks 0..13 share the first dither stream; bank b >= 14 uses DITHER_SEED + 1 + (b - 14)
 WT_LEVELS = 7                 # mip levels, each one cycle: level L has LEVEL_LEN[L] samples
 LEVEL_LEN = [512, 256, 128, 64, 32, 16, 16]                     # level 6 is 16 samples so its interpolation stays clean
 LEVEL_HARM = [256, 128, 64, 32, 16, 8, 4]                       # the highest harmonic a level keeps (its Nyquist, or 4 at the top)
@@ -317,6 +317,35 @@ def bone_flute(t, seed):
     return from_spectrum(amp + noise_spec(rng, breath))
 
 
+# The flute family, one frame each, as harmonic levels: the tone only. A flute's breath and chiff are not periodic,
+# so they come from the voice (NOISE in the mixer, the BONE CHIFF / REED CHIFF attacks in STRIKE), not the frames.
+HOLLOW_REEDS_FRAMES = [
+    {1: 1.0, 2: 0.03, 3: 0.02},                                            # 1 ocarina: a clay vessel, near pure
+    {1: 1.0, 2: 0.08, 3: 0.05, 4: 0.02},                                   # 2 ocarina blown warmer
+    {1: 1.0, 2: 0.05, 3: 0.22, 5: 0.07, 7: 0.03},                          # 3 pan flute, soft: stopped, odd
+    {1: 1.0, 2: 0.10, 3: 0.35, 4: 0.05, 5: 0.15, 7: 0.06, 9: 0.03},        # 4 pan flute, full
+    {1: 1.0, 2: 0.35, 3: 0.15, 4: 0.08, 5: 0.04},                          # 5 bone flute, open: every harmonic
+    {1: 1.0, 2: 0.50, 3: 0.30, 4: 0.18, 5: 0.12, 6: 0.07, 7: 0.05, 8: 0.03},   # 6 rim flute, husky
+    {1: 0.8, 2: 0.60, 3: 0.45, 4: 0.30, 5: 0.22, 6: 0.16, 7: 0.12, 8: 0.09, 9: 0.07, 10: 0.05, 11: 0.04, 12: 0.03},
+    {1: 0.45, 2: 1.0, 3: 0.20, 4: 0.12, 6: 0.05, 8: 0.04, 10: 0.03, 12: 0.02},  # 8 whistle: overblown to the octave
+]                                                                          # (7 is the rim flute pushed to its edge)
+
+
+def hollow_reeds(t, seed):
+    """The flute family, gentlest to sharpest: ocarina (a near-pure vessel), warmer ocarina, pan flute (stopped
+    pipes: odd harmonics) soft then full, an open bone flute (every harmonic, falling fast), the husky end-blown rim
+    flute, the rim flute pushed to its edge, and a whistle overblown to its octave. A trace of breath, the same in
+    every frame. Meant for STRIKE with BONE CHIFF / REED CHIFF in front and NOISE for the air (2026-10-21, bank 15;
+    auditioned in listening/flute_bank)."""
+    rng = np.random.default_rng(seed)
+    phase = rng.uniform(0.0, 2.0 * np.pi, H + 1)          # one phase per harmonic for every frame: no cancelling
+    breath = 0.012 * np.where((KI >= 2) & (KI <= 60), 1.0 / np.sqrt(KSAFE), 0.0)
+    amp = np.zeros(H + 1)
+    for k, a in HOLLOW_REEDS_FRAMES[frame_index(t)].items():
+        amp[k] = a
+    return from_spectrum(amp * np.exp(1j * phase) + noise_spec(rng, breath))
+
+
 # ------------------------------------------------- Group 4: Time & Decay (11-13) --- #
 
 EROSION_BITS = [None, 6, 5, 4, 4, 3, 3, 2]        # None: the fresh-cut stone, not quantised
@@ -396,6 +425,7 @@ BANK_DEFS = [
     ("Bone Flute", bone_flute),
     ("Erosion", erosion), ("Frost Shatter", frost_shatter), ("Dust", dust),
     ("Hearth", hearth),                     # new banks go at the end: saved patches keep their bank numbers
+    ("Hollow Reeds", hollow_reeds),
 ]
 assert all(len(name) <= 20 for name, _ in BANK_DEFS)
 
@@ -592,9 +622,9 @@ def main():
     table = np.concatenate([quantise(level[:DITHER_BANKS], rng) for level in levels], axis=-1)
     square = one_frame(sub_square(), rng)
     sine = one_frame(sub_sine(), rng)
-    if len(names) > DITHER_BANKS:
-        rng_added = np.random.default_rng(DITHER_SEED + 1)
-        added = np.concatenate([quantise(level[DITHER_BANKS:], rng_added) for level in levels], axis=-1)
+    for b in range(DITHER_BANKS, len(names)):        # each added bank its own stream: adding one never touches another
+        rng_added = np.random.default_rng(DITHER_SEED + 1 + (b - DITHER_BANKS))
+        added = np.concatenate([quantise(level[b:b + 1], rng_added) for level in levels], axis=-1)
         table = np.concatenate([table, added], axis=0)
 
     image = store_image(table, names)

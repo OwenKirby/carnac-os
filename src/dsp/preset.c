@@ -4,6 +4,7 @@
 #include "hardware/synth_libc.h"
 
 EngineState engine_state[NLAYER];
+volatile uint8_t engine_load_count[NLAYER];
 MasterPerformancePreset perf_state;
 SequencerLane seq_lanes[SEQ_NLANE];
 ArpState arp_state;
@@ -164,8 +165,10 @@ void live_defaults(void)
 {
     seq_defaults(seq_lanes);
     arp_defaults(&arp_state);
-    for (unsigned l = 0; l < NLAYER; l++)
+    for (unsigned l = 0; l < NLAYER; l++) {
         engine_defaults(&engine_state[l]);
+        engine_load_count[l]++;
+    }
 
     perf_defaults(&perf_state);
 }
@@ -203,5 +206,6 @@ void patch_load(uint8_t layer, uint8_t slot)
 {
     if (layer >= NLAYER || slot >= PATCH_SLOTS) return;
     engine_state[layer] = patch_bank[slot];
+    engine_load_count[layer]++;
     perf_state.layer_patch[layer] = slot;
 }

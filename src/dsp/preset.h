@@ -7,6 +7,9 @@
 
 /* the live patch of each layer: what that layer's voices play */
 extern EngineState engine_state[NLAYER];
+/* counts each wholesale change of a layer's patch (a patch or performance load, defaults): the voices' knob smoothing
+ * (synth_voice.c) jumps to the new values instead of sweeping to them. Whoever replaces engine_state[l] bumps it. */
+extern volatile uint8_t engine_load_count[NLAYER];
 
 /* the live performance: layer routing, voice modes, split, effects, GLOBAL */
 extern MasterPerformancePreset perf_state;

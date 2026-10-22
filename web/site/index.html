@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Carnac OS landing page; web/site/make_site.py fills the __MARKS__. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carnac OS</title>
+<meta name="description" content="Carnac OS: synthesizer firmware for the M-VAVE FM1.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="preload" href="carnac-rune.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="carnac.css">
+</head>
+<body>
+<main>
+  <h1 class="screen"><img class="px" src="splash.png" width="240" height="240" alt="CARNAC OS, by Orbvorgis"></h1>
+  <p>Synthesizer firmware for the M-VAVE FM1: wavetable and LA-style voices, two layers, filters, effects,
+    a sequencer and an arpeggiator.</p>
+  <nav class="menu">
+    <a class="tablet" href="install/"><strong>Install Carnac __VERSION__</strong><span>From Chrome or Edge on a computer, with the FM1 connected by USB. It updates from stock firmware or from any earlier Carnac, and keeps your saved sounds.</span></a>
+__EMU__    <a class="tablet" href="firmware/__PKG__"><strong>Download __PKG__</strong><span>For the command-line installer: <code>python3 tools/fm1_install.py __PKG__</code></span></a>
+__TIP__    <a class="tablet" href="__REPO__"><strong>Source</strong><span>GitHub, GPL-3.0. Built on X0X and Felucca.</span></a>
+  </nav>
+  <footer>
+    <canvas class="alignment" data-alignment="7" width="240" height="44" aria-hidden="true"></canvas>
+    <p class="small">Installing is at your own risk. To go back to M-VAVE's firmware, use the last section of the installer,
+      or M-VAVE's own M-UPGRADE from <a href="https://www.m-vave.com/download">m-vave.com/download</a>.
+      M-VAVE and FM-1 are trademarks of their owners.</p>
+  </footer>
+</main>
+<script src="stones.js"></script>
+</body>
+</html>

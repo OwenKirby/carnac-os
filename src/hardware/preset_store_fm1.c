@@ -12,8 +12,9 @@
  * under another layout is left out, its slots empty, until a migration exists), so the old wavetable image there, and
  * a chunk of the 128-slot layout before 2026-10-17 where another bank's chunk sits now, read as nothing.
  * The payload: the chunk's used bits (PS_USED_BYTES), then its slots. Chunks: arp 0, sequences 2..5, performances
- * 6..13, patches 17..22 (where they always were: the patches outlive the change); 1, 14..16, 23 and 24 are free, all in
- * the 200 KiB the 128-slot banks took.
+ * 6..13, patches 17..22 (where they always were: the patches outlive the change); 1 and 14..16 are free. Since
+ * 2026-10-21 the store ends after chunk 22 (PS_NCHUNK 23): its old chunks 23 and 24 and the flash after them are PCM
+ * wave area 1 (pcm_store_fm1.c).
  * A SAVE copies into the bank at once (syn_commit, inside syn_lock) and marks its chunk; the main loop writes it
  * (ps_tick, outside the lock: the erase stops the flash, and the audio with it, for tens of ms), then reports the save
  * done, so SAVED means it is in flash. The boot loads every chunk (ps_load). Patches are stored packed (engine_store_pack,
@@ -58,7 +59,7 @@ typedef struct {
 #define PS_FIRST_SEQ 2u
 #define PS_FIRST_PERF 6u
 #define PS_FIRST_PATCH 17u                          /* the 128-slot layout's: the saved patches stay */
-#define PS_NCHUNK 25u                               /* the chunks the store spans (some free) */
+#define PS_NCHUNK 23u                               /* the chunks the store spans (1, 14..16 free); PCM waves after */
 PS_STATIC_ASSERT(UISAVE_ARP_SEQ == 0 && UISAVE_SEQ_SETTINGS == 1 && UISAVE_PATCH_PRESET == 2 && UISAVE_WHOLE_PERF == 3,
                  "PS_KIND is in UISAVE_* order");
 PS_STATIC_ASSERT(PS_N_ARP == 1u && PS_N_SEQ == 4u && PS_N_PERF == 8u && PS_N_PATCH == 6u, "the chunk counts above");

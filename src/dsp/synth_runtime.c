@@ -262,6 +262,8 @@ static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t v
     if (!retrig) return;
 
     v->snap = 1;
+    analog_note_on(&v->analog);                /* ANALOG: this note's own small pitch and speed offsets */
+    v->osc1.pcm.trig = v->osc2.pcm.trig = 1;   /* a PCM wave's attack starts at the next tick (pcm_osc.c) */
     if (arch == VARCH_STRIKE) {                /* the attack starts over with the note (a legato note keeps it) */
         const AttackInfo *ai = &attack_info[e->oscmix.atk_sample % ATK_COUNT];
         v->atk_sample = (uint8_t)(e->oscmix.atk_sample % ATK_COUNT);
@@ -437,6 +439,7 @@ void synth_init(void)
     global_init();
     preset_defaults();
     voice_attack_init();
+    pcm_osc_init();
     synth_restart();
 }
 

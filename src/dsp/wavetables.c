@@ -2,11 +2,11 @@
  * The bank data is not here: it is the store image (wavetables_image.bin, wavetable_attach.c). */
 #include "wavetables.h"
 
-_Static_assert(NUM_BANKS == 15, "wavetables.h NUM_BANKS != gen_wavetables.py BANK_DEFS");
+_Static_assert(NUM_BANKS == 16, "wavetables.h NUM_BANKS != gen_wavetables.py BANK_DEFS");
 
 const uint16_t wavetable_level_start[WT_LEVELS] = {0, 512, 768, 896, 960, 992, 1008};
 
-const uint32_t wavetable_set_id = 0x998EBF27u;   /* CRC-32 of the names, one per line */
+const uint32_t wavetable_set_id = 0x8EB86668u;   /* CRC-32 of the names, one per line */
 
 const char *const wavetable_bank_names[NUM_BANKS] = {
     "Menhir",
@@ -24,6 +24,7 @@ const char *const wavetable_bank_names[NUM_BANKS] = {
     "Frost Shatter",
     "Dust",
     "Hearth",
+    "Hollow Reeds",
 };
 
 /* A band-limited sine at every level, laid out as one bank frame (peak ~4926, about -16 dB): the sub-oscillator's

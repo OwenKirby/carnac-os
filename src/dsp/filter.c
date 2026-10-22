@@ -141,19 +141,27 @@ else d[i]=(n[i]-c[i])*r;
 /* The input clip's large-signal gain for an input gain L: a signal at the output knee comes out of sat_f at Le; a
  * makeup of 1 / Le gives small signals unity and a fully clipped one the knee (SH-2, FORMANT) */
 static inline float clip_gain(float L){return sat_f(SOFT_T*L)*(1.f/SOFT_T);}
-/* MS-20 / SH-2: the morph's weights on LP, BP, HP (0 LP .. 64 BP .. 127 HP, crossfaded) */
-static void lbh_weights(int morph,float *wl,float *wb,float *wh){
-float f=(float)morph*(1.f/63.5f);
+/* MS-20 / SH-2: the morph's weights on LP, BP, HP (0 LP .. 64 BP .. 127 HP, crossfaded), morph in Q8 knob units */
+static void lbh_weights(int32_t morph_q8,float *wl,float *wb,float *wh){
+float f=(float)morph_q8*(1.f/(63.5f*256.f));
 if(f<=1.f){*wl=1.f-f;*wb=f;*wh=0.f;}
 else{*wl=0.f;*wb=2.f-f;*wh=f-1.f;}
 }
+/* filter_feedback_q12 between the knob's steps, resonance in Q8 knob units (a smoothed knob turns through them):
+ * the same value on each whole step */
+static int32_t feedback_q8(int flavor,int32_t res_q8){
+int32_t i=res_q8>>8,f=res_q8&255,a=filter_feedback_q12(flavor,i);
+if(f==0)return a;
+return a+(((filter_feedback_q12(flavor,i+1)-a)*f)>>8);
+}
 /* One core's settings for the tick. The coefficients ramp from where they are to the new ones over the tick (snap:
- * jump at once, on a new note). A change of flavour clears the state: one circuit's state is noise to another. */
-void filter_core_prepare(SvfCore *k,int cutoff_q8,int raw_res,int morph,int drive,int flavor,uint8_t shift,int snap){
-if(raw_res>115)raw_res=115;
-if(raw_res<0)raw_res=0;
-if(morph<0)morph=0;
-if(morph>127)morph=127;
+ * jump at once, on a new note). A change of flavour clears the state: one circuit's state is noise to another.
+ * Resonance and morph come in Q8 knob units, as the cutoff does, so a smoothed knob moves them between its steps. */
+void filter_core_prepare(SvfCore *k,int cutoff_q8,int res_q8,int morph_q8,int drive,int flavor,uint8_t shift,int snap){
+if(res_q8>(115<<8))res_q8=115<<8;
+if(res_q8<0)res_q8=0;
+if(morph_q8<0)morph_q8=0;
+if(morph_q8>(127<<8))morph_q8=127<<8;
 if(drive<0)drive=0;
 if(drive>127)drive=127;
 if(flavor<0||flavor>=FLT_COUNT)flavor=FLT_MULTI;
@@ -168,14 +176,14 @@ case FLT_MULTI:{
 /* the feedback, and the mode's taps. The passband sinks by 1 / (1 + fb) as the resonance rises (the ladder's
  * thinning bass); a quarter of the feedback is made up at the input, with DRIVE's gain. The loop is solved for this
  * sample's output (zero delay): u = (x - k S) / (1 + k G^4), S the stages' stored part of the 4th's output. */
-int32_t fb=filter_feedback_q12(FLT_MULTI,raw_res),dq=(drive*MULTI_DRIVE_Q8)/127;
+int32_t fb=feedback_q8(FLT_MULTI,res_q8),dq=(drive*MULTI_DRIVE_Q8)/127;
 int16_t tap[5]={0,0,0,0,0};
 float g=lut_g(tpt_g_lut,cutoff_q8),G=g/(1.f+g),G2=G*G;
 k->k=(float)fb*(1.f/4096.f)*(1.f-0.3f*filter_res_taper(cutoff_q8));
 k->drive=(1.f+(float)fb*(1.f/16384.f))*(float)filter_exp2_q8(dq)*(1.f/256.f);
 n[0]=G;n[1]=1.f/(1.f+k->k*G2*G2);
 ramp_to(k->c,k->dc,n,2,shift,snap);
-filter_multi_taps(morph,tap);
+filter_multi_taps_q8(morph_q8,tap);
 float ease=(float)filter_exp2_q8(-(int32_t)(MULTI_DRIVE_EASE*(float)dq))*(1.f/256.f);
 for(int i=0;i<5;i++)k->tap[i]=(float)tap[i]*(1.f/128.f)*ease;
 return;
@@ -185,10 +193,10 @@ case FLT_MS20:{
  * turns, never quieter (filter.h). The morph crossfades its outputs: LP s1, BP 2 (s0 - s1) (unity at the cutoff),
  * HP u - 2 s0 + s1, as taps on u, s0, s1. */
 float wl,wb,wh;
-k->k=(float)filter_feedback_q12(FLT_MS20,raw_res)*(MS20_DIODE_G*0.5f/4096.f)*(1.f-0.25f*filter_res_taper(cutoff_q8));
+k->k=(float)feedback_q8(FLT_MS20,res_q8)*(MS20_DIODE_G*0.5f/4096.f)*(1.f-0.25f*filter_res_taper(cutoff_q8));
 k->drive=(float)filter_ms20_drive_q8(drive)*(1.f/256.f);
 k->makeup=(float)filter_ms20_makeup_q8(drive)*(1.f/256.f);
-lbh_weights(morph,&wl,&wb,&wh);
+lbh_weights(morph_q8,&wl,&wb,&wh);
 k->tap[0]=wh*k->makeup;k->tap[1]=(2.f*wb-2.f*wh)*k->makeup;k->tap[2]=(wl-2.f*wb+wh)*k->makeup;
 n[0]=(float)lut_coeff(onepole_g44_lut,cutoff_q8)*(1.f/32768.f);
 ramp_to(k->c,k->dc,n,1,shift,snap);
@@ -199,8 +207,8 @@ case FLT_FORMANT:{
  * (filter_res_taper). The level gives way as the resonance rises, as an analogue filter's passband does
  * (1 - 0.39 r^2: -0.7 dB at resonance 50, -3 dB at 100, -4.3 dB at 115). DRIVE above 0 clips the input as the
  * SH-2's mixer does (the same level and span), its makeup holding the level; at 0 the input goes straight in. */
-float r=(float)raw_res*(1.f/115.f),comp=1.f-0.39f*r*r;
-k->k=(float)((127-raw_res)*180+1200)*(1.f/32768.f);
+float r=(float)res_q8*(1.f/(115.f*256.f)),comp=1.f-0.39f*r*r;
+k->k=((float)((127<<8)-res_q8)*(180.f/256.f)+1200.f)*(1.f/32768.f);
 k->k+=(0.734375f-k->k)*0.4f*filter_res_taper(cutoff_q8);
 svf_coeffs(n,lut_g(tpt_g_lut,cutoff_q8),k->k);
 ramp_to(k->c,k->dc,n,3,shift,snap);
@@ -210,7 +218,7 @@ if(drive>0){
 k->drive=SH2_BASE*(float)filter_exp2_q8((drive*SH2_DRIVE_Q8)/127)*(1.f/256.f);
 k->makeup*=1.f/clip_gain(k->drive);
 }
-svf_coeffs(n,lut_g(tpt_g_lut,cutoff_q8+(filter_formant_gap(morph)<<8)),k->k);
+svf_coeffs(n,lut_g(tpt_g_lut,cutoff_q8+filter_formant_gap_q8(morph_q8)),k->k);
 ramp_to(k->e,k->de,n,3,shift,snap);
 return;
 }
@@ -222,7 +230,7 @@ default:{
  * resonance (1 / (1 + k)); SH2_BASS of the feedback boosts the input, before the mixer's clip, and is not made up
  * after it (a made-up boost ran a clipped input past the knee). No high-cutoff taper: it self-oscillates to the top,
  * as the circuit does. LP24 -> BP -> HP24. */
-int32_t fb=filter_feedback_q12(FLT_MULTI,raw_res);
+int32_t fb=feedback_q8(FLT_MULTI,res_q8);
 k->k=(float)fb*(1.f/4096.f);
 float bass=1.f+SH2_BASS*k->k;
 k->drive=SH2_BASE*(float)filter_exp2_q8((drive*SH2_DRIVE_Q8)/127)*(1.f/256.f)*bass;
@@ -244,15 +252,15 @@ n[0]=G;n[1]=1.f/(1.f+k->k*G2*G2);n[2]=g;
 ramp_to(k->c,k->dc,n,3,shift,snap);
 /* LP24 y4, BP 4 (y2 - 2 y3 + y4) = 4 H^2 (1 - H)^2 (unity at the cutoff), HP24 (1 - H)^4 */
 static const float LP[5]={0,0,0,0,1},BP[5]={0,0,4,-8,4},HP[5]={1,-4,6,-4,1};
-lbh_weights(morph,&wl,&wb,&wh);
+lbh_weights(morph_q8,&wl,&wb,&wh);
 for(int i=0;i<5;i++)k->tap[i]=(wl*LP[i]+wb*BP[i]+wh*HP[i])*(k->makeup*(1.f/SH2_Q));   /* back to Q15 units */
 return;
 }
 }
 }
-void dual_filter_prepare(DualFilterMatrix *dfm,int cutoff1_q8,int res1,int morph1,int drive1,int flavor1,int cutoff2_q8,int res2,int morph2,int drive2,int flavor2,int routing_morph,int balance_morph,uint8_t shift,int snap){
-filter_core_prepare(&dfm->core[0],cutoff1_q8,res1,morph1,drive1,flavor1,shift,snap);
-filter_core_prepare(&dfm->core[1],cutoff2_q8,res2,morph2,drive2,flavor2,shift,snap);
+void dual_filter_prepare(DualFilterMatrix *dfm,int cutoff1_q8,int res1_q8,int morph1_q8,int drive1,int flavor1,int cutoff2_q8,int res2_q8,int morph2_q8,int drive2,int flavor2,int routing_morph,int balance_morph,uint8_t shift,int snap){
+filter_core_prepare(&dfm->core[0],cutoff1_q8,res1_q8,morph1_q8,drive1,flavor1,shift,snap);
+filter_core_prepare(&dfm->core[1],cutoff2_q8,res2_q8,morph2_q8,drive2,flavor2,shift,snap);
 dfm->parallel=(float)(routing_morph*258)*(1.f/32768.f);
 dfm->bal2=(float)(balance_morph*258)*(1.f/32768.f);
 }

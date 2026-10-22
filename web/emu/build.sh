@@ -1,14 +1,15 @@
 #!/bin/sh
-# Synth core in the browser: src/dsp/*.c (minus engine.c, the old shim, and test_wavetables.c) plus
-# src/host/web_entry.c and src/host/web_seq_screen.c (the firmware's screen renderers, src/ui_page_draw.c with
-# src/ui_seq_draw.c and src/ui_arp_draw.c, on a stand-in canvas), compiled to WebAssembly with Emscripten.
-#   web/emu/build.sh   ->  web/emu/synth.js, web/emu/synth.wasm
-# Emscripten: emcc on PATH, or the emsdk install at $EMSDK (default below), run through its bundled Python.
-# EMSDK=/path/to/emsdk web/emu/build.sh overrides the install location.
+# SPDX-License-Identifier: GPL-3.0-only
+# Carnac in the browser: src/host/carnac_web.c (the FM1's app, src/hardware/synth_panel.c, its UI and screens, on a
+# simulated FM1 over X0X's gfx.c and storage.c) and the synth's DSP, compiled to WebAssembly with Emscripten.
+#   web/emu/build.sh   ->  web/emu/carnac.wasm   (the page: web/emu/index.html + worklet.js, served as they are)
+# Needs X0X's tree in x0x-firmware/ (its gfx.c, storage.c, plat.h and font). Emscripten: emcc on PATH, or the emsdk
+# install at $EMSDK (default below), run through its bundled Python. SYNTH_VERSION=0.9.2 names the build on the splash.
 set -e
 cd "$(dirname "$0")/../.."
 
-EMSDK=${EMSDK:-"$(pwd)/../emsdk/emsdk"}
+# (absolute, as Windows spells it: emcc keys its cache on the path, and a different spelling clears the cache)
+EMSDK=${EMSDK:-"$( (cd .. && (pwd -W 2>/dev/null || pwd)) )/emsdk/emsdk"}
 if command -v emcc >/dev/null 2>&1; then
     emcc() { command emcc "$@"; }
 elif [ -f "$EMSDK/upstream/emscripten/emcc.py" ]; then
@@ -23,6 +24,37 @@ else
     exit 1
 fi
 
+FW=x0x-firmware/firmware
+[ -f "$FW/src/gfx.c" ] || { echo "build: no $FW (git clone https://github.com/charlesvestal/fm1-x0x.git x0x-firmware)"; exit 1; }
+
+# X0X's screen font (gfx.c's FONT_S: the splash's and the crash screen's words; the pages draw their own runes)
+GEN=build/emu-gen
+mkdir -p "$GEN"
+if [ ! -f "$GEN/felucca_font.h" ]; then
+    PYTHON=$(command -v python3 >/dev/null 2>&1 && python3 -c "" 2>/dev/null && echo python3 || echo python)
+    if ! "$PYTHON" x0x-firmware/tools/gen_font.py "$GEN/felucca_font.h" >/dev/null 2>&1; then
+        # Pillow without libraqm can't take OpenType features: drop them (only tabular digits, "tnum", are lost), as
+        # src/host/x0x_unity_check.sh does
+        cat > "$GEN/noraqm.py" <<'EOF'
+import runpy, sys
+from PIL import ImageFont, ImageDraw
+def strip(f):
+    def g(*a, **k):
+        for x in ("features", "language", "direction"): k.pop(x, None)
+        return f(*a, **k)
+    return g
+F = ImageFont.FreeTypeFont
+_gl = F.getlength
+F.getlength = lambda self, text, mode="", direction=None, features=None, language=None: _gl(self, text, mode)
+for n in ("getbbox", "getmask", "getmask2"): setattr(F, n, strip(getattr(F, n)))
+ImageDraw.ImageDraw.text = strip(ImageDraw.ImageDraw.text)
+tool = sys.argv[1]; sys.argv = sys.argv[1:]; sys.path.insert(0, tool.rsplit("/", 1)[0])
+runpy.run_path(tool, run_name="__main__")
+EOF
+        "$PYTHON" "$GEN/noraqm.py" x0x-firmware/tools/gen_font.py "$GEN/felucca_font.h" >/dev/null
+    fi
+fi
+
 SOURCES=""
 for f in src/dsp/*.c; do
     case "$f" in
@@ -31,16 +63,12 @@ for f in src/dsp/*.c; do
     SOURCES="$SOURCES $f"
 done
 
-EXPORTS="_web_init,_web_midi,_web_render,_web_out_ptr,_web_max_frames,_web_sample_rate,_web_knob_get,_web_knob_set,_web_knob_label,_web_knob_kind,_web_knob_text,_web_page_visible,_web_layer_arch,_web_arch_name,_web_layer_voices,_web_perf_mode,_web_ui_page,_web_ui_layer,_web_ui_select,_web_ui_algo,_web_ui_preset,_web_ui_preset_target,_web_ui_preset_slot,_web_ui_count,_web_ui_cursor,_web_ui_active,_web_ui_state,_web_ui_value,_web_ui_label,_web_ui_text,_web_ui_transport,_web_ui_button,_web_ui_wpage,_web_ui_uipage,_web_ui_focus_layer,_web_ui_save_armed,_web_seq_key,_web_arp_key,_web_arp_pos,_web_arp_held,_web_key_leds,_web_screen_draw,_web_seq_playing,_web_seq_recording,_web_seq_draw,_web_seq_palette,_web_seq_fb,_web_seq_blits,_web_seq_text_pos,_web_seq_text_col,_web_seq_text_face,_web_seq_text_str,_web_seq_text_len,_web_seq_knob_text,_malloc,_free"
-
-mkdir -p web/emu
+VER=$(printf %s "${SYNTH_VERSION:-WEB}" | tr a-z A-Z)
 # shellcheck disable=SC2086
-emcc -O3 -Wall -Wextra -Isrc -Isrc/dsp -Isrc/hardware \
-    $SOURCES src/UIStateMachine.c src/host/web_entry.c src/host/web_seq_screen.c \
-    -sWASM=1 -sSTANDALONE_WASM=1 -sENVIRONMENT=web -sFILESYSTEM=0 \
-    -sEXPORTED_FUNCTIONS="$EXPORTS" \
-    -sEXPORTED_RUNTIME_METHODS=ccall,cwrap \
-    --no-entry \
-    -o web/emu/synth.js
+emcc -O2 -ffp-contract=off -std=gnu99 -Wall -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
+    "-DSYNTH_VERSION=\"$VER\"" -Isrc -Isrc/dsp -Isrc/hardware -I$FW/src -I"$GEN" \
+    $SOURCES src/host/pcm_images_host.c src/host/carnac_web.c \
+    --no-entry -sSTANDALONE_WASM -sSTACK_SIZE=1048576 -sINITIAL_MEMORY=33554432 -sFILESYSTEM=0 \
+    -o web/emu/carnac.wasm
 
-echo "build: web/emu/synth.js + synth.wasm ($(wc -c < web/emu/synth.wasm | tr -d ' ') B wasm)"
+echo "build: web/emu/carnac.wasm ($(wc -c < web/emu/carnac.wasm | tr -d ' ') B)"

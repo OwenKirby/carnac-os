@@ -15,6 +15,7 @@
 #include "dsp/preset.h"
 #include "dsp/synth_runtime.h"
 #include "dsp/voice_allocator.h"
+#include "dsp/pcm_osc.h"
 #include "UIStateMachine.h"
 #include "dsp/wavetables.h"
 #include "hardware/mem_section.h"
@@ -53,7 +54,7 @@ static void wt_to_flash(void)
     pt_wt_on = 0;
 }
 
-enum { K_IDLE, K_HELD, K_SEQ };
+enum { K_IDLE, K_HELD, K_SEQ, K_RS };   /* K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS */
 enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_HEAVY 1u
 #define F_ONE 2u                     /* one note, not the cap */
@@ -64,6 +65,10 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_DLY_BBD 64u                /* the delay as a BBD (DELAY TYPE), with any of the above */
 #define F_ATK_FILT 128u              /* STRIKE: half the attack through FILTER1 (ATTACK TO FILTER 64), its dearer path */
 #define F_HP 256u                    /* both filters' morph at 110 (SH-2: past BP, all five output taps) */
+#define F_PCM 512u                   /* PCM waves (needs the store uploaded): OSC1 CHOIR at SCAN 64 (both loops read),
+                                      * OSC2 WOOD CHIMES; with K_RS / K_SEQ OSC1 plays WOOD CHIMES too (the attack
+                                      * at every note). gen_pcm_waves.py's wave order: WOOD CHIMES 0, CHOIR 4 */
+#define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
 
 typedef struct {
@@ -137,12 +142,27 @@ static const PtScen SCEN[] = {
     {"SEQ+ARP SH2 CEL", K_SEQ, VARCH_SINGLE, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
     {"DUALFLT SH2 HP", K_HELD, VARCH_DUAL_FILTER, FLT_SH2, F_HEAVY | F_HP, UIPAGE_HOME1},
     {"BINAUR SH2 HP", K_HELD, VARCH_BINAURAL, FLT_SH2, F_HEAVY | F_HP, UIPAGE_HOME1},
+    /* 2026-10-21: PCM waves on the oscillators (pcm_osc.c), each beside the row above it without them */
+    {"SINGLE PCM", K_HELD, VARCH_SINGLE, FLT_MULTI, F_PCM, UIPAGE_HOME1},
+    {"DUAL OSC PCM", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_PCM, UIPAGE_HOME1},
+    {"SPREAD PCM", K_HELD, VARCH_SPREAD, FLT_MULTI, F_PCM, UIPAGE_HOME1},
+    {"DUAL FILTER PCM", K_HELD, VARCH_DUAL_FILTER, FLT_MULTI, F_PCM, UIPAGE_HOME1},
+    {"STACK PCM", K_HELD, VARCH_STACK, FLT_MULTI, F_PCM, UIPAGE_HOME1},
+    {"BINAURAL PCM", K_HELD, VARCH_BINAURAL, FLT_MULTI, F_PCM, UIPAGE_HOME1},
+    {"DUALOSC MULTI H PCM", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_HEAVY | F_PCM, UIPAGE_HOME1},
+    {"DUALFLT MULTI H PCM", K_HELD, VARCH_DUAL_FILTER, FLT_MULTI, F_HEAVY | F_PCM, UIPAGE_HOME1},
+    {"BINAUR MULTI H PCM", K_HELD, VARCH_BINAURAL, FLT_MULTI, F_HEAVY | F_PCM, UIPAGE_HOME1},
+    {"SINGLE RS", K_RS, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
+    {"SINGLE RS PCM", K_RS, VARCH_SINGLE, FLT_MULTI, F_PCM, UIPAGE_HOME1},
+    {"DUALOSC RS", K_RS, VARCH_DUAL_OSC, FLT_MULTI, 0, UIPAGE_HOME1},
+    {"DUALOSC RS PCM", K_RS, VARCH_DUAL_OSC, FLT_MULTI, F_PCM, UIPAGE_HOME1},
+    {"SEQ+ARP HOME PCM", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_PCM, UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
 static struct {
     uint8_t state, scen, phase;
-    uint32_t t0;
+    uint32_t t0, t_rs;                  /* t_rs: K_RS's last strike */
     PtResult res[NSCEN];
     /* the live state the test overwrites, put back after */
     EngineState eng[NLAYER];
@@ -254,6 +274,11 @@ static void patch(EngineState *e, const PtScen *s)
         e->filter[0].mod_src = MSRC_MODSLOT3;
         e->filter[0].mod_amt = 120;
     }
+    if (s->flags & F_PCM) {
+        e->osc[0].wavebank = (uint8_t)(WAVE_PCM_FIRST + (s->kind == K_HELD ? 4u : 0u));
+        e->osc[1].wavebank = WAVE_PCM_FIRST;
+        e->osc[0].scan = e->osc[1].scan = 64;
+    }
 }
 
 static void seq_slot(void)
@@ -318,7 +343,7 @@ static void setup(const PtScen *s)
     tally_clear();
     if (s->flags & F_HEAVY)
         synth_midi_3(0xB0, 1, 90);
-    if (s->kind == K_HELD) {
+    if (s->kind == K_HELD || s->kind == K_RS) {
         n = (s->flags & F_ONE) ? 1u : varch_voice_cap(&engine_state[0]);
         for (i = 0; i < n; i++)
             synth_midi_3(0x90, (uint8_t)(48 + i * 3), (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
@@ -331,8 +356,10 @@ static void setup(const PtScen *s)
 static void restore(void)
 {
     uint8_t l;
-    for (l = 0; l < NLAYER; l++)
+    for (l = 0; l < NLAYER; l++) {
         engine_state[l] = pt.eng[l];
+        engine_load_count[l]++;
+    }
     perf_state = pt.perf;
     for (l = 0; l < SEQ_NLANE; l++)
         seq_lanes[l] = pt.lanes[l];
@@ -393,11 +420,20 @@ uint8_t pt_tick(uint32_t now_ms)
     s = &SCEN[pt.scen];
     r = &pt.res[pt.scen];
     dt = now_ms - pt.t0;
+    if (s->kind == K_RS && pt.phase != P_SETUP && now_ms - pt.t_rs >= PT_RESTRIKE_MS) {
+        uint8_t i, n = varch_voice_cap(&engine_state[0]);
+        for (i = 0; i < n; i++) {                    /* the same chord as setup: off, then on again (a new attack) */
+            uint8_t note = (uint8_t)(48 + i * 3);
+            synth_midi_3(0x80, note, 0);
+            synth_midi_3(0x90, note, (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
+        }
+        pt.t_rs = now_ms;
+    }
     switch (pt.phase) {
     case P_SETUP:
         setup(s);
         pt.phase = P_SETTLE;
-        pt.t0 = now_ms;
+        pt.t0 = pt.t_rs = now_ms;
         break;
     case P_SETTLE:
         if (ld.over || dt >= PT_SETTLE_MS) {        /* cut while settling: measure the cut itself */

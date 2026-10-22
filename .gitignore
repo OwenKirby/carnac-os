@@ -2,8 +2,7 @@
 build/
 listening/
 src/host/renders/*.wav
-web/emu/synth.js
-web/emu/synth.wasm
+web/emu/carnac.wasm
 *.exe
 *.o
 

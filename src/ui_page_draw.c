@@ -5,7 +5,7 @@
  *
  *   y   0..19   header: the layer and its architecture (or the mode, the slot) at the left; the section's pages at the
  *               right ("FLT1  FLT2  FLTMIX", this one lit and underlined); the moon (ui_seq_draw.c sq_draw_moon: the
- *               bar's phase) at the right end
+ *               battery) at the right end
  *   y  22..78   knobs 1..4: each a stone circle (13 stones over 270 degrees, lit up to the value; bipolar values lit
  *               outwards from the top stone) with a pointer, its name above and its value below
  *   y  81..160  the menu list, 6 rows; the row under the Select Encoder cursor on the SEQ page's noisy ground, in white
@@ -69,6 +69,7 @@
 
 #include <stddef.h>                          /* offsetof (the MOD page's destination table) */
 #include "dsp/attacks.h"                     /* STRIKE: the attack outline on the OSCMIXER page */
+#include "dsp/pcm_osc.h"                     /* a PCM wave's name and picture on the OSC / OSCMIXER pages */
 /* ----------------------------------------------------------- colours --- */
 #define PUC_STONE SQ_STONE[sq_pal]                 /* an unlit stone (ui_seq_draw.c) */
 #define PUC_HL SQ_PAL_LANE[sq_pal][SQC_BG]          /* the noisy ground's base: white text sits on it */
@@ -417,9 +418,7 @@ static uint8_t pu_layer_page(uint8_t page) { return (uint8_t)(page <= UIPAGE_AMP
  * SAMHAIN is seq_palette_set's (ORANGE, or RED for the host's text checks) */
 static uint8_t pu_page_pal(const UIStateMachine *sm)
 {
-    static const uint8_t PAL[UITHEME_COUNT] = {SQPAL_ORANGE, SQPAL_RED, SQPAL_FIRE, SQPAL_SOLSTICE, SQPAL_LICHEN, SQPAL_HEATHER,
-                                               SQPAL_RITUAL, SQPAL_GRANITE, SQPAL_OAK};
-    return sm->theme == UITHEME_SAMHAIN || sm->theme >= UITHEME_COUNT ? sq_pal_base : PAL[sm->theme];
+    return sm->theme == UITHEME_SAMHAIN || sm->theme >= UITHEME_COUNT ? sq_pal_base : seq_theme_pal(sm->theme);
 }
 
 /* ------------------------------------------------------------ header --- */
@@ -455,7 +454,7 @@ static int32_t pu_head_tabs(const UIStateMachine *sm, int32_t xr, int32_t y)
 }
 
 /* the header: what the page is about at the left (the layer and its architecture, the mode, the slot), its section's
- * pages at the right, the clock moon past them (sq_draw_moon) */
+ * pages at the right, the battery moon past them (sq_draw_moon) */
 static void pu_draw_head(const UIStateMachine *sm)
 {
     static const char *const MODE[PERF_COUNT] = {"SINGL", "DUAL", "SPLIT"};
@@ -529,6 +528,8 @@ static void pu_knob_read(UIStateMachine *sm, uint8_t page, uint8_t k, PuKnob *o,
         ui_sm_note_name((uint8_t)v, b);                                 /* SPLIT NOTE: C4 */
     else if (info.kind == UIKNOB_FINE)
         ui_sm_fine_text((uint8_t)v, b);                                 /* FINE TUNE: +125C */
+    else if (info.kind == UIKNOB_PORTA && v == 0)
+        b[0] = 'O', b[1] = 'F', b[2] = 'F', b[3] = 0;                     /* PORTA TIME 0: no glide */
     else
         pu_num(b, o->bip ? v - (int32_t)BIPOLAR_CENTER : v, o->bip, 1u);
 }
@@ -764,15 +765,16 @@ static void pu_viz_osc(const UIStateMachine *sm, uint8_t osc)
 {
     const OscParams *o = &sm->engine[sm->s.active_synth_layer]->osc[osc];
     int32_t voice, morph = pu_osc_morph(sm, osc, &voice), x, k, sx, near;
-    int bank = o->wavebank % NUM_BANKS;
-    sq_text(PV_X0, CAP_IN(S, 13), &AF_S, wavetable_bank_names[bank], SQC(MID));
-    for (x = 0; x < PV_W; x++)                       /* one cycle, level 1 (256 samples) */
-        pu_ys[x] = wt_read_morph(bank, morph, 1, (uint32_t)x * (0xFFFFFFFFu / PV_W));
+    char nb[13];
+    int stones = wave_stones(o->wavebank);
+    sq_text(PV_X0, CAP_IN(S, 13), &AF_S, wave_name(o->wavebank, nb), SQC(MID));
+    for (x = 0; x < PV_W; x++)                       /* a bank: one cycle (level 1); a PCM wave: its start */
+        pu_ys[x] = wave_preview(o->wavebank, morph, (uint32_t)x * (0xFFFFFFFFu / PV_W));
     pu_trace(pu_ys, 0, 37, 20, SQC(THEME));
-    /* the bank's frames as a stone row, the one nearest the scan lit */
-    near = (morph + 2048) >> 12;
-    for (k = 0; k < NUM_MORPH_STEPS; k++) {
-        sx = PV_X0 + 4 + k * (PV_W - 12) / (NUM_MORPH_STEPS - 1);
+    /* the bank's frames (a PCM pair: its two loops) as a stone row, the one nearest the scan lit */
+    near = stones > 1 ? (int32_t)((morph * (stones - 1) + PU_MORPH_MAX / 2) / PU_MORPH_MAX) : 0;
+    for (k = 0; k < stones; k++) {
+        sx = stones > 1 ? PV_X0 + 4 + k * (PV_W - 12) / (stones - 1) : PV_X0 + PV_W / 2;
         pu_menhir(sx - 3, PV_GROUND, 6, k == near ? 10 : 7, k == near ? SQC(THEME) : PUC_STONE);
     }
 }
@@ -794,16 +796,16 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
     int32_t voice, morph1 = pu_osc_morph(sm, 0, &voice), morph2 = pu_osc_morph(sm, 1, &voice);
     int32_t w1 = 127, w2 = 0, ws = m->sub_level, wn = m->noise_level, x, brown = 0, col = m->noise_colour;
     int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2;
-    int bank1 = e->osc[0].wavebank % NUM_BANKS, bank2 = e->osc[1].wavebank % NUM_BANKS;
+    uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;
     uint32_t seed = 0x1234567u, sstep = 0xFFFFFFFFu / PV_W, step = sstep * (uint32_t)ncyc;
     if (arch == VARCH_DUAL_OSC) { w2 = m->balance; w1 = 127 - w2; }
     if (arch == VARCH_STACK) { w2 = e->fltmix.balance; w1 = 127 - w2; }
     for (x = 0; x < PV_W; x++) {
         uint32_t ph = (uint32_t)x * step, sph = (uint32_t)x * sstep;
-        int32_t s = w1 * wt_read_morph(bank1, morph1, 1, ph), sub, n;
-        if (w2) s += w2 * wt_read_morph(bank2, morph2, 1, ph);
+        int32_t s = w1 * wave_preview(wave1, morph1, ph), sub, n;
+        if (w2) s += w2 * wave_preview(wave2, morph2, ph);
         if (m->sub_waveform == SUBWAVE_SQUARE) sub = sph < 0x80000000u ? 24000 : -24000;
-        else if (m->sub_waveform == SUBWAVE_CURRENT) sub = wt_read_morph(bank1, morph1, 1, sph);
+        else if (m->sub_waveform == SUBWAVE_CURRENT) sub = wave_preview(wave1, morph1, sph);
         else sub = PU_SIN[sph >> 26] * 128;
         s += ws * sub;
         seed = seed * 1664525u + 1013904223u;        /* the noise: white, browned by the colour (a leaky sum) */
@@ -812,7 +814,7 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
         s += wn * ((n * (127 - col) + (brown / 2) * col) / 127);
         pu_ys[x] = s / 127;
         if (spread)                                  /* the detuned playheads: OSC1 stretched, dim behind */
-            pu_ys2[x] = w1 * wt_read_morph(bank1, morph1, 1, ph + (uint32_t)m->spread * (uint32_t)x * (step >> 9)) / 127;
+            pu_ys2[x] = w1 * wave_preview(wave1, morph1, ph + (uint32_t)m->spread * (uint32_t)x * (step >> 9)) / 127;
     }
     pu_trace(pu_ys, spread ? pu_ys2 : 0, 36, 24, SQC(THEME));
 }
@@ -1126,8 +1128,9 @@ static void pu_viz_env(const UIStateMachine *sm, uint8_t i)
         pu_ys[x] = pu_env_y(lv);
     }
     pu_curve(pu_ys, SQC(THEME), 1u);
-    for (x = 1; x < 4; x++)                          /* the stage boundaries, faint */
-        pu_fog_col(xs[x], PU_ENV_TOP, PV_GROUND, 3u, PUC_STONE, PU_VIZ_Y);
+    for (x = 1; x < 4; x++)                          /* the stage boundaries, faint, under the curve only */
+        if (xs[x] >= PV_X0 && xs[x] < PV_X0 + PV_W)
+            pu_fog_col(xs[x], pu_ys[xs[x] - PV_X0] + 2, PV_GROUND, 3u, PUC_STONE, PU_VIZ_Y);
     if (i > 0u && p->invert)
         sq_text_r(PV_X0 + PV_W, CAP_IN(S, 13), &AF_S, "INVERTED", SQC(MID), SQC(BG));
 }
@@ -2576,7 +2579,7 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
         arp_draw(sm, q, a, force);
     else
         page_draw(sm, force);
-    sq_draw_moon(force);                             /* the clock, top right on every page */
+    sq_draw_moon(force);                             /* the battery, top right on every page */
     if (held)
         pu_draw_hold(sm);
 }

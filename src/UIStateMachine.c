@@ -6,7 +6,8 @@
  * below counts and indexes shown rows only. Integer only: no float / double anywhere. */
 #include "UIStateMachine.h"
 #include "dsp/attacks.h"            /* ATK_COUNT and attack_names: STRIKE's ATTACK knob */
-#include "dsp/wavetables.h"          /* NUM_BANKS and wavetable_bank_names: the WAVEBANK row */
+#include "dsp/wavetables.h"          /* NUM_BANKS */
+#include "dsp/pcm_osc.h"             /* the WAVE row: the wave list (banks, PCM waves, attacks) */
 #include "dsp/arp_chords.h"          /* ARP_GENRE_COUNT and arp_genre_names: the GENRE BANK row */
 #include "dsp/seq_scale.h"           /* a NOTE lane's SCALE: the knob and the keyboard held to it */
 #include "dsp/midi_clock.h"          /* MIDI_CLOCK_BPM_BASE: the INT TEMPO row in BPM */
@@ -40,7 +41,9 @@ enum {                               /* how a row reads and writes its value */
     RK_SAVE_ACTION,                  /* ACTION: UIACT_* (6.2.2) */
     RK_THEME,                        /* GLOBAL > THEME: UIStateMachine.theme */
     RK_INST,                         /* the byte at offset in the instrument settings (GLOBAL, sm->inst) */
-    RK_FINE                          /* RK_BYTE shown in cents (OSC FINE TUNE, osc_fine_cents) */
+    RK_FINE,                         /* RK_BYTE shown in cents (OSC FINE TUNE, osc_fine_cents) */
+    RK_WAVE                          /* RK_BYTE holding a wave code (pcm_osc.h): steps through the wave list (banks,
+                                      * PCM waves, attacks), shows the wave's name */
 };
 #define RF_LAYER2 (1u << 0)          /* a Layer 2 parameter: greyed under SINGL_SYNTH */
 #define RF_SPLIT_MIRROR (1u << 1)    /* "SAME AS LAYER1": greyed under SPLIT_SYNTH (5.3 View 2) */
@@ -150,7 +153,7 @@ PS_STATIC_ASSERT(sizeof(VARCH_NAMES) / sizeof(VARCH_NAMES[0]) == VARCH_COUNT, "o
 /* SINGLE, SPREAD and STRIKE (2026-10-17): knob 3 is SCAN AMT, so FINE TUNE is a row there (OSC_KNOBS_SCAN) */
 #define A_SCANKNOB ((uint8_t)(VARCH_BIT(VARCH_SINGLE) | VARCH_BIT(VARCH_SPREAD) | VARCH_BIT(VARCH_STRIKE)))
 static const UiRow OSC_ROWS[] = {
-    {"WAVEBANK", OFS(OscParams, wavebank), 0, NUM_BANKS - 1, RK_BYTE, 0, wavetable_bank_names, A_ALL},
+    {"WAVE", OFS(OscParams, wavebank), 0, 255, RK_WAVE, 0, NULL, A_ALL},
     {"FINE TUNE", OFS(OscParams, fine), 0, VAL_MAX, RK_FINE, 0, NULL, A_SCANKNOB},
     {"SCAN MOD SRC", OFS(OscParams, scan_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"SCAN MOD AMT", OFS(OscParams, scan_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, (uint8_t)(VARCH_ALL & ~A_SCANKNOB)},
@@ -190,15 +193,23 @@ static const UiRow ATTACK_ROWS[] = {
     {"KEY TRACK", OFS(OscMixerParams, atk_track), 0, ATKTRK_COUNT - 1, RK_BYTE, 0, ATKTRK_NAMES, A(STRIKE)},
     {"BEND MOD SRC", OFS(OscMixerParams, atk_bend_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(STRIKE)},
 };
-/* FILTER1 / FILTER2 (4.2): DRIVE first (2026-10-21), then the circuit; the type morph's own mod source and amount
- * show in every architecture */
-static const UiRow FILTER_ROWS[] = {
-    {"DRIVE", OFS(FilterParams, drive), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"FLAVOUR", OFS(FilterParams, flavour), 0, FLT_COUNT - 1, RK_BYTE, 0, FLT_NAMES, A_ALL},
-    {"MOD SRC", OFS(FilterParams, mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"MORPH MOD SRC", OFS(FilterParams, morph_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"MORPH MOD AMT", OFS(FilterParams, morph_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
-};
+/* FILTER1 / FILTER2 (4.2): DRIVE first (2026-10-21), then the circuit and KEY TRACK; the type morph's own mod source
+ * and amount show in every architecture. KEY TRACK lives at the patch's end (EngineState.filter_key_track), so each
+ * filter page has its own table: the row's offset counts from that filter's block. */
+#define FKT_OFS(i) ((uint8_t)(offsetof(EngineState, filter_key_track) + (i) - offsetof(EngineState, filter) - \
+                              (i) * sizeof(FilterParams)))
+#define FILTER_ROWS(i) {                                                                                   \
+    {"DRIVE", OFS(FilterParams, drive), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},                               \
+    {"FLAVOUR", OFS(FilterParams, flavour), 0, FLT_COUNT - 1, RK_BYTE, 0, FLT_NAMES, A_ALL},                \
+    {"KEY TRACK", FKT_OFS(i), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},                                         \
+    {"MOD SRC", OFS(FilterParams, mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},                     \
+    {"MORPH MOD SRC", OFS(FilterParams, morph_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},         \
+    {"MORPH MOD AMT", OFS(FilterParams, morph_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},      \
+}
+static const UiRow FILTER1_ROWS[] = FILTER_ROWS(0);
+static const UiRow FILTER2_ROWS[] = FILTER_ROWS(1);
+PS_STATIC_ASSERT(offsetof(EngineState, filter_key_track) + 1u - offsetof(EngineState, filter[1]) <= 255u,
+                 "FILTER2's KEY TRACK in reach of a row offset");
 /* FILTER MIXER (4.2): DUAL FILTER's balance / routing sources, STACK's blend source, BINAURAL's phase mod source and
  * CUTOFF L/R's own mod source and amount */
 static const UiRow FLTMIX_ROWS[] = {
@@ -298,12 +309,13 @@ static const UiRow GLOBAL_ROWS[] = {
     {"INT TEMPO", PERF(int_tempo), 0, VAL_MAX, RK_BYTE, RF_BPM, NULL, A_ALL},
     {"THEME", 0, 0, UITHEME_COUNT - 1, RK_THEME, 0, THEME_NAMES, A_ALL},
 };
-/* 5.3 View 1 / View 2: the architecture lives in the layer's patch (RK_ENG), the rest in the performance. Since
+/* 5.3 View 1 / View 2: the architecture and ANALOG live in the layer's patch (RK_ENG), the rest in the performance. Since
  * 2026-10-16 they are one HOME page that follows the layer focus (View 2 = layer 2 in focus), so both keep the same
  * rows in the same order (the cursor stays on its row across a layer switch). PERF MODE is on the performance browser
  * (UIPAGE_PERF) since 2026-10-17 */
 static const UiRow HOME1_ROWS[] = {
     {"L1 ARCH", ENGB(arch), 0, VARCH_COUNT - 1, RK_ENG, 0, VARCH_NAMES, A_ALL},
+    {"L1 ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, 0, NULL, A_ALL},
     {"L1 VOICE MODE", PERF(voice_mode), 0, VMODE_COUNT - 1, RK_BYTE, 0, VMODE_NAMES, A_ALL},
     {"L1 UNISON DETUNE", PERF(unison_detune), 0, VAL_MAX, RK_BYTE, RF_UNISON, NULL, A_ALL},
     {"L1 PORTA MODE", PERF(porta_mode), 0, PORTA_COUNT - 1, RK_BYTE, 0, PORTA_NAMES, A_ALL},
@@ -312,6 +324,7 @@ static const UiRow HOME1_ROWS[] = {
 };
 static const UiRow HOME2_ROWS[] = {
     {"L2 ARCH", ENGB(arch), 0, VARCH_COUNT - 1, RK_ENG, RF_LAYER2, VARCH_NAMES, A_ALL},
+    {"L2 ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, RF_LAYER2, NULL, A_ALL},
     {"L2 VOICE MODE", (uint8_t)(PERF(voice_mode) + 1u), 0, VMODE_COUNT - 1, RK_BYTE, RF_LAYER2 | RF_SPLIT_MIRROR, VMODE_NAMES, A_ALL},
     {"L2 UNISON DETUNE", (uint8_t)(PERF(unison_detune) + 1u), 0, VAL_MAX, RK_BYTE,
      RF_LAYER2 | RF_SPLIT_MIRROR | RF_UNISON, NULL, A_ALL},
@@ -376,8 +389,8 @@ static const UiPage UI_PAGES[] = {
     SYNTH(OSC_ROWS, NROWS(OSC_ROWS), osc, 1, OscParams),
     SYNTH(ATTACK_ROWS, NROWS(ATTACK_ROWS), oscmix, 0, OscMixerParams),
     SYNTH(OSCMIX_ROWS, NROWS(OSCMIX_ROWS), oscmix, 0, OscMixerParams),
-    SYNTH(FILTER_ROWS, NROWS(FILTER_ROWS), filter, 0, FilterParams),
-    SYNTH(FILTER_ROWS, NROWS(FILTER_ROWS), filter, 1, FilterParams),
+    SYNTH(FILTER1_ROWS, NROWS(FILTER1_ROWS), filter, 0, FilterParams),
+    SYNTH(FILTER2_ROWS, NROWS(FILTER2_ROWS), filter, 1, FilterParams),
     SYNTH(FLTMIX_ROWS, NROWS(FLTMIX_ROWS), fltmix, 0, FilterMixerParams),
     SYNTH(ENV_ROWS, NROWS(ENV_ROWS) - 1u, env, 0, EnvParams),           /* ENV1: no invert */
     SYNTH(ENV_ROWS, NROWS(ENV_ROWS), env, 1, EnvParams),
@@ -410,7 +423,7 @@ static const uint8_t SECTION_COUNT[BTN_COUNT] = {
 
 /* -------------------------------------------------------- knob table --- */
 /* 2.2: the four knobs of each page. offset is in the page's data block (as the rows' offsets are), except HOME's
- * knob 4, which is the focused layer's PORTA TIME in the performance. */
+ * knob 4 (UIKNOB_PORTA), which is the focused layer's PORTA TIME in the performance. */
 typedef struct {
     const char *label;
     uint8_t offset;
@@ -502,11 +515,12 @@ static const UiKnob ARP_KNOBS[4] = {
     {"RATE", 0, UIKNOB_LIST, ARPRATE_COUNT, ARPRATE_NAMES}, {"OCTAVE", 1, UIKNOB_LIST, ARP_NOCT, ARPOCT_NAMES},
     {"STYLE", 2, UIKNOB_LIST, ARPSTYLE_COUNT, ARPSTYLE_NAMES}, {"RHYTHM", 3, UIKNOB_LIST, ARP_NVAR, ARPVAR_NAMES},
 };
-/* LAYER (2026-10-17): the play controllers. VELOCITY is the keys' own; MOD WHEEL goes out as CC 1; CC1 / CC2 set
- * the CUSTOMCC1 / 2 mod sources directly (no CC number needed) */
+/* LAYER (2026-10-17): the play controllers. VELOCITY is the keys' own; MOD WHEEL goes out as CC 1; CC1 sets the
+ * CUSTOMCC1 mod source directly (no CC number needed). Knob 4 (2026-10-21, was CC2): the focused layer's PORTA TIME,
+ * 0 is portamento off */
 static const UiKnob HOME_KNOBS[4] = {
     UIK("VELOCITY", UIPERF_VELOCITY, UIKNOB_PERF), UIK("MOD WHEEL", UIPERF_MODWHEEL, UIKNOB_PERF),
-    UIK("CC1", UIPERF_CC1, UIKNOB_PERF), UIK("CC2", UIPERF_CC2, UIKNOB_PERF),
+    UIK("CC1", UIPERF_CC1, UIKNOB_PERF), UIK("PORTA TIME", 0, UIKNOB_PORTA),
 };
 /* ZONES: its four rows */
 static const UiKnob ZONES_KNOBS[4] = {
@@ -549,6 +563,12 @@ static uint8_t perf_mode(const UIStateMachine *sm)
 {
     uint8_t m = sm->perf->perf_mode;
     return m < PERF_COUNT ? m : (uint8_t)PERF_SINGL_SYNTH;
+}
+
+uint8_t ui_sm_key_channel(const UIStateMachine *sm)
+{
+    uint8_t l = (uint8_t)(perf_mode(sm) == PERF_DUAL_SYNTH && sm->s.active_synth_layer == 1u);
+    return (uint8_t)(sm->perf->midi_ch[l] & 0x0Fu);
 }
 
 static const UiPage *ui_cur_page(const UIStateMachine *sm) { return &UI_PAGES[sm->page]; }
@@ -762,6 +782,13 @@ static void row_step(UIStateMachine *sm, const UiRow *r, int16_t delta)
     int16_t n = delta > 0 ? delta : (int16_t)-delta;
     if (r->kind == RK_RENAME || r->kind == RK_VOICES || r->kind == RK_CHAIN || r->kind == RK_SEQ_STEPS)
         return;
+    if (r->kind == RK_WAVE) {                 /* by list position: banks, PCM waves, attacks */
+        int32_t p = (int32_t)wave_list_pos((uint8_t)cur) + delta, last = (int32_t)wave_list_count() - 1;
+        p = p < 0 ? 0 : p > last ? last : p;
+        if (wave_list_code((uint32_t)p) != (uint8_t)cur)
+            row_set(sm, r, wave_list_code((uint32_t)p));
+        return;
+    }
     v = cur < lo ? lo : cur > hi ? hi : cur;  /* a stored value out of range (flash) is pulled in first */
     while (n-- > 0) {
         t = v;
@@ -2177,6 +2204,8 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
         return 0;
     if (k->kind == UIKNOB_PERF)
         return &sm->perf_knob[k->offset];
+    if (k->kind == UIKNOB_PORTA)
+        return &sm->perf->porta_time[layer < NLAYER ? layer : 0u];
     if (page == UIPAGE_GLOBAL && knob < 3u)
         return (uint8_t *)ui_inst(sm) + k->offset;
     if (page == UIPAGE_SAVE_COMMIT) {
@@ -2237,6 +2266,10 @@ uint8_t ui_sm_row_place(const UIStateMachine *sm, uint8_t row)
     int32_t v;
     if (r == NULL || r->max <= r->min || r->kind == RK_RENAME)
         return 0u;
+    if (r->kind == RK_WAVE) {                 /* the knob ring: the place in the wave list */
+        int32_t last = (int32_t)wave_list_count() - 1;
+        return last > 0 ? (uint8_t)(((int32_t)wave_list_pos(row_get(sm, r)) * 127 + last / 2) / last) : 0u;
+    }
     v = (int32_t)row_get(sm, r) - r->min;
     if (v < 0) v = 0;
     if (v > r->max - r->min) v = r->max - r->min;
@@ -2306,6 +2339,7 @@ const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row)
         return src == MSRC_NONE || src >= MSRC_COUNT ? "OFF" : MSRC_NAMES[src];
     }
     if (r->kind == RK_FINE) return ui_sm_fine_text(v, num_buf);
+    if (r->kind == RK_WAVE) return wave_name(v, num_buf);
     if (r->kind == RK_RENAME) {       /* the name, trailing spaces dropped; "-" when the TARGET has none */
         name = ui_sm_rename_name(sm);
         return name != NULL ? ui_sm_name_text(name, num_buf) : "-";

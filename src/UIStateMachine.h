@@ -85,7 +85,9 @@ enum {
     UIKNOB_LIST,                     /* an index into names (n_enum entries): SUB OCTAVE, XMOD TYPE */
     UIKNOB_BPM,                      /* stored 0..127, shown as MIDI_CLOCK_BPM_BASE + value BPM: GLOBAL's INT TEMPO */
     UIKNOB_NOTE,                     /* a MIDI note 0..127, shown by name: ZONES' SPLIT NOTE */
-    UIKNOB_FINE                      /* OSC FINE TUNE: shown in cents, osc_fine_cents */
+    UIKNOB_FINE,                     /* OSC FINE TUNE: shown in cents, osc_fine_cents */
+    UIKNOB_PORTA                     /* LAYER's knob 4: the focused layer's PORTA TIME in the performance, 0 shown OFF
+                                      * (no glide) */
 };
 typedef struct {
     const char *label;               /* "" for UIKNOB_NONE */
@@ -132,10 +134,11 @@ typedef union {
     ArpState arp;                    /* ARP_SEQ: the live arp pattern */
     WholePerformance whole;          /* WHOLE_PERF: the performance and everything it plays */
 } UiClipboard;
-PS_STATIC_ASSERT(sizeof(UiClipboard) == 887u, "the clipboard's RAM (spec 6.2.3)");   /* 887: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE) */
+PS_STATIC_ASSERT(sizeof(UiClipboard) == 893u, "the clipboard's RAM (spec 6.2.3)");   /* 893: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK) */
 /* spec 1: the name characters; MasterPerformancePreset.name holds indices into it (0 = space) */
 #define UI_CHAR_MAP " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/"
-/* 5.1: the play controllers. LAYER's knobs (2026-10-17): VELOCITY, MOD WHEEL, CC1, CC2; PITCH BEND has no knob now */
+/* 5.1: the play controllers. LAYER's knobs (2026-10-17): VELOCITY, MOD WHEEL, CC1, (2026-10-21) PORTA TIME, not CC2;
+ * PITCH BEND has no knob now. CC2 keeps its slot (MIDI / the SEQ still set the CUSTOMCC2 source) */
 enum { UIPERF_VELOCITY, UIPERF_BEND, UIPERF_MODWHEEL, UIPERF_CC1, UIPERF_CC2, UIPERF_COUNT };
 
 /* ------------------------------------------------------------ state --- */
@@ -356,6 +359,10 @@ void ui_sm_attach_arp(UIStateMachine *sm, CarpSeq *carp);
  * rest the same way, ACCENT alone toggles the step recorded last. Returns 1 for every key of that span (the caller must
  * not play it); keys above play. Every other page: returns 0. */
 uint8_t ui_sm_arp_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t down, uint8_t vel);
+
+/* the MIDI channel (0..15) a played key goes out on: in DUAL the selected layer's, so the keys play the layer being
+ * edited (both when the two share a channel); SINGL and SPLIT layer 1's (SPLIT splits it by key and velocity). */
+uint8_t ui_sm_key_channel(const UIStateMachine *sm);
 
 /* the caller wrote the byte ui_sm_knob returned for knob k of page: on ARP the value also goes into every held step
  * (8.1: a step key held while a knob turns edits that step at once); on SAVE submenu 2 a new TARGET re-applies the

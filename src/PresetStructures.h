@@ -451,13 +451,19 @@ typedef struct {
     AmpParams amp;
     uint8_t arch;                    /* VARCH_*: the voice architecture, HOME View 1 / 2 (5.3) */
     uint8_t name[NAME_LEN];          /* char_map indices (0 = space), not ASCII: RENAME PATCH (6.2.1) */
+    uint8_t analog;                  /* ANALOG 0..127 (LAYER page, dsp/analog.h): 0 = clean. Stored in the patch's
+                                      * last stored byte, which v9 left 0, so a v9 patch reads as 0 (no version bump) */
+    uint8_t filter_key_track[NFILTER];   /* FILTER1 / FILTER2 KEY TRACK 0..127 (2026-10-21): the cutoff follows the
+                                          * keys about C4, 127 = an octave an octave. Here, not in FilterParams, so no
+                                          * offset moves; stored in the high nibbles of the filter's two MSRC_* bytes,
+                                          * which v9 left 0, so a v9 patch reads as 0 (no version bump) */
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 183u, "EngineState layout");
+PS_STATIC_ASSERT(sizeof(EngineState) == 186u, "EngineState layout");
 /* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 173 is the most that keeps 22
  * patches to a store chunk (preset_store_fm1.c: (3840 - 16) / 173), so the chunks stay where they were. Since v7 the
  * stored form packs the name 6 bits a character and leaves out OSC1's SYNC and ENV1's INVERT (nothing reads them); v8
  * also packs the three LFOs' CLOCK SYNC and KEY RESET into one byte: 181 in RAM, 171 + 2 spare in flash; v9 spends the
- * two on the filters' DRIVE: 183 in RAM, all 173 stored (no spare left). v8 (ENGINE_V8_RAM), v7 (179 in
+ * two on the filters' DRIVE: 183 in RAM, 172 stored + 1 spare; ANALOG (2026-10-21, 184 in RAM) takes the spare; the filters' KEY TRACK (186 in RAM) the MSRC_* bytes' high nibbles. v8 (ENGINE_V8_RAM), v7 (179 in
  * RAM, atk_bend in the last stored byte) lacked the two BEND MOD bytes, v6 (173, stored as in RAM) atk_filter on,
  * v5 (170 bytes) all the attack bytes. */
 #define ENGINE_STORED_SIZE 173u
@@ -592,7 +598,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 887u, "WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 893u, "WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */

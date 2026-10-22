@@ -25,7 +25,7 @@ static double self_osc_hz(int cutoff, int drive)
     memset(&k, 0, sizeof k);
     k.flavour = 255;
     for (i = 0; i < 33075; i++) {
-        if ((i & 31) == 0) filter_core_prepare(&k, cutoff << 8, 115, 0, drive, FLT_SH2, 5, i == 0);
+        if ((i & 31) == 0) filter_core_prepare(&k, cutoff << 8, 115 << 8, 0, drive, FLT_SH2, 5, i == 0);
         y[i] = filter_core_render_f(&k, i < 20 ? 8000 : 0);
     }
     for (i = 22051; i < 33075; i++)
@@ -54,8 +54,8 @@ int main(void)
             a.flavour = b.flavour = 255;
             for (blk = 0; blk < 2000; blk++) {
                 int cut = st ? 70 << 8 : (int)((20.f + 107.f * expf(-(float)(blk % 400) / 60.f)) * 256.f);
-                filter_core_prepare(&a, cut, 112, MORPH[m], d, fl, 5, blk == 0);
-                filter_core_prepare(&b, cut, 112, MORPH[m], d, fl, 5, blk == 0);
+                filter_core_prepare(&a, cut, 112 << 8, MORPH[m] << 8, d, fl, 5, blk == 0);
+                filter_core_prepare(&b, cut, 112 << 8, MORPH[m] << 8, d, fl, 5, blk == 0);
                 for (i = 0; i < 32; i++) x[i] = saw(blk * 32 + i);
                 filter_core_render_block(&a, x, ya, 32);
                 for (i = 0; i < 32; i++) yb[i] = filter_core_render_f(&b, (int32_t)x[i]);
@@ -84,7 +84,7 @@ int main(void)
         for (i = 0; i < 22050; i++) {
             float t = (float)(i % 11025) / 11025.f;
             if ((i & 31) == 0)
-                filter_core_prepare(&k, (int)((20.f + 107.f * expf(-t * 12.f)) * 256.f), 115, 0, 0, FLT_SH2, 5, i == 0);
+                filter_core_prepare(&k, (int)((20.f + 107.f * expf(-t * 12.f)) * 256.f), 115 << 8, 0, 0, FLT_SH2, 5, i == 0);
             over += fabsf(filter_core_render_f(&k, (int32_t)saw(i))) > 24576.f;
         }
         CHECK(over < 22050 / 100, "SH-2 zap at resonance 115: %.1f %% in the output knee", 100.0 * over / 22050);

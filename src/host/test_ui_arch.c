@@ -132,6 +132,8 @@ int main(void)
     dump("FILTER1 SINGLE");
     CHECK(find_row("MORPH MOD SRC") >= 0 && find_row("MORPH MOD AMT") >= 0, "FILTER page: the type morph's mod rows");
     CHECK(ui_sm_row_text(&sm, (uint8_t)find_row("MORPH MOD AMT")) != NULL, "MORPH MOD AMT is bipolar text");
+    engine_state[0].filter_key_track[0] = 33u; engine_state[0].filter_key_track[1] = 99u;
+    CHECK(find_row("KEY TRACK") == 2 && ui_sm_row_value(&sm, 2) == 33u, "FILTER1 KEY TRACK: the third row, its own byte");
     press(BTN_FX); press(BTN_FX);
     CHECK(sm.page == UIPAGE_OSCMIX, "FX skips OSC2 under SINGLE: %u", sm.page);
     dump("OSCMIX SINGLE"); knobs(UIPAGE_OSCMIX, "OSCMIX SINGLE");
@@ -189,12 +191,29 @@ int main(void)
     ui_sm_enforce(&sm);
     dump("FLTMIX DUAL FILTER"); knobs(UIPAGE_FLTMIX, "FLTMIX DUAL FILTER");
     CHECK(find_row("ROUTING MOD SRC") >= 0 && find_row("CUT L/R MOD SRC") < 0, "DUAL FILTER routing row, no L/R mod");
+    {
+        uint8_t pg = sm.page;
+        sm.page = UIPAGE_FILTER2;
+        CHECK(find_row("KEY TRACK") == 2 && ui_sm_row_value(&sm, 2) == 99u, "FILTER2 KEY TRACK: its own byte");
+        sm.page = pg;
+        engine_state[0].filter_key_track[0] = engine_state[0].filter_key_track[1] = 0u;
+    }
 
     /* layer focus: layer 2 on DUAL OSC while on FILTER MIXER -> falls back to FILTER1 */
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     engine_state[1].arch = VARCH_DUAL_OSC;
     CHECK(ui_sm_set_layer_focus(&sm, 1), "focus L2");
     CHECK(sm.page == UIPAGE_FILTER1, "L2 DUAL OSC fallback from FLTMIX: %u", sm.page);
+    /* DUAL: the keys play the layer in focus, on its channel */
+    {
+        uint8_t c0 = perf_state.midi_ch[0], c1 = perf_state.midi_ch[1];
+        perf_state.midi_ch[0] = 0; perf_state.midi_ch[1] = 1;
+        CHECK(ui_sm_key_channel(&sm) == 1u, "DUAL, L2 in focus: keys on channel 2");
+        perf_state.perf_mode = PERF_SPLIT_SYNTH;
+        CHECK(ui_sm_key_channel(&sm) == 0u, "SPLIT: keys on layer 1's channel (the split picks the layer)");
+        perf_state.perf_mode = PERF_DUAL_SYNTH;
+        perf_state.midi_ch[0] = c0; perf_state.midi_ch[1] = c1;
+    }
 
     /* HOME (2026-10-17 order): LAYER (View 1, or View 2 with layer 2 in focus) -> ZONES -> the performance browser
      * (PERF PRESET, PERF MODE, the links) -> GLOBAL. Layered voices = min cap / 2 */
@@ -206,7 +225,9 @@ int main(void)
         CHECK(ui_sm_knob(&sm, UIPAGE_HOME2, 1, 0, &i) == &sm.perf_knob[UIPERF_VELOCITY] &&
               ui_sm_knob(&sm, UIPAGE_HOME2, 1, 1, &i) == &sm.perf_knob[UIPERF_MODWHEEL] &&
               ui_sm_knob(&sm, UIPAGE_HOME2, 1, 2, &i) == &sm.perf_knob[UIPERF_CC1] &&
-              ui_sm_knob(&sm, UIPAGE_HOME2, 1, 3, &i) == &sm.perf_knob[UIPERF_CC2], "LAYER knobs: VELOCITY MOD CC1 CC2");
+              ui_sm_knob(&sm, UIPAGE_HOME2, 1, 3, &i) == &perf_state.porta_time[1] && i.kind == UIKNOB_PORTA &&
+              ui_sm_knob(&sm, UIPAGE_HOME1, 0, 3, &i) == &perf_state.porta_time[0],
+              "LAYER knobs: VELOCITY MOD CC1 PORTA TIME (the layer's)");
         CHECK(ui_sm_knob(&sm, UIPAGE_HOME3, 0, 0, &i) == &perf_state.split_note && i.kind == UIKNOB_NOTE &&
               ui_sm_knob(&sm, UIPAGE_HOME3, 0, 3, &i) == &perf_state.vel_fade, "ZONES knobs: its four rows");
     }
@@ -242,15 +263,15 @@ int main(void)
     press(BTN_HOME);
     CHECK(sm.page == UIPAGE_HOME1, "DUAL GLOBAL -> HOME1 (%u)", sm.page);
     /* the layer switch swaps HOME1 / HOME2 in place, the cursor on the same row; the cycle never shows both */
-    sm.s.current_param_focus = 3u;   /* PORTA MODE */
-    CHECK(ui_sm_set_layer_focus(&sm, 1) && sm.page == UIPAGE_HOME2 && sm.s.current_param_focus == 3u,
+    sm.s.current_param_focus = 4u;   /* PORTA MODE (ANALOG is row 1 since 2026-10-21) */
+    CHECK(ui_sm_set_layer_focus(&sm, 1) && sm.page == UIPAGE_HOME2 && sm.s.current_param_focus == 4u,
           "L2 focus on HOME1 -> HOME2, row kept (%u, %u)", sm.page, sm.s.current_param_focus);
     press(BTN_HOME);
     CHECK(sm.page == UIPAGE_HOME3, "HOME2 -> ZONES (%u)", sm.page);
     press(BTN_HOME); press(BTN_HOME); press(BTN_HOME);
     CHECK(sm.page == UIPAGE_HOME2, "L2: browser -> GLOBAL -> HOME2 (%u)", sm.page);
-    sm.s.current_param_focus = 3u;
-    CHECK(ui_sm_set_layer_focus(&sm, 0) && sm.page == UIPAGE_HOME1 && sm.s.current_param_focus == 3u,
+    sm.s.current_param_focus = 4u;
+    CHECK(ui_sm_set_layer_focus(&sm, 0) && sm.page == UIPAGE_HOME1 && sm.s.current_param_focus == 4u,
           "L1 focus on HOME2 -> HOME1, row kept (%u, %u)", sm.page, sm.s.current_param_focus);
     ui_sm_set_layer_focus(&sm, 1);
     perf_state.perf_mode = PERF_SINGL_SYNTH;

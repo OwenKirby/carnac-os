@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* CARNAC OS: the start-up screen, in pixel art. A row of granite menhirs runs from a great stone at the bottom left up
  * to the right and away into the mist, towards a setting sun sunk into the horizon where the row vanishes, a dark
- * tree line, a few stars. All in the synth's orange on black. The stones as at Carnac: bulging slabs narrowing at the foot, one
+ * tree line, a few stars. All in the GLOBAL > THEME's colours on black (SP_PAL is SAMHAIN's orange; sp_theme moves it
+ * into the others). The stones as at Carnac: bulging slabs narrowing at the foot, one
  * face lit and one in shadow, fissured, flecked with lichen.
  *
  * Pixel art: the scene is a 120 x 120 grid of 2 x 2 screen pixels, every colour from SP_PAL (no blends), gradients and
@@ -11,10 +12,11 @@
  * canvas (cv_begin, cv_pset, cv_blit). It draws the screen in two 120-row bands, one canvas each (the FM1's canvas
  * holds 240 x 144, the host shim's 240 x 124).
  *
- * Boot-safe by construction: it only draws. Integer arithmetic, no tables in RAM, no state kept between calls, every
- * pixel through cv_pset (which clips); a few milliseconds.
+ * Boot-safe by construction: it only draws. Integer arithmetic, no tables in RAM (the theme's palette on the stack), no
+ * state kept between calls, every pixel through cv_pset (which clips); a few milliseconds.
  *
- *   carnac_splash(version)    the whole screen; version (e.g. SYNTH_VERSION) small at the foot */
+ *   carnac_splash(version, theme)   the whole screen in UITHEME_* theme's colours (out of range: SAMHAIN); version
+ *                                   (e.g. SYNTH_VERSION) small at the foot */
 
 #define SP_A 120                     /* the art grid: SP_A x SP_A pixels of 2 x 2 */
 #define SP_HZ 48                     /* the horizon's art row: high, the stones stand up against the sky */
@@ -22,6 +24,7 @@
 #define SP_BAND 120                  /* screen rows a band */
 
 static int32_t sp_y0;                /* the band being drawn: its first screen row */
+static const uint16_t *sp_col;       /* the palette being drawn in, RGB565 (sp_theme's) */
 
 /* ----------------------------------------------------------- palette --- */
 enum {
@@ -37,6 +40,57 @@ static const uint8_t SP_PAL[P_COUNT][3] = {
     {255, 190, 100}, {255, 214, 150}, {255, 140, 30}, {178, 98, 21}, {150, 80, 14},                         /* title, grass */
 };
 
+static int32_t sp_clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+/* the THEME's splash: each SP_PAL colour sits, by its brightness, between two of ORANGE's page tones (ui_seq_draw.c
+ * SQ_PAL: black, SURF, DIM, MID, THEME, TEXT, ACCENT, and ACCENT half way to white) and takes the same place between
+ * the theme's own: ORANGE's levels in another hue, as the page palettes are made. FIRE's run ember to flame, GRANITE's
+ * grey. ORANGE itself is SP_PAL as drawn. */
+static const uint8_t SP_STOP[] = {SQC_BG, SQC_SURF, SQC_DIM, SQC_MID, SQC_THEME, SQC_TEXT, SQC_ACCENT, SQC_ACCENT};
+#define SP_NSTOP ((int32_t)sizeof SP_STOP)
+
+static void sp_stop(uint32_t pal, int32_t i, int32_t c[3])
+{
+    uint32_t v = SQ_PAL[pal][SP_STOP[i]];
+    c[0] = (int32_t)((v >> 11) * 255u / 31u);
+    c[1] = (int32_t)(((v >> 5) & 63u) * 255u / 63u);
+    c[2] = (int32_t)((v & 31u) * 255u / 31u);
+    if (i == SP_NSTOP - 1)                                                          /* the pale one: ACCENT to white */
+        c[0] = (c[0] + 255) / 2, c[1] = (c[1] + 255) / 2, c[2] = (c[2] + 255) / 2;
+}
+
+static int32_t sp_lum(const int32_t c[3]) { return (77 * c[0] + 150 * c[1] + 29 * c[2]) >> 8; }
+
+static uint16_t sp_565(const int32_t c[3])
+{
+    return (uint16_t)(((uint32_t)(c[0] >> 3) << 11) | ((uint32_t)(c[1] >> 2) << 5) | (uint32_t)(c[2] >> 3));
+}
+
+static void sp_theme(uint32_t theme, uint16_t out[P_COUNT])
+{
+    uint32_t pal = seq_theme_pal(theme), p;
+    for (p = 0; p < P_COUNT; p++) {
+        int32_t c[3] = {SP_PAL[p][0], SP_PAL[p][1], SP_PAL[p][2]}, a[3], b[3], la, lb, l = sp_lum(c), i, k;
+        if (pal != SQPAL_ORANGE) {
+            for (i = 1; i < SP_NSTOP - 1; i++) {                                   /* ORANGE's stops it falls between */
+                sp_stop(SQPAL_ORANGE, i, a);
+                if (sp_lum(a) >= l)
+                    break;
+            }
+            sp_stop(SQPAL_ORANGE, i - 1, a);
+            sp_stop(SQPAL_ORANGE, i, b);
+            la = sp_lum(a);
+            lb = sp_lum(b);
+            l = lb > la ? sp_clamp((l - la) * 256 / (lb - la), 0, 256) : 256;
+            sp_stop(pal, i - 1, a);
+            sp_stop(pal, i, b);
+            for (k = 0; k < 3; k++)
+                c[k] = a[k] + (b[k] - a[k]) * l / 256;
+        }
+        out[p] = sp_565(c);
+    }
+}
+
 static const uint8_t SP_BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
 
 static uint32_t sp_hash(uint32_t a, uint32_t b)
@@ -48,7 +102,6 @@ static uint32_t sp_hash(uint32_t a, uint32_t b)
     return h;
 }
 
-static int32_t sp_clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 /* a .. b by t256 (0..256), ordered-dithered at art pixel (x, y) */
 static uint32_t sp_dith(uint32_t a, uint32_t b, int32_t t256, int32_t x, int32_t y)
@@ -59,8 +112,7 @@ static uint32_t sp_dith(uint32_t a, uint32_t b, int32_t t256, int32_t x, int32_t
 /* one art pixel: a 2 x 2 block, clipped to the band by cv_pset */
 static void sp_px(int32_t x, int32_t y, uint32_t p)
 {
-    const uint8_t *c = SP_PAL[p < P_COUNT ? p : P_NIGHT];
-    uint16_t v = (uint16_t)(((uint32_t)(c[0] >> 3) << 11) | ((uint32_t)(c[1] >> 2) << 5) | (uint32_t)(c[2] >> 3));
+    uint16_t v = sp_col[p < P_COUNT ? p : P_NIGHT];
     int32_t sy = 2 * y - sp_y0;
     if ((uint32_t)x >= SP_A || sy < -1 || sy >= SP_BAND)
         return;
@@ -257,9 +309,12 @@ static int32_t sp_runes_w(const char *s, int32_t scale, int32_t track)
     return n ? (n * (SQ_RUNE_W + 1 + track) - 1 - track) * scale : 0;
 }
 
-static void carnac_splash(const char *version)
+static void carnac_splash(const char *version, uint32_t theme)
 {
     int32_t band, x, y, k, r;
+    uint16_t col[P_COUNT];
+    sp_theme(theme, col);
+    sp_col = col;
     for (band = 0; band < 2 * SP_A; band += SP_BAND) {
         sp_y0 = band;
         cv_begin(240, SP_BAND, 0);
@@ -285,4 +340,5 @@ static void carnac_splash(const char *version)
                  P_TXTMID);
         cv_blit(0, (uint32_t)band);
     }
+    sp_col = 0;
 }

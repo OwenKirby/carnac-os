@@ -72,7 +72,14 @@ int main(void)
             }
             e.osc[0].sync = 0;
             e.env[0].invert = 0;
+            e.analog = (uint8_t)(40u + (uint32_t)pass * 43u);   /* 0..127, in the last stored byte */
+            for (uint32_t f = 0; f < NFILTER; f++) {     /* sources fit 4 bits; KEY TRACK in their high nibbles */
+                e.filter[f].mod_src &= 15u;
+                e.filter[f].morph_mod_src &= 15u;
+                e.filter_key_track[f] = (uint8_t)(pass == 2 ? VAL_MAX - f : (f * 77u + (uint32_t)pass * 45u) & VAL_MAX);
+            }
             frec_pack(FREC_ENGINE, &e, rec);
+            CHECK(rec[FREC_SIZE_ENGINE - 1u] == e.analog, "ENGINE: ANALOG not in the last stored byte (pass %d)", pass);
             CHECK(rec[0] == FREC_VER_ENGINE, "ENGINE: version byte %u", rec[0]);
             memset(&back, 0xA5, sizeof back);
             CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_OK && memcmp(&back, &e, sizeof e) == 0,
@@ -152,6 +159,9 @@ int main(void)
             uint32_t j = 0;
             for (uint32_t i = 0; i < sizeof want; i++) w[i] = (uint8_t)(i * 7u + 1u);
             want.osc[0].sync = 0u; want.env[0].invert = 0u;
+            for (uint32_t f = 0; f < NFILTER; f++) {     /* v8 sources fit 4 bits, so its KEY TRACK reads 0 */
+                want.filter[f].mod_src &= 15u; want.filter[f].morph_mod_src &= 15u; want.filter_key_track[f] = 0u;
+            }
             for (uint32_t l = 0; l < NLFO; l++) { want.lfo[l].clock_sync = 1u; want.lfo[l].key_reset = (uint8_t)(l & 1u); }
             for (uint32_t i = 0; i < NAME_LEN; i++) want.name[i] = (uint8_t)((i * 5u + 2u) % CHAR_MAP_LEN);
             want.filter[0].flavour = 3u; want.filter[0].morph = 40u; want.filter[0].drive = 0u;

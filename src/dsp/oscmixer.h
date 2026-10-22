@@ -62,6 +62,9 @@ void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t f
                        int balance_offset, int xmod_offset, int noise_offset, int colour_offset);
 
 /* Audio rate: OSC2's sample, cross-modulated by OSC1's sample wave1_q15 (FM / AM / RING / PM by xmod_type). */
+/* OSC2 for a block against OSC1's samples w1, into w2: osc_mixer_osc2 sample by sample for a bank; a PCM wave as a
+ * block (AM and RING applied after, PM does nothing on it), or sample by sample at its FM pitch while FM moves it */
+void osc_mixer_osc2_block(const OscMixVoice *mv, const int32_t *w1, WavetableOsc *osc2, int32_t *w2, int n);
 int16_t osc_mixer_osc2(const OscMixVoice *mv, int16_t wave1_q15, WavetableOsc *osc2);
 
 /* Audio rate: the sub-oscillator (following OSC1) and the noise generator at half weight each, Q15, unclamped.

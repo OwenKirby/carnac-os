@@ -19,6 +19,10 @@ static const aafont_t AF_M = {19, 15};
 #define HALF_UP(v) ((v) >> 1)                           /* half, a pixel left over going left / up (also below 0) */
 #define CAP_IN(F, h) (HALF_UP((h) - AF_##F##_CAP_H) - AF_##F##_CAP_Y)
 
+/* the battery as the header's moon shows it (ui_seq_draw.c sq_draw_moon); synth_main_fm1.c reads it */
+static int32_t carnac_battery_moon(void);
+#define UI_BATTERY_MOON() carnac_battery_moon()
+
 /* a 1 px outline */
 static void cv_frame(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
 {

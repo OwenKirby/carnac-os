@@ -74,6 +74,7 @@ void adsr_init(ADSR *env) {
     env->is_key_down = 0;
     env->retrigger_timer = 0;
     env->retrig_phase = 0;
+    env->time_dk_q16 = 0;
 }
 
 void adsr_note_on_legato(ADSR *env, const EnvParams *p, int is_any_other_voice_held) {
@@ -135,6 +136,14 @@ static uint32_t coef_pow2(uint32_t coef_q31, uint8_t shift) {
     return (uint32_t)((1ull << 31) - keep);
 }
 
+/* ANALOG's speed change on the running stage's coefficient (a faster stage: a larger coefficient), held below 1 */
+static uint32_t coef_analog(uint32_t coef_q31, int32_t dk_q16) {
+    int64_t c;
+    if (dk_q16 == 0) return coef_q31;
+    c = (int64_t)coef_q31 + (((int64_t)coef_q31 * dk_q16) >> 16);
+    return c >= (int64_t)(1u << 31) ? (1u << 31) - 1u : (c < 1 ? 1u : (uint32_t)c);
+}
+
 int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, uint16_t release_boost_q15, uint8_t shift,
                      uint32_t frame) {
     int attack_i = clampi(p->attack + time_mod, 0, 127);
@@ -156,7 +165,8 @@ int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, uint16_t relea
     int32_t level = env->level_q30;
     switch (env->state) {
         case STATE_ATTACK:
-            level = env_step(level, ENV_PEAK_Q30 + (ENV_PEAK_Q30 >> 1), coef_pow2(env_attack_coef_q31[attack_i], shift));
+            level = env_step(level, ENV_PEAK_Q30 + (ENV_PEAK_Q30 >> 1),
+                             coef_pow2(coef_analog(env_attack_coef_q31[attack_i], env->time_dk_q16), shift));
             if (level >= ENV_PEAK_Q30) {
                 level = ENV_PEAK_Q30;
                 env->state = STATE_DECAY;
@@ -165,7 +175,8 @@ int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, uint16_t relea
         case STATE_DECAY:
             /* Roland style: the decay discharges toward 0 and is caught at the sustain level, so a high sustain
              * is reached sooner and the curve keeps its full exponential slope into the sustain. */
-            level = env_step(level, 0, coef_pow2((uint32_t)(((uint64_t)env_fall_coef_q31[decay_i] * ENV_DECAY_SLOWING_Q10) >> 10), shift));
+            level = env_step(level, 0, coef_pow2(coef_analog((uint32_t)(((uint64_t)env_fall_coef_q31[decay_i] *
+                                                                    ENV_DECAY_SLOWING_Q10) >> 10), env->time_dk_q16), shift));
             if (level - sustain_target < ENV_DECAY_SNAP) {
                 level = sustain_target;
                 env->state = STATE_SUSTAIN;
@@ -175,7 +186,7 @@ int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, uint16_t relea
             level = sustain_target;
             break;
         case STATE_RELEASE:
-            level = env_step(level, 0, coef_pow2(release_coef, shift));
+            level = env_step(level, 0, coef_pow2(coef_analog(release_coef, env->time_dk_q16), shift));
             if (level < ENV_RELEASE_OFF) {
                 level = 0;
                 env->state = STATE_OFF;

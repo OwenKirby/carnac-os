@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define NUM_BANKS 15                    /* = len(BANK_DEFS) in gen_wavetables.py (wavetables.c checks it) */
+#define NUM_BANKS 16                    /* = len(BANK_DEFS) in gen_wavetables.py (wavetables.c checks it) */
 #define NUM_MORPH_STEPS 8
 #define WAVE_SAMPLES 512                /* level 0: one full cycle of a frame */
 

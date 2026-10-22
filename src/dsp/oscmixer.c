@@ -106,6 +106,37 @@ int16_t osc_mixer_osc2(const OscMixVoice *mv, int16_t wave1_q15, WavetableOsc *o
     }
 }
 
+void osc_mixer_osc2_block(const OscMixVoice *mv, const int32_t *w1, WavetableOsc *osc2, int32_t *w2, int n) {
+    if (!osc2->pcm.on) {
+        for (int i = 0; i < n; i++)
+            w2[i] = osc_mixer_osc2(mv, (int16_t)w1[i], osc2);
+        return;
+    }
+    if (mv->xmod_type != OSCMIX_XMOD_AM && mv->xmod_type != OSCMIX_XMOD_RING && mv->xmod_type != OSCMIX_XMOD_PM &&
+        mv->depth != 0) {                       /* FM: osc_mixer_osc2's pitch, per sample */
+        for (int i = 0; i < n; i++) {
+            int32_t fm_hz = ((int32_t)(int16_t)w1[i] * mv->depth) >> 12;
+            int32_t f = (int32_t)mv->freq2_q16 + fm_hz * 98304;
+            w2[i] = pcm_render_one_fm(&osc2->pcm, (uint32_t)(f < 655360 ? 655360 : f));
+        }
+        osc2->center_phase += osc2->center_step * (uint32_t)n;
+        return;
+    }
+    osc_render_block(osc2, w2, n);
+    if (mv->xmod_type == OSCMIX_XMOD_AM) {
+        for (int i = 0; i < n; i++) {
+            int32_t mod_uni_q15 = ((int32_t)(int16_t)w1[i] + 32768) >> 1;
+            int32_t gain_q15 = 32767 - (((32767 - mod_uni_q15) * mv->depth_q15) >> 15);
+            w2[i] = (int16_t)((w2[i] * gain_q15) >> 15);
+        }
+    } else if (mv->xmod_type == OSCMIX_XMOD_RING) {
+        for (int i = 0; i < n; i++) {
+            int32_t ring_q15 = (w2[i] * (int32_t)(int16_t)w1[i]) >> 15;
+            w2[i] = (int16_t)(w2[i] + (((ring_q15 - w2[i]) * mv->depth_q15) >> 15));
+        }
+    }
+}
+
 /* Kellet's economy pink filter: three one-poles summed with a little of the white. The white is taken at 1/8 scale
  * (+-4096) so every state times its Q15 coefficient stays inside 32 bits. */
 static int32_t noise_pink(NoiseState *ns, int32_t w) {

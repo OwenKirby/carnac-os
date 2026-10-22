@@ -265,6 +265,43 @@ static void refresh_osc_mixer(int l) {
     x->noise_colour = clampi(m->noise_colour, 0, 127);
 }
 
+/* Knob smoothing (2026-10-21). The knobs are encoders a step at a time, and a cutoff step is 89 cents: turned slowly,
+ * a filter sweep stepped audibly. CUTOFF, RESONANCE and MORPH of both filters and both oscillators' SCAN glide to the
+ * knob instead, once a control tick per layer (every voice of the layer reads the same value), Q16 knob units, by
+ * 1 / 2^KNOB_GLIDE_SHIFT a tick: a time constant of 64 ticks, 23 ms (a turn settles in about 70). A MIDI CC or a
+ * sequencer lane writing the same knob glides as well. A patch or performance load (engine_load_count) jumps. */
+#ifndef KNOB_GLIDE_SHIFT
+#define KNOB_GLIDE_SHIFT 6
+#endif
+typedef struct {
+    int32_t cutoff[2], res[2], morph[2], scan[2];   /* filter / oscillator 1 and 2, Q16 knob units */
+} KnobGlide;
+static KnobGlide knob_glide[NLAYER];
+static uint8_t knob_glide_seen[NLAYER];
+static uint8_t knob_glide_live;                     /* 0 until the first tick: start on the knobs, no sweep up from 0 */
+
+static void glide_one(int32_t *g, uint8_t knob, int snap) {
+    int32_t t = (int32_t)knob << 16;
+    *g = snap ? t : *g + ((t - *g) >> KNOB_GLIDE_SHIFT);
+}
+
+static void glide_knobs(unsigned l) {
+    const EngineState *e = &engine_state[l];
+    KnobGlide *g = &knob_glide[l];
+    uint8_t seen = engine_load_count[l];
+    int snap = !knob_glide_live || seen != knob_glide_seen[l];
+    knob_glide_seen[l] = seen;
+    for (unsigned i = 0; i < 2; i++) {
+        glide_one(&g->cutoff[i], e->filter[i].cutoff, snap);
+        glide_one(&g->res[i], e->filter[i].resonance, snap);
+        glide_one(&g->morph[i], e->filter[i].morph, snap);
+        glide_one(&g->scan[i], e->osc[i].scan, snap);
+    }
+}
+
+/* a glided knob in Q8 knob units */
+static inline int32_t glide_q8(int32_t g_q16) { return g_q16 >> 8; }
+
 /* The slot the screen shows runs once more at the end of a pass, after every real reader of it: a slot nothing
  * reads still has a value to show, and one something does read answers from that pass's cache, so the sound is
  * unchanged. */
@@ -279,13 +316,16 @@ int32_t synth_mod_layer_out(int layer, int slot) {
 
 void synth_voice_begin_tick(uint32_t frame) {
     tune_cents_now = instrument_tune_cents();       /* once a tick, not once a voice */
+    analog_begin_tick();                            /* ANALOG's warm-up drift, shared by every voice */
     layer_mod_pass++;                                               /* the LFO1 pass is a pass of its own */
     update_global_lfo1(frame);
     for (unsigned l = 0; l < NLAYER; l++) {
         SourceCtx c = {&engine_state[l], (int)l, NULL, NULL, 0};
         watch_slot(&c);
         refresh_osc_mixer(l);
+        glide_knobs(l);
     }
+    knob_glide_live = 1;
 }
 
 /* ------------------------------------------------------------------ voice --- */
@@ -342,8 +382,14 @@ static void voice_go_silent(SynthVoiceNode *voice) {
     voice->silent = 1;
 }
 
-/* the cutoff of a filter in Q8 knob units: knob plus a mod offset, clamped to the whole knob (20 Hz .. 14 kHz) */
-static int cutoff_q8(uint8_t knob, int32_t mod_q8) { return clampi(((int)knob << 8) + (int)mod_q8, 0, 127 << 8); }
+/* the cutoff of a filter in Q8 knob units: knob plus a mod offset plus KEY TRACK, clamped to the whole knob (20 Hz ..
+ * 14 kHz). KEY TRACK pivots on C4; a knob step is 89.3 cents, so a semitone at 127 is 286.7 Q8 = 127 * 578 / 256. */
+static int cutoff_q8(const SourceCtx *c, int fi, int32_t mod_q8) {   /* FILTER fi's glided knob */
+    int32_t kt = c->eng->filter_key_track[fi];
+    if (kt != 0 && c->in)
+        mod_q8 += (((int32_t)c->in->note - 60) * kt * 578) >> 8;
+    return clampi((int)glide_q8(knob_glide[c->layer].cutoff[fi]) + (int)mod_q8, 0, 127 << 8);
+}
 
 /* a filter's own mod source and amount (spec 4.2), as a Q8 cutoff offset. Kept in Q8 so the filter interpolates
  * between the table steps and a modulated cutoff does not zipper. */
@@ -353,22 +399,37 @@ static int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f) {
 
 /* A FILTER page's type morph plus its own mod source and amount (spec 4.2, every architecture), the knob's way round
  * (dsp/filter.h). An amount of 0 resolves no source. */
-static int filter_morph(const SourceCtx *c, const FilterParams *f) {
-    int m = f->morph;
+static int filter_morph(const SourceCtx *c, const FilterParams *f, int fi) {
+    int m = (int)glide_q8(knob_glide[c->layer].morph[fi]);              /* Q8 knob units (2026-10-21) */
     if (f->morph_mod_amt != BIPOLAR_CENTER)
-        m = clampi(m + (int)((resolve_source(c, f->morph_mod_src, 0) * bip(f->morph_mod_amt)) >> 15), 0, 127);
+        m = clampi(m + (int)((resolve_source(c, f->morph_mod_src, 0) * bip(f->morph_mod_amt)) >> 7), 0, 127 << 8);
     return m;
 }
 
-/* One core from a FILTER page, its morph modulated through c (the BINAURAL right ear passes its phase-offset context). */
-static void filter_prepare_one(SvfCore *k, const SourceCtx *c, const FilterParams *f, int cut_q8, int snap) {
-    filter_core_prepare(k, cut_q8, f->resonance, filter_morph(c, f), f->drive, f->flavour, SYNTH_CTRL_SHIFT, snap);
+/* a resonance plus ANALOG's offset for the voice */
+static int res_plus(const SourceCtx *c, int fi, int off) {   /* FILTER fi's glided knob, Q8 knob units */
+    int r = (int)glide_q8(knob_glide[c->layer].res[fi]);
+    return off ? clampi(r + (off << 8), 0, 127 << 8) : r;
+}
+
+/* One core from a FILTER page, its morph modulated through c (the BINAURAL right ear passes its phase-offset context),
+ * res_off ANALOG's resonance offset. */
+static void filter_prepare_one(SvfCore *k, const SourceCtx *c, const FilterParams *f, int fi, int cut_q8, int res_off,
+                               int snap) {
+    filter_core_prepare(k, cut_q8, res_plus(c, fi, res_off), filter_morph(c, f, fi), f->drive, f->flavour,
+                        SYNTH_CTRL_SHIFT, snap);
+}
+
+/* ANALOG's pitch offset: a frequency times a ratio near 1 (in float, so a fraction of a cent counts) */
+static uint32_t analog_freq(uint32_t f_q16, float ratio) {
+    float f = (float)f_q16 * ratio;
+    return f >= (float)PITCH_MAX_Q16 ? PITCH_MAX_Q16 : (uint32_t)f;
 }
 
 /* Wavetable scan: knob 0..127 plus its mod and an offset, kept in Q8 so a mod sweep (LFO, envelope) moves smoothly
  * instead of in whole knob steps, then spread continuously across the 8 morph frames. */
-static int scan_morph_q12(const SourceCtx *c, const OscParams *o, int offset_knob) {
-    int32_t scan_q8 = ((int32_t)o->scan + offset_knob) << 8;
+static int scan_morph_q12(const SourceCtx *c, const OscParams *o, int oi, int offset_knob) {   /* OSC oi, glided */
+    int32_t scan_q8 = glide_q8(knob_glide[c->layer].scan[oi]) + ((int32_t)offset_knob << 8);
     scan_q8 += (resolve_source(c, o->scan_mod_src, 0) * o->scan_mod_amt) >> 7;
     return scan_q8_to_morph_q12(clampi(scan_q8, 0, 127 << 8));
 }
@@ -390,6 +451,14 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     voice->mod_pass++;                                              /* this voice's pass: its slots run afresh */
     SPROF_DECL;
     SPROF_START();
+
+    /* ANALOG (dsp/analog.h): this voice's offsets for the tick. 0 skips all of it (the patch plays as before, exactly) */
+    int analog = e->analog != 0u;
+    const AnalogTick *an = analog ? analog_voice_tick(&voice->analog, e->analog) : NULL;
+    int an_res1 = analog ? an->res1 : 0, an_res2 = analog ? an->res2 : 0;
+    int32_t an_cut2 = analog ? an->cut2_q8 : 0;
+    voice->amp_env.time_dk_q16 = voice->mod_env.time_dk_q16 = voice->aux_env.time_dk_q16 =
+        analog ? an->time_k_q16 - 65536 : 0;
 
     /* LFO2/3 first, so their phases never stall while the voice is still rendering. */
     update_poly_lfo_engines(voice, in);
@@ -432,6 +501,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     }
     int32_t level_q15 = (((amp_gain_q15 * velocity_gain_q15(in->velocity)) >> 15) * voice->unison_gain_q15) >> 15;
     if (voice->choke) level_q15 = (level_q15 * voice->choke_q15) >> 15;
+    if (analog) level_q15 = (level_q15 * an->level_q15) >> 15;      /* (a little over 32767 is fine: float from here) */
     int32_t vol_q15 = (amp_env_q15 * level_q15) >> 15;
     int32_t vol_b_q15 = (amp_b_env_q15 * level_q15) >> 15;
 
@@ -448,8 +518,10 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     int32_t pitch1_cents = osc_fine_cents(o1->fine) + track1 + base_cents;
     uint32_t freq1_q16 = apply_cents_q16(mtof_q16(note1),
                                          pitch1_cents + pitch_mod_cents(resolve_source(&c, o1->pitch_mod_src, 0), o1->pitch_mod_amt));
-    voice->osc1.bank = o1->wavebank % NUM_BANKS;
-    voice->osc1.morph_q12 = scan_morph_q12(&c, o1, 0);
+    uint32_t freq1_set_q16 = freq1_q16;                             /* without ANALOG: STRIKE's attack follows this */
+    if (analog) freq1_q16 = analog_freq(freq1_q16, an->pitch1);
+    osc_select_wave(&voice->osc1, o1->wavebank);
+    voice->osc1.morph_q12 = scan_morph_q12(&c, o1, 0, 0);
 
     uint32_t freq2_q16 = 0;
     if (varch_uses_osc2(arch)) {
@@ -457,8 +529,9 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         base_pitch(o2, in, &note2, &track2);
         freq2_q16 = apply_cents_q16(mtof_q16(note2), osc_fine_cents(o2->fine) + track2 + base_cents
                                     + pitch_mod_cents(resolve_source(&c, o2->pitch_mod_src, 0), o2->pitch_mod_amt));
-        voice->osc2.bank = o2->wavebank % NUM_BANKS;
-        voice->osc2.morph_q12 = scan_morph_q12(&c, o2, 0);
+        if (analog) freq2_q16 = analog_freq(freq2_q16, an->pitch2);
+        osc_select_wave(&voice->osc2, o2->wavebank);
+        voice->osc2.morph_q12 = scan_morph_q12(&c, o2, 1, 0);
     }
 
     /* 4. OSCMIXER. Only the sources the architecture uses are resolved; mod offsets are in 0..127 knob units. */
@@ -486,7 +559,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const FilterParams *f1 = &e->filter[0];
     const FilterParams *f2 = &e->filter[1];
     SvfCore *core = voice->synth_filters.core;
-    int32_t f1_mod_q8 = filter_mod_q8(&c, f1);
+    int32_t f1_mod_q8 = filter_mod_q8(&c, f1) + (analog ? an->cut1_q8 : 0);
     int snap = voice->snap;
 
     /* BINAURAL: the two phase offsets, each knob plus the shared PHASE MOD, wrapping round the cycle */
@@ -500,8 +573,10 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         int32_t balance_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt)) >> 15;
         int32_t routing_mod = (resolve_source(&c, fm->routing_mod_src, 0) * bip(fm->routing_mod_amt)) >> 15;
         dual_filter_prepare(&voice->synth_filters,
-                            cutoff_q8(f1->cutoff, f1_mod_q8), f1->resonance, filter_morph(&c, f1), f1->drive, f1->flavour,
-                            cutoff_q8(f2->cutoff, filter_mod_q8(&c, f2)), f2->resonance, filter_morph(&c, f2), f2->drive, f2->flavour,
+                            cutoff_q8(&c, 0, f1_mod_q8), res_plus(&c, 0, an_res1), filter_morph(&c, f1, 0),
+                            f1->drive, f1->flavour,
+                            cutoff_q8(&c, 1, filter_mod_q8(&c, f2) + an_cut2), res_plus(&c, 1, an_res2),
+                            filter_morph(&c, f2, 1), f2->drive, f2->flavour,
                             clampi(fm->routing + (int)routing_mod, 0, 127), clampi(fm->balance + (int)balance_mod, 0, 127),
                             SYNTH_CTRL_SHIFT, snap);
         break;
@@ -509,8 +584,9 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     case VARCH_STACK: {
         /* ENV3 is hardwired to both cutoffs (FILTER MIXER knob 4), on top of each filter's own mod */
         int32_t env3_q8 = (resolve_source(&c, MSRC_ENV3, 0) * bip(fm->env3_cutoff)) >> 7;
-        filter_prepare_one(&core[0], &c, f1, cutoff_q8(f1->cutoff, f1_mod_q8 + env3_q8), snap);
-        filter_prepare_one(&core[1], &c, f2, cutoff_q8(f2->cutoff, filter_mod_q8(&c, f2) + env3_q8), snap);
+        filter_prepare_one(&core[0], &c, f1, 0, cutoff_q8(&c, 0, f1_mod_q8 + env3_q8), an_res1, snap);
+        filter_prepare_one(&core[1], &c, f2, 1, cutoff_q8(&c, 1, filter_mod_q8(&c, f2) + env3_q8 + an_cut2), an_res2,
+                           snap);
         break;
     }
     case VARCH_BINAURAL: {
@@ -521,10 +597,11 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         cf.lfo_offset = (uint32_t)((fm->bin_mod_phase + phase_mod) & 127) << 25;
         uint32_t freq_r_q16 = apply_cents_q16(mtof_q16(note1), pitch1_cents
                                               + pitch_mod_cents(resolve_source(&co, o1->pitch_mod_src, 0), o1->pitch_mod_amt));
+        if (analog) freq_r_q16 = analog_freq(freq_r_q16, an->pitch2);   /* the right ear drifts on its own */
         freq_r_q16 += (uint32_t)mx->bin_beat * BIN_BEAT_STEP_Q16;
         if (freq_r_q16 > PITCH_MAX_Q16) freq_r_q16 = PITCH_MAX_Q16;
-        voice->osc2.bank = voice->osc1.bank;
-        voice->osc2.morph_q12 = scan_morph_q12(&co, o1, bip(mx->bin_scan_offset));
+        osc_select_wave(&voice->osc2, o1->wavebank);
+        voice->osc2.morph_q12 = scan_morph_q12(&co, o1, 0, bip(mx->bin_scan_offset));
         osc_prepare(&voice->osc2, freq_r_q16, 0);
 
         /* CUTOFF L/R plus its own mod source and amount, in knob units, held to the knob's -64..+63 */
@@ -533,12 +610,13 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
             offset = clampi(offset + (int)((resolve_source(&c, fm->bin_cutoff_mod_src, 0) * bip(fm->bin_cutoff_mod_amt)) >> 15),
                             -64, 63);
         int32_t offset_q8 = (int32_t)offset << 7;                   /* up to +-32 cutoff steps per ear */
-        filter_prepare_one(&core[0], &c, f1, cutoff_q8(f1->cutoff, f1_mod_q8 - offset_q8), snap);
-        filter_prepare_one(&core[1], &cf, f1, cutoff_q8(f1->cutoff, filter_mod_q8(&cf, f1) + offset_q8), snap);
+        filter_prepare_one(&core[0], &c, f1, 0, cutoff_q8(&c, 0, f1_mod_q8 - offset_q8), an_res1, snap);
+        filter_prepare_one(&core[1], &cf, f1, 0, cutoff_q8(&c, 0, filter_mod_q8(&cf, f1) + offset_q8 + an_cut2), an_res2,
+                           snap);
         break;
     }
     default:                                                        /* SINGLE, DUAL OSC, SPREAD: FILTER1 alone */
-        filter_prepare_one(&core[0], &c, f1, cutoff_q8(f1->cutoff, f1_mod_q8), snap);
+        filter_prepare_one(&core[0], &c, f1, 0, cutoff_q8(&c, 0, f1_mod_q8), an_res1, snap);
         break;
     }
     voice->snap = 0;
@@ -557,15 +635,15 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
      * filter. A new note starts both at their levels, no ramp up. */
     if (arch == VARCH_STRIKE && voice->atk_p) {
         uint16_t tt = (uint16_t)(mx->atk_tune | (uint16_t)mx->atk_track << 8);
-        if (freq1_q16 != voice->atk_f1 || tt != voice->atk_tt) {    /* (2026-10-16: PERF TEST, not every tick) */
+        if (freq1_set_q16 != voice->atk_f1 || tt != voice->atk_tt) {    /* (2026-10-16: PERF TEST, not every tick) */
             const AttackInfo *ai = &attack_info[voice->atk_sample];
             float step = (float)apply_cents_q16(ai->rate_q16, clampi(bip(mx->atk_tune), -24, 24) * 100);
             uint8_t trk = mx->atk_track;
             if (trk == ATKTRK_TRACK || (trk != ATKTRK_FIXED && ai->root != ATK_UNPITCHED))
-                step *= (float)freq1_q16 / (float)mtof_q16(ai->root != ATK_UNPITCHED ? ai->root : 60);
+                step *= (float)freq1_set_q16 / (float)mtof_q16(ai->root != ATK_UNPITCHED ? ai->root : 60);
             voice->atk_base = step > 8.f * 65536.f ? 8u << 16 : (step < 1.f ? 1u : (uint32_t)step);   /* <= 3 octaves up */
             voice->atk_step = voice->atk_base;
-            voice->atk_f1 = freq1_q16;
+            voice->atk_f1 = freq1_set_q16;
             voice->atk_tt = tt;
         }
         if (voice->atk_glide != 0.f) {                  /* BEND: off pitch at the note's start, gliding back, tau ~40 ms */
@@ -715,9 +793,29 @@ static void render_single(SynthVoiceNode *v, float *mix, int n) {
 }
 
 /* DUAL OSC: OSC1 + cross-modulated OSC2 by balance, + sub + noise -> FILTER1 */
+/* DUAL OSC with a PCM wave on either oscillator: OSC1 as a block, OSC2 against it (osc_mixer_osc2_block), mixed as
+ * osc_mixer_render mixes */
+static void render_dual_osc_pcm(SynthVoiceNode *v, float *mix, int n) {
+    int32_t w1[VB], w2[VB], o[VB];
+    float x[VB];
+    osc_render_block(&v->osc1, w1, n);
+    osc_mixer_osc2_block(&v->mix, w1, &v->osc2, w2, n);
+    int32_t g1 = v->mix.osc1_gain_q15, g2 = v->mix.osc2_gain_q15;
+    for (int i = 0; i < n; i++)
+        o[i] = (((int32_t)(int16_t)w1[i] * g1) >> 15) + (((int32_t)(int16_t)w2[i] * g2) >> 15);
+    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, &v->noise[0], o, n);
+    q15_to_float(o, x, n);
+    filter_core_render_block(&v->synth_filters.core[0], x, x, n);
+    finish_mono_block(v, x, mix, n);
+}
+
 static void render_dual_osc(SynthVoiceNode *v, float *mix, int n) {
     int32_t o[VB];
     float x[VB];
+    if (v->osc1.pcm.on || v->osc2.pcm.on) {
+        render_dual_osc_pcm(v, mix, n);
+        return;
+    }
     for (int i = 0; i < n; i++)                /* the cross-modulation reads OSC1 sample by sample */
         o[i] = osc_mixer_render(&v->mix, &v->osc1, &v->osc2, &v->sub_phase, &v->noise[0]);
     q15_to_float(o, x, n);
@@ -741,8 +839,7 @@ static void render_stack(SynthVoiceNode *v, float *mix, int n) {
     int32_t w1[VB], w2[VB];
     float a[VB], b[VB];
     osc_render_block(&v->osc1, w1, n);
-    for (int i = 0; i < n; i++)
-        w2[i] = osc_mixer_osc2(&v->mix, (int16_t)w1[i], &v->osc2);
+    osc_mixer_osc2_block(&v->mix, w1, &v->osc2, w2, n);   /* (a bank: osc_mixer_osc2 sample by sample) */
     osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, &v->noise[0], w1, n);   /* A: w1 + sub + noise */
     q15_to_float(w1, a, n);
     for (int i = 0; i < n; i++) b[i] = (float)w2[i];
@@ -909,6 +1006,8 @@ void voice_render_block(SynthVoiceNode *voice, float *mix, int n) {
          * cancel by their fixed phase difference. */
         osc_set_phase(&voice->osc1, ph);
         osc_set_phase(&voice->osc2, ph);
+        if (voice->osc1.pcm.on) pcm_idle(&voice->osc1.pcm, (int)k);   /* PCM loops keep turning too */
+        if (voice->osc2.pcm.on) pcm_idle(&voice->osc2.pcm, (int)k);
         voice->sub_phase = ph >> (voice->osc1.center_step > voice->mix.sub_step * 3u ? 2 : 1);
         return;
     }

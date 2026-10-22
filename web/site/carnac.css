@@ -1,0 +1,79 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+   The Carnac OS site in the FM1's own look: the SAMHAIN palette (src/ui_seq_draw.c SQ_PAL ORANGE: orange on black),
+   the screen's rune face (carnac-rune.woff, web/site/make_rune_font.py), tablets of the dark stone (SQ_ROCK) and the
+   menhirs of stones.js. Shared by the landing page and the installer; make_site.py copies it to the site's root. */
+@font-face { font-family: "Carnac Rune"; src: url("carnac-rune.woff") format("woff"); font-display: swap; }
+
+:root {
+  /* SQ_PAL ORANGE */
+  --bg: #000; --surf: #221000; --text: #ff8c1e; --theme: #ff6e00; --accent: #ffbe5a; --mid: #b26215; --dim: #6b3b0d;
+  --sel: #733200; --stone: #422206;
+  /* SQ_PAL_LANE ORANGE: the highlight (the menu row under the cursor), its words in light tones */
+  --lane: #6e2a00; --lane-text: #ffc88c; --lane-hi: #ffe8c8;
+  /* SQ_ROCK ORANGE: a tablet's face, its grooves */
+  --rock: #301300; --groove: #0e0500;
+  /* reading text on the web: ACCENT's tones, a little paler, so a paragraph reads */
+  --body: #e9b27a; --soft: #c27a36; --warn: #ff6a50;
+  --rune: "Carnac Rune", "IBM Plex Mono", ui-monospace, monospace;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body { margin: 0; background: var(--bg); color: var(--body); padding: 32px 16px 64px;
+       font: 400 15px/1.65 var(--mono); }
+main { max-width: 36rem; margin: 0 auto; }
+a { color: var(--text); text-underline-offset: 3px; }
+a:hover { color: var(--accent); }
+::selection { background: var(--lane); color: var(--lane-hi); }
+p { margin: 0 0 1rem; }
+code { font: 400 .9em var(--mono); color: var(--accent); overflow-wrap: anywhere; }
+
+/* the rune face: font-size in tens of px, so each of the face's pixels is a whole number of screen pixels */
+.rune, h1, h2, button, .home { font-family: var(--rune); font-weight: 400; letter-spacing: 0;
+                               -webkit-font-smoothing: none; }
+h1 { font-size: 30px; line-height: 1.2; color: var(--text); margin: .8rem 0 1rem; }
+h2 { font-size: 20px; line-height: 1.3; color: var(--text); margin: 2.6rem 0 .9rem; padding-bottom: 6px;
+     border-bottom: 2px solid var(--dim); }
+.home { font-size: 20px; color: var(--mid); text-decoration: none; }
+.home:hover, .home:focus-visible { color: var(--text); }
+.soft { color: var(--soft); }
+
+/* pixel art: whole pixels, never smoothed */
+canvas, img.px { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+
+/* the FM1's screen: the splash, in a 2 px frame like the knob frame's */
+.screen { display: block; width: min(100%, 484px); margin: 0 auto 1.6rem; border: 2px solid var(--dim); background: #000; }
+.screen img { width: 100%; height: auto; }
+
+/* a row of menhirs (stones.js data-alignment) */
+canvas.alignment { width: 100%; height: auto; margin: 0 0 1.2rem; }
+
+/* a tablet of the dark stone: hewn corners, its face mottled (stones.js sets --rock-tex) */
+.tablet { background-color: var(--rock); background-image: var(--rock-tex, none); background-size: 128px 128px;
+          clip-path: polygon(8px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 8px), calc(100% - 8px) 100%,
+                             6px 100%, 0 calc(100% - 6px), 0 8px); }
+
+/* the menu: rows of tablets, the one under the cursor in the highlight's colours */
+nav.menu { display: grid; gap: 10px; margin: 0 0 2rem; }
+nav.menu a { display: block; text-decoration: none; padding: 14px 18px 13px; color: var(--soft); }
+nav.menu a strong { display: block; font: 400 20px/1.3 var(--rune); color: var(--text); margin-bottom: 4px; }
+nav.menu a span { font-size: 14px; }
+nav.menu a:hover, nav.menu a:focus-visible { background-color: var(--lane); background-image: var(--lane-tex, none);
+                                             background-size: 128px 128px;
+                                             color: var(--lane-text); outline: none; }
+nav.menu a:hover strong, nav.menu a:focus-visible strong { color: var(--lane-hi); }
+nav.menu a:hover code, nav.menu a:focus-visible code { color: var(--lane-hi); }
+
+/* buttons: hewn tablets, THEME lit; the quiet one dark stone */
+button { font-size: 20px; line-height: 1.2; cursor: pointer; border: 0; padding: 12px 22px 11px;
+         background: var(--theme); color: #000;
+         clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%,
+                            6px 100%, 0 calc(100% - 6px), 0 6px); }
+button:hover:not(:disabled), button:focus-visible { background: var(--accent); outline: none; }
+button.quiet { background: var(--lane); color: var(--lane-hi); }
+button.quiet:hover:not(:disabled), button.quiet:focus-visible { background: var(--sel); }
+button:disabled { background: var(--surf); color: var(--dim); cursor: default; }
+
+.small { font-size: 13px; color: var(--soft); }
+footer { margin-top: 2.4rem; }

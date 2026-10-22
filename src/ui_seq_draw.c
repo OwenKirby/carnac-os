@@ -94,6 +94,14 @@ static uint16_t sq_c(uint32_t t)
 
 static void seq_palette_set(uint32_t i) { sq_pal = sq_pal_base = (uint8_t)(i < SQPAL_COUNT ? i : SQPAL_ORANGE); }
 
+/* GLOBAL > THEME's palette (UITHEME_*), SAMHAIN's ORANGE */
+static uint8_t seq_theme_pal(uint32_t theme)
+{
+    static const uint8_t PAL[UITHEME_COUNT] = {SQPAL_ORANGE, SQPAL_RED, SQPAL_FIRE, SQPAL_SOLSTICE, SQPAL_LICHEN, SQPAL_HEATHER,
+                                               SQPAL_RITUAL, SQPAL_GRANITE, SQPAL_OAK};
+    return theme < UITHEME_COUNT ? PAL[theme] : SQPAL_ORANGE;
+}
+
 
 /* -------------------------------------------------------------- runes --- */
 /* Every word on the screen is in the rune face: 5 x 9, one byte a row, the leftmost column in bit 4 (generated:
@@ -858,22 +866,45 @@ static void sq_moon(int32_t cx, int32_t cy, int32_t r, uint32_t phase, uint16_t 
     }
 }
 
-/* The clock in every page's header, at its right end (the headers leave x SQ_MOON_X .. 239 to it): a moon going through
- * its phases once a bar, new on the downbeat, full on beat 3. With no clock to follow (the MIDI clock stopped) it hangs
- * full and unlit. Redrawn on its own when the phase moves a 16th, or with force. */
+/* The battery, as the moon shows it: SQ_BATT_FULL steps of charge from 0, SQ_BATT_USB on a USB host's power, -1 not
+ * known. The firmware's canvas header (src/hardware/fm1_x0x_canvas.h) points UI_BATTERY_MOON at the glue's reading;
+ * the host builds have no battery. */
+#define SQ_BATT_FULL 32
+#define SQ_BATT_LOW 10               /* under the stock firmware's first bar (synth_main_fm1.c carnac_battery_moon) */
+#define SQ_BATT_USB (-2)
+#ifndef UI_BATTERY_MOON
+#define UI_BATTERY_MOON() (-1)
+#endif
+
+/* The battery in every page's header, at its right end (the headers leave x SQ_MOON_X .. 239 to it): a moon waxing
+ * with the charge, new when empty, full when full (2026-10-21: it was the bar clock). Under the first bar it is lit in
+ * ACCENT; on a USB host's power it is full with a ring of eight stars round it; not read yet, full and unlit.
+ * Redrawn on its own when the reading changes, or with force. */
 static uint32_t sq_moon_sig;
 
 static void sq_draw_moon(uint32_t force)
 {
-    uint32_t ph = 0, sig;
-    uint8_t live = midi_clock_phase(0u, &ph);
-    ph = live ? ph & 0xF0000000u : 0x80000000u;
-    sig = sq_mix(sq_mix(2166136261u, ph >> 28 | (uint32_t)live << 4 | (uint32_t)sq_pal << 8), 0x300Du) | 1u;
+    int32_t b = UI_BATTERY_MOON(), k;
+    uint32_t ph, sig;
+    uint16_t lit;
+    if (b > SQ_BATT_FULL)
+        b = SQ_BATT_FULL;
+    ph = b < 0 ? 0x80000000u : (uint32_t)b << 26;   /* 32 << 26: half a turn, the full moon */
+    sig = sq_mix(sq_mix(2166136261u, (uint32_t)(b + 2) | (uint32_t)sq_pal << 8), 0x300Du) | 1u;
     if (!force && sig == sq_moon_sig)
         return;
     sq_moon_sig = sig;
+    lit = b == -1 ? SQ_STONE[sq_pal] : b >= 0 && b < SQ_BATT_LOW ? SQC(ACCENT) : SQC(THEME);
     cv_begin(SQ_MOON_W, SQ_MOON_H, SQC(BG));
-    sq_moon(SQ_MOON_W / 2, SQ_MOON_H / 2, 7, ph, live ? SQC(THEME) : SQ_STONE[sq_pal], SQC(SURF));
+    if (b == SQ_BATT_USB) {
+        for (k = 0; k < 64; k += 8) {               /* the stars at radius 8, every eighth of a turn */
+            int32_t sx = (SQ_SIN[(k + 16) & 63] * 8 + 128) >> 8, sy = (SQ_SIN[k] * 8 + 128) >> 8;
+            cv_pset(SQ_MOON_W / 2 + sx, SQ_MOON_H / 2 + sy, SQC(MID));
+        }
+        sq_moon(SQ_MOON_W / 2, SQ_MOON_H / 2, 6, ph, lit, SQC(SURF));
+    } else {
+        sq_moon(SQ_MOON_W / 2, SQ_MOON_H / 2, 7, ph, lit, SQC(SURF));
+    }
     cv_blit(SQ_MOON_X, 0);
 }
 

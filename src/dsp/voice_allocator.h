@@ -10,6 +10,7 @@
 #include "oscmixer.h"
 #include "filter.h"
 #include "amplifier.h"
+#include "analog.h"
 
 #define POLYPHONY_VOICES 8   /* the physical pool; how many a layer may use is layer_voice_limit (see pool_range) */
 PS_STATIC_ASSERT(POLYPHONY_VOICES == VOICE_POOL, "the allocator's pool is PresetStructures.h's VOICE_POOL");
@@ -91,6 +92,7 @@ typedef struct __attribute__((aligned(64))) {
     uint8_t ctrl_left;            // samples until this voice's next control tick; 0 = tick before the next sample
     uint8_t snap;                 // 1 = a new note: the next tick sets the filter coefficients without a ramp
     uint8_t silent;               // 1 = the last tick found the voice finished: it renders silence
+    AnalogVoice analog;           // ANALOG: this slot's character, drift and note scatter (dsp/analog.h)
 } SynthVoiceNode;
 
 /* a voice nobody hears and nobody holds: free to take (STACK's ENV2 path keeps a voice sounding after ENV1 ends) */

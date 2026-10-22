@@ -28,6 +28,7 @@ void voice_allocator_init(void) {
         amp_init(&n->master_amp);
         noise_state_init(&n->noise[0]);
         noise_state_init(&n->noise[1]);
+        analog_voice_init(&n->analog, (unsigned)v);
         noise_seed_init(&n->noise[0], 2u * (uint32_t)v);
         noise_seed_init(&n->noise[1], 2u * (uint32_t)v + 1u);
         n->active_note = 33;

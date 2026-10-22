@@ -12,7 +12,20 @@ void osc_init(WavetableOsc *osc) {
     osc->bank = 0;
     osc->morph_q12 = 0;
     osc->xfade_q15 = 0;
+    osc->pcm = (PcmOsc){0};
     osc_prepare(osc, 0, 0);
+}
+
+void osc_select_wave(WavetableOsc *osc, uint8_t code) {
+    int kind = wave_kind(code);
+    if (kind == 1 || kind == 2) {
+        osc->pcm.code = code;
+        osc->pcm.on = 1;
+        return;
+    }
+    osc->pcm.on = 0;
+    osc->pcm.code = 0;
+    osc->bank = kind == 0 ? code % NUM_BANKS : 0;   /* a PCM wave the store does not hold: bank 0 */
 }
 
 /* Nyquist of the 44.1 kHz core (22050 Hz), in Q16. Level L holds harmonics up to (512 >> L) / 2, so it is
@@ -252,6 +265,13 @@ static void osc_read_level(WavetableOsc *osc, int h, uint8_t level) {
 }
 
 void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread) {
+    if (osc->pcm.on) {                              /* a PCM wave (no spread); the phase still turns, for the sub */
+        osc->center_step = phase_step(frequency_q16);
+        osc->xfade_q15 = 0;
+        osc->live = 0;
+        pcm_prepare(&osc->pcm, frequency_q16, osc->morph_q12);
+        return;
+    }
     /* the two frames either side of the scan (wt_read_morph's split), for every read this tick */
     int morph = osc->morph_q12 >> 12;
     int32_t morph_frac_q15 = (osc->morph_q12 & 0xFFF) << 3;
@@ -344,6 +364,11 @@ static void osc_render_spread4(WavetableOsc *osc, int32_t *out, int n) {
 }
 
 void osc_render_block(WavetableOsc *osc, int32_t *out, int n) {
+    if (osc->pcm.on) {                              /* a PCM wave (pcm_osc.c); the phase turns on, for the sub */
+        osc->center_phase += osc->center_step * (uint32_t)n;
+        pcm_render_block(&osc->pcm, out, n);
+        return;
+    }
     if (osc->xfade_q15 != 0) {                 /* SPREAD: four playheads and the crossfade, as osc_render */
         if (osc->live == 0xF) {
             osc_render_spread4(osc, out, n);

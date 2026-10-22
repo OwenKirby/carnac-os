@@ -12,12 +12,13 @@ extern const uint8_t wavetable_image_host[WT_STORE_IMAGE_LEN];   /* wavetables_i
                         ((b) * NUM_MORPH_STEPS + (f)) * WT_FRAME_SAMPLES)
 #define WT_START_BANK(b) WT_START(b, 0), WT_START(b, 1), WT_START(b, 2), WT_START(b, 3), \
                          WT_START(b, 4), WT_START(b, 5), WT_START(b, 6), WT_START(b, 7)
-_Static_assert(NUM_MORPH_STEPS == 8 && NUM_BANKS == 15, "WT_START_BANK / the initialiser below list every frame");
+_Static_assert(NUM_MORPH_STEPS == 8 && NUM_BANKS == 16, "WT_START_BANK / the initialiser below list every frame");
 
 const int16_t *wavetable_frames[NUM_BANKS * NUM_MORPH_STEPS] = {
     WT_START_BANK(0), WT_START_BANK(1), WT_START_BANK(2), WT_START_BANK(3), WT_START_BANK(4),
     WT_START_BANK(5), WT_START_BANK(6), WT_START_BANK(7), WT_START_BANK(8), WT_START_BANK(9),
     WT_START_BANK(10), WT_START_BANK(11), WT_START_BANK(12), WT_START_BANK(13), WT_START_BANK(14),
+    WT_START_BANK(15),
 };
 static int wt_ok = 1;
 

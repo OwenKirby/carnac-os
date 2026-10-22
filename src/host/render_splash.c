@@ -3,10 +3,12 @@
  *
  *   gcc -O1 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
  *       src/UIStateMachine.c src/host/render_splash.c -o render_splash
- *   render_splash OUTDIR [VERSION]   writes OUTDIR/ui_splash.bin + .log, then:
+ *   render_splash OUTDIR [VERSION] [THEME]   writes OUTDIR/ui_splash.bin + .log (THEME: UITHEME_* number, default 0
+ *                                            SAMHAIN), then:
  *   python src/host/seq_screen_png.py png OUTDIR/ui_splash.bin OUTDIR/ui_splash.log splash.png 2
  * Also prints how many band blits it took and checks every pixel was drawn (no black hole left by a band). */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include "UIStateMachine.h"
@@ -33,7 +35,7 @@ int main(int argc, char **argv)
     int i, unset = 0;
     for (i = 0; i < 240 * 240; i++)
         shim_fb[i] = 0xF81Fu;                       /* magenta: any pixel left like this was never drawn */
-    carnac_splash(argc > 2 ? argv[2] : "DEV");     /* render_splash OUTDIR [VERSION] */
+    carnac_splash(argc > 2 ? argv[2] : "DEV", argc > 3 ? (uint32_t)atoi(argv[3]) : UITHEME_SAMHAIN);
     for (i = 0; i < 240 * 240; i++)
         unset += shim_fb[i] == 0xF81Fu;
     printf("splash: %d blits, %d pixels never drawn\n", blits, unset);

@@ -14,6 +14,7 @@ typedef struct {
     int is_key_down;
     uint32_t retrigger_timer;
     uint32_t retrig_phase;    // clock-synced retrigger: the grid phase of the previous sample, to see a cycle start
+    int32_t time_dk_q16;      // ANALOG (dsp/analog.h): the stages' speed is (1 + this / 65536) times the set one; 0 = as set
 } ADSR;
 
 void adsr_init(ADSR *env);
