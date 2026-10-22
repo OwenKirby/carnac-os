@@ -1,0 +1,500 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Carnac OS in the browser. The page follows X0X's browser page (web/emu/index.html of charlesvestal/fm1-x0x,
+     GPL-3.0), as Felucca's does: the FM1 drawn whole, the firmware running behind it (carnac.wasm, src/host/carnac_web.c),
+     its screen and lights read back. Built by web/emu/build.sh; web/site/make_site.py serves it as play/. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carnac OS in the browser</title>
+<meta name="description" content="Play Carnac OS, the synth firmware for the M-VAVE FM1, in your browser: the same code the FM1 runs.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Barlow+Semi+Condensed:wght@600&display=swap">
+<style>
+/* the site's rune face, when the page is served as the site's play/ (carnac-rune.woff one level up) */
+@font-face { font-family: "Carnac Rune"; src: url("../carnac-rune.woff") format("woff"); font-display: swap; }
+/* web/site/carnac.css's SAMHAIN tokens: the FM1's own orange on black */
+:root { --bg: #000; --text: #ff8c1e; --theme: #ff6e00; --accent: #ffbe5a; --mid: #b26215; --dim: #6b3b0d;
+        --lane: #6e2a00; --lane-hi: #ffe8c8; --rock: #301300; --body: #e9b27a; --soft: #c27a36;
+        --rune: "Carnac Rune", "IBM Plex Mono", ui-monospace, monospace;
+        --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace; color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { background: var(--bg); }
+body { margin: 0; color: var(--body); padding-inline: 16px; padding-block: 28px 48px; font: 400 15px/1.6 var(--mono); }
+main { max-width: 1040px; margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1.2rem; margin: 0 0 1rem; }
+h1 { font: 400 30px/1.1 var(--rune); color: var(--text); margin: 0; -webkit-font-smoothing: none; }
+h1 a { color: inherit; text-decoration: none; }
+header p { margin: 0; color: var(--soft); }
+header nav { margin-left: auto; display: flex; gap: 1rem; }
+a { color: var(--text); text-underline-offset: 3px; }
+a:hover { color: var(--accent); }
+
+.device { position: relative; width: 100%; aspect-ratio: 1000 / 640; user-select: none; -webkit-user-select: none;
+          -webkit-touch-callout: none; touch-action: manipulation; }
+.device svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.device canvas { position: absolute; left: 31.8%; top: 9.6875%; width: 20%; height: 31.25%; image-rendering: pixelated;
+                 image-rendering: crisp-edges; background: #000; border-radius: 2px; }
+.hit { position: absolute; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 12px; }
+.hit.knob { cursor: ns-resize; border-radius: 50%; }
+.hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btnface, .keyface { transition: fill .06s; }
+.lit .btnface { fill: #ff6e00; }
+.lit text.btn { fill: #1a0a00; }
+.green .btnface { fill: #5fe08a; }
+.green text.btn { fill: #0d2414; }
+.red .btnface { fill: #ff4a3a; }
+.red text.btn { fill: #1a0400; }
+.held .btnface, .held .keyface { stroke: var(--accent); stroke-width: 3; }
+.latched .btnface { stroke: #6fc3ff; stroke-width: 3; }
+.lit .keyface.white { fill: #ff9a3c; }
+.lit .keyface.black { fill: #ff7a14; }
+.dim .keyface.white { fill: #e7c9a8; }
+.dim .keyface.black { fill: #6b3b0d; }
+.half .keyface.white { fill: #f0b47a; }
+.half .keyface.black { fill: #9a4e10; }
+.start { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .55); border-radius: 4.4% / 6.9%; }
+.start[hidden] { display: none; }
+.start button, .bar button { font: 400 20px/1.2 var(--rune); -webkit-font-smoothing: none; cursor: pointer; border: 0;
+         padding: 12px 26px 11px; background: var(--theme); color: #000;
+         clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%,
+                            6px 100%, 0 calc(100% - 6px), 0 6px); }
+.start button:hover:not(:disabled), .start button:focus-visible { background: var(--accent); outline: none; }
+.start button:disabled { opacity: .6; cursor: progress; }
+.turn { display: none; margin: 0 0 .8rem; color: var(--soft); font-size: .92rem; }
+@media (orientation: portrait) and (max-width: 700px) { .turn { display: block; } }
+.bar { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; align-items: center; margin: .9rem 0 0; color: var(--soft); font-size: .92rem; }
+.bar button { font-size: 16px; padding: 7px 14px 6px; background: var(--lane); color: var(--lane-hi); }
+.bar button:hover:not(:disabled), .bar button:focus-visible { background: #733200; outline: none; }
+.bar button:disabled { opacity: .5; cursor: default; }
+.bar .cpu { font-variant-numeric: tabular-nums; }
+.help { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1.2rem 2rem; margin: 1.8rem 0 0; }
+.help h2 { font: 400 20px/1.3 var(--rune); color: var(--text); margin: 0 0 .4rem; padding-bottom: 4px;
+           border-bottom: 2px solid var(--dim); -webkit-font-smoothing: none; }
+.help p, .help ul { margin: 0; color: var(--body); max-width: 60ch; }
+.help ul { padding-left: 1.1rem; }
+.help li { margin: 0 0 .25rem; }
+.help li::marker { color: var(--mid); }
+kbd { font: 600 .85em var(--mono); background: var(--rock); border: 1px solid var(--dim); border-radius: 3px; padding: 0 .3em;
+      color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1><a href="../" title="Carnac OS home">CARNAC OS</a></h1>
+  <p>in the browser: the same code the FM1 runs</p>
+  <nav><a href="../install/">Install</a><a href="https://github.com/OwenKirby/carnac-os">Source</a></nav>
+</header>
+
+<p class="turn">Turn your phone sideways for bigger controls.</p>
+<div class="device" id="device">
+  <svg id="panel" viewBox="0 0 1000 640" role="application" aria-label="The FM1: knobs, buttons, screen and keys"></svg>
+  <canvas id="screen" width="240" height="240" aria-label="The FM1 screen"></canvas>
+  <div class="start" id="start"><button id="go" type="button">SWITCH ON</button></div>
+</div>
+
+<div class="bar">
+  <span id="status">Off. Sound starts when you switch it on.</span>
+  <span class="cpu" id="cpu"></span>
+  <button id="midi" type="button" hidden title="Play it from a MIDI keyboard connected to this computer">MIDI IN</button>
+  <button id="reset" type="button" title="Forget the saves and settings kept in this browser, and start again from the factory bank">FACTORY RESET</button>
+</div>
+
+<section class="help">
+  <div>
+    <h2>MOUSE AND TOUCH</h2>
+    <ul>
+      <li>Drag a knob up or down, or use the scroll wheel over it.</li>
+      <li>Click or touch buttons and keys. Several fingers at once work on a touch screen.</li>
+      <li>Chords with a mouse: <kbd>Shift</kbd>-click (or right-click) a button to hold it down, click again to let go.
+        Hold HOME this way and press OCT&minus; / OCT+ to edit layer 1 / layer 2.</li>
+    </ul>
+  </div>
+  <div>
+    <h2>KEYBOARD</h2>
+    <ul>
+      <li>White keys 1&ndash;8: <kbd>Q</kbd>&ndash;<kbd>I</kbd>, 9&ndash;16: <kbd>A</kbd>&ndash;<kbd>K</kbd>. Black keys 1&ndash;11: <kbd>1</kbd>&ndash;<kbd>0</kbd>, <kbd>-</kbd>.</li>
+      <li><kbd>Space</kbd> PLAY, <kbd>Enter</kbd> REC, <kbd>Shift</kbd> SEL (held), <kbd>Esc</kbd> HOME, <kbd>Z</kbd> / <kbd>X</kbd> OCT&minus; / OCT+.</li>
+      <li><kbd>&uarr;</kbd> <kbd>&darr;</kbd> turn SELECT, <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn ALGORITHM.</li>
+      <li>MIDI IN plays it from a MIDI keyboard, as the FM1's USB port does.</li>
+    </ul>
+  </div>
+  <div>
+    <h2>SAVING</h2>
+    <p>SAVE writes to the FM1's flash, which this browser keeps: your patches, performances, sequences, arps and
+      GLOBAL settings are still there next time. FACTORY RESET forgets them. It is the firmware, not a recording: what
+      you hear is Carnac running, at the FM1's 44.1 kHz, on one core. The idea of running FM1 firmware in the browser,
+      and this page's shape, come from <a href="https://github.com/charlesvestal/fm1-x0x">X0X</a>'s emulator, after
+      <a href="https://www.groove-os.com/">Groove OS</a>'s.</p>
+  </div>
+</section>
+</main>
+
+<script>
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+// X0X's plat.h: B_* and EN_* (src/host/carnac_web.c web_buttons / web_enc)
+const BTN = { FX: 0, SEL: 1, ENV: 2, LFO: 3, EDIT: 4, GLO: 5, HOME: 6, SAVE: 7, ARP: 8, SEQ: 9, PLAY: 10, REC: 11, "OCT-": 12, "OCT+": 13 };
+const ENC = { SELECT: 0, ALGORITHM: 1, PRESETS: 2, KNOB1: 3, KNOB2: 4, KNOB3: 5, KNOB4: 6 };
+const WHITE_K = [0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26];   // key 0 = F3
+const BLACK_K = [1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25];
+const BLACK_AFTER = [0, 1, 2, 4, 5, 7, 8, 9, 11, 12, 14];
+const BODY = "#2b2826", TRAY = "#1c1a19", KEY_W = "#d9d6d2", KEY_B = "#c8c4bf", KNOB = "#161414", BTNC = "#26231f", LABEL = "#e8e4df";
+const DB_NAME = "carnac-emu", POT_KEY = "carnac-emu-master";
+
+const svg = document.getElementById("panel");
+function el(tag, attrs, parent = svg) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  parent.appendChild(e);
+  return e;
+}
+function text(parent, x, y, s, size, fill = LABEL, weight = 600) {
+  const t = el("text", { x, y, "text-anchor": "middle", "font-family": "'Barlow Semi Condensed', 'Arial Narrow', Arial, sans-serif",
+                         "font-size": size, "font-weight": weight, fill, "letter-spacing": ".05em", class: "btn", "pointer-events": "none" }, parent);
+  t.textContent = s;
+  return t;
+}
+
+// ---------------------------------------------------------------- the panel
+el("rect", { x: 4, y: 4, width: 992, height: 632, rx: 44, fill: BODY });
+const knobs = {};
+function knob(x, y, r, label, role) {
+  const g = el("g", { class: "ctl knob", tabindex: 0, role: "slider", "aria-label": label });
+  el("circle", { cx: x, cy: y, r: r + 5, fill: TRAY }, g);
+  el("circle", { cx: x, cy: y, r, fill: KNOB, stroke: "#3c3936", "stroke-width": 2 }, g);
+  const ind = el("line", { x1: x, y1: y - r + 5, x2: x, y2: y - r + 15, stroke: LABEL, "stroke-width": 3, "stroke-linecap": "round" }, g);
+  text(g, x, y - r - 12, label, 17);
+  el("circle", { cx: x, cy: y, r: r + 14, fill: "transparent" }, g);
+  knobs[label] = { g, ind, x, y, angle: 0, role };
+  return knobs[label];
+}
+knob(105, 100, 24, "MASTER", "master");
+knob(215, 100, 24, "SELECT", ENC.SELECT);
+knob(105, 205, 24, "PRESETS", ENC.PRESETS);
+knob(215, 205, 24, "ALGORITHM", ENC.ALGORITHM);
+for (let i = 0; i < 4; i++) knob(610 + i * 104, 100, 22, `KNOB${i + 1}`, ENC[`KNOB${i + 1}`]);
+
+const buttons = {};
+function button(x, y, w, h, label, two) {
+  const g = el("g", { class: "ctl", role: "button", "aria-label": label });
+  el("rect", { x, y, width: w, height: h, rx: 9, fill: BTNC, stroke: "#46423d", "stroke-width": 1.5, class: "btnface" }, g);
+  if (two) { text(g, x + w / 2, y + h / 2 - 1, label, 12); text(g, x + w / 2, y + h / 2 + 12, two, 12); }
+  else text(g, x + w / 2, y + h / 2 + 5, label, 15);
+  buttons[label] = { g, bit: BTN[label] };
+}
+el("rect", { x: 58, y: 258, width: 210, height: 58, rx: 14, fill: TRAY });
+button(72, 268, 82, 38, "OCT-"); button(170, 268, 82, 38, "OCT+");
+el("rect", { x: 300, y: 44, width: 236, height: 236, rx: 26, fill: "#0c0b0a" });
+el("rect", { x: 568, y: 160, width: 400, height: 140, rx: 18, fill: TRAY });
+const ROW1 = ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO"], ROW2 = ["HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC"];
+for (let i = 0; i < 6; i++) {
+  button(582 + i * 63, 174, 54, 48, ROW1[i]);
+  if (ROW2[i] === "PLAY") button(582 + i * 63, 236, 54, 48, "PLAY", "STOP"); else button(582 + i * 63, 236, 54, 48, ROW2[i]);
+}
+
+const keys = [];
+(function keybed(x0, y0, w, h) {
+  el("rect", { x: x0, y: y0, width: w, height: h, rx: 18, fill: TRAY });
+  const pitch = (w - 24) / 16, kw = pitch * 0.78;
+  for (let i = 0; i < 16; i++) {
+    const g = el("g", { class: "ctl", role: "button", "aria-label": `white key ${i + 1}` });
+    el("rect", { x: x0 + 12 + i * pitch + (pitch - kw) / 2, y: y0 + h * 0.43, width: kw, height: h * 0.52, rx: kw / 2, fill: KEY_W, class: "keyface white" }, g);
+    keys[WHITE_K[i]] = { g };
+  }
+  BLACK_AFTER.forEach((a, k) => {
+    const g = el("g", { class: "ctl", role: "button", "aria-label": `black key ${k + 1}` });
+    el("rect", { x: x0 + 12 + (a + 1) * pitch - kw / 2, y: y0 + h * 0.06, width: kw, height: h * 0.33, rx: kw / 2, fill: KEY_B, class: "keyface black" }, g);
+    keys[BLACK_K[k]] = { g };
+  });
+})(36, 340, 928, 270);
+
+// ---------------------------------------------------------------- touch targets
+// The drawing is only a picture (pointer-events: none). Each control gets an invisible HTML target over it: browsers
+// (iOS Safari above all) honour touch-action and touchstart on HTML elements but not on SVG ones, so the controls keep
+// their touches while a finger anywhere else on the device scrolls the page natively.
+const device = document.getElementById("device");
+function hit(c, cls) {
+  const b = c.g.getBBox(), d = document.createElement("div");
+  d.className = "hit" + (cls ? " " + cls : "");
+  Object.assign(d.style, { left: `${b.x / 10}%`, top: `${b.y / 6.4}%`, width: `${b.width / 10}%`, height: `${b.height / 6.4}%` });
+  for (const a of ["role", "aria-label", "tabindex"]) if (c.g.hasAttribute(a)) { d.setAttribute(a, c.g.getAttribute(a)); c.g.removeAttribute(a); }
+  c.g.setAttribute("aria-hidden", "true");
+  d.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+  device.insertBefore(d, document.getElementById("start"));
+  c.hit = d;
+}
+for (const k of Object.values(knobs)) hit(k, "knob");
+for (const b of Object.values(buttons)) hit(b);
+keys.forEach((k) => hit(k));
+
+// ---------------------------------------------------------------- state and input
+let node = null, btnMask = 0, keyMask = 0, latched = 0;
+let pot = 768;                                       // the MASTER pot, 0..1023 as the FM1's ADC reads it
+try { const v = parseInt(localStorage.getItem(POT_KEY), 10); if (v >= 0 && v <= 1023) pot = v; } catch { /* no storage */ }
+const btnHeldBy = new Map(), keyHeldBy = new Map();      // pointer / key id -> bit
+function send(m) { if (node) node.port.postMessage(m); }
+function syncButtons() {
+  let m = latched;
+  for (const b of btnHeldBy.values()) m |= 1 << b;
+  if (m !== btnMask) { btnMask = m; send({ type: "buttons", mask: m }); }
+  for (const b of Object.values(buttons)) {
+    b.g.classList.toggle("held", !!(m & (1 << b.bit)));
+    b.g.classList.toggle("latched", !!(latched & (1 << b.bit)));
+    b.hit.classList.toggle("latched", !!(latched & (1 << b.bit)));
+    b.hit.setAttribute("aria-pressed", m & (1 << b.bit) ? "true" : "false");
+  }
+}
+function syncKeys() {
+  let m = 0;
+  for (const k of keyHeldBy.values()) m |= 1 << k;
+  if (m !== keyMask) { keyMask = m; send({ type: "keys", mask: m }); }
+  keys.forEach((k, i) => k.g.classList.toggle("held", !!(m & (1 << i))));
+}
+
+for (const b of Object.values(buttons)) {
+  b.hit.addEventListener("contextmenu", (e) => e.preventDefault());
+  b.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (e.shiftKey || e.button === 2) { latched ^= 1 << b.bit; syncButtons(); return; }
+    if (latched & (1 << b.bit)) { latched &= ~(1 << b.bit); syncButtons(); return; }
+    b.hit.setPointerCapture(e.pointerId);
+    btnHeldBy.set("p" + e.pointerId, b.bit);
+    syncButtons();
+  });
+}
+keys.forEach((k, i) => {
+  k.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    k.hit.setPointerCapture(e.pointerId);
+    keyHeldBy.set("p" + e.pointerId, i);
+    syncKeys();
+  });
+});
+function pointerUp(e) {
+  const id = "p" + e.pointerId;
+  if (btnHeldBy.delete(id)) syncButtons();
+  if (keyHeldBy.delete(id)) syncKeys();
+}
+device.addEventListener("pointerup", pointerUp);
+device.addEventListener("pointercancel", pointerUp);
+device.addEventListener("lostpointercapture", pointerUp);
+
+function drawKnob(k) { k.ind.setAttribute("transform", `rotate(${k.angle} ${k.x} ${k.y})`); }
+function turn(k, n) {
+  if (!n) return;
+  if (k.role === "master") {
+    pot = Math.max(0, Math.min(1023, pot + n * 16));
+    k.angle = -135 + 270 * pot / 1023;
+    send({ type: "master", value: pot });
+    try { localStorage.setItem(POT_KEY, String(pot)); } catch { /* this session only */ }
+  } else {
+    k.angle = (k.angle + n * 18) % 360;
+    send({ type: "enc", role: k.role, n });
+  }
+  drawKnob(k);
+}
+for (const k of Object.values(knobs)) {
+  if (k.role === "master") { k.angle = -135 + 270 * pot / 1023; drawKnob(k); }
+  let drag = null, wheel = 0;
+  k.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    k.hit.setPointerCapture(e.pointerId);
+    drag = { y: e.clientY, acc: 0 };
+  });
+  k.hit.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    drag.acc += drag.y - e.clientY;
+    drag.y = e.clientY;
+    const step = k.role === "master" ? 3 : 7;
+    const n = Math.trunc(drag.acc / step);
+    if (n) { drag.acc -= n * step; turn(k, n); }
+  });
+  const end = () => { drag = null; };
+  k.hit.addEventListener("pointerup", end);
+  k.hit.addEventListener("pointercancel", end);
+  k.hit.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    if (Math.abs(dy) >= 50) { turn(k, dy < 0 ? 1 : -1); wheel = 0; return; }   // a mouse wheel notch: one detent
+    wheel -= dy;                                                                   // a trackpad: by distance
+    const n = Math.trunc(wheel / 25);
+    if (n) { wheel -= n * 25; turn(k, n); }
+  }, { passive: false });
+  k.hit.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") { turn(k, 1); e.preventDefault(); e.stopPropagation(); }
+    if (e.key === "ArrowDown" || e.key === "ArrowLeft") { turn(k, -1); e.preventDefault(); e.stopPropagation(); }
+  });
+}
+
+const KEYMAP = {};
+"qwertyui".split("").forEach((c, i) => KEYMAP["Key" + c.toUpperCase()] = { key: WHITE_K[i] });
+"asdfghjk".split("").forEach((c, i) => KEYMAP["Key" + c.toUpperCase()] = { key: WHITE_K[8 + i] });
+"1234567890".split("").forEach((c, i) => KEYMAP["Digit" + c] = { key: BLACK_K[i] });
+KEYMAP.Minus = { key: BLACK_K[10] };
+Object.assign(KEYMAP, { Space: { btn: BTN.PLAY }, Enter: { btn: BTN.REC }, ShiftLeft: { btn: BTN.SEL }, ShiftRight: { btn: BTN.SEL },
+                        Escape: { btn: BTN.HOME }, KeyZ: { btn: BTN["OCT-"] }, KeyX: { btn: BTN["OCT+"] } });
+addEventListener("keydown", (e) => {
+  if (!node || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.code === "ArrowUp" || e.code === "ArrowDown") { turn(knobs.SELECT, e.code === "ArrowUp" ? 1 : -1); e.preventDefault(); return; }
+  if (e.code === "ArrowLeft" || e.code === "ArrowRight") { turn(knobs.ALGORITHM, e.code === "ArrowRight" ? 1 : -1); e.preventDefault(); return; }
+  const m = KEYMAP[e.code];
+  if (!m) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  if (m.key !== undefined) { keyHeldBy.set("k" + e.code, m.key); syncKeys(); }
+  else { btnHeldBy.set("k" + e.code, m.btn); syncButtons(); }
+});
+addEventListener("keyup", (e) => {
+  const id = "k" + e.code;
+  if (keyHeldBy.delete(id)) syncKeys();
+  if (btnHeldBy.delete(id)) syncButtons();
+});
+addEventListener("blur", () => {
+  for (const id of [...btnHeldBy.keys()]) if (id[0] === "k") btnHeldBy.delete(id);
+  for (const id of [...keyHeldBy.keys()]) if (id[0] === "k") keyHeldBy.delete(id);
+  syncButtons(); syncKeys();
+});
+
+// ---------------------------------------------------------------- screen and lights
+const ctx = document.getElementById("screen").getContext("2d");
+const img = ctx.createImageData(240, 240);
+function drawScreen(fb) {
+  const d = img.data;
+  for (let i = 0; i < 240 * 240; i++) {
+    const v = fb[i], p = ((v >> 8) | (v << 8)) & 0xFFFF;
+    d[i * 4] = ((p >> 11) & 31) * 255 / 31;
+    d[i * 4 + 1] = ((p >> 5) & 63) * 255 / 63;
+    d[i * 4 + 2] = (p & 31) * 255 / 31;
+    d[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+// PLAY lights green, red while recording (plat_play_red); dim keys at a quarter, or half on the ARP page (dimDiv 2)
+function drawLights(m) {
+  for (const x of Object.values(buttons)) {
+    const on = !!(m.buttons & (1 << x.bit)), play = x.bit === BTN.PLAY;
+    x.g.classList.toggle("lit", on && !play);
+    x.g.classList.toggle("green", on && play && !m.red);
+    x.g.classList.toggle("red", on && play && !!m.red);
+  }
+  keys.forEach((x, i) => {
+    const lit = !!(m.keys & (1 << i)), dim = !lit && !!(m.dim & (1 << i));
+    x.g.classList.toggle("lit", lit);
+    x.g.classList.toggle("dim", dim && m.dimDiv !== 2);
+    x.g.classList.toggle("half", dim && m.dimDiv === 2);
+  });
+}
+
+// ---------------------------------------------------------------- the flash this browser keeps
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("flash");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function flashLoad() {
+  try {
+    const db = await idb();
+    return await new Promise((res) => {
+      const q = db.transaction("flash").objectStore("flash").get(0);
+      q.onsuccess = () => res(q.result || null);
+      q.onerror = () => res(null);
+    });
+  } catch { return null; }
+}
+async function flashSave(u8) {
+  try { (await idb()).transaction("flash", "readwrite").objectStore("flash").put(u8.buffer, 0); }
+  catch { /* no IndexedDB: this session only */ }
+}
+
+// ---------------------------------------------------------------- Web MIDI in
+const midiBtn = document.getElementById("midi");
+if (navigator.requestMIDIAccess) midiBtn.hidden = false;
+midiBtn.addEventListener("click", async () => {
+  try {
+    const access = await navigator.requestMIDIAccess();
+    const hook = () => {
+      let n = 0;
+      for (const input of access.inputs.values()) {
+        n++;
+        input.onmidimessage = (e) => {
+          const [b0, b1 = 0, b2 = 0] = e.data;
+          if (b0 >= 0x80 && b0 !== 0xF0) send({ type: "midi", b0, b1, b2 });
+        };
+      }
+      midiBtn.textContent = n ? `MIDI IN: ${n}` : "MIDI IN: NONE";
+    };
+    hook();
+    access.onstatechange = hook;
+    midiBtn.disabled = true;
+  } catch {
+    midiBtn.textContent = "MIDI IN: REFUSED";
+  }
+});
+
+// ---------------------------------------------------------------- switching on
+const status = document.getElementById("status"), cpu = document.getElementById("cpu");
+async function switchOn() {
+  const go = document.getElementById("go");
+  go.disabled = true;
+  go.textContent = "STARTING...";
+  try {
+    const ac = new AudioContext({ sampleRate: 44100, latencyHint: "interactive" });
+    const [wasm, flash] = await Promise.all([
+      fetch("carnac.wasm").then((r) => { if (!r.ok) throw new Error(`carnac.wasm: ${r.status}`); return r.arrayBuffer(); }),
+      flashLoad(),
+      ac.audioWorklet.addModule("worklet.js")]);
+    node = new AudioWorkletNode(ac, "carnac", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+    node.connect(ac.destination);
+    const ready = new Promise((res) => {
+      node.port.onmessage = (e) => {
+        const m = e.data;
+        if (m.type === "ready") res();
+        else if (m.type === "frame") {
+          if (m.fb) drawScreen(m.fb);
+          drawLights(m);
+          window.carnacLast = m;
+          if (m.load !== undefined) cpu.textContent = `Carnac uses ${m.load}% of this computer's time`;
+          if (m.flash) flashSave(m.flash);
+        }
+      };
+    });
+    const transfer = [wasm];
+    if (flash) transfer.push(flash);
+    node.port.postMessage({ type: "load", wasm, flash, master: pot }, transfer);
+    await ready;
+    await ac.resume();
+    document.getElementById("start").hidden = true;
+    status.textContent = ac.sampleRate === 44100 ? "On." : `On (the browser runs audio at ${ac.sampleRate} Hz).`;
+    syncButtons(); syncKeys();
+  } catch (err) {
+    go.disabled = false;
+    go.textContent = "SWITCH ON";
+    status.textContent = "Could not start: " + (err && err.message || err) + ". Chrome, Edge, Firefox and Safari should all work.";
+  }
+}
+document.getElementById("go").addEventListener("click", switchOn);
+document.getElementById("reset").addEventListener("click", async () => {
+  const r = document.getElementById("reset");
+  if (r.dataset.armed) {
+    if (node) node.port.onmessage = null;            // (no late flash from the running unit)
+    try {
+      const t = (await idb()).transaction("flash", "readwrite");
+      t.objectStore("flash").delete(0);
+      await new Promise((res) => { t.oncomplete = t.onerror = t.onabort = res; });
+    } catch { /* nothing kept */ }
+    location.reload();
+  } else {
+    r.dataset.armed = "1";
+    r.textContent = "CLICK AGAIN TO FORGET EVERYTHING";
+  }
+});
+</script>
+</body>
+</html>

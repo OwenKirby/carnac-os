@@ -1,0 +1,653 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Carnac OS web installer. Built on X0X's installer page (x0x-firmware/web/x0x_installer.html, after Felucca's
+     web/index_pkg.html by Leo Kuroshita, Hügelton Instruments); the USB-MIDI update itself is X0X's fm1ota.js and
+     fm1pkg.js, unchanged. web/site/make_site.py inlines them and the package's metadata at the marks below.
+     Added for Carnac: the FM1 is asked which Carnac it runs (editor INFO, F0 7D 46 4C 01 F7) before anything is
+     written, an older package than the one on the FM1 needs a tick first, and the install is checked by that same
+     INFO answering "CARNAC OS <version>". Then the PCM waves (src/dsp/pcm_area*.bin) are written to their flash areas
+     with the editor's PCM commands (src/hardware/pcm_store_upload.py's protocol), each only when the FM1 does not
+     hold that image already. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install Carnac OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="preload" href="../carnac-rune.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="../carnac.css">
+<style>
+  /* the installer's own pieces; the rest is ../carnac.css */
+  .steps { padding: 16px 18px 8px; margin: 0 0 1.4rem; }
+  .step { display: flex; gap: 14px; align-items: baseline; margin: 0 0 10px; }
+  .step b { font: 400 20px/1 var(--rune); color: var(--theme); min-width: 1ch; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 1rem; }
+  /* the FM1's screen: what it runs, the step stones filling, what is happening, in the rune face */
+  .panel { border: 2px solid var(--dim); background: #000; padding: 14px 14px 12px; margin: 0 0 1rem; }
+  .panel canvas { width: 100%; max-width: 448px; height: auto; margin: 0 auto; }
+  #bar { display: none; }                                   /* its value drives the stones (stones.js data-steps) */
+  #device { font: 400 20px/1.4 var(--rune); color: var(--text); min-height: 1.4em; margin: 0 0 12px; }
+  #device:empty::before { content: "NO FM1 YET"; color: var(--dim); }
+  #status { font: 400 20px/1.4 var(--rune); color: var(--accent); min-height: 1.4em; margin: 12px 0 0; }
+  #status.bad { color: var(--warn); }
+  label.confirm { display: none; gap: 10px; align-items: flex-start; color: var(--warn); margin: 0 0 1rem; }
+  label.confirm.show { display: flex; }
+  label.confirm input { margin-top: .35em; accent-color: var(--theme); }
+  .tip { padding: 14px 18px; margin: 1rem 0 0; }
+  details { margin-top: 1rem; }
+  summary { font: 400 20px var(--rune); color: var(--mid); cursor: pointer; }
+  summary:hover { color: var(--text); }
+  pre { font: 400 12px/1.5 var(--mono); color: var(--soft); white-space: pre-wrap; margin: 8px 0 0; max-height: 14rem;
+        overflow: auto; background: var(--surf); padding: 10px 12px; }
+  ol { padding-left: 1.4rem; margin: 0 0 1rem; }
+  ol li::marker { font-family: var(--rune); color: var(--theme); }
+  input[type=file] { font: inherit; font-size: 14px; color: var(--soft); max-width: 100%; }
+  input[type=file]::file-selector-button { font: 400 20px var(--rune); background: var(--lane); color: var(--lane-hi);
+        border: 0; padding: 6px 14px; margin-right: 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <a class="home" href="../">CARNAC OS</a>
+  <h1>Install Carnac <span id="ver"></span></h1>
+  <canvas class="alignment" data-alignment="3" width="240" height="44" aria-hidden="true"></canvas>
+  <p class="soft">Works in Chrome or Edge on a computer, with the FM1 connected by USB. Nothing to install on the computer.
+    Your saved patches stay on the FM1. Coming from Carnac 0.9.1, sequences and performances saved with it do not carry over.</p>
+
+  <div class="tablet steps">
+    <div class="step"><b>1</b><span>Connect the FM1 straight to the computer with a USB data cable, switch it on,
+      and close other apps that use MIDI.</span></div>
+    <div class="step"><b>2</b><span>Press <em>Find my FM1</em>. The browser asks to allow MIDI: allow it.</span></div>
+    <div class="step"><b>3</b><span>Press <em>Install</em>. It takes about three minutes: the firmware, then the PCM waves
+      (the FM1 goes quiet for moments while they are written). Do not unplug the cable or close this page while it writes.</span></div>
+  </div>
+
+  <div class="panel">
+    <p id="device"></p>
+    <canvas data-steps="bar" width="224" height="24" aria-hidden="true"></canvas>
+    <progress id="bar" max="100" value="0"></progress>
+    <p id="status" role="status"></p>
+  </div>
+  <label class="confirm" id="confirmbox"><input type="checkbox" id="confirm">
+    <span id="confirmtext"></span></label>
+  <div class="actions"><button id="find" disabled>Find my FM1</button><button id="go" disabled>Install</button></div>
+  <p class="tablet tip" id="tip" hidden>Enjoying Carnac? It's free; <a id="tiplink" href="#" target="_blank" rel="noopener">tip me</a> if you like it.</p>
+  <details><summary>Details</summary><pre id="log"></pre></details>
+
+  <h2>If something goes wrong</h2>
+  <p class="soft">If the install stops part-way, replug the cable and press <em>Find my FM1</em> again: the FM1 stays in
+    update mode until it is finished, and this page carries on from there.</p>
+  <p class="soft">If the FM1 doesn't start after an update, switch it off and on twice. After two failed starts it
+    starts in safe mode, which keeps USB working, so this page can install again.</p>
+
+  <h2>Back to the stock firmware</h2>
+  <p class="soft">This writes M-VAVE's own FM-1 V15 back, over the same USB cable. Sounds saved in Carnac may be lost.</p>
+  <ol class="soft">
+    <li>Download M-VAVE's FM-1 V15:
+      <a href="https://yms-file-store.oss-cn-hongkong.aliyuncs.com/software/firmware/FM-1.fwsc">FM-1.fwsc</a></li>
+    <li>Choose the file you downloaded:<br><input type="file" id="stockfile" accept=".fwsc"></li>
+    <li>Press <em>Find my FM1</em> above, then the button below.</li>
+  </ol>
+  <p><button class="quiet" id="stockgo" disabled>Install the stock firmware</button></p>
+  <p class="soft">You can also use M-VAVE's own updater, M-UPGRADE, from
+    <a href="https://www.m-vave.com/download" target="_blank" rel="noopener">m-vave.com/download</a>.</p>
+
+  <h2>Small print</h2>
+  <p class="soft">Installing custom firmware is at your own risk. Carnac OS is free software under the GPL-3.0, with no
+    warranty. Source: <a href="https://github.com/OwenKirby/carnac-os">github.com/OwenKirby/carnac-os</a>. Package <code id="pkgname"></code>,
+    SHA-256 <code id="pkgsha"></code>.</p>
+  <p class="soft">Built on X0X by Charles Vestal and Felucca by Leo Kuroshita (Hügelton Instruments); this page's USB
+    update code is theirs. M-VAVE and FM-1 are trademarks of their owners.</p>
+  <footer><canvas class="alignment" data-alignment="11" width="240" height="44" aria-hidden="true"></canvas></footer>
+</main>
+<script src="../stones.js"></script>
+<script type="module">
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+//
+// FM-1 .fwsc packages in the browser: the package identity and the image the
+// device reads during an update.
+
+const BLOCKS = 20, BLK = 0x30, KEEP = 0x2F;
+
+// the package identity ("FM-1_904"): one marker byte after each of the first 20 blocks
+function productOf(fwsc) {
+  if (fwsc.length < BLOCKS * BLK) throw new Error("not an FM-1 package (too short)");
+  let s = "";
+  for (let i = 0; i < BLOCKS; i++) {
+    const m = fwsc[i * BLK + KEEP];
+    if (m !== 0x7D) s += String.fromCharCode((m - i - 1) & 0xFF);
+  }
+  return s;
+}
+
+// the image the device addresses during an update: the .fwsc without the 20 marker bytes
+function logicalImage(fwsc) {
+  const out = new Uint8Array(fwsc.length - BLOCKS);
+  for (let i = 0; i < BLOCKS; i++) out.set(fwsc.subarray(i * BLK, i * BLK + KEEP), i * KEEP);
+  out.set(fwsc.subarray(BLOCKS * BLK), BLOCKS * KEEP);
+  return out;
+}
+
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+//
+// The FM-1 USB-MIDI update protocol (M-UPGRADE compatible) over WebMIDI.
+// Step 1: the running firmware reads parts of the package and stages the update
+// loader. Step 2: the loader reads the whole image and writes it. In both steps
+// the device sends cmd 0x30 read requests on the logical image and we answer.
+
+const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
+const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
+const MAXDATA = 512;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const IS_OTA = (id) => /^ota-/i.test(id.model);
+
+// errors carry a code the pages translate: notfound, model, stopped, noloader, lost, noreturn,
+// mismatch (detail: the identity the device reports), badreq
+function fail(code, msg, detail = "") { const e = new Error(msg); e.code = code; e.detail = detail; return e; }
+
+function pack7(data) {
+  const out = []; let acc = 0, nb = 0;
+  for (const b of data) {
+    acc |= b << nb; nb += 8;
+    while (nb >= 7) { out.push(acc & 0x7F); acc >>>= 7; nb -= 7; }
+  }
+  if (nb) out.push(acc & 0x7F);
+  return out;
+}
+
+function unpack7(s) {
+  const out = []; let acc = 0, nb = 0;
+  for (const b of s) {
+    acc |= (b & 0x7F) << nb; nb += 7;
+    while (nb >= 8) { out.push(acc & 0xFF); acc >>>= 8; nb -= 8; }
+  }
+  return out;
+}
+
+function response(addr, data, fl = 0) {
+  const len = data.length;
+  const body = [0x00, 0x59, 0x30, (len + 8) & 0xFF, ((len + 8) >> 8) & 0xFF, 0, fl,
+    addr & 0xFF, (addr >>> 8) & 0xFF, (addr >>> 16) & 0xFF, (addr >>> 24) & 0xFF,
+    len & 0xFF, (len >> 8) & 0xFF, 0, ...data];
+  let s = 0;
+  for (let i = 6; i < body.length; i++) s += body[i];
+  body.push(~s & 0xFF);
+  return [0xF0, ...pack7(body), 0xF7];
+}
+
+function parseRequest(pkt) {
+  if (pkt[0] !== 0xF0 || pkt[pkt.length - 1] !== 0xF7) return null;
+  const u = unpack7(pkt.slice(1, -1));
+  if (u.length !== 15 || u[0] !== 0 || u[1] !== 0x59 || u[2] !== 0x30) return null;
+  let s = 0;
+  for (let i = 6; i < 14; i++) s += u[i];
+  if ((~s & 0xFF) !== u[14]) return null;
+  return { fl: u[6], addr: (u[7] | (u[8] << 8) | (u[9] << 16) | (u[10] << 24)) >>> 0, len: u[11] | (u[12] << 8) | (u[13] << 16) };
+}
+
+function parseIdentity(pkt) {
+  const d = unpack7(pkt.slice(1, -1));
+  if (d.length !== 34 || d[0] !== 0 || d[1] !== 0x59 || d[2] !== 0x11) return null;
+  const txt = String.fromCharCode(...d.slice(6, 33)).replace(/\0+$/, "");
+  const m = /^([^_]+)_(\d+)$/.exec(txt);
+  return m ? { text: txt, model: m[1], version: parseInt(m[2], 10) } : null;
+}
+
+// one MIDI in/out pair with a SysEx queue
+class Link {
+  constructor(input, output) {
+    this.input = input; this.output = output; this.q = []; this.waiter = null;
+    input.onmidimessage = (ev) => {
+      if (ev.data[0] !== 0xF0) return;
+      this.q.push(Array.from(ev.data));
+      if (this.waiter) { const w = this.waiter; this.waiter = null; w(); }
+    };
+  }
+  get lost() { return this.input.state === "disconnected" || this.output.state === "disconnected"; }
+  // false when the port is gone (unplugged): WebMIDI throws on a disconnected output
+  send(bytes) {
+    try { this.output.send(bytes); return true; } catch (_) { return false; }
+  }
+  drain() { this.q.length = 0; }
+  async read(ms) {
+    if (!this.q.length) {
+      let tm;
+      await Promise.race([new Promise((r) => { this.waiter = r; }), new Promise((r) => { tm = setTimeout(r, ms); })]);
+      clearTimeout(tm);
+      this.waiter = null;
+    }
+    return this.q.shift() || null;
+  }
+  close() { this.input.onmidimessage = null; }
+}
+
+async function handshake(link, tries = 3) {
+  link.drain();
+  for (let t = 0; t < tries; t++) {
+    if (!link.send(HS_QUERY)) return null;
+    const end = Date.now() + 1000;
+    while (Date.now() < end) {
+      const p = await link.read(end - Date.now());
+      if (!p) break;
+      const id = parseIdentity(p);
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
+class Updater {
+  constructor(access, log) {
+    this.access = access;
+    this.log = log || (() => {});
+  }
+
+  // every in/out pair with the same port name that answers the handshake
+  async find(filter) {
+    const outs = [...this.access.outputs.values()];
+    for (const input of this.access.inputs.values()) {
+      if (input.state === "disconnected") continue;
+      if (!/fm-1|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
+      const output = outs.find((o) => o.name === input.name) || (outs.length === 1 ? outs[0] : null);
+      if (!output) continue;
+      try { await input.open(); await output.open(); } catch (_) { continue; }
+      const link = new Link(input, output);
+      const id = await handshake(link, 2);
+      if (id && (!filter || filter(id))) return { link, id, name: input.name };
+      link.close();
+    }
+    return null;
+  }
+
+  async waitFor(filter, ms) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      const dev = await this.find(filter);
+      if (dev) return dev;
+      await sleep(1000);
+    }
+    return null;
+  }
+
+  // serve read requests until the device asks for one of the finish addresses; stops early
+  // when the port disappears (lost: true) instead of waiting out idleMs
+  async serve(link, image, finishAddr, idleMs, onProgress) {
+    let served = 0, last = Date.now();
+    for (;;) {
+      const pkt = await link.read(1000);
+      if (!pkt) {
+        if (link.lost) return { served, finished: false, lost: true };
+        if (Date.now() - last > idleMs) return { served, finished: false };
+        continue;
+      }
+      const r = parseRequest(pkt);
+      if (!r) continue;
+      last = Date.now();
+      if (r.addr === 0xE0000000 || r.addr === 0xF0000000) {
+        link.send(response(r.addr, [...new TextEncoder().encode("success"), 0]));
+        if (r.addr === finishAddr) return { served, finished: true };
+        continue;
+      }
+      if (r.len > MAXDATA || r.addr + r.len > image.length) throw fail("badreq", `bad request ${r.addr.toString(16)}+${r.len}`);
+      await sleep(10);
+      if (!link.send(response(r.addr, Array.from(image.subarray(r.addr, r.addr + r.len)), r.fl))) {
+        return { served, finished: false, lost: true };
+      }
+      served++;
+      if (onProgress) onProgress(served, r.addr);
+    }
+  }
+
+  // full install: running firmware -> loader -> new firmware
+  async install(image, product, onStep) {
+    const step = onStep || (() => {});
+    const dev = await this.find((id) => !IS_OTA(id));
+    if (!dev) throw fail("notfound", "FM-1 not found (USB cable, and no other app using it?)");
+    const [model] = product.split("_");
+    if (dev.id.model !== model) { dev.link.close(); throw fail("model", `the device is ${dev.id.text}, the package is for ${product}`); }
+    step("start", dev.id.text);
+    dev.link.send(UPGRADE);
+    await sleep(2000);
+    const s1 = await this.serve(dev.link, image, 0xE0000000, 8000, (n) => step("verify", n));
+    dev.link.close();
+    if (!s1.finished) throw fail(s1.lost ? "lost" : "stopped", `the device ${s1.lost ? "was disconnected" : "stopped"} after ${s1.served} requests: nothing was written`);
+    step("loader");
+    await sleep(3000);
+    const ota = await this.waitFor(IS_OTA, 30000);
+    if (!ota) throw fail("noloader", "the update loader did not appear. Replug the USB cable and press Install again: the device stays in update mode until it is finished.");
+    const s2 = await this.write(ota, image, step);
+    if (!s2.finished) throw fail(s2.lost ? "lost" : "stopped", `the loader ${s2.lost ? "was disconnected" : "stopped"} after ${s2.served} requests. Replug and press Install again to resume.`);
+    step("reboot");
+    await sleep(3000);
+    const back = await this.waitFor((id) => !IS_OTA(id), 40000);
+    if (!back) throw fail("noreturn", "the device did not come back: power-cycle it");
+    back.link.close();
+    if (back.id.text !== product) throw fail("mismatch", `installed, but the device reports ${back.id.text}`, back.id.text);
+    step("done", back.id.text);
+    return back.id.text;
+  }
+
+  // step 2 with the loader found by find()/waitFor()
+  async write(ota, image, step) {
+    ota.link.send(UPGRADE);
+    await sleep(2000);
+    const s2 = await this.serve(ota.link, image, 0xF0000000, 180000, (n) => step("write", n));
+    ota.link.close();
+    return s2;
+  }
+
+  // resume: the device is already in update mode (loader) -> true when the write finished
+  async resume(image, onStep) {
+    const ota = await this.find(IS_OTA);
+    if (!ota) return false;
+    return (await this.write(ota, image, onStep || (() => {}))).finished;
+  }
+}
+
+const $ = (id) => document.getElementById(id);
+const meta = {"version": "0.9.3", "product": "FM-1_900", "name": "carnac-0.9.3.fwsc", "sha256": "cb76875d78a3d43207749d4177ff894c0d9d157fde4ad1bfac007de9635ce7f6", "tip": "https://ko-fi.com/orbvorgis", "pkg": "../firmware/carnac-0.9.3.fwsc", "pcm": [{"area": 0, "file": "../firmware/pcm_area0.bin", "sha256": "b5b5c8fc3b830aa1f2a31f2863012fa90ec14e03134d251ccc6213c92a90a96f", "count": 12, "len": 36677}, {"area": 1, "file": "../firmware/pcm_area1.bin", "sha256": "0d9ffca98acc0ea08c9676355b320b2df23c648a75c9d54c7a4f9ddbc7a7f6ad", "count": 9, "len": 53263}]};
+const IS_LOADER = (id) => /^ota-/i.test(id.model);
+const INFO_REQ = [0xF0, 0x7D, 0x46, 0x4C, 0x01, 0xF7];   /* (sleep() comes with fm1ota.js) */
+
+const say = (txt, bad = false) => { $("status").textContent = txt; $("status").className = bad ? "bad" : ""; };
+const log = (t) => { const l = $("log"); l.textContent += t + "\n"; l.scrollTop = l.scrollHeight; };
+const setDevice = (txt) => { $("device").textContent = txt; };
+
+$("ver").textContent = meta.version;
+$("pkgname").textContent = meta.name;
+$("pkgsha").textContent = meta.sha256;
+if (meta.tip) $("tiplink").href = meta.tip;
+$("go").textContent = `Install Carnac ${meta.version}`;
+
+const ERR = {
+  notfound: "FM1 not found. Check the USB cable (it must be a data cable), close other apps that use MIDI, and try again.",
+  model: "The connected device is not an FM1.",
+  stopped: "The FM1 stopped answering. Replug the USB cable and press Find my FM1 again.",
+  lost: "The USB connection was lost. Replug it and press Find my FM1 again: the install carries on from where it stopped.",
+  noloader: "The FM1 did not switch to update mode. Replug the USB cable and press Find my FM1 again.",
+  noreturn: "The FM1 did not come back after the update. Switch it off and on.",
+  badreq: "The FM1 asked for something outside the package. Reload the page and try again.",
+};
+
+let image = null, midi = null, state = null, writing = false, stock = null, pcmImages = null;
+window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault(); e.returnValue = ""; } });
+
+/* "0.9.1" -> [0, 9, 1]; anything else (DEV, a suffix) -> null */
+const parseVer = (v) => { const m = /^(\d+)\.(\d+)(?:\.(\d+))?$/.exec(v || ""); return m ? [+m[1], +m[2], +(m[3] || 0)] : null; };
+const cmpVer = (a, b) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+
+/* Carnac answers editor INFO with "CARNAC OS <version>"; stock firmware and safe mode do not answer */
+async function carnacVersion(link) {
+  link.drain();
+  for (let t = 0; t < 2; t++) {
+    if (!link.send(INFO_REQ)) return null;
+    const end = Date.now() + 800;
+    while (Date.now() < end) {
+      const p = await link.read(end - Date.now());
+      if (!p) break;
+      if (p[1] === 0x7D && p[2] === 0x46 && p[3] === 0x4C && p[4] === 0x01) {
+        let s = "";
+        for (let i = 5; i < p.length && p[i] !== 0 && p[i] !== 0xF7; i++) s += String.fromCharCode(p[i]);
+        const m = /^CARNAC OS\s*(.*)$/.exec(s);
+        return m ? m[1].trim() : null;
+      }
+    }
+  }
+  return null;
+}
+
+/* the PCM waves (src/hardware/pcm_store_fm1.c): 100 BEGIN [area], 101 WRITE [off x3, data], 102 END [header],
+   103 INFO [area, first] -> areas, area, entries, KiB x2, used x3, names; data in groups of 7 behind their top bits */
+const PCM_BEGIN = 100, PCM_WRITE = 101, PCM_END = 102, PCM_INFO = 103, PCM_HDR = 32, PCM_CHUNK = 256;
+const pcmPack = (b) => {
+  const o = [];
+  for (let i = 0; i < b.length; i += 7) {
+    const g = b.subarray(i, i + 7);
+    o.push(g.reduce((hi, x, j) => hi | ((x >> 7) << j), 0), ...Array.from(g, (x) => x & 0x7F));
+  }
+  return o;
+};
+const u21 = (v) => [v & 0x7F, (v >> 7) & 0x7F, (v >> 14) & 0x7F];
+async function edReq(link, cmd, args, ms = 5000) {
+  link.drain();
+  if (!link.send([0xF0, 0x7D, 0x46, 0x4C, cmd, ...args, 0xF7])) return null;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const p = await link.read(end - Date.now());
+    if (!p) break;
+    if (p[1] === 0x7D && p[2] === 0x46 && p[3] === 0x4C && p[4] === cmd) return p.slice(5, -1);
+  }
+  return null;
+}
+/* the areas whose image differs from the package's (entries or length); null when the FM1 has no PCM commands */
+async function pcmMissing(link) {
+  const out = [];
+  for (const a of meta.pcm) {
+    const r = await edReq(link, PCM_INFO, [a.area, 0], 1500);
+    if (!r || r.length < 8 || r[1] !== a.area) return null;
+    if (r[2] !== a.count || (r[5] | r[6] << 7 | r[7] << 14) !== a.len) out.push(a);
+  }
+  return out;
+}
+/* write the areas that need it -> "" or why not */
+async function pcmSync(link, onPart) {
+  const todo = await pcmMissing(link);
+  if (todo === null) return "the FM1 did not answer the PCM commands";
+  for (const [k, a] of todo.entries()) {
+    const img = pcmImages[a.area];
+    const frames = [[PCM_BEGIN, [a.area]]];
+    for (let off = PCM_HDR; off < img.length; off += PCM_CHUNK) frames.push([PCM_WRITE, [...u21(off), ...pcmPack(img.subarray(off, off + PCM_CHUNK))]]);
+    frames.push([PCM_END, pcmPack(img.subarray(0, PCM_HDR))]);
+    log(`PCM area ${a.area}: ${frames.length} frames`);
+    for (const [n, [cmd, args]] of frames.entries()) {
+      const r = await edReq(link, cmd, args);
+      if (!r) return `no answer at area ${a.area}, frame ${n + 1}`;
+      const rc = cmd === PCM_WRITE ? r[3] : cmd === PCM_BEGIN ? r[1] : r[0];
+      if (rc) return `area ${a.area} refused frame ${n + 1} (rc ${rc})`;
+      onPart(k, todo.length, (n + 1) / frames.length);
+    }
+  }
+  const left = await pcmMissing(link);
+  return left && left.length === 0 ? "" : "the FM1 does not show the PCM waves after writing them";
+}
+
+async function getMidi() {
+  if (midi) return midi;
+  try { midi = await navigator.requestMIDIAccess({ sysex: true }); }
+  catch (_) { say("MIDI access was not allowed. Allow MIDI in the site settings (the icon in the address bar) and try again.", true); return null; }
+  return midi;
+}
+
+/* what is on the FM1: { kind: "loader" } | { kind: "carnac", version } | { kind: "other", text } */
+async function probe() {
+  const up = new Updater(midi, log);
+  const dev = await up.find(() => true);
+  if (!dev) return null;
+  log(`found ${dev.name}: ${dev.id.text}`);
+  if (IS_LOADER(dev.id)) { dev.link.close(); return { kind: "loader" }; }
+  const v = await carnacVersion(dev.link);
+  const pcm = v === meta.version && pcmImages ? await pcmMissing(dev.link) : null;
+  dev.link.close();
+  return v !== null ? { kind: "carnac", version: v, pcmOnly: !!(pcm && pcm.length) } : { kind: "other", text: dev.id.text };
+}
+
+function refreshButtons() {
+  const needConfirm = $("confirmbox").classList.contains("show");
+  $("find").disabled = writing || !image;
+  $("go").disabled = writing || !image || !state || (needConfirm && !$("confirm").checked);
+  $("stockgo").disabled = writing || !stock || !state;
+}
+$("confirm").addEventListener("change", refreshButtons);
+
+function showState() {
+  const box = $("confirmbox");
+  box.classList.remove("show");
+  $("confirm").checked = false;
+  $("go").textContent = `Install Carnac ${meta.version}`;
+  if (!state) { setDevice(""); refreshButtons(); return; }
+  if (state.kind === "loader") {
+    setDevice("The FM1 is in update mode: an earlier install did not finish.");
+    $("go").textContent = `Finish installing Carnac ${meta.version}`;
+  } else if (state.kind === "other") {
+    setDevice(`The FM1 runs other firmware (${state.text}): stock, or Carnac in safe mode.`);
+  } else {
+    const on = parseVer(state.version), pkg = parseVer(meta.version);
+    setDevice(`The FM1 runs Carnac OS ${state.version}.`);
+    if (!on || !pkg) {
+      $("confirmtext").textContent = `The FM1 runs a test build (${state.version}). It may save sounds in a newer format than ${meta.version} reads: patches saved with it may not load. Install anyway.`;
+      box.classList.add("show");
+    } else if (cmpVer(pkg, on) < 0) {
+      $("confirmtext").textContent = `${meta.version} is older than the ${state.version} on the FM1. Patches saved with ${state.version} may not load in ${meta.version}. Install the older version anyway.`;
+      box.classList.add("show");
+    } else if (cmpVer(pkg, on) === 0 && state.pcmOnly) {
+      setDevice(`The FM1 runs Carnac OS ${state.version}, but its PCM waves are missing or out of date.`);
+      $("go").textContent = "Write the PCM waves";
+    } else if (cmpVer(pkg, on) === 0) {
+      setDevice(`The FM1 already runs Carnac OS ${state.version}. You can install it again.`);
+    }
+  }
+  refreshButtons();
+}
+
+$("find").addEventListener("click", async () => {
+  if (!(await getMidi())) return;
+  $("find").disabled = true;
+  say("Looking for the FM1…");
+  try {
+    state = await probe();
+    if (!state) say(ERR.notfound, true);
+    else say("");
+  } catch (e) { state = null; say("Error: " + (e && e.message), true); log(String(e && e.stack || e)); }
+  showState();
+});
+
+async function run(img, product, isStock) {
+  writing = true;
+  refreshButtons();
+  $("bar").value = 0;
+  const up = new Updater(midi, log);
+  const total = 74 + Math.ceil(img.length / 512);
+  const step = (k, a) => {
+    if (k !== "verify" && k !== "write") log(`${k} ${a ?? ""}`);
+    if (k === "start") say("Starting…");
+    if (k === "verify") { say("Checking the package with the FM1…"); $("bar").value = (a / total) * 100; }
+    if (k === "loader") say("Switching the FM1 to update mode…");
+    if (k === "write") { say("Writing… do not unplug the cable."); $("bar").value = ((74 + a) / total) * 100; }
+    if (k === "reboot") say("Restarting the FM1…");
+  };
+  try {
+    if (state && state.kind === "loader") {
+      if (!(await up.resume(img, step))) throw Object.assign(new Error("stopped"), { code: "stopped" });
+      step("reboot");
+      await sleep(3000);
+      const back = await up.waitFor((id) => !IS_LOADER(id), 40000);
+      if (!back) throw Object.assign(new Error("noreturn"), { code: "noreturn" });
+      back.link.close();
+    } else {
+      try { await up.install(img, product, step); }
+      catch (e) { if (!(e && e.code === "mismatch")) throw e; log(e.message); }   /* checked below instead */
+    }
+    $("bar").value = 100;
+    if (isStock) { say("Done. The FM1 has restarted with M-VAVE's firmware."); state = null; }
+    else {
+      say("Installed. Checking the version…");
+      let v = null;
+      for (let t = 0; t < 6 && v === null; t++) {           /* the splash screen runs first */
+        await sleep(1500);
+        const dev = await up.find((id) => !IS_LOADER(id));
+        if (dev) { v = await carnacVersion(dev.link); dev.link.close(); }
+      }
+      if (v === meta.version) await finishPcm(up, v);
+      else if (v !== null) say(`Written, but the FM1 reports Carnac OS ${v}, not ${meta.version}. Press Find my FM1 and install again.`, true);
+      else say("Written, but the FM1 did not report its version. If it shows the Carnac splash, all is well; if not, switch it off and on.", true);
+      state = v !== null ? { kind: "carnac", version: v } : null;
+    }
+  } catch (e) {
+    say((e && e.code && ERR[e.code]) || ("Error: " + (e && e.message)), true);
+    log(String(e && e.stack || e));
+    state = null;
+  }
+  writing = false;
+  showState();
+}
+
+/* after a good install (or alone, when only the PCM waves are missing): the PCM waves, then the last word */
+async function finishPcm(up, v) {
+  let why = pcmImages ? "" : "their download failed";
+  if (!why) {
+    const dev = await up.find((id) => !IS_LOADER(id));
+    if (!dev) why = "the FM1 stopped answering";
+    else {
+      $("bar").value = 0;
+      why = await pcmSync(dev.link, (k, n, f) => {
+        say(`Writing the PCM waves${n > 1 ? ` (${k + 1} of ${n})` : ""}… do not unplug the cable.`);
+        $("bar").value = ((k + f) / n) * 100;
+      });
+      dev.link.close();
+      $("bar").value = 100;
+    }
+  }
+  if (why) { log("PCM: " + why); say(`Carnac OS ${v} is installed, but the PCM waves were not written (${why}). Press Find my FM1 to try again.`, true); return; }
+  say(`Done. The FM1 runs Carnac OS ${v}, with its PCM waves.`);
+  if (meta.tip) $("tip").hidden = false;
+}
+
+async function runPcmOnly() {
+  writing = true;
+  refreshButtons();
+  try { await finishPcm(new Updater(midi, log), state.version); }
+  catch (e) { say("Error: " + (e && e.message), true); log(String(e && e.stack || e)); }
+  state = { kind: "carnac", version: state.version, pcmOnly: false };
+  writing = false;
+  showState();
+}
+
+$("go").addEventListener("click", () => {
+  if (state && state.kind === "carnac" && state.pcmOnly) runPcmOnly();
+  else if (image) run(image, meta.product, false);
+});
+$("stockgo").addEventListener("click", () => { if (stock) run(stock.image, stock.product, true); });
+
+/* stock: M-VAVE's FM-1 V15, chosen by the user (M-VAVE's server allows no cross-site download), checked by SHA-256 */
+const STOCK_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a";
+const sha256 = async (b) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].map((x) => x.toString(16).padStart(2, "0")).join("");
+$("stockfile").addEventListener("change", async (e) => {
+  stock = null;
+  const f = e.target.files && e.target.files[0];
+  if (f) {
+    const raw = new Uint8Array(await f.arrayBuffer());
+    if ((await sha256(raw)) !== STOCK_SHA256) say("That is not M-VAVE's FM-1 V15 file. Choose the file from the link above.", true);
+    else { stock = { image: logicalImage(raw), product: productOf(raw) }; say("That is M-VAVE's FM-1 V15."); }
+  }
+  refreshButtons();
+});
+
+(async () => {
+  if (!navigator.requestMIDIAccess) { say("This browser cannot talk to the FM1. Open this page in Chrome or Edge on a computer.", true); return; }
+  try {
+    const r = await fetch(meta.pkg);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const pkg = new Uint8Array(await r.arrayBuffer());
+    if ((await sha256(pkg)) !== meta.sha256 || productOf(pkg) !== meta.product) { say("The firmware download is damaged. Reload the page.", true); return; }
+    image = logicalImage(pkg);
+  } catch (e) { say("Could not load the firmware: " + e.message, true); return; }
+  try {
+    const imgs = {};
+    for (const a of meta.pcm) {
+      const r = await fetch(a.file);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const b = new Uint8Array(await r.arrayBuffer());
+      if ((await sha256(b)) !== a.sha256) throw new Error(`${a.file} is damaged`);
+      imgs[a.area] = b;
+    }
+    pcmImages = imgs;
+  } catch (e) { log("PCM waves: " + e.message); }
+  refreshButtons();
+})();
+</script>
+</body>
+</html>

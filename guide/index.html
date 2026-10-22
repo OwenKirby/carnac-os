@@ -1,0 +1,953 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Carnac Button Guide: what every FM1 button does, drawn with the firmware's runes and stones (a port of
+     ui_seq_draw.c). Self-contained; make_site.py copies it to guide/index.html. --><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Carnac Button Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the FM1's own screen, grown to a page. Black ground, the rune face at whole-pixel sizes (20px = 2 screen
+   pixels a rune pixel), the palette of GLOBAL > THEME, hewn tablets for cards, grass where a rule would be, a moon
+   waxing section by section. Single dark look by design: the firmware has no light theme. */
+@font-face { font-family: "Carnac Rune"; src: url(data:font/woff;base64,d09GRgABAAAAAAlMAAoAAAAAL9AAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAABPUy8yAAABZAAAADgAAABgRirmzmNtYXAAAAGsAAAAtQAAAPrMhol4Z2x5ZgAAAvAAAAT4AAApBMG71RNoZWFkAAAA9AAAADYAAAA2LwZcKmhoZWEAAAEsAAAAIAAAACQF3gH2aG10eAAAAZwAAAANAAAAigJYAABsb2NhAAACZAAAAIoAAACKmbWPkG1heHAAAAFMAAAAGAAAACAAXgBmbmFtZQAAB+gAAABYAAAAbHFN7Ohwb3N0AAAIQAAAAQwAAALCtHfBtgABAAAAAQAADpJSQ18PPPUAAQPoAAAAAOb/C+MAAAAA5v8L4wAAAAAB9AOEAAAAAwACAAAAAAAAeJxjYGRgYH7x34KBgSmCgYEhhfELAyMDKmAEAGQ7A9l4nGNgZGBgcGFIYZBkAAEmMIkEABOQAMV4nGNgZopgnMDAysDCQAA0MDAwMzAwJMD49vb29gwMDApKQswv/lswMDC/YDiBpkWBgQEADp4HIHicY4pgGCQAADC2AFsAAAB4nE3KTy4DcRyG8c9o4wBUQqLJr8QISuvfYIxq3QIR6TWcwFLiApzC2tIJbBArK3f4ipqFN3nyJk8eTKGBloZs8k1fyCVN05b1HDl14dKVazcePHlNrbSQ2inv3C/NRCBZ0Vca1d247mbTfFpMeeeu7sQ38Rzv8RYv8RjjuI3zX89nm485mVwXgz/7b4dKFRPIbKhs21cq7NrTt2nHqtyarmM9B7asGxoqFCqVgZETZz8XZCswAAAAAAAAPQA9ALABNQGIAfsCZQK9Ay0DpwPxBD0EpwTxBXAF+wZwBtYHTwfLCCcIcQjiCUgJxwosCnoK1gtXC6wMBQxhDMENJg2RDdsOUw6+DskO3g77DzQPcQ+fD7EP5hARED0QfhDrEPwRNBFrEcoR3BISEl0SqBMUEzETTROBE7UTwRPfFCYUbRSCAAB4nMVZO64bNxQ9HPlBcGzDeZYVx3BhGylSRIAhDB5cuEiRwoWLFCliIIULcwFvEV6AFvQWwAV4KaofAn5FUpfkJUdBBpgZfcn7OTz38A5+AABxXH3DCms8wlNs8AKv8Bq/4FdgczNv9+68upm3b2/m7To7VzfzVkop72+l2EkplVT6rVy9kfRx/11K4Hl15t/wDjPe4wN+xx/4iE/401qjZ5ydNXNkVXz3FueW53drqTbHGX//2F2Nmf5NuBY9Kh74udvLv/A3/sEX4JrhhY8Ax9v8d6ecBR+V/uD84xCT/gCEQOApMxIJ5rw/68K5JXzy+YsPruEjqIzzVEPlW2YOLSQVnQQiWwOoXOhlKTPc78hMWeR15ivy6Ue2T4t9KdvOt3uU/2p2zQMMcPJDUZRnPRtIB7YDzGcy01ovXHb39+L6cd6TX48wHfAEEhCHqs9JFku8lqPQ5Sc69DuOkXjCyAPLppyrVGbT/a1mpO9Ms/CsCx8kMnIdsGfoA4pBtdGKot0+FIAX6+uOvCcrNT94cf5pSIEk8d5n3DJnMe6peOnaS2+VcjemPICXw/rrKx2D/PXMfB3Hbk/EQ0VXKjaWnQNHjyuxBdqby7gc9jZutRROWoZGqtAAy4xoaUohlET0gFhYUFFH85bjN8Y9K3fmR4Zi9f5qrKAu4K7RLFZrRyurCwtI8Pu6w++qKoz3R9uslrf2Tf1bPn79a6nv/LQGGSD1FsBNJ4ZYGpTNclx+G2c59KGlx7uZuJtstHywLRV9UX0AuoRa6WW2nN2I6tzguPS2QK0szmSeqQ41HPJW6Ir15ZHNBBwPEiYgLe5ihO4o52w1qN7thineNvXF9MWglm1qgJK2j3Vuh46zItV84SXtUiHnQtDVQ/SZqKGJ6ieYFGW1xr1ltxF7ulGcHnsLXb73bgHmO/Bd/ahFq6KkLZqawxk/Ljn67BYELkqdhNKKF7sAENvycBcb/W4HhvRJT/eyV/eNpGHMk01H/5W5nzz5cHshdTWsaVtVIszRWxH+453gQNRJDXiZBFwGWZzdX6kuVHx0xyCyBBQgdpBYAZp5NAiwghQHcRBH52vii/6jOLgBrmxUzP99VLBvdw+Bh5V4Bo6sncaGVM/U/Af+v+fMaxvls5mDRqDmSXvtxAx27AkKSuymOzO2GdH/e/pscWFircTR/SaLtbeBqjmeEYMadzc9MhnkNaCxs3qTe3rtqoA/cxayimG6K4wqIcXxfNQcJ/EM4nCSIYVxH1Xiote0iQ2lSCml6rtMgXpctEqxMhboLijlWaML2tIK3O9CJ80piTPzw/6GjmDFs8k8h9pBWVy+D0jyuMbDypOqKgOEDGsVFC+T+vqvzrcpYJOslg6v1emGtGy+6ylZQnXzT/37mBRDz75P0U5Q011grMAREckaPhU7cZw+03xa0oj7iv4TxzjCS55qtrp5SWXNm3pcDXTRZ615vU8PYyPPqmGlUtqFxKir7VYcm/gOtCVEv0L9o87RZjzwwDJKxNah2nkL7VQqVD731weQ012SpzMWpWLcrpvbxl5Nrz6/K7NWka6x6jO1775yNpz223q64jwCShz0mtVqT4+rjJLTKk6rvaD3jIqj1q+MxZ/NymNXwcpoSzohVOVcZ6fr/oUK6o8mZKw1GvvlekpqrlKNP2EqMsUYVtIqiTWrTB0bZezniX/5L66vlIx4nC2JMQrAIBDAclYoRejQobNjX9AP9Af+4BBxkRsE/18szRACATw3wkQInyeOlcCC+A3h5PjbsXM92k1zTMNKKnU07TwoHUPJRBIDo5AoVAZt3hfuGQ6IeJx9kUdywzAQBNlykHPOOedA7nIp0VnB/osvvvn/rqIGV+PSBbAwPVhmrez/NcwyWowxzgSTtJlimhlmmWOeBRZZYpkVVlljnQ022WKbHXbZY58DDjnimBNOOeOcCy654pobbrnjngceySkwnJKgokOXmieeeeGVN975oEefAcP27893nls+YlmIJrpYiiFWYkfsirXYE/viQJSv/BS/Rgz5Q/6QP+QP+UP+kD/kD/lD/pDflevKdeW6cl25rlxXrivXlevKNfU2vSPU30RP++RTD9McXPdd87D0XX0snctryat+lnolv3Ij/cfUX+fWvNeKOlHz6Dc5lheN14q66WtFPdrnVv0BjXSYNw==) format("woff"); font-display: block; }
+:root {
+  color-scheme: dark;
+  --bg: #000000; --surf: #221000; --text: #ff8c1e; --theme: #ff6e00; --accent: #ffbe5a; --mid: #b26215;
+  --dim: #6b3b0d; --sel: #733200; --lane: #ffc88c; --noise: none;
+  --rune: "Carnac Rune", "Courier New", monospace;
+}
+body { background: var(--bg); color: var(--text); font-family: var(--rune); font-size: 20px; line-height: 30px;
+  -webkit-font-smoothing: none; text-rendering: optimizeSpeed; image-rendering: pixelated; }
+main { max-width: 1000px; margin: 0 auto; padding-block: 16px 60px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 36px; }
+canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+h1, h2, h3, p { margin: 0; font-weight: normal; }
+h1 { font-size: 60px; line-height: 66px; letter-spacing: .2em; color: var(--theme); }
+h2 { font-size: 40px; line-height: 48px; letter-spacing: .2em; color: var(--theme); text-wrap: balance; }
+h3 { font-size: 20px; letter-spacing: .2em; color: var(--accent); }
+p { max-width: 62ch; }
+.mid { color: var(--mid); }
+.dim { color: var(--dim); }
+.acc { color: var(--accent); }
+.b { background: var(--noise) var(--sel); background-size: 128px 32px; color: var(--lane); padding: 0 6px; white-space: nowrap; }
+ul.r { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ul.r > li { padding-left: 24px; position: relative; }
+ul.r > li::before { content: "\00b7"; position: absolute; left: 4px; color: var(--mid); }
+ol.r { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: s; }
+ol.r > li { padding-left: 36px; position: relative; counter-increment: s; }
+ol.r > li::before { content: counter(s); position: absolute; left: 0; color: var(--bg); background: var(--theme); width: 24px; text-align: center; }
+
+/* the screen header strip: title, tab, moon */
+.bar { display: flex; align-items: center; gap: 16px; min-height: 40px; }
+.bar .t { color: var(--theme); letter-spacing: .1em; }
+.bar .tab { color: var(--theme); text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 2px; }
+.bar .sp { flex: 1; }
+.bar .tabs { color: var(--dim); display: flex; gap: 12px; }
+.theme { display: flex; align-items: center; gap: 4px; }
+.theme button { font: inherit; color: var(--text); background: none; border: 0; padding: 0 8px; cursor: pointer; }
+.theme button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme output { background: var(--noise) var(--sel); background-size: 128px 32px; color: var(--lane); padding: 0 8px; min-width: 132px; text-align: center; }
+
+section { display: grid; gap: 22px; }
+.head { display: flex; align-items: flex-end; gap: 16px; }
+.head h2 { flex: 1; min-width: 0; }
+.head .tag { color: var(--mid); letter-spacing: .1em; padding-bottom: 6px; white-space: nowrap; }
+.grass { width: 100%; height: 16px; }
+.wide { overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+.lede { color: var(--text); }
+
+/* hewn tablets drawn behind boxes (canvas.bg) */
+.tab, .dlg, .strip { position: relative; isolation: isolate; }
+.tab > canvas.bg, .dlg > canvas.bg, .strip > canvas.bg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; }
+.tab { padding: 22px 24px; display: grid; gap: 14px; align-content: start; min-width: 0; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 18px; }
+@media (max-width: 460px) { .two { grid-template-columns: 1fr; } .tab { padding: 18px 16px; } }
+
+/* the panel legend */
+.legend { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 6px 22px; }
+.legend li { display: grid; grid-template-columns: 26px 1fr; gap: 12px; padding: 6px; cursor: default; }
+.legend li.hl, .legend li:hover { background: var(--surf); }
+.legend .k { background: var(--noise) var(--sel); background-size: 128px 32px; color: var(--accent); text-align: center; height: 30px; }
+.legend b { font-weight: normal; color: var(--theme); display: block; letter-spacing: .1em; }
+.legend span { color: var(--mid); display: block; }
+
+/* page chains */
+.grp { display: grid; grid-template-columns: 76px 1fr; gap: 20px; align-items: start; padding-block: 14px; }
+.grp + .grp { border-top: 2px dotted var(--dim); }
+.grp > div { min-width: 0; display: grid; gap: 14px; }
+.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 4px; }
+.chain li { display: flex; align-items: flex-end; gap: 4px; }
+.chain li + li::before { content: "\2192"; color: var(--dim); padding: 0 6px 30px; }
+.chain .pg { display: grid; justify-items: center; gap: 4px; }
+.chain .pg span { color: var(--text); white-space: nowrap; }
+.chain .pg.opt span { color: var(--mid); }
+.chain .back { color: var(--dim); padding-bottom: 30px; }
+.knobs { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: end; }
+.knobs .kn { display: grid; justify-items: center; gap: 2px; color: var(--mid); }
+.knobs .cap { color: var(--dim); align-self: center; letter-spacing: .1em; }
+.note { color: var(--mid); }
+
+/* the screen mock */
+.scr { background: var(--bg); border: 2px solid var(--dim); padding: 10px 12px; display: grid; gap: 0; max-width: 340px; }
+.scr .hd { display: flex; justify-content: space-between; color: var(--theme); border-bottom: 2px dotted var(--dim); margin-bottom: 6px; padding-bottom: 2px; }
+.scr .row { display: flex; justify-content: space-between; color: var(--text); padding: 0 6px; }
+.scr .row.on { background: var(--noise) var(--sel); background-size: 128px 32px; color: var(--lane); }
+.scr .row.grey { color: var(--dim); }
+
+/* menu-list tables */
+.menu { display: grid; gap: 0; }
+.menu .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 16px; padding: 3px 8px; }
+.menu.three .row { grid-template-columns: minmax(0, .9fr) minmax(0, .8fr) minmax(0, 1.3fr); }
+.menu .row:hover { background: var(--noise) var(--sel); background-size: 128px 32px; color: var(--lane); }
+.menu .row:hover span { color: var(--lane); }
+.menu .hd { color: var(--dim); letter-spacing: .1em; }
+.menu .hd:hover { background: none; color: var(--dim); }
+.menu .row span:first-child { color: var(--theme); }
+.menu .row span:last-child { text-align: right; }
+@media (max-width: 560px) { .menu .row, .menu.three .row { grid-template-columns: 1fr; gap: 0; } .menu .row span:last-child { text-align: left; } .menu .row { padding-block: 6px; } }
+
+.strip { display: flex; justify-content: space-between; padding: 10px 18px; color: var(--text); gap: 16px; flex-wrap: wrap; }
+.dlg { display: grid; justify-items: center; gap: 4px; padding: 22px 18px; color: var(--text); max-width: 360px; }
+.dlg .q { color: var(--theme); letter-spacing: .1em; }
+.dlg .yn { display: flex; gap: 36px; margin-top: 6px; }
+.dlg .yes { border: 2px solid var(--mid); border-radius: 12px; padding: 0 14px; color: var(--accent); }
+
+.lights { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px 22px; }
+.lights li { display: grid; grid-template-columns: 72px 1fr; gap: 14px; align-items: center; }
+.cap2 { display: grid; gap: 8px; justify-items: center; color: var(--mid); }
+.row2 { display: flex; flex-wrap: wrap; gap: 24px; align-items: end; }
+footer { color: var(--dim); }
+@media (max-width: 520px) { h1 { font-size: 40px; line-height: 48px; } h2 { font-size: 40px; letter-spacing: .1em; } .grp { grid-template-columns: 1fr; } .bar .tabs { display: none; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<main>
+<div class="bar">
+  <a class="t" href="../" style="text-decoration:none">CARNAC</a><a class="tab" href="../manual/">MANUAL</a>
+  <span class="sp"></span>
+  <div class="theme" role="group" aria-label="Screen theme">
+    <span class="mid">THEME</span>
+    <button type="button" id="thPrev" aria-label="Previous theme">&lt;</button>
+    <output id="thName" aria-live="polite">SAMHAIN</output>
+    <button type="button" id="thNext" aria-label="Next theme">&gt;</button>
+  </div>
+  <canvas data-draw="moon" data-phase="full-usb" width="18" height="20" aria-hidden="true"></canvas>
+</div>
+
+<header style="display:grid;gap:18px">
+  <div class="wide"><canvas data-draw="hero" role="img" aria-label="A row of standing stones under a full moon"></canvas></div>
+  <h1>CARNAC</h1>
+  <p class="lede">What every button on the FM1 does, drawn in the screen's own runes and stones.</p>
+  <p class="mid">Most buttons open a page. Press the same button again for its next page. The letters below find each control on the drawing. THEME, top right, repaints this manual in any palette from GLOBAL &gt; THEME.</p>
+</header>
+
+<section aria-labelledby="s-panel">
+  <div class="head"><h2 id="s-panel">THE PANEL</h2><span class="tag">A-K</span><canvas data-draw="moon" data-phase="0" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="11" aria-hidden="true"></canvas>
+  <div class="wide"><canvas id="panel" data-draw="panel" role="img" aria-label="The FM1 panel drawn in runes, with lettered callouts A to K"></canvas></div>
+  <ul class="legend" id="legend">
+    <li tabindex="0" data-c="A"><div class="k">A</div><div><b>MASTER</b><span>Volume. The one knob no page uses.</span></div></li>
+    <li tabindex="0" data-c="B"><div class="k">B</div><div><b>SELECT</b><span>Moves the cursor up and down the page.</span></div></li>
+    <li tabindex="0" data-c="C"><div class="k">C</div><div><b>PRESETS</b><span>Loads the next saved patch, performance, sequence or arp.</span></div></li>
+    <li tabindex="0" data-c="D"><div class="k">D</div><div><b>ALGORITHM</b><span>Changes the value under the cursor.</span></div></li>
+    <li tabindex="0" data-c="E"><div class="k">E</div><div><b>OCT- / OCT+</b><span>Octave down / up. Held with HOME, SAVE or a key, a second job.</span></div></li>
+    <li tabindex="0" data-c="F"><div class="k">F</div><div><b>SCREEN</b><span>The open page, its rows, the moon (battery).</span></div></li>
+    <li tabindex="0" data-c="G"><div class="k">G</div><div><b>KNOBS 1-4</b><span>Follow the page. Their names are on the screen.</span></div></li>
+    <li tabindex="0" data-c="H"><div class="k">H</div><div><b>SOUND BUTTONS</b><span>FX SEL ENV LFO EDIT GLO shape the sound.</span></div></li>
+    <li tabindex="0" data-c="I"><div class="k">I</div><div><b>HOME SAVE ARP SEQ</b><span>The performance, saving, arp and sequencer.</span></div></li>
+    <li tabindex="0" data-c="J"><div class="k">J</div><div><b>PLAY / REC</b><span>Start, stop, and record into the SEQ or ARP.</span></div></li>
+    <li tabindex="0" data-c="K"><div class="k">K</div><div><b>KEYS</b><span>Play notes. On SEQ and ARP some become steps and switches.</span></div></li>
+  </ul>
+</section>
+
+<section aria-labelledby="s-sound">
+  <div class="head"><h2 id="s-sound">THE SOUND BUTTONS</h2><span class="tag">H</span><canvas data-draw="moon" data-phase="1" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="23" aria-hidden="true"></canvas>
+  <p>Each press moves to the next stone in the row, and after the last one back to the first. Only the button of the open page lights. These pages edit the layer you have picked on HOME.</p>
+  <div>
+    <div class="grp"><canvas data-draw="btn" data-label="FX" data-state="lit" role="img" aria-label="FX button, lit"></canvas><div>
+      <ol class="chain"><li><div class="pg"><canvas data-draw="pstone" data-seed="1"></canvas><span>OSC 1</span></div></li><li><div class="pg opt"><canvas data-draw="pstone" data-seed="2" data-opt="1"></canvas><span>OSC 2</span></div></li><li><div class="pg opt"><canvas data-draw="pstone" data-seed="3" data-opt="1"></canvas><span>ATTACK</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="4"></canvas><span>OSC MIX</span></div></li><li><span class="back">BACK TO OSC 1</span></li></ol>
+      <div class="knobs"><span class="cap">OSC 1</span><div class="kn">WAVE SCAN<canvas data-draw="dial" data-v=".55"></canvas></div><div class="kn">OCTAVE<canvas data-draw="dial" data-v=".5"></canvas></div><div class="kn">FINE TUNE<canvas data-draw="dial" data-v=".5"></canvas></div><div class="kn">PITCH MOD<canvas data-draw="dial" data-v=".1"></canvas></div></div>
+      <p class="note">Outlined stones show only on some voices: OSC 2 on DUAL OSC and STACK, ATTACK on STRIKE.</p>
+    </div></div>
+    <div class="grp"><canvas data-draw="btn" data-label="SEL" data-state="lit" role="img" aria-label="SEL button, lit"></canvas><div>
+      <ol class="chain"><li><div class="pg"><canvas data-draw="pstone" data-seed="5"></canvas><span>FILTER 1</span></div></li><li><div class="pg opt"><canvas data-draw="pstone" data-seed="6" data-opt="1"></canvas><span>FILTER 2</span></div></li><li><div class="pg opt"><canvas data-draw="pstone" data-seed="7" data-opt="1"></canvas><span>FILTER MIX</span></div></li><li><span class="back">BACK TO FILTER 1</span></li></ol>
+      <div class="knobs"><span class="cap">FILTER</span><div class="kn">TYPE MORPH<canvas data-draw="dial" data-v=".3"></canvas></div><div class="kn">CUTOFF<canvas data-draw="dial" data-v=".85"></canvas></div><div class="kn">RESONANCE<canvas data-draw="dial" data-v=".2"></canvas></div><div class="kn">MOD AMOUNT<canvas data-draw="dial" data-v=".6"></canvas></div></div>
+      <p class="note">FILTER 2 on DUAL FILTER and STACK voices. FILTER MIX on those and BINAURAL.</p>
+    </div></div>
+    <div class="grp"><canvas data-draw="btn" data-label="ENV" data-state="lit" role="img" aria-label="ENV button, lit"></canvas><div>
+      <ol class="chain"><li><div class="pg"><canvas data-draw="pstone" data-seed="8"></canvas><span>ENV 1</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="9"></canvas><span>ENV 2</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="10"></canvas><span>ENV 3</span></div></li><li><span class="back">BACK TO ENV 1</span></li></ol>
+      <div class="knobs"><div class="kn">ATTACK<canvas data-draw="dial" data-v=".1"></canvas></div><div class="kn">DECAY<canvas data-draw="dial" data-v=".45"></canvas></div><div class="kn">SUSTAIN<canvas data-draw="dial" data-v=".7"></canvas></div><div class="kn">RELEASE<canvas data-draw="dial" data-v=".4"></canvas></div></div>
+    </div></div>
+    <div class="grp"><canvas data-draw="btn" data-label="LFO" data-state="lit" role="img" aria-label="LFO button, lit"></canvas><div>
+      <ol class="chain"><li><div class="pg"><canvas data-draw="pstone" data-seed="11"></canvas><span>LFO 1</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="12"></canvas><span>LFO 2</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="13"></canvas><span>LFO 3</span></div></li><li><span class="back">BACK TO LFO 1</span></li></ol>
+      <div class="knobs"><div class="kn">SHAPE<canvas data-draw="dial" data-v=".25"></canvas></div><div class="kn">RATE<canvas data-draw="dial" data-v=".5"></canvas></div><div class="kn">DELAY<canvas data-draw="dial" data-v="0"></canvas></div><div class="kn">FADE<canvas data-draw="dial" data-v=".5"></canvas></div></div>
+    </div></div>
+    <div class="grp"><canvas data-draw="btn" data-label="EDIT" data-state="lit" role="img" aria-label="EDIT button, lit"></canvas><div>
+      <ol class="chain"><li><div class="pg"><canvas data-draw="pstone" data-seed="14"></canvas><span>MOD 1</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="15"></canvas><span>MOD 2</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="16"></canvas><span>MOD 3</span></div></li><li><span class="back">BACK TO MOD 1</span></li></ol>
+      <p class="note">Each MOD page is one modulation slot, drawn as a ring of destination stones. Turn a destination's amount to route the slot to it.</p>
+    </div></div>
+    <div class="grp"><canvas data-draw="btn" data-label="GLO" data-state="lit" role="img" aria-label="GLO button, lit"></canvas><div>
+      <ol class="chain"><li><div class="pg"><canvas data-draw="pstone" data-seed="17"></canvas><span>AMP</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="18"></canvas><span>EFFECTS</span></div></li><li><span class="back">BACK TO AMP</span></li></ol>
+      <div class="knobs"><span class="cap">AMP</span><div class="kn">DRIVE<canvas data-draw="dial" data-v=".2"></canvas></div><div class="kn">AMP MOD<canvas data-draw="dial" data-v="0"></canvas></div><div class="kn">DELAY SEND<canvas data-draw="dial" data-v=".35"></canvas></div><div class="kn">REVERB SEND<canvas data-draw="dial" data-v=".6"></canvas></div></div>
+      <div class="knobs"><span class="cap">EFFECTS</span><div class="kn">DELAY TIME<canvas data-draw="dial" data-v=".5"></canvas></div><div class="kn">DELAY FDBK<canvas data-draw="dial" data-v=".4"></canvas></div><div class="kn">REVERB TIME<canvas data-draw="dial" data-v=".75"></canvas></div><div class="kn">REVERB DAMP<canvas data-draw="dial" data-v=".3"></canvas></div></div>
+      <p class="note">One press flips between the sends and the effects they feed.</p>
+    </div></div>
+  </div>
+</section>
+
+<section aria-labelledby="s-enc">
+  <div class="head"><h2 id="s-enc">THE ENCODERS</h2><span class="tag">B C D</span><canvas data-draw="moon" data-phase="2" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="37" aria-hidden="true"></canvas>
+  <div class="two">
+    <div class="tab" data-tab="rock-edge" data-seed="31">
+      <h3>SELECT, THEN ALGORITHM</h3>
+      <div class="row2">
+        <div class="cap2"><canvas data-draw="enc" data-dir="v" role="img" aria-label="SELECT encoder"></canvas>SELECT</div>
+        <div class="scr" aria-label="Screen: FILTER 1 with CUTOFF selected" role="img">
+          <div class="hd"><span>L1 FLT1</span><span class="mid">MULTI</span></div>
+          <div class="row"><span>TYPE MORPH</span><span>40</span></div>
+          <div class="row on"><span>CUTOFF</span><span>84</span></div>
+          <div class="row"><span>RESONANCE</span><span>22</span></div>
+          <div class="row"><span>MOD AMOUNT</span><span>+12</span></div>
+          <div class="row grey"><span>MORPH MOD</span><span>0</span></div>
+        </div>
+        <div class="cap2"><canvas data-draw="enc" data-dir="h" role="img" aria-label="ALGORITHM encoder"></canvas>ALGORITHM</div>
+      </div>
+      <ul class="r">
+        <li><span class="acc">SELECT</span> moves the lit row. Dim rows are skipped.</li>
+        <li><span class="acc">ALGORITHM</span> changes the lit row's value. While it turns, a large tablet shows the row and its value. The tablet goes away 1.5 s after you stop.</li>
+      </ul>
+    </div>
+    <div class="tab" data-tab="rock-edge" data-seed="47">
+      <h3>PRESETS LOADS WHAT THE PAGE IS ABOUT</h3>
+      <p>Each click steps to the next saved slot and loads it at once. A list of names stays up 2 s after the last click.</p>
+      <div class="menu">
+        <div class="row hd"><span>ON THIS PAGE</span><span>PRESETS LOADS</span></div>
+        <div class="row"><span>SOUND PAGES</span><span>A PATCH, INTO THE PICKED LAYER</span></div>
+        <div class="row"><span>HOME</span><span>A WHOLE PERFORMANCE</span></div>
+        <div class="row"><span>SEQ</span><span>A SEQUENCE</span></div>
+        <div class="row"><span>ARP</span><span>AN ARP PATTERN</span></div>
+      </div>
+      <p class="note">While HOME is held PRESETS does nothing, so a slip of the hand loads nothing.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s-home">
+  <div class="head"><h2 id="s-home">HOME</h2><span class="tag">I</span><canvas data-draw="moon" data-phase="3" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="41" aria-hidden="true"></canvas>
+  <div class="grp" style="border:0"><canvas data-draw="btn" data-label="HOME" data-state="lit" role="img" aria-label="HOME button, lit"></canvas><div>
+    <ol class="chain"><li><div class="pg"><canvas data-draw="pstone" data-seed="21"></canvas><span>LAYER</span></div></li><li><div class="pg opt"><canvas data-draw="pstone" data-seed="22" data-opt="1"></canvas><span>ZONES</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="23"></canvas><span>PERF</span></div></li><li><div class="pg"><canvas data-draw="pstone" data-seed="24"></canvas><span>GLOBAL</span></div></li><li><span class="back">BACK TO LAYER</span></li></ol>
+    <div class="menu three">
+      <div class="row hd"><span>PAGE</span><span>KNOBS</span><span>WHAT IT IS</span></div>
+      <div class="row"><span>LAYER</span><span>VELOCITY, MOD WHEEL, CC1, PORTA</span><span>The layer you are editing.</span></div>
+      <div class="row"><span>ZONES</span><span>SPLIT, FADE, VEL SPLIT, VEL FADE</span><span>Where the layers meet. DUAL and SPLIT only.</span></div>
+      <div class="row"><span>PERF</span><span>L1 PATCH, L2 PATCH, SEQ LINK, ARP LINK</span><span>What the performance holds.</span></div>
+      <div class="row"><span>GLOBAL</span><span>TUNE, CURVE, CLOCK, TEMPO</span><span>The instrument, not the sound. THEME is here.</span></div>
+    </div>
+  </div></div>
+  <div class="two">
+    <div class="tab" data-tab="rock-edge" data-seed="53">
+      <h3>A PERFORMANCE IS A DOLMEN</h3>
+      <div class="wide"><canvas data-draw="dolmen" role="img" aria-label="A dolmen: the capstone is the performance, the four pillars are layer 1, layer 2, the sequence and the arp"></canvas></div>
+      <p>The capstone is the performance. It rests on four pillars: the two patches, the sequence and the arp. A pillar grows with how far its part is from the factory one. On a SINGL performance the layer 2 pillar lies in rubble.</p>
+    </div>
+    <div class="tab" data-tab="rock-edge" data-seed="59">
+      <h3>HOLD HOME TO PICK THE LAYER</h3>
+      <div class="row2"><canvas data-draw="btn" data-label="HOME" data-state="lit" role="img" aria-label="HOME held"></canvas><span class="mid" style="align-self:center">HELD +</span><canvas data-draw="btn" data-label="OCT-" data-w="40" role="img" aria-label="OCT minus"></canvas><canvas data-draw="btn" data-label="OCT+" data-w="40" role="img" aria-label="OCT plus"></canvas></div>
+      <div class="strip" data-tab="strip" data-seed="61"><span>&lt; OCT- &nbsp;L1</span><span>L2 &nbsp;OCT+ &gt;</span></div>
+      <p>Hold <span class="b">HOME</span> and this strip appears at the foot of the screen. <span class="b">OCT-</span> picks layer 1, <span class="b">OCT+</span> layer 2. The picked layer's OCT button lights and the other one flashes. In DUAL the keys then play the picked layer. Used like this, HOME does not change the page when you let go.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s-save">
+  <div class="head"><h2 id="s-save">SAVE</h2><span class="tag">I</span><canvas data-draw="moon" data-phase="4" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="53" aria-hidden="true"></canvas>
+  <div class="two">
+    <div class="tab" data-tab="rock-edge" data-seed="67">
+      <h3>THREE MOVES</h3>
+      <ol class="r">
+        <li>Press <span class="b">SAVE</span>. The save page opens on what the page you came from holds: a sound page the picked layer's PATCH, HOME the PERFORMANCE, SEQ the SEQUENCE, ARP the ARP.</li>
+        <li>Turn <span class="acc">ALGORITHM</span> or knob 2 to choose the slot. Knobs 3 and 4 write the name on a keyboard of runes.</li>
+        <li>Press <span class="b">SAVE</span> again while it flashes. You go back to the page you came from.</li>
+      </ol>
+    </div>
+    <div class="tab" data-tab="rock-edge" data-seed="71">
+      <h3>READ THE MOON</h3>
+      <div class="row2">
+        <div class="cap2"><canvas data-draw="bank" data-used="0" role="img" aria-label="An empty slot: an outlined stone under a full moon"></canvas><span>FULL MOON: EMPTY</span></div>
+        <div class="cap2"><canvas data-draw="bank" data-used="1" role="img" aria-label="A used slot: a solid stone under a crescent"></canvas><span class="acc">CRESCENT: OVERWRITES</span></div>
+      </div>
+      <p>The bank is a hill of slots, a mark for each one in use. The chosen slot is a stone. An empty slot saves at once. A used one asks first:</p>
+      <div class="dlg" data-tab="dlg" data-seed="73"><span class="q">OVERWRITE?</span><span>SLOT 024 &nbsp;OLD DUSK</span><div class="yn"><span class="mid">NO</span><span class="yes">YES</span></div></div>
+      <p class="note">Turn ALGORITHM to YES and press SAVE.</p>
+    </div>
+  </div>
+  <div class="tab" data-tab="rock-edge" data-seed="79">
+    <h3>COPY AND PASTE: HOLD SAVE</h3>
+    <div class="strip" data-tab="strip" data-seed="83"><span>&lt; OCT- &nbsp;COPY PATCH</span><span>PASTE &nbsp;OCT+ &gt;</span></div>
+    <ul class="r">
+      <li>Hold <span class="b">SAVE</span> + <span class="b">OCT-</span> to copy what SAVE would save here.</li>
+      <li>Hold <span class="b">SAVE</span> + <span class="b">OCT+</span> to paste it over the current one. The save page opens and asks PASTE? first.</li>
+    </ul>
+    <p class="note">128 patch slots. 32 each of performances, sequences and arps.</p>
+  </div>
+</section>
+
+<section aria-labelledby="s-seq">
+  <div class="head"><h2 id="s-seq">SEQ</h2><span class="tag">I K</span><canvas data-draw="moon" data-phase="5" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="61" aria-hidden="true"></canvas>
+  <p>On the SEQ page the 16 white keys are the 16 steps of the lane on screen. Each step is a stone that grows with its value. Press <span class="b">SEQ</span> again for the next lane.</p>
+  <div class="wide"><canvas data-draw="seq" role="img" aria-label="Sixteen step stones above sixteen white keys. Step 3 is the playhead, steps 5 to 8 are on the knobs, step 10 is tied, step 12 is muted, steps 13 to 16 are outside the loop."></canvas></div>
+  <div class="menu">
+    <div class="row hd"><span>IN THE PICTURE</span><span>MEANS</span></div>
+    <div class="row"><span>BRIGHTEST STONE</span><span>THE PLAYHEAD</span></div>
+    <div class="row"><span>LIT STONES 5-8</span><span>THE FOUR STEPS ON KNOBS 1-4</span></div>
+    <div class="row"><span>CAPSTONE 9-10</span><span>A TIE: STEP 9 RINGS ON</span></div>
+    <div class="row"><span>CRUMBLING STONE</span><span>A MUTED STEP</span></div>
+    <div class="row"><span>GRASS</span><span>THE LOOP. DIM STONES PLAY NOT</span></div>
+  </div>
+  <div class="two">
+    <div class="tab" data-tab="rock-edge" data-seed="89">
+      <h3>EDIT STEPS</h3>
+      <ul class="r">
+        <li>Tap a white key: that step and the three after it go on knobs 1-4 (from 13 on, steps 13-16).</li>
+        <li>The knobs set those steps: a note, or the lane's value.</li>
+        <li><span class="acc">SELECT</span> walks the steps four at a time, then the settings at the foot of the screen: scale, root, mode, target.</li>
+        <li>The black keys are silent here.</li>
+      </ul>
+    </div>
+    <div class="tab" data-tab="rock-edge" data-seed="97">
+      <h3>LOOP AND RECORD</h3>
+      <ul class="r">
+        <li>Hold <span class="b">OCT-</span> + a white key: the loop starts on that step.</li>
+        <li>Hold <span class="b">OCT+</span> + a white key: the loop ends on that step.</li>
+        <li>A tap of OCT- / OCT+ with no key still moves the octave.</li>
+        <li><span class="b">REC</span>: step record. The keys play as usual and write into the record step. Hold keys together for a chord of up to 4 notes.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s-arp">
+  <div class="head"><h2 id="s-arp">ARP</h2><span class="tag">I K</span><canvas data-draw="moon" data-phase="6" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="71" aria-hidden="true"></canvas>
+  <p>On the ARP page the keyboard splits. The low 13 keys play chords. The white keys above are the pattern's 8 steps, and the black keys between them are switches.</p>
+  <div class="wide"><canvas data-draw="arp" role="img" aria-label="Keyboard on the ARP page: chord keys F3 to F4, steps 1 to 8 on G4 to G5, switches LATCH TIE CLEAR COPY ACCENT on the black keys"></canvas></div>
+  <div class="two">
+    <div class="tab" data-tab="rock-edge" data-seed="101">
+      <h3>CHORDS AND STEPS</h3>
+      <ul class="r">
+        <li>Hold a chord key to hear its chord arpeggiated. While the ARP plays, a chord key moves the pattern to its key.</li>
+        <li>Hold a step key + a chord key: the chord goes into that step, with the four knob settings.</li>
+        <li>Hold a step key + turn a knob: that step changes at once.</li>
+        <li>Knobs: RATE, OCTAVE, STYLE, RHYTHM.</li>
+      </ul>
+    </div>
+    <div class="tab" data-tab="rock-edge" data-seed="103">
+      <h3>THE SWITCHES</h3>
+      <div class="menu">
+        <div class="row"><span>LATCH</span><span>THE ARP PLAYS ON AFTER YOU LET GO</span></div>
+        <div class="row"><span>TIE + STEP</span><span>THE CHORD BEFORE RINGS ON</span></div>
+        <div class="row"><span>CLEAR + STEP</span><span>THE STEP RESTS</span></div>
+        <div class="row"><span>COPY + STEPS</span><span>FIRST TAPPED IS COPIED TO THE REST</span></div>
+        <div class="row"><span>ACCENT + STEP</span><span>ACCENT ON OR OFF</span></div>
+        <div class="row"><span>REC</span><span>CHORD KEYS RECORD INTO STEPS 1, 2, 3...</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s-tr">
+  <div class="head"><h2 id="s-tr">PLAY, REC, OCTAVE</h2><span class="tag">J E</span><canvas data-draw="moon" data-phase="7" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="83" aria-hidden="true"></canvas>
+  <div class="two">
+    <div class="tab" data-tab="rock-edge" data-seed="107">
+      <div class="row2"><canvas data-draw="btn" data-label="PLAY" data-state="play" role="img" aria-label="PLAY, lit green"></canvas><h3 style="align-self:center">PLAY FOLLOWS THE PAGE</h3></div>
+      <div class="menu">
+        <div class="row"><span>ON SEQ</span><span>STARTS OR STOPS THE SEQUENCER</span></div>
+        <div class="row"><span>ON ARP</span><span>STARTS OR STOPS THE ARP</span></div>
+        <div class="row"><span>ANYWHERE ELSE</span><span>BOTH</span></div>
+      </div>
+      <p class="note">If one already plays, the other waits for its next bar, so the two stay in time.</p>
+    </div>
+    <div class="tab" data-tab="rock-edge" data-seed="109">
+      <div class="row2"><canvas data-draw="btn" data-label="REC" data-state="rec" role="img" aria-label="REC, lit red"></canvas><h3 style="align-self:center">REC RECORDS INTO THE PAGE</h3></div>
+      <div class="menu">
+        <div class="row"><span>ON SEQ</span><span>STEP RECORD ON / OFF</span></div>
+        <div class="row"><span>ON ARP</span><span>CHORD RECORD ARMED / OFF</span></div>
+      </div>
+      <p class="note">PLAY lights green while playing and red while recording.</p>
+    </div>
+    <div class="tab" data-tab="rock-edge" data-seed="113">
+      <div class="row2"><canvas data-draw="btn" data-label="OCT-" data-w="40" role="img" aria-label="OCT minus"></canvas><canvas data-draw="btn" data-label="OCT+" data-w="40" data-state="lit" role="img" aria-label="OCT plus, lit"></canvas></div>
+      <p>A tap moves the keys down or up an octave, three each way. The button stays lit while you are off the middle octave, where the keys run F3 to G5.</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s-all">
+  <div class="head"><h2 id="s-all">LIGHTS AND HOLDS</h2><span class="tag">ALL</span><canvas data-draw="moon" data-phase="8" aria-hidden="true"></canvas></div>
+  <canvas class="grass" data-draw="grass" data-salt="97" aria-hidden="true"></canvas>
+  <ul class="lights">
+    <li><canvas data-draw="btn" data-label="SEL" data-state="lit" role="img" aria-label="SEL lit"></canvas><span>The lit button is the page on screen. The rest stay dark.</span></li>
+    <li><canvas data-draw="btn" data-label="PLAY" data-state="play" role="img" aria-label="PLAY green"></canvas><span>Green: playing. Red: recording.</span></li>
+    <li><canvas data-draw="btn" data-label="SAVE" data-state="flash" role="img" aria-label="SAVE flashing"></canvas><span>Flashing: a press of SAVE saves now.</span></li>
+    <li><canvas data-draw="moon" data-phase="batt" role="img" aria-label="The header moon"></canvas><span>The moon on every page is the battery: new when empty, full when full, a ring of stars on USB power.</span></li>
+  </ul>
+  <div class="tab" data-tab="rock-edge" data-seed="127">
+    <h3>EVERY HOLD</h3>
+    <div class="menu three">
+      <div class="row hd"><span>HOLD</span><span>PRESS</span><span>DOES</span></div>
+      <div class="row"><span>HOME</span><span>OCT- / OCT+</span><span>EDIT LAYER 1 / 2</span></div>
+      <div class="row"><span>SAVE</span><span>OCT-</span><span>COPY</span></div>
+      <div class="row"><span>SAVE</span><span>OCT+</span><span>PASTE (ASKS FIRST)</span></div>
+      <div class="row"><span>OCT- ON SEQ</span><span>A WHITE KEY</span><span>LOOP STARTS THERE</span></div>
+      <div class="row"><span>OCT+ ON SEQ</span><span>A WHITE KEY</span><span>LOOP ENDS THERE</span></div>
+      <div class="row"><span>A STEP ON ARP</span><span>CHORD KEY / KNOB</span><span>WRITE INTO THE STEP</span></div>
+      <div class="row"><span>OCT- + OCT+</span><span>AT POWER-ON</span><span>HARDWARE CALIBRATION</span></div>
+      <div class="row"><span>OCT- + OCT+</span><span>FOR 5 S</span><span>CHIP RESCUE MODE (RECOVERY ONLY)</span></div>
+    </div>
+    <p class="note">After two failed starts the FM1 opens SAFE MODE: no sound, USB on, so the web installer still reaches it. PLAY tries again.</p>
+  </div>
+</section>
+
+<canvas class="grass" data-draw="grass" data-salt="131" aria-hidden="true"></canvas>
+<footer><a href="../manual/" style="color:var(--mid)">THE FULL MANUAL</a> · <a href="../" style="color:var(--mid)">CARNAC OS HOME</a><br>CARNAC IS FREE GPL FIRMWARE FOR THE M-VAVE FM1. THE RUNES, STONES AND MOONS HERE ARE DRAWN BY THE SAME CODE AS ON ITS SCREEN.</footer>
+</main>
+
+<script>
+(function () {
+"use strict";
+const GLYPHS = {" ":[0,0,0,0,0,0,0,0,0],"A":[4,10,10,17,17,31,17,17,17],"B":[30,17,17,18,30,17,17,17,30],"C":[15,16,16,16,16,16,16,16,15],"D":[28,18,17,17,17,17,17,18,28],"E":[31,16,16,16,30,16,16,16,31],"F":[31,16,16,16,30,16,16,16,16],"G":[15,16,16,16,19,17,17,17,15],"H":[17,17,17,17,31,17,17,17,17],"I":[14,4,4,4,4,4,4,4,14],"J":[7,2,2,2,2,2,2,18,12],"K":[17,17,18,20,24,20,18,17,17],"L":[16,16,16,16,16,16,16,16,31],"M":[17,27,21,21,17,17,17,17,17],"N":[17,25,25,21,21,21,19,19,17],"O":[14,17,17,17,17,17,17,17,14],"P":[30,17,17,17,30,16,16,16,16],"Q":[14,17,17,17,17,17,21,18,13],"R":[30,17,17,17,30,20,18,17,17],"S":[15,16,16,16,14,1,1,1,30],"T":[31,4,4,4,4,4,4,4,4],"U":[17,17,17,17,17,17,17,17,14],"V":[17,17,17,17,17,10,10,10,4],"W":[17,17,17,17,17,21,21,27,17],"X":[17,17,10,10,4,10,10,17,17],"Y":[17,17,10,10,4,4,4,4,4],"Z":[31,1,2,2,4,8,8,16,31],"0":[14,17,17,19,21,25,17,17,14],"1":[4,12,20,4,4,4,4,4,31],"2":[14,17,1,1,2,4,8,16,31],"3":[30,1,1,1,14,1,1,1,30],"4":[2,6,10,18,18,31,2,2,2],"5":[31,16,16,16,30,1,1,1,30],"6":[14,16,16,16,30,17,17,17,14],"7":[31,1,1,2,2,4,4,4,4],"8":[14,17,17,17,14,17,17,17,14],"9":[14,17,17,17,15,1,1,1,14],".":[0,0,0,0,0,0,0,0,4],"-":[0,0,0,0,14,0,0,0,0],"_":[0,0,0,0,0,0,0,0,31],"/":[1,1,2,2,4,8,8,16,16],"?":[14,17,1,2,4,4,0,0,4],"!":[4,4,4,4,4,4,0,0,4],":":[0,0,4,0,0,0,4,0,0],"+":[0,0,4,4,31,4,4,0,0],">":[0,16,8,4,2,4,8,16,0],"<":[0,1,2,4,8,4,2,1,0],"*":[0,0,4,21,14,21,4,0,0],"#":[0,10,10,31,10,31,10,10,0],",":[0,0,0,0,0,0,0,4,8],"(":[2,4,8,8,8,8,8,4,2],")":[8,4,2,2,2,2,2,4,8],"%":[25,25,2,2,4,8,8,19,19],"'":[4,4,0,0,0,0,0,0,0],"=":[0,0,0,31,0,31,0,0,0],"[":[14,8,8,8,8,8,8,8,14],"]":[14,2,2,2,2,2,2,2,14],"&":[12,18,18,12,8,21,18,18,13],";":[0,0,4,0,0,0,4,4,8],"\"":[10,10,0,0,0,0,0,0,0],"\u2192":[0,0,4,2,31,2,4,0,0],"\u2190":[0,0,4,8,31,8,4,0,0],"\u00b7":[0,0,0,0,4,0,0,0,0],"\u2013":[0,0,0,0,31,0,0,0,0],"\u2191":[4,14,21,4,4,4,4,4,0],"\u2193":[0,4,4,4,4,4,21,14,4],"\u2026":[0,0,0,0,0,0,0,0,21]};
+
+/* ---------------------------------------------------------------- palettes (ui_seq_draw.c SQ_PAL / _LANE / NOISE / STONE / ROCK) */
+const P = {
+  SAMHAIN:   { surf:[34,16,0], text:[255,140,30], theme:[255,110,0], accent:[255,190,90], mid:[178,98,21], dim:[107,59,13], sel:[115,50,0], lane:[255,200,140], noise:[[80,28,0],[140,56,0],[110,42,0]], stone:[66,34,6], rock:[[14,5,0],[36,14,0],[48,19,0],[62,25,0],[76,31,0]] },
+  "BLOOD MOON": { surf:[36,4,4], text:[255,70,60], theme:[230,20,20], accent:[255,140,120], mid:[178,49,42], dim:[107,29,25], sel:[104,9,9], lane:[255,190,180], noise:[[80,8,6],[140,18,14],[110,12,10]], stone:[66,14,12], rock:[[14,2,0],[36,5,2],[48,7,4],[62,9,6],[76,12,8]] },
+  FIRE:      { surf:[27,4,0], text:[250,201,81], theme:[242,170,53], accent:[255,226,122], mid:[163,103,42], dim:[92,42,18], sel:[97,35,8], lane:[255,233,151], noise:[[65,15,2],[120,50,13],[91,30,7]], stone:[54,17,7], rock:[[11,2,0],[28,4,0],[38,6,0],[49,10,1],[61,15,2]] },
+  SOLSTICE:  { surf:[12,21,34], text:[112,173,255], theme:[90,160,255], accent:[155,198,255], mid:[78,120,178], dim:[47,73,107], sel:[41,72,115], lane:[191,218,255], noise:[[28,50,80],[49,88,140],[39,69,110]], stone:[28,44,66], rock:[[5,9,14],[13,23,36],[17,30,48],[22,39,62],[27,48,76]] },
+  LICHEN:    { surf:[19,28,9], text:[155,216,94], theme:[140,210,70], accent:[185,228,143], mid:[108,151,66], dim:[65,91,40], sel:[63,95,32], lane:[211,238,184], noise:[[44,66,22],[77,115,38],[60,91,30]], stone:[39,56,23], rock:[[8,12,4],[20,30,10],[26,40,13],[34,51,17],[42,63,21]] },
+  HEATHER:   { surf:[32,14,25], text:[242,125,199], theme:[240,105,190], accent:[246,164,216], mid:[169,87,139], dim:[102,53,83], sel:[108,47,86], lane:[249,197,230], noise:[[75,33,60],[132,58,104],[104,45,82]], stone:[63,31,51], rock:[[13,6,10],[34,15,27],[45,20,36],[58,26,46],[72,31,57]] },
+  RITUAL:    { surf:[25,15,34], text:[194,129,255], theme:[185,110,255], accent:[213,167,255], mid:[136,90,178], dim:[82,54,107], sel:[83,50,115], lane:[228,199,255], noise:[[58,35,80],[102,60,140],[80,47,110]], stone:[50,32,66], rock:[[10,6,14],[26,16,36],[35,21,48],[45,27,62],[55,33,76]] },
+  GRANITE:   { surf:[18,18,18], text:[200,200,195], theme:[150,152,150], accent:[235,235,230], mid:[140,140,136], dim:[84,84,82], sel:[68,68,68], lane:[225,225,222], noise:[[46,47,46],[82,84,82],[64,65,64]], stone:[52,52,51], rock:[[8,8,8],[21,21,21],[28,29,28],[37,37,37],[45,46,45]] },
+  OAK:       { surf:[26,16,7], text:[235,175,105], theme:[215,135,55], accent:[250,215,160], mid:[164,122,74], dim:[99,74,44], sel:[97,61,25], lane:[244,211,172], noise:[[67,42,17],[118,74,30],[92,58,24]], stone:[61,46,27], rock:[[12,7,3],[30,19,8],[41,26,10],[53,33,13],[64,40,16]] },
+};
+const THEMES = Object.keys(P);
+const PLAY_GREEN = [95,224,138], REC_RED = [255,74,58];
+let C = P.SAMHAIN;
+
+/* ---------------------------------------------------------------- the firmware's drawing, ported */
+function H(x, y) {                                    /* sq_hash */
+  let n = (Math.imul(x | 0, 0x9E3779B1) ^ Math.imul(y | 0, 0x85EBCA77)) >>> 0;
+  n = (n ^ (n >>> 15)) >>> 0;
+  return Math.imul(n, 0x2C1B3C6D) >>> 0;
+}
+function shade(c, t) {                                /* sq_shade: full, 3/4, 1/2, 1/4 */
+  return t === 0 ? c : t === 1 ? c.map(v => v - (v >> 2)) : t === 2 ? c.map(v => v >> 1) : c.map(v => v >> 2);
+}
+class Px {                                            /* a canvas at screen resolution, shown 2x */
+  constructor(cv, w, h, scale) {
+    this.cv = cv; this.w = w; this.h = h;
+    cv.width = w; cv.height = h;
+    const s = scale || 2;
+    cv.style.width = (w * s) + "px"; cv.style.height = (h * s) + "px";
+    this.ctx = cv.getContext("2d");
+    this.img = this.ctx.createImageData(w, h);
+    this.d = this.img.data;
+  }
+  pset(x, y, c) {
+    x |= 0; y |= 0;
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
+    const i = (y * this.w + x) * 4;
+    this.d[i] = c[0]; this.d[i + 1] = c[1]; this.d[i + 2] = c[2]; this.d[i + 3] = 255;
+  }
+  rect(x, y, w, h, c) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.pset(x + i, y + j, c); }
+  line(x0, y0, x1, y1, c) {
+    const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) || 1;
+    for (let k = 0; k <= n; k++) this.pset(Math.round(x0 + (x1 - x0) * k / n), Math.round(y0 + (y1 - y0) * k / n), c);
+  }
+  done() { this.ctx.putImageData(this.img, 0, 0); }
+}
+
+function runeW(s, track) { track = track || 0; return s.length ? s.length * (6 + track) - 1 - track : 0; }
+function rune(px, x, y, s, c, track) {                /* sq_rune */
+  track = track || 0;
+  for (const ch of s.toUpperCase()) {
+    const g = GLYPHS[ch] || GLYPHS["?"];
+    for (let j = 0; j < 9; j++) for (let i = 0; i < 5; i++) if ((g[j] >> (4 - i)) & 1) px.pset(x + i, y + j, c);
+    x += 6 + track;
+  }
+  return x - 1 - track;
+}
+function runeC(px, cx, y, s, c, track) { return rune(px, Math.round(cx - runeW(s, track) / 2), y, s, c, track); }
+
+function stoneIn(r, w, h, seed, side) {               /* sq_stone_in */
+  const s = H(seed, 7);
+  const deep = ((s >>> 4) & 1) === side;
+  let k, d;
+  if (deep) { k = (h >> 2) + ((s >>> 8) % ((h >> 2) + 1)); d = ((w / 3) | 0) + ((s >>> 16) % (((w / 6) | 0) + 1)); }
+  else { k = 1 + ((s >>> 12) % 3); d = 1 + ((s >>> 20) % (((w / 5) | 0) + 1)); }
+  if (k < 1) k = 1;
+  let inn = r < k ? (((k - r) * d + k - 1) / k) | 0 : 0;
+  inn += (((h - 1 - r) * ((w >> 3) + 1)) / (2 * h)) | 0;
+  if (h >= 8 && w >= 6 && r >= k && (H(r >> 1, ((s >>> 8) | 0) + side) >>> 29) === 0) inn++;
+  return inn;
+}
+function stone(px, x, yb, w, h, fill, c, seed, edge, decay) {   /* sq_stone */
+  if (h <= 0 || w <= 0 || fill <= 0) return;
+  if (fill > h) fill = h;
+  const top = yb - h;
+  if (w < 4 || h < 5) {
+    if (edge) { px.rect(x + 1, top, w - 2, 1, c); px.rect(x, top + 1, 1, h - 1, c); px.rect(x + w - 1, top + 1, 1, h - 1, c); }
+    else if (h > 2 && w > 2) { px.rect(x + 1, yb - fill, w - 2, 1, c); px.rect(x, yb - fill + 1, w, fill - 1, c); }
+    else px.rect(x, yb - fill, w, fill, c);
+    return;
+  }
+  let cx = -1, cy0 = 0, cy1 = 0, pl = 0, pr = 0;
+  if (h >= 12 && w >= 6 && !edge) {
+    const n = H(seed, 31);
+    cx = 2 + (n % (w - 4));
+    cy1 = ((h / 3) | 0) + ((n >>> 8) % (h >> 1));
+    cy0 = cy1 - (h >> 2) - ((n >>> 16) % ((h >> 2) + 1));
+  }
+  for (let r = 0; r < h; r++) {
+    let l = stoneIn(r, w, h, seed, 0), rt = w - stoneIn(r, w, h, seed, 1);
+    if (rt - l < 2) { l = ((l + rt) >> 1) - 1; rt = l + 2; }
+    const j = h - 1 - r;
+    if (r >= h - fill)
+      for (let i = l; i < rt; i++) {
+        if (decay) {
+          const loss = ((H((i >> 1) + 5, seed) >>> 24) * decay * h) >> 17;
+          if (r < loss) continue;
+          if ((H((i >> 1) + seed * 3, (j >> 1) + 77) >>> 24) < ((decay * (h + 2 * r)) / (8 * h) | 0)) continue;
+        }
+        const n = H(i + seed * 131, j);
+        if (edge && !(i === l || i === rt - 1 || r === 0 || i < pl || i >= pr || r === h - fill)) {
+          if ((n >>> 27) === 0) px.pset(x + i, top + r, shade(c, 3));
+          continue;
+        }
+        const g = H((i >> 1) + seed * 7, (j >> 1) + 300) >>> 29;
+        let t = g < 6 ? 0 : 1;
+        if ((n >>> 27) === 0) t = 2;
+        if (i === l && t < 1) t = 1;
+        if (i === cx + (H(j >> 2, seed) >>> 31) && j >= cy0 && j < cy1) t = 3;
+        px.pset(x + i, top + r, shade(c, t));
+      }
+    pl = l; pr = rt;
+  }
+  if (decay)
+    for (let i = 0; i < ((decay * w) >> 7); i++) {
+      const n = H(i, seed + 501), r = (n % (w + 6)) - 3;
+      px.pset(x + r, yb - 1 - ((n >>> 8) & 1), shade(c, 1 + ((n >>> 12) & 1)));
+    }
+}
+function lintel(px, x, y, w, h, c, seed) {            /* sq_lintel */
+  for (let j = 0; j < h; j++) {
+    const inn = j === 0 ? 1 + (H(seed, 3) >>> 31) : j === h - 1 ? 1 : 0;
+    for (let i = inn; i < w - inn; i++) {
+      const n = H(i + seed * 37, j);
+      if (j === 0 && (n >>> 29) === 0) continue;
+      px.pset(x + i, y + j, shade(c, j === h - 1 ? 2 : (n >>> 28) === 0 ? 1 : 0));
+    }
+  }
+}
+const SIN = [0,25,50,74,98,121,142,162,181,198,213,226,237,245,251,255,256,255,251,245,237,226,213,198,181,162,142,121,98,74,50,25,0,-25,-50,-74,-98,-121,-142,-162,-181,-198,-213,-226,-237,-245,-251,-255,-256,-255,-251,-245,-237,-226,-213,-198,-181,-162,-142,-121,-98,-74,-50,-25];
+const MARE = [[-82,-97,77],[51,-92,51],[87,-10,61],[-148,5,87],[179,-67,33],[-41,92,51],[138,67,36],[-13,-179,31]];
+function mare(x, y, r) {
+  const u = Math.trunc(x * 256 / r), v = Math.trunc(y * 256 / r);
+  for (const m of MARE) { const du = u - m[0], dv = v - m[1]; if (du * du + dv * dv < m[2] * m[2]) return true; }
+  return false;
+}
+function moon(px, cx, cy, r, phase, lit, dark) {      /* sq_moon: phase as a fraction of a turn, 0 new .. 0.5 full */
+  const ph = Math.round(phase * 4294967296) >>> 0;
+  const k = SIN[((ph >>> 26) + 16) & 63], wax = ph < 0x80000000;
+  const sea = lit.map(v => (v * 3) >> 2);
+  for (let y = -r; y <= r; y++) {
+    let hw = r;
+    while (hw > 0 && hw * hw + y * y > r * r + (r >> 1)) hw--;
+    for (let x = -hw; x <= hw; x++) {
+      const t = (k * hw) >> 8, on = wax ? x > t : x < -t;
+      px.pset(cx + x, cy + y, !on ? dark : mare(x, y, r) ? sea : lit);
+    }
+  }
+}
+function rockIn(i, n, seed) {                         /* sq_rock_in */
+  const c = i < n - 1 - i ? i : n - 1 - i, k = c < 4 ? 4 - c : 0;
+  const r = H(i >> 2, seed) >>> 29, chip = r === 0 ? 2 : r < 3 ? 1 : 0;
+  return k > chip ? k : chip;
+}
+function rockTone(x, y) {
+  const m = (H((x / 7) | 0, ((y / 5) | 0) + 911) >>> 31) + (H(((x + 3) / 4) | 0, (((y + 1) / 3) | 0) + 577) >>> 31);
+  const f = H(x, y) >>> 29;
+  return 1 + m + (f === 7 ? 1 : 0) - (f === 0 ? 1 : 0);
+}
+/* sq_tab_shape + sq_tablet, any size. kind: rock | lit | ruin | none; rim: colour of a 2 px edge or null */
+function tablet(px, x0, y0, w, h, seed, kind, rim, ruinC) {
+  const tl = [], tr = [], tt = [], tb = [];
+  for (let k = 0; k < h; k++) { tl[k] = rockIn(k, h, seed + 1); tr[k] = w - rockIn(k, h, seed + 2); }
+  for (let k = 0; k < w; k++) { tt[k] = rockIn(k, w, seed + 3); tb[k] = h - rockIn(k, w, seed + 4); }
+  const inside = (x, y) => x >= 0 && x < w && y >= 0 && y < h && x >= tl[y] && x < tr[y] && y >= tt[x] && y < tb[x];
+  const depth = (x, y) => { for (let d = 1; d <= 3; d++) if (!inside(x - d, y) || !inside(x + d, y) || !inside(x, y - d) || !inside(x, y + d)) return d - 1; return 3; };
+  for (let y = 0; y < h; y++)
+    for (let x = tl[y]; x < tr[y]; x++) {
+      if (!inside(x, y)) continue;
+      const d = depth(x, y);
+      if (rim && d < 2) px.pset(x0 + x, y0 + y, rim);
+      else if (kind === "ruin") { if (d === 0 && (H(((x0 + x) / 3) | 0, ((y0 + y) / 3) | 0) >>> 30) !== 0) px.pset(x0 + x, y0 + y, ruinC || C.dim); }
+      else if (kind === "lit") { const t = (H(x0 + x, y0 + y) >>> 28) & 3; px.pset(x0 + x, y0 + y, C.noise[t < 2 ? t : 2]); }
+      else if (kind === "rock") { const t = rockTone(x0 + x, y0 + y); px.pset(x0 + x, y0 + y, C.rock[d === 0 && t > 1 ? t - 1 : t]); }
+    }
+}
+function vnoise(x, y, cw, ch, salt) {
+  const gx = Math.floor(x / cw), gy = Math.floor(y / ch), fx = x - gx * cw, fy = y - gy * ch;
+  const a = H(gx * 7 + salt, gy * 13) >>> 24, b = H(gx * 7 + 7 + salt, gy * 13) >>> 24;
+  const c = H(gx * 7 + salt, gy * 13 + 13) >>> 24, d = H(gx * 7 + 7 + salt, gy * 13 + 13) >>> 24;
+  const top = a * cw + (b - a) * fx, bot = c * cw + (d - c) * fx;
+  return Math.trunc((top * ch + (bot - top) * fy) / (cw * ch));
+}
+function grass(px, x0, x1, yb, hmax, c, salt) {       /* sq_grass */
+  const TURF = 3;
+  for (let x = x0; x < x1; x++) {
+    const e = Math.min(x - x0, x1 - 1 - x);
+    let t = TURF - 1 + (vnoise(x + 300, salt, 6, 1, salt) >> 7);
+    if (t > TURF) t = TURF;
+    if (t > e + 1) t = e + 1;
+    for (let r = 0; r < t; r++) { const n = H(x, salt * 5 + r); px.pset(x, yb - 1 - r, shade(c, r === 0 ? 2 : (n >>> 30) === 0 ? 1 : 0)); }
+    const n = H(x, salt + 900), tuft = vnoise(x + 41, salt, 7, 1, salt + 17) >> 6;
+    if (e < 1 || (n >>> 28) >= 3 + tuft * 3) continue;
+    let h = 1 + ((n >>> 8) % (2 + tuft));
+    if (h > hmax) h = hmax;
+    if (h > e + 1) h = e + 1;
+    const lean = h >= 3 ? ((n >>> 16) % 3) - 1 : 0;
+    for (let k = 0; k < h; k++)
+      px.pset(x + (k >= ((h + 1) >> 1) ? lean : 0), yb - 1 - t - k, shade(c, k === h - 1 || !((n >>> 20) & 1) ? 0 : 1));
+  }
+}
+/* a knob's dial: 25 dots over 270 degrees, lit up to v, a pointer */
+function dial(px, cx, cy, r, v, ring, lit, ptr) {
+  const N = 24;
+  for (let k = 0; k <= N; k++) {
+    const a = (-135 + 270 * k / N) * Math.PI / 180;
+    px.pset(Math.round(cx + r * Math.sin(a)), Math.round(cy - r * Math.cos(a)), k / N <= v + 1e-6 ? lit : ring);
+  }
+  const a = (-135 + 270 * v) * Math.PI / 180;
+  px.line(cx, cy, Math.round(cx + (r - 4) * Math.sin(a)), Math.round(cy - (r - 4) * Math.cos(a)), ptr);
+  const a0 = -135 * Math.PI / 180;
+  px.rect(Math.round(cx + (r + 1) * Math.sin(a0)) - 1, Math.round(cy - (r + 1) * Math.cos(a0)), 2, 2, lit);
+}
+
+/* ---------------------------------------------------------------- pictures */
+function fbtn(px, x, y, w, h, label, state, seed, hl) {   /* a panel button: a hewn tablet, its name */
+  let rim = hl ? C.accent : null, kind = "rock", ink = C.text;
+  if (state === "lit" || state === "flash") { kind = "lit"; rim = hl ? C.accent : C.theme; ink = C.lane; }
+  if (state === "play") { kind = "rock"; rim = PLAY_GREEN; ink = PLAY_GREEN; }
+  if (state === "rec") { kind = "rock"; rim = REC_RED; ink = REC_RED; }
+  tablet(px, x, y, w, h, seed, kind, rim);
+  runeC(px, x + w / 2, y + ((h - 9) >> 1), label, hl ? C.accent : ink);
+}
+const NAMES = ["F","F#","G","G#","A","A#","B","C","C#","D","D#","E"];
+const BLACKS = new Set([1,3,5,8,10]);
+function keyName(k) { return NAMES[k % 12] + (3 + Math.floor((k + 5) / 12)); }
+function keyLayout(x0, pitch) {                        /* 27 keys from F3: whites and the blacks between them */
+  const whites = [], blacks = []; let w = 0;
+  for (let k = 0; k < 27; k++) {
+    if (BLACKS.has(k % 12)) blacks.push({ k, cx: x0 + w * pitch });
+    else whites.push({ k, w, cx: x0 + w * pitch + pitch / 2 }), w++;
+  }
+  return { whites, blacks };
+}
+
+const DRAW = {
+  moon(cv) {
+    const px = new Px(cv, 18, 20);
+    const p = cv.dataset.phase;
+    if (p === "full-usb") {
+      for (let k = 0; k < 64; k += 8) px.pset(9 + ((SIN[(k + 16) & 63] * 8 + 128) >> 8), 10 + ((SIN[k] * 8 + 128) >> 8), C.mid);
+      moon(px, 9, 10, 6, 0.5, C.theme, C.surf);
+    } else if (p === "batt") moon(px, 9, 10, 7, 0.34, C.theme, C.surf);
+    else moon(px, 9, 10, 7, 0.06 + 0.44 * (+p) / 8, C.theme, C.surf);   /* waxing, section by section, full at the end */
+    px.done();
+  },
+  grass(cv) {
+    const w = Math.max(40, Math.floor((cv.parentElement.clientWidth || 600) / 2));
+    const px = new Px(cv, w, 8);
+    grass(px, 0, w, 8, 4, C.mid, +cv.dataset.salt || 5);
+    px.done();
+  },
+  hero(cv) {
+    const W = 480, Hh = 120, px = new Px(cv, W, Hh);
+    cv.style.width = "100%"; cv.style.maxWidth = "960px"; cv.style.height = "auto";
+    /* the Carnac alignment: rows of menhirs falling away into the distance, a full moon over them */
+    for (let k = 0; k < 400; k++) { const n = H(k, 4242); if ((n >>> 28) < 2) px.pset(n % W, (n >>> 9) % 60, C.dim); }
+    moon(px, 404, 30, 16, 0.5, C.theme, C.surf);
+    const yb = 108;
+    for (let i = 0; i < 17; i++) {
+      const f = i / 16, h = Math.round(64 - 52 * f), w = Math.max(5, Math.round(18 - 12 * f));
+      const x = Math.round(12 + 440 * Math.pow(f, 0.85)) - (w >> 1);
+      const c = f < 0.35 ? C.theme : f < 0.7 ? C.mid : C.dim;
+      stone(px, x, yb - Math.round(10 * f), w, h, h, c, 17 + i * 3, 0, 0);
+    }
+    grass(px, 0, W, yb + 1, 5, C.mid, 9);
+    grass(px, 0, W, Hh, 3, C.dim, 15);
+    px.done();
+  },
+  pstone(cv) {                                         /* a page in a button's chain */
+    const px = new Px(cv, 18, 30), opt = cv.dataset.opt === "1", seed = +cv.dataset.seed * 11;
+    stone(px, 1, 29, 16, 28, 28, opt ? C.mid : C.theme, seed, opt ? 1 : 0, 0);
+    px.done();
+  },
+  dial(cv) {
+    const px = new Px(cv, 30, 28), v = +cv.dataset.v;
+    dial(px, 15, 15, 11, v, C.dim, C.theme, C.text);
+    px.done();
+  },
+  enc(cv) {
+    const px = new Px(cv, 40, 40);
+    tablet(px, 0, 0, 40, 40, 77, "none", null);
+    for (let k = 0; k < 24; k++) { const a = k * Math.PI / 12; px.pset(Math.round(20 + 15 * Math.sin(a)), Math.round(20 - 15 * Math.cos(a)), C.dim); }
+    px.line(20, 20, 20, 9, C.text);
+    if (cv.dataset.dir === "v") { runeC(px, 20, 0, "↑", C.accent); runeC(px, 20, 31, "↓", C.accent); }
+    else { rune(px, 0, 16, "←", C.accent); rune(px, 35, 16, "→", C.accent); }
+    px.done();
+  },
+  btn(cv) {
+    const w = +cv.dataset.w || 34, px = new Px(cv, w, 26);
+    let st = cv.dataset.state || "";
+    if (st === "flash") { cv._flash = !cv._flash; if (!cv._flash) st = ""; }
+    fbtn(px, 0, 0, w, 26, cv.dataset.label, st, 300 + cv.dataset.label.charCodeAt(0) * 7, false);
+    px.done();
+  },
+  dolmen(cv) {
+    const px = new Px(cv, 230, 70);
+    const pil = [["L1 088", 30, 24, 13], ["L2 012", 85, 14, 9], ["SEQ 004", 140, 22, 12], ["ARP 006", 195, 18, 11]];
+    lintel(px, 8, 10, 214, 6, C.theme, 5);
+    for (const [lab, x, h, w] of pil) {
+      stone(px, x - (w >> 1), 46, w, 30, 30, C.theme, x * 3, 0, 0);
+      runeC(px, x, 58, lab, C.text);
+    }
+    grass(px, 2, 228, 47, 3, C.mid, 21);
+    px.done();
+  },
+  bank(cv) {
+    const used = cv.dataset.used === "1", px = new Px(cv, 120, 70);
+    for (let x = 2; x < 118; x += 3) { const u = (x - 60) / 58, y = Math.round(54 - 30 * (1 - u * u)); px.pset(x, y, C.dim); }
+    for (let x = 2; x < 118; x += 2) px.pset(x, 56, C.dim);
+    [14, 22, 46, 70, 86, 98].forEach(x => px.rect(x, 50, 1, 6, C.mid));
+    const sx = 34;
+    if (used) { stone(px, sx - 4, 56, 9, 18, 18, C.theme, 9, 0, 0); moon(px, sx, 20, 7, 0.1, C.accent, C.surf); }
+    else { stone(px, sx - 4, 56, 9, 18, 18, C.mid, 9, 1, 0); moon(px, sx, 20, 7, 0.5, C.theme, C.surf); }
+    runeC(px, sx, 60, "024", C.text);
+    px.done();
+  },
+  seq(cv) {
+    const W = 460, px = new Px(cv, W, 170), P0 = 4, PITCH = 28;
+    const L = keyLayout(P0, PITCH);
+    const vals = [70, 40, 100, 55, 90, 30, 75, 110, 85, 0, 60, 80, 50, 95, 35, 65];
+    const BOX_W = 18, BOX_H = 32, BOX_Y = 6, yb = BOX_Y + BOX_H;
+    /* grass under the loop window (steps 1..12), the knob group's part brighter */
+    const gx = i => P0 + i * PITCH;
+    grass(px, gx(0) + 2, gx(4), yb + 4, 4, C.mid, 31);
+    grass(px, gx(4), gx(8), yb + 4, 4, C.text, 32);
+    grass(px, gx(8), gx(12) - 2, yb + 4, 4, C.mid, 33);
+    for (let i = 0; i < 16; i++) {
+      const x = Math.round(P0 + i * PITCH + (PITCH - BOX_W) / 2), seed = 16 + i + 1;
+      const inLoop = i < 12, head = i === 2, lit = i >= 4 && i < 8;
+      let edge = head ? C.accent : !inLoop ? C.dim : C.mid, fill = head ? C.accent : inLoop ? C.theme : C.dim;
+      if (lit) { edge = C.text; fill = C.text; }
+      if (i === 11) {                                  /* muted: crumbling */
+        stone(px, x, yb, BOX_W, BOX_H, BOX_H, edge, seed, 1, 170);
+        const h = Math.round(vals[i] * BOX_H / 127), w = Math.round((BOX_W * (h + BOX_H)) / (2 * BOX_H));
+        stone(px, x + ((BOX_W - w) >> 1), yb, w, h, h, shade(fill, 1), seed, 0, 170);
+        continue;
+      }
+      stone(px, x, yb, BOX_W, BOX_H, BOX_H, edge, seed, 1, 0);
+      if (i === 9) {                                   /* tied to step 9: the capstone */
+        const x0 = Math.round(P0 + 8 * PITCH + (PITCH - BOX_W) / 2);
+        lintel(px, x0 - 1, BOX_Y - 1, x + BOX_W + 1 - (x0 - 1), 4, C.theme, seed);
+        continue;
+      }
+      const h = Math.round(vals[i] * BOX_H / 127), w = Math.round((BOX_W * (h + BOX_H)) / (2 * BOX_H));
+      stone(px, x + ((BOX_W - w) >> 1), yb, w, h, h, fill, seed, 0, 0);
+    }
+    /* the keys: black ones silent, white ones the steps */
+    for (const b of L.blacks) tablet(px, Math.round(b.cx - 9), 56, 18, 30, 500 + b.k, "ruin", null, C.dim);
+    for (const o of L.whites) {
+      const step = o.w + 1, x = Math.round(o.cx - 12);
+      const head = step === 3, lit = step >= 5 && step <= 8;
+      tablet(px, x, 92, 24, 56, 600 + o.k, lit ? "lit" : "rock", head ? C.accent : lit ? C.text : step > 12 ? null : C.dim);
+      runeC(px, o.cx, 128, String(step), head ? C.accent : lit ? C.lane : step > 12 ? C.mid : C.text);
+      runeC(px, o.cx, 154, keyName(o.k), C.dim);
+    }
+    px.done();
+  },
+  arp(cv) {
+    const W = 460, px = new Px(cv, W, 182), P0 = 4, PITCH = 28;
+    const L = keyLayout(P0, PITCH);
+    const FN = { 15: "LATCH", 17: "TIE", 20: "CLEAR", 22: "COPY", 25: "ACCENT" };
+    const xa = P0 + 2, xb = P0 + 8 * PITCH, xc = P0 + 16 * PITCH - 2;
+    runeC(px, (xa + xb) / 2, 2, "CHORD KEYS F3-F4", C.theme);
+    runeC(px, (xb + xc) / 2, 2, "STEPS 1-8", C.theme);
+    for (let x = xa; x < xb - 3; x += 2) px.pset(x, 14, C.mid);
+    for (let x = xb + 3; x < xc; x += 2) px.pset(x, 14, C.mid);
+    const ROW = { 15: 20, 17: 32, 20: 20, 22: 32, 25: 20 };
+    for (const b of L.blacks) {
+      const x = Math.round(b.cx - 9);
+      if (b.k <= 12) tablet(px, x, 46, 18, 30, 700 + b.k, "lit", C.theme);
+      else if (FN[b.k]) { tablet(px, x, 46, 18, 30, 700 + b.k, "lit", C.accent); runeC(px, b.cx, ROW[b.k], FN[b.k], C.accent); px.rect(Math.round(b.cx), ROW[b.k] + 11, 1, 46 - ROW[b.k] - 12, C.dim); }
+      else tablet(px, x, 46, 18, 30, 700 + b.k, "ruin", null, C.dim);
+    }
+    for (const o of L.whites) {
+      const x = Math.round(o.cx - 12);
+      if (o.k <= 12) { tablet(px, x, 82, 24, 56, 800 + o.k, "lit", C.theme); runeC(px, o.cx, 118, keyName(o.k).replace(/\d/, ""), C.lane); }
+      else { tablet(px, x, 82, 24, 56, 800 + o.k, "rock", C.mid); runeC(px, o.cx, 118, String(o.w - 7), C.text); }
+      runeC(px, o.cx, 144, keyName(o.k), C.dim);
+    }
+    runeC(px, (xa + xb) / 2, 164, "HOLD: ITS CHORD PLAYS", C.mid);
+    runeC(px, (xb + xc) / 2, 164, "HOLD + CHORD: WRITE IT", C.mid);
+    px.done();
+  },
+  panel(cv) { drawPanel(cv, panelHL); },
+};
+
+/* ---------------------------------------------------------------- the panel */
+let panelHL = null;
+const CALL = { A: [22, 50], B: [134, 50], C: [22, 102], D: [134, 102], E: [138, 143], F: [209, 11], G: [486, 50],
+               H: [278, 99], I: [278, 130], J: [450, 157], K: [12, 186] };
+function drawPanel(cv, hl) {
+  const px = new Px(cv, 500, 322);
+  const on = g => hl === g;
+  tablet(px, 1, 1, 498, 320, 4001, "none", C.dim);
+  /* encoders and master */
+  const knob = (x, y, label, g, v) => {
+    runeC(px, x, y - 26, label, on(g) ? C.accent : C.mid);
+    dial(px, x, y, 12, v, on(g) ? C.mid : C.dim, on(g) ? C.accent : C.theme, on(g) ? C.accent : C.text);
+  };
+  knob(52, 52, "MASTER", "A", 0.7); knob(106, 52, "SELECT", "B", 0.5);
+  knob(52, 104, "PRESETS", "C", 0.3); knob(106, 104, "ALGORITHM", "D", 0.6);
+  for (let i = 0; i < 4; i++) knob(305 + 52 * i, 52, "KNOB " + (i + 1), "G", [0.2, 0.85, 0.3, 0.5][i]);
+  fbtn(px, 34, 132, 44, 22, "OCT-", "", 41, on("E")); fbtn(px, 84, 132, 44, 22, "OCT+", "", 43, on("E"));
+  /* the screen: FILTER 1, CUTOFF lit */
+  const sx = 150, sy = 22, S = 120;
+  tablet(px, sx, sy, S, S, 51, "none", on("F") ? C.accent : C.mid);
+  rune(px, sx + 7, sy + 6, "L1 FLT1", C.theme);
+  moon(px, sx + S - 12, sy + 10, 5, 0.38, C.theme, C.surf);
+  for (let x = sx + 6; x < sx + S - 6; x += 2) px.pset(x, sy + 19, C.dim);
+  const rows = [["MORPH", "40"], ["CUTOFF", "84"], ["RESO", "22"], ["MOD AMT", "+12"]];
+  rows.forEach((r, i) => {
+    const y = sy + 24 + i * 12;
+    if (i === 1) for (let yy = y - 1; yy < y + 10; yy++) for (let xx = sx + 5; xx < sx + S - 5; xx++) { const t = (H(xx, yy) >>> 28) & 3; px.pset(xx, yy, C.noise[t < 2 ? t : 2]); }
+    const ink = i === 1 ? C.lane : C.text;
+    rune(px, sx + 8, y, r[0], ink); rune(px, sx + S - 8 - runeW(r[1]), y, r[1], ink);
+  });
+  /* the filter's curve and its fog */
+  let py = 0;
+  for (let x = sx + 8; x < sx + S - 8; x++) {
+    const f = (x - sx - 8) / (S - 16), y = Math.round(sy + 82 + (f < 0.62 ? 0 : Math.pow((f - 0.62) / 0.38, 1.6) * 26));
+    if (py && Math.abs(y - py) > 1) px.line(x - 1, py, x, y, C.theme); else px.pset(x, y, C.theme);
+    for (let yy = y + 1; yy < sy + 110; yy++) if ((H(x, yy) >>> 28) < 2) px.pset(x, yy, C.dim);
+    py = y;
+  }
+  /* section buttons, transport */
+  const R1 = ["FX","SEL","ENV","LFO","EDIT","GLO"], R2 = ["HOME","SAVE","ARP","SEQ","PLAY","REC"];
+  for (let i = 0; i < 6; i++) {
+    const x = 291 + Math.round(31.5 * i);
+    fbtn(px, x, 86, 29, 24, R1[i], R1[i] === "SEL" ? "lit" : "", 61 + i, on("H"));
+    fbtn(px, x, 117, 29, 24, R2[i], "", 71 + i, on(i < 4 ? "I" : "J"));
+  }
+  /* keys */
+  const L = keyLayout(24, 28.25);
+  for (const b of L.blacks) tablet(px, Math.round(b.cx - 10), 178, 20, 44, 900 + b.k, "rock", on("K") ? C.accent : C.dim);
+  for (const o of L.whites) tablet(px, Math.round(o.cx - 11), 232, 22, 76, 950 + o.k, "rock", on("K") ? C.accent : C.mid);
+  runeC(px, 24 + 14, 296, "F3", C.dim); runeC(px, 24 + 28.25 * 15 + 14, 296, "G5", C.dim);
+  /* callouts */
+  for (const c in CALL) {
+    const [x, y] = CALL[c];
+    for (let yy = y - 7; yy < y + 8; yy++) for (let xx = x - 6; xx < x + 7; xx++) { const t = (H(xx, yy) >>> 28) & 3; px.pset(xx, yy, on(c) ? C.theme : C.noise[t < 2 ? t : 2]); }
+    rune(px, x - 2, y - 4, c, on(c) ? [0, 0, 0] : C.accent);
+  }
+  px.done();
+  cv.style.width = "1000px"; cv.style.height = "644px"; cv.style.maxWidth = "100%"; cv.style.minWidth = "700px"; cv.style.height = "auto";
+}
+
+/* ---------------------------------------------------------------- tablets behind boxes */
+function paintBox(el) {
+  let cv = el.querySelector(":scope > canvas.bg");
+  if (!cv) { cv = document.createElement("canvas"); cv.className = "bg"; cv.setAttribute("aria-hidden", "true"); el.prepend(cv); }
+  const w = Math.max(20, Math.ceil(el.clientWidth / 2)), h = Math.max(16, Math.ceil(el.clientHeight / 2));
+  const px = new Px(cv, w, h, 2);
+  cv.style.width = "100%"; cv.style.height = "100%";
+  const seed = +el.dataset.seed || 1, kind = el.dataset.tab;
+  if (kind === "strip") tablet(px, 0, 0, w, h, seed, "none", C.mid);
+  else if (kind === "dlg") tablet(px, 0, 0, w, h, seed, "ruin", null, C.mid);
+  else tablet(px, 0, 0, w, h, seed, "ruin", null, C.dim);
+  px.done();
+}
+
+/* ---------------------------------------------------------------- theme */
+const css = c => "rgb(" + c.join(",") + ")";
+function noiseTile() {
+  const cv = document.createElement("canvas"), W = 64, Hh = 16;
+  cv.width = W; cv.height = Hh;
+  const ctx = cv.getContext("2d"), img = ctx.createImageData(W, Hh);
+  for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) {
+    const t = (H(x, y) >>> 28) & 3, c = C.noise[t < 2 ? t : 2], i = (y * W + x) * 4;
+    img.data[i] = c[0]; img.data[i + 1] = c[1]; img.data[i + 2] = c[2]; img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv.toDataURL();
+}
+function redrawAll() {
+  document.querySelectorAll("canvas[data-draw]").forEach(cv => { try { DRAW[cv.dataset.draw](cv); } catch (e) { console.error(cv.dataset.draw, e); } });
+  document.querySelectorAll("[data-tab]").forEach(paintBox);
+}
+function setTheme(name) {
+  if (!P[name]) name = "SAMHAIN";
+  C = P[name];
+  const r = document.documentElement.style;
+  r.setProperty("--surf", css(C.surf)); r.setProperty("--text", css(C.text)); r.setProperty("--theme", css(C.theme));
+  r.setProperty("--accent", css(C.accent)); r.setProperty("--mid", css(C.mid)); r.setProperty("--dim", css(C.dim));
+  r.setProperty("--sel", css(C.sel)); r.setProperty("--lane", css(C.lane));
+  r.setProperty("--noise", "url(" + noiseTile() + ")");
+  document.getElementById("thName").textContent = name;
+  try { localStorage.setItem("carnac-manual-theme", name); } catch (e) {}
+  redrawAll();
+}
+let theme = "SAMHAIN";
+try { theme = localStorage.getItem("carnac-manual-theme") || theme; } catch (e) {}
+const step = d => { theme = THEMES[(THEMES.indexOf(theme) + d + THEMES.length) % THEMES.length]; setTheme(theme); };
+document.getElementById("thPrev").addEventListener("click", () => step(-1));
+document.getElementById("thNext").addEventListener("click", () => step(1));
+
+/* legend <-> panel */
+const items = document.querySelectorAll("#legend li");
+function mark(c) {
+  panelHL = c;
+  items.forEach(li => li.classList.toggle("hl", li.dataset.c === c));
+  drawPanel(document.getElementById("panel"), c);
+}
+items.forEach(li => {
+  li.addEventListener("mouseenter", () => mark(li.dataset.c)); li.addEventListener("focus", () => mark(li.dataset.c));
+  li.addEventListener("mouseleave", () => mark(null)); li.addEventListener("blur", () => mark(null));
+  li.addEventListener("click", () => mark(li.dataset.c));
+});
+
+/* SAVE flashes at 2 Hz, as on the panel */
+if (!window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+  setInterval(() => document.querySelectorAll('canvas[data-state="flash"]').forEach(cv => DRAW.btn(cv)), 250);
+
+/* boxes and grass follow their size */
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(es => es.forEach(e => paintBox(e.target)));
+  document.querySelectorAll("[data-tab]").forEach(el => ro.observe(el));
+}
+let rz = 0;
+window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => document.querySelectorAll('canvas[data-draw="grass"]').forEach(cv => DRAW.grass(cv)), 120); });
+setTheme(theme);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => document.querySelectorAll("[data-tab]").forEach(paintBox));
+})();
+</script>
+
+</body></html>
