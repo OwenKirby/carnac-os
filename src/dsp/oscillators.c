@@ -265,11 +265,17 @@ static void osc_read_level(WavetableOsc *osc, int h, uint8_t level) {
 }
 
 void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread) {
-    if (osc->pcm.on) {                              /* a PCM wave (no spread); the phase still turns, for the sub */
+    if (osc->pcm.on) {                              /* a PCM wave; the phase still turns, for the sub */
         osc->center_step = phase_step(frequency_q16);
         osc->xfade_q15 = 0;
         osc->live = 0;
         pcm_prepare(&osc->pcm, frequency_q16, osc->morph_q12);
+        /* SPREAD: the loops' own detuned playheads at the bank's ratios and crossfade */
+        if (raw_spread <= 0)
+            pcm_spread(&osc->pcm, 0, 0);
+        else
+            pcm_spread(&osc->pcm, spread_ratio_q28[raw_spread > 127 ? 127 : raw_spread],
+                       raw_spread >= SPREAD_XFADE ? 32768 : (raw_spread << 15) / SPREAD_XFADE);
         return;
     }
     /* the two frames either side of the scan (wt_read_morph's split), for every read this tick */

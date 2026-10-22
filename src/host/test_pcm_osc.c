@@ -103,7 +103,7 @@ static void patch(uint8_t arch, uint8_t code, uint8_t scan)
 }
 
 /* the same PcmOsc rendered by blocks and sample by sample, ticks in between, the SCAN moving: identical samples */
-static void same_paths(uint8_t code, const char *name)
+static void same_paths(uint8_t code, const char *name, int spread)
 {
     static WavetableOsc a, b;
     int32_t ob[16], one;
@@ -115,8 +115,9 @@ static void same_paths(uint8_t code, const char *name)
     for (int tick = 0; tick < 400; tick++) {
         uint32_t f = mtof_q16(48 + (tick / 100) * 7);
         a.morph_q12 = b.morph_q12 = (tick * 97) % (7 << 12);
-        osc_prepare(&a, f, 0);
-        osc_prepare(&b, f, 0);
+        int sp = spread ? spread - 20 + (tick % 40) : 0;     /* across the low-spread crossfade and above it */
+        osc_prepare(&a, f, sp);
+        osc_prepare(&b, f, sp);
         osc_render_block(&a, ob, 16);
         for (int i = 0; i < 16; i++) {
             one = pcm_render_one(&b.pcm);         /* (osc_render plays banks only: the per-sample path) */
@@ -127,6 +128,32 @@ static void same_paths(uint8_t code, const char *name)
     }
     CHECK(!diff, "%s: block and one-sample renders differ in %d samples", name, diff);
     CHECK(sounded, "%s: silent", name);
+}
+
+/* SPREAD on a PCM wave: the four detuned playheads change the sound (not the one playhead as at spread 0), at a
+ * like level */
+static void spread_detunes(uint8_t code, const char *name)
+{
+    static WavetableOsc a, b;
+    int32_t oa[16], ob[16];
+    double ea = 0, eb = 0, ed = 0;
+    osc_init(&a);
+    osc_select_wave(&a, code);
+    b = a;
+    for (int tick = 0; tick < 600; tick++) {
+        osc_prepare(&a, mtof_q16(57), 0);
+        osc_prepare(&b, mtof_q16(57), 90);
+        osc_render_block(&a, oa, 16);
+        osc_render_block(&b, ob, 16);
+        if (tick < 100) continue;                           /* the playheads drift apart first */
+        for (int i = 0; i < 16; i++) {
+            ea += (double)oa[i] * oa[i];
+            eb += (double)ob[i] * ob[i];
+            ed += (double)(ob[i] - oa[i]) * (ob[i] - oa[i]);
+        }
+    }
+    CHECK(ed > 0.2 * ea, "%s: SPREAD 90 barely changes the sound (diff %.3g of %.3g)", name, ed, ea);
+    CHECK(eb > 0.1 * ea && eb < 1.5 * ea, "%s: SPREAD 90 level %.3g against %.3g", name, eb, ea);
 }
 
 int main(int argc, char **argv)
@@ -151,9 +178,14 @@ int main(int argc, char **argv)
           "kinds: a bank, past the attacks, past the waves");
 
     /* 2 block = one sample */
-    for (uint32_t w = 0; w < nw; w++)
-        same_paths((uint8_t)(WAVE_PCM_FIRST + w), wave_name((uint8_t)(WAVE_PCM_FIRST + w), nb));
-    same_paths(WAVE_ATK_FIRST + 2, "HORN BLAT (an attack-wave)");
+    for (uint32_t w = 0; w < nw; w++) {
+        same_paths((uint8_t)(WAVE_PCM_FIRST + w), wave_name((uint8_t)(WAVE_PCM_FIRST + w), nb), 0);
+        same_paths((uint8_t)(WAVE_PCM_FIRST + w), wave_name((uint8_t)(WAVE_PCM_FIRST + w), nb), 40);
+        same_paths((uint8_t)(WAVE_PCM_FIRST + w), wave_name((uint8_t)(WAVE_PCM_FIRST + w), nb), 110);
+        spread_detunes((uint8_t)(WAVE_PCM_FIRST + w), wave_name((uint8_t)(WAVE_PCM_FIRST + w), nb));
+    }
+    same_paths(WAVE_ATK_FIRST + 2, "HORN BLAT (an attack-wave)", 0);
+    same_paths(WAVE_ATK_FIRST + 2, "HORN BLAT (an attack-wave)", 80);
 
     /* 3 every wave in every architecture */
     for (uint8_t arch = 0; arch < VARCH_COUNT; arch++) {
