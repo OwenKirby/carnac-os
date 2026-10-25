@@ -66,7 +66,7 @@ Carnac has eight physical voices shared by up to two layers. Each layer plays it
 - **DUAL**: each layer has its own MIDI channel. The FM1's keys play the layer you have selected, so you hear the layer you are editing (both layers when the two share a channel). External MIDI reaches each layer on its channel.
 - **SPLIT**: layer 1 and layer 2 share the keyboard. The ZONES page (HOME) sets, on its four knobs, SPLIT NOTE and SPLIT FADE (by note) and VEL SPLIT and VEL FADE (by velocity).
 
-In DUAL and SPLIT the voices are shared out: layer 1 gets half rounded up, layer 2 half rounded down, based on the smaller of the two layers' caps. MAX VOICES on the LAYER page shows the result.
+In DUAL and SPLIT the voices are shared out: layer 1 gets half rounded up, layer 2 half rounded down, based on the smaller of the two layers' caps. MAX VOICES on the LAYER page shows the result. A layer set to MONO RETRIG or MONO LEGATO needs only one voice, so the other layer gets the rest of the budget: with two SINGLE patches that is 1 + 7 instead of 4 + 4, and with a mono DUAL OSC layer under a SINGLE one, 1 + 6.
 
 **Architecture** (ARCH on the LAYER page, for the focused layer) decides the signal path of every voice, and the most voices it may use.
 
@@ -84,7 +84,7 @@ The caps keep the FM-1 within its processing budget. Carnac uses both of the FM-
 
 **ANALOG** (L1 ANALOG and L2 ANALOG on the LAYER page, right after ARCH) makes the layer behave more like an analog synth. It is stored with the patch. Each voice gets its own small fixed tolerances: pitch, cutoff, resonance, envelope speed and level. Each note scatters them a little. From 40 up, slow drift eases in as well. At 0 the layer is exact.
 
-**Voice mode** (L1 VOICE MODE, L2 VOICE MODE): MONO RETRIG, MONO LEGATO, POLY REUSE, POLY RESET or UNISON. In UNISON, UNISON DETUNE spreads the outer voices by up to 50 cents. In SPLIT, layer 2 uses layer 1's voice mode.
+**Voice mode** (L1 VOICE MODE, L2 VOICE MODE): MONO RETRIG, MONO LEGATO, POLY REUSE, POLY RESET or UNISON. In UNISON, UNISON DETUNE spreads the outer voices by up to 50 cents. Each layer has its own voice mode in SPLIT as well as DUAL, so a mono bass can sit under poly chords.
 
 **Glide.** PORTA MODE is CONST RATE, CONST TIME or LEGATO TIED, and PORTA TIME (knob 4 on the LAYER page; 0 is no glide) sets how long it takes. In polyphonic modes the glide starts from the last note played on that layer. A chord (notes within 30 ms of each other) fans out from the note played before it.
 
@@ -123,7 +123,7 @@ The PCM waves live in their own flash areas, beside the firmware. The web instal
 | BINAURAL | OSC PHASE | BEAT HZ | SUB LEVEL | NOISE |
 | STRIKE | ATK LEVEL | NOISE COLOUR | SUB LEVEL | NOISE |
 
-Cross-modulation types are FM, AM, RING and PM. The sub oscillator sits one or two octaves down (SUB OCTAVE) and is a SINE, a SQUARE, or CURRENT, a copy of OSC1's live wavetable frame. Noise colour morphs from white (0) through pink (64) to brown (127). In BINAURAL, BEAT HZ offsets the right ear's pitch by up to 31.75 Hz.
+Cross-modulation types are FM, AM, RING and PM. The sub oscillator sits one or two octaves down (SUB OCTAVE) and is a SINE, a SQUARE, or CURRENT, a copy of OSC1's live wavetable frame. Noise colour morphs from white (0) through pink (64) to brown (127). Like the classic polysynths, Carnac has one noise source that every voice shares (BINAURAL's right ear has its own), so noise in a chord sounds like one breath. Each voice still sets its own noise level and colour, and pink or brown noise now costs far less CPU. In BINAURAL, BEAT HZ offsets the right ear's pitch by up to 15.9 Hz, in 1/8 Hz steps.
 
 In STRIKE, each new note starts with a short attack sound layered over the wavetable, the way an LA synth puts a sampled attack in front of its tone. A note played legato over a held one keeps the running attack. STRIKE adds an ATTACK page to the FX section, between OSC1 and OSCMIX; its screen shows the sound's outline, dim at full length and bright as it will play.
 
@@ -195,6 +195,19 @@ Almost every destination in Carnac has a MOD SRC row (which source drives it) an
 
 ## Effects
 
+**Amplifier (AMP page, GLO button).** Each layer's DRIVE (knob 1) comes after its amp envelope, so velocity and ENV1 play into it: a soft note drives less than a hard one. At 0 it is off. Turning it up adds grit while the level stays roughly even (the old drive got up to 7 dB louder). DRIVE MODEL picks its character:
+
+| Model | Character | Gain at 127 |
+| --- | --- | --- |
+| SOFT | Smooth saturation, rounding into full scale | +30 dB |
+| HARD | Clean up to about 3/4 of full scale, then a short bend into clipping | +30 dB |
+| FOLD | The peaks fold back on themselves; the fold points are rounded | +16 dB |
+| TAPE | Soft saturation with a slight bias (even harmonics); the treble falls away as it drives harder | +24 dB |
+| TUBE | Uneven, so mainly the 2nd harmonic at low and middle settings; its bias moves with the level, so loud notes bloom. Pushed hard it turns square | +30 dB |
+| OVERDRIVE | Like a Tube Screamer: only the part above about 720 Hz is clipped, the lows stay clean, and the tone rolls off at about 3.4 kHz | +40 dB |
+
+The drive works on each voice, so a chord's notes do not distort each other.
+
 There is one reverb and one delay, shared by both layers. Each layer feeds them through its own sends on the AMP page (DELAY SEND and REVERB SEND). The effects settings are on the EFFECTS page (GLO button) and belong to the performance.
 
 **EFFECTS knobs:** DELAY TIME, DELAY FDBK, REVERB TIME, REVERB DAMP.
@@ -217,7 +230,7 @@ There is one reverb and one delay, shared by both layers. Each layer feeds them 
 
 - **DEGRADE** is one control for wow, flutter and filtering. It drives both the tape and the BBD delay.
 - **PING PONG** bounces the echoes between left and right.
-- **DELAY SYNC** locks the delay time to the tempo.
+- **DELAY SYNC** locks the delay time to the tempo: DELAY TIME then steps from 1/24 (fully left) through 1/16, 1/12, 1/8, 1/6, 1/4 and 1/3 to 1/2 (fully right), short to long as when unsynced.
 - **Self-oscillation.** With FEEDBACK above 100, both delays build up on themselves, in a musical way. At the top of the range they run away to a dark, filtered howl, so turn it up slowly.
 
 > Very loud sends are limited before they reach the reverb and delay, so playing several voices into a hot reverb should not buzz. If you hear digital buzz or a high whine after a note ends, report it with the reverb type and the patch.
@@ -250,7 +263,7 @@ SEQ has four lanes of 16 steps. Each lane has its own event type, speed, directi
 ARP plays chord patterns of up to 8 steps. The lowest 13 keys are chord keys, and a chord key sounds the chord for its note from the current GENRE BANK. The next 8 white keys are step keys.
 
 - **Play live:** hold a chord key.
-- **Capture a step:** hold a step key and press a chord key. The chord and the four ARP knobs are stored in that step.
+- **Capture a step:** hold a step key and press a chord key. The chord and the four ARP knobs are stored in that step. While you hold a step key that has a chord, the four knobs show that step's values and turning one edits the step; let go of the last step key and the knobs return to their live values. Holding a rest or TIE step leaves the knobs as they are (in source).
 - **Knobs:** RATE (how fast the step's notes play: the length of one rhythm cell, 1/2 down to 1/128, with triplets; the rhythm repeats until the step ends), OCTAVE (1 to 4), STYLE (hold, block, up, down, up-down, down-up, random, strum up, strum down) and RHYTHM (24 patterns). HOLD strikes the chord once and holds it; while following steps play the same chord it is not struck again, at any TIMING and octave range. With HOLD, RHYTHM becomes STRUM: NONE, UP or DOWN, with the notes RATE apart.
 - **Function keys** (the black keys among the step keys): LATCH keeps a live arpeggio playing after you let go. TIE carries the previous chord on. CLEAR makes a rest. COPY copies a step to others. ACCENT plays the first strike at ACCENT VEL.
 - **Rows:** LAYER (L1, L2 or BOTH in DUAL mode), TIMING (every step's length, 2 bars down to 1/32T), GATE (how long each strike sounds, for the whole pattern), SEQ LENGTH (1 to 8), TRANSPOSE MAQ, GENRE BANK and ACCENT VEL.
@@ -278,11 +291,48 @@ Carnac stores four kinds of thing, each in 128 slots:
 
 1. Press SAVE. The save page opens on what the page you were on saves (a sound page: the focused layer's patch; HOME: the performance; SEQ; ARP) at the slot it came from. The header says it, e.g. SAVE L2 PATCH.
 2. Pick the slot with the Algorithm Encoder or knob 2. The bottom of the screen shows the whole bank: a mark for each used slot, your slot as a standing stone, and the moon above it, full over an empty slot and a dark crescent when you would overwrite. The line under the name says EMPTY or OVERWRITES and the name there.
-3. To rename, turn knobs 3 (position) and 4 (character); the letter keyboard shows while they turn. Names are up to 16 characters from letters, digits, space and . - _ /.
+3. To rename, turn knobs 3 (position) and 4 (character); the letter keyboard shows while they turn. Patches, performances, sequences and arp patterns all take a name (sequence and arp names since 2026-10-25). A loaded sequence or arp keeps its slot's name, a performance brings the names of the sequence and arp slots it links, and the factory ones are named after their performance. Names are up to 16 characters from letters, digits, space and . - _ /.
 4. Press SAVE. An empty slot is written at once; a used one asks OVERWRITE? first (NO or YES with the Algorithm Encoder, then SAVE).
 5. The screen reports SAVED NAME TO SLOT N, and the next control takes you back to the page you came from.
 
 **Copy and paste.** Hold SAVE and press OCT- to copy what SAVE would save on the current page (the focused layer's patch, the performance, the sequence or the arp pattern). Hold SAVE and press OCT+ to paste it over the same kind, for example layer 1's patch onto layer 2: the save page opens and asks PASTE? first. While SAVE is held, a strip names both, with PASTE dimmed when the clipboard holds another kind.
+
+**Factory bank: RITES OF STONE.** Slots 0 to 31 hold 32 factory performances, each with its own patch, effects, tempo, sequence and arp pattern; the patches are also patch slots 0 to 31. Power-on always plays performance 0, NEWGRANGE DAWN. A slot you have saved over shows your version in the browser. Every patch gives the MOD WHEEL (HOME knob 3) a job. PLAY on an ARP-led performance plays its chord progression with a bass under it; on a SEQ-led one, its sequence (installed).
+
+| Slot | Name | Sound | MOD WHEEL |
+| --- | --- | --- | --- |
+| 0 | NEWGRANGE DAWN | STACK: an FM bell over the PCM choir, filters opening over 3 s, CELESTIAL | vibrato, choir brighter |
+| 1 | CALANAIS MOON | SPREAD PCM strings through a driven SH-2 | strings bow harder, vibrato |
+| 2 | AVEBURY CIRCLE | DUAL OSC warm drifting pad, ANALOG high | FM edge |
+| 3 | HYPOGEUM ORACLE | STRIKE: stone thud, then a low chant through FORMANT; mono | vowel opens, vibrato |
+| 4 | SKARA BRAE FIRE | BINAURAL hearth pad, 5 Hz beat, flickering noise | ears swirl |
+| 5 | GOBEKLI PILLARS | DUAL FILTER: MS-20 into a moving notch | low-pass to band-pass |
+| 6 | LUNAR STANDSTILL | BINAURAL Star Chart, harmonics surfacing over 8 s | ears swirl |
+| 7 | MAESHOWE BEAM | SPREAD Solstice through an MS-20 band-pass | wider spread |
+| 8 | DAWN PROCESSION | STACK: PCM choir and a second choir an octave up | vibrato |
+| 9 | CURSUS WIND | Noise through a whistling SH-2 band-pass, random gusts | colder, thinner wind |
+| 10 | LITHOPHONE | STRIKE: ringing stones over an FM bell | brighter strike |
+| 11 | RING OF BRODGAR | PCM clay chimes through two tuned band-passes | denser cloud |
+| 12 | BEAKER BELLS | DUAL OSC ring-modulated bells | more ring |
+| 13 | FLINT KNAPPING | STRIKE: flint over a wavefolder, MS-20 high-pass | flake bends further |
+| 14 | MUSICAL BOW | STRIKE: bow pluck, snapping filter | pluck bends further |
+| 15 | BONE FLUTE RITE | STRIKE: tongued chiff over Hollow Reeds, delayed vibrato; mono | more breath |
+| 16 | CONCH CALL | STRIKE: conch blast over PCM horns | brassier |
+| 17 | LOG DRUM CIRCLE | STRIKE: log drum marimba | brighter body |
+| 18 | CAIRN DRUMS | STRIKE: frame drum and pot drum, tuned by the keys | louder slap |
+| 19 | ANCESTOR PULSE | STACK: a pulse retriggered on the clock's sixteenths over PCM choir and wood | filter opens |
+| 20 | SILBURY BASS | Resonant SH-2 mono bass, tied steps slide | cutoff wobble |
+| 21 | QUOIT GROWL | DUAL OSC phase-mod bass into a growling MS-20 | synced eighth-note wobble |
+| 22 | ANTLER PICK | STRIKE: rasp over a saw, plucked bass | rasp bends in |
+| 23 | KNOWTH SPIRAL | DUAL OSC sync lead; mono with glide | longer sync sweep |
+| 24 | SOLSTICE FIRE | SPREAD supersaw in UNISON, 24 saws a key | wider, vibrato |
+| 25 | OVERTONE CHANT | STRIKE: mouth bow, then a throat-singing drone; mono | sweeps the overtone |
+| 26 | GGANTIJA ORGAN | DUAL OSC organ with key click and rotary tremolo | rotor speeds up |
+| 27 | KERMARIO KEYS | STRIKE electric piano, auto-pan | more bark |
+| 28 | WOODHENGE | PCM wood chimes | denser loop |
+| 29 | MENEC ALIGNMENT | SPLIT: a round bass below C4, KERMARIO KEYS above | bass filter opens |
+| 30 | SKY BURIAL | DUAL: PCM shell chimes layered with CURSUS WIND | denser shells |
+| 31 | EQUINOX | SPREAD chord mode: one key sings a choir chord in fifths | choir opens |
 
 ## Display and themes
 
@@ -309,7 +359,7 @@ The screen is mostly black, so the panel gives off little light when played outd
 
 ## System
 
-**GLOBAL page** (the last page of HOME). Knobs: TUNE (MASTER TUNE, -50 to +50 cents), CURVE (VEL CURVE), CLOCK (CLOCK OUT) and TEMPO (INT TEMPO, greyed when following MIDI clock). Rows: MASTER TUNE, VEL CURVE (SOFT, LINEAR or HARD, applied to incoming MIDI notes), CLOCK OUT (OFF or USB: while the clock is internal, MIDI clock, start and stop go out on USB; the TRS jack only receives), MIDI CH LAYER1 and LAYER2, CUSTOM CC1 and CC2, BASE VELOCITY, BEND RANGE, CLOCK SOURCE (INTERNAL or MIDI), INT TEMPO and THEME. MASTER TUNE, VEL CURVE, CLOCK OUT and THEME belong to the instrument and survive power-off; the rest belong to the performance. The sequencer and arp follow the clock, internal or MIDI, and changing page never disturbs it.
+**GLOBAL page** (the last page of HOME). Knobs: TUNE (MASTER TUNE, -50 to +50 cents), CURVE (VEL CURVE), CLOCK (CLOCK OUT) and TEMPO (INT TEMPO, greyed when following MIDI clock). Rows: MASTER TUNE, VEL CURVE (SOFT, LINEAR or HARD, applied to incoming MIDI notes), CLOCK OUT (OFF or USB: while the clock is internal, MIDI clock, start and stop go out on USB; the TRS jack only receives), MIDI CH LAYER1 and LAYER2, CUSTOM CC1 and CC2, BASE VELOCITY, BEND RANGE, CLOCK SOURCE (INTERNAL or MIDI), INT TEMPO and THEME. INT TEMPO and BASE VELOCITY belong to the performance; every other GLOBAL setting belongs to the instrument: it survives power-off and stays as you set it when you load a performance. A DUAL performance that plays both layers on one channel stays that way, on your MIDI CH LAYER1 channel, and changing LAYER1 there moves layer 2 with it. The sequencer and arp follow the clock, internal or MIDI, and changing page never disturbs it.
 
 **Processing load.** Carnac runs on both of the FM-1's cores. The sound is the same on one core or two. If the FM-1 gets close to its limit, Carnac lightens the load by itself rather than drop out, and the voice caps in Voices and layers keep the heaviest architectures inside the budget. On the device, eight SINGLE voices use about 43 percent of the processor. The heaviest combinations (SH-2 filters in DUAL FILT, STACK or BINAURAL, or heavy patches with the sequencer and arpeggiator running) reach 75 to 85 percent, where Carnac may lighten the load.
 
@@ -332,6 +382,15 @@ Newest first. Features marked *in source* are written but not yet installed on t
 
 | Date | Change |
 | --- | --- |
+| 2026-10-25 | Carnac OS 0.9.4 released, with every row above the 0.9.2 row (0.9.3 added the RITES OF STONE bank and power-on into NEWGRANGE DAWN). New since 0.9.3: AMP DRIVE TUBE and OVERDRIVE, sequence and arp names, GLOBAL settings that survive power-off, shared noise, MONO layers taking one voice in DUAL and SPLIT, the ARP step peek, finer BINAURAL BEAT HZ, and tight MIDI: notes and clock coming in over USB or TRS now play at a steady 23 ms delay and the clock locks to an external tempo instead of jittering. DELAY SYNC divisions now run short to long across DELAY TIME, like the unsynced delay. From 0.9.3, patches, performances, sequences, arps and settings all carry over; a saved performance with DELAY SYNC on may land on a different division, so set its DELAY TIME again. |
+| 2026-10-25 | GLOBAL settings now survive power-off and performance loads: MIDI CH LAYER1 and LAYER2, CUSTOM CC1 and CC2, BEND RANGE and CLOCK SOURCE join MASTER TUNE, VEL CURVE, CLOCK OUT and THEME. DUAL performances that stack both layers keep stacking, on your layer-1 channel. INT TEMPO and BASE VELOCITY still come with each performance (in source). |
+| 2026-10-25 | AMP DRIVE reworked: two new models, TUBE and OVERDRIVE; smoother SOFT, HARD, FOLD and TAPE curves; much more gain (up to +30 to +40 dB); and the level holds roughly even as DRIVE turns. Patches keep their settings, but driven ones sound different and come out up to 5 dB quieter than before. Each driven voice costs about half a point of CPU (installed). |
+| 2026-10-25 | Sequences and arp patterns can be named on the SAVE page like patches and performances; the preset list, SAVED and the CLIP line show the names. Saved sequences and arps keep loading, with the factory names until renamed (installed). |
+| 2026-10-25 | ARP: holding a step key that has a chord puts that step's RATE, OCTAVE, STYLE and RHYTHM on the knobs; the live values come back when you let go. Rests and TIEs leave the knobs alone (in source) |
+| 2026-10-25 | BINAURAL BEAT HZ now spans 0 to 15.9 Hz in 1/8 Hz steps (was 0 to 31.75 Hz in 1/4 Hz steps), for finer control. In source, not yet installed. |
+| 2026-10-25 | Voices: in DUAL and SPLIT a MONO layer (MONO RETRIG or MONO LEGATO) takes one voice and the other layer gets the rest (two SINGLE patches: 1 + 7 instead of 4 + 4). In SPLIT, layer 2 now has its own VOICE MODE and UNISON DETUNE instead of copying layer 1's; saved SPLIT performances use the layer 2 voice mode stored with them (in source). |
+| 2026-10-25 | Noise is now one shared source for all voices, as on classic polysynths (BINAURAL's right ear keeps its own). Each voice still sets its own noise level and colour. Noisy patches use much less CPU: up to 11 points less on the heaviest test patches, and 12 more of the 70 load tests now pass. With noise off, the sound is unchanged (installed) |
+| 2026-10-21 | New factory bank RITES OF STONE: 32 performances and patches built on PCM waves, the SH-2, MS-20 and FORMANT filters, STRIKE attacks, mod slots, synced envelope retrigger, DUAL and SPLIT. The FM-1 now powers up into performance 0, NEWGRANGE DAWN, instead of a bare default patch. The old bank STONE & FIRE is gone (installed). |
 | 2026-10-21 | Carnac OS 0.9.2 released, with everything below it in this table. New since the rows below: PCM waves in the WAVE list (chimes, strings, choir, horns, with their own attacks; SPREAD works on them), the HOLLOW REEDS wavetable bank, ANALOG on the LAYER page, KEY TRACK on both FILTER pages. The web installer writes the PCM waves after the firmware. From 0.9.1, patches carry over; sequences and performances saved with 0.9.1 do not (installed). |
 | 2026-10-21 | ENV2 / ENV3 display: an inverted envelope is drawn upside down (in source). |
 | 2026-10-21 | The start-up screen follows THEME: the standing stones, sun and title are drawn in the colours of the theme saved last session (BLOOD MOON red, SOLSTICE blue, GRANITE grey, and so on). SAMHAIN keeps the original orange (in source). |

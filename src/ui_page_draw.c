@@ -697,6 +697,14 @@ static void pu_draw_menu(const UIStateMachine *sm)
     cv_blit(0, PU_MENU_Y);
 }
 
+/* the clipboard's name, as the CLIP line shows it */
+static const uint8_t *pu_clip_name(const UIStateMachine *sm)
+{
+    if (sm->clip_kind == UISAVE_PATCH_PRESET) return sm->clip.patch.name;
+    if (sm->clip_kind == UISAVE_WHOLE_PERF) return sm->clip.whole.perf.name;
+    return sm->clip_name;
+}
+
 static uint32_t pu_menu_sig(const UIStateMachine *sm, uint32_t h)
 {
     char b[8];
@@ -714,7 +722,7 @@ static uint32_t pu_menu_sig(const UIStateMachine *sm, uint32_t h)
                           (uint32_t)sm->clip_kind << 24);
         h = pu_mix_str(sq_mix(h, (uint32_t)sm->clip_layer | (uint32_t)sm->s.active_synth_layer << 8), n);
         if (sm->clip_kind < UISAVE_COUNT)
-            h = sq_mix_bytes(h, sm->clip_kind == UISAVE_PATCH_PRESET ? sm->clip.patch.name : sm->clip.whole.perf.name,
+            h = sq_mix_bytes(h, pu_clip_name(sm),
                              NAME_LEN);
     }
     return h;
@@ -1954,10 +1962,12 @@ static void pu_clip_text(const UIStateMachine *sm, char *b)
         pu_cat(pu_cat(e, "  "), pu_name(sm->clip.patch.name, n));
     else if (sm->clip_kind == UISAVE_WHOLE_PERF)
         pu_cat(pu_cat(e, " "), pu_name(sm->clip.whole.perf.name, n));
+    else
+        pu_cat(pu_cat(e, "  "), pu_name(sm->clip_name, n));
 }
 
-/* The save page's menu (2026-10-17): what SAVE stores, large: the name (or the kind, for a sequence or an arp, which
- * have none); then where it goes and what that slot holds (an overwrite in the accent), the clipboard, and the hold
+/* The save page's menu (2026-10-17): what SAVE stores, large: the name (a sequence's and an arp's too since
+ * 2026-10-25); then where it goes and what that slot holds (an overwrite in the accent), the clipboard, and the hold
  * that copies and pastes, so it is never hidden */
 static void pu_draw_save_menu(const UIStateMachine *sm)
 {
@@ -2212,8 +2222,8 @@ static void pu_draw_browse(const UIStateMachine *sm, uint32_t force)
             st = ui_sm_slot_query(sm, tgt, row[i], nm);
             if (st == UISLOT_EMPTY)
                 nmt = "UNSAVED";
-            else if (tgt == UISAVE_SEQ_SETTINGS || tgt == UISAVE_ARP_SEQ)
-                nmt = tgt == UISAVE_SEQ_SETTINGS ? "SEQUENCE" : "PATTERN";
+            else if ((tgt == UISAVE_SEQ_SETTINGS || tgt == UISAVE_ARP_SEQ) && (st != UISLOT_USED || !nm[0]))
+                nmt = tgt == UISAVE_SEQ_SETTINGS ? "SEQUENCE" : "PATTERN";   /* (unnamed: what it is) */
             else
                 nmt = st != UISLOT_USED ? "-" : nm[0] ? nm : "UNTITLED";
             pu_num(nb, row[i], 0u, 3u);
@@ -2479,8 +2489,9 @@ static void page_draw(UIStateMachine *sm, uint32_t force)
                           (uint32_t)sm->save_target << 24);
         h = sq_mix(h, (uint32_t)ui_sm_slot_state(sm, n) | (uint32_t)sm->clip_kind << 8 | (uint32_t)sm->clip_layer << 16);
         h = sq_mix_bytes(h, (const uint8_t *)n, NAME_LEN);   /* what the slot holds (a save can change it) */
+        h = sq_mix_bytes(h, ui_sm_rename_name(sm), NAME_LEN);   /* (a sequence's or arp's: not in the bytes above) */
         if (sm->clip_kind < UISAVE_COUNT)            /* the clipboard's name, as the CLIP line shows it */
-            h = sq_mix_bytes(h, sm->clip_kind == UISAVE_PATCH_PRESET ? sm->clip.patch.name : sm->clip.whole.perf.name,
+            h = sq_mix_bytes(h, pu_clip_name(sm),
                              NAME_LEN);
     }
     h = sq_mix(h, (uint32_t)ui_sm_layer_voices(sm, 0u) | (uint32_t)ui_sm_layer_voices(sm, 1u) << 8);

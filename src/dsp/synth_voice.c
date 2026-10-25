@@ -37,7 +37,7 @@ static int bip(uint8_t v) { return (int)v - (int)BIPOLAR_CENTER; }
 static uint32_t apply_cents_q16(uint32_t f_q16, int32_t cents) {
     int32_t oct = cents >= 0 ? cents / 1200 : -((1199 - cents) / 1200);   /* floor */
     int32_t rem = cents - oct * 1200;                                       /* 0..1199 */
-    uint32_t ratio_q16 = ctrl_cents_ratio_q16[rem];   /* the semitones of 2^(i/12) interpolated (gen_ctrl_tables.py) */
+    uint32_t ratio_q16 = 65536u + ctrl_cents_ratio_q16_lo[rem];   /* the semitones of 2^(i/12) interpolated (gen_ctrl_tables.py) */
     uint64_t f = ((uint64_t)f_q16 * ratio_q16) >> 16;
     if (oct >= 0) {
         if (oct > 16) return PITCH_MAX_Q16;
@@ -362,8 +362,8 @@ static void base_pitch(const OscParams *o, const VoiceInput *in, int *note, int 
  * 2^CHOKE_SHIFT control ticks, 256 samples (5.8 ms), then the voice is silenced and reset. */
 #define CHOKE_SHIFT 5
 
-/* BINAURAL right ear: 0.25 Hz per BEAT step, in Q16 */
-#define BIN_BEAT_STEP_Q16 16384u
+/* BINAURAL right ear: 0.125 Hz per BEAT step, in Q16 */
+#define BIN_BEAT_STEP_Q16 8192u
 
 /* A choked voice's fade has ended: everything back to rest, ready for a clean note on any architecture. */
 static void voice_choke_done(SynthVoiceNode *voice) {
@@ -677,7 +677,11 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         voice->atk_pre_step = (pre - voice->atk_pre) * tick_inv;
     }
     voice->drive = a->drive;
-    voice->drive_model = a->drive_model;
+    if (a->drive) {
+        if (a->drive_model != voice->drv.model)   /* each model reads its state its own way: a new one starts clean */
+            voice->drv_s[0][0] = voice->drv_s[0][1] = voice->drv_s[1][0] = voice->drv_s[1][1] = 0.f;
+        amp_drive_prepare(&voice->drv, a->drive, a->drive_model);
+    }
     int pan = clampi(in->pan + (int)((resolve_source(&c, a->pan_mod_src, 0) * a->pan_mod_depth) >> 15), 0, 127);
     /* 7. AMP sends: the layer's output as mono into the shared delay and reverb (the sends are the knob values), and
      * the layer's routing weight on everything; the dry side gets the mix gain as well. */
@@ -728,32 +732,56 @@ static inline void q15_to_float(const int32_t *x, float *y, int n) {
     for (int i = 0; i < n; i++) y[i] = (float)clamp_q15(x[i]);
 }
 
+/* A driven path: the amp level (ramped from vol by step) and the drive, in place over its block; the mix loops then
+ * take it at level 1. Returns the level at the block's end. (One drive loop in the firmware, amp_drive_block: the
+ * FM1's flash has no room for one inlined in every mix loop.) */
+static float level_drive(SynthVoiceNode *voice, int path, float *y, int n, float vol, float step) {
+    for (int i = 0; i < n; i++) {
+        y[i] *= vol;
+        vol += step;
+    }
+    amp_drive_block(&voice->drv, voice->drv_s[path], y, n);
+    return vol;
+}
+
 /* one path: amp level (ramped), drive, then into the mix: four multiply-adds by the tick's gains (pan, routing, mix
  * gain and sends folded together). SINGLE, DUAL OSC, SPREAD and DUAL FILTER end here. */
-static void finish_mono_block(SynthVoiceNode *voice, const float *y, float *mix, int n) {
-    float vol = voice->vol, step = voice->vol_step;
+static void finish_mono_block(SynthVoiceNode *voice, float *y, float *mix, int n) {
+    float vol = voice->vol, step = voice->vol_step, end = 0.f;
     const float g0 = voice->mix_a[MIX_L], g1 = voice->mix_a[MIX_R], g2 = voice->mix_a[MIX_DELAY],
                 g3 = voice->mix_a[MIX_REVERB];
-    int drive = voice->drive, model = voice->drive_model;
+    if (voice->drive) {
+        end = level_drive(voice, 0, y, n, vol, step);
+        vol = 1.f;
+        step = 0.f;
+    }
     for (int i = 0; i < n; i++, mix += MIX_N) {
         float s = y[i] * vol;
         vol += step;
-        if (drive) s = amp_drive_f(s, drive, model);
         mix[MIX_L] += s * g0;
         mix[MIX_R] += s * g1;
         mix[MIX_DELAY] += s * g2;
         mix[MIX_REVERB] += s * g3;
     }
-    voice->vol = vol;
+    voice->vol = voice->drive ? end : vol;
 }
 
 /* two paths, each through its own amp level and drive, each with its own gains. STACK: B has ENV2's level; BINAURAL:
  * both ears share ENV1's. */
-static void finish_pair_block(SynthVoiceNode *voice, const float *ya, const float *yb, int own_b_level, float *mix,
-                              int n) {
+static void finish_pair_block(SynthVoiceNode *voice, float *ya, float *yb, int own_b_level, float *mix, int n) {
     float vol = voice->vol, step = voice->vol_step, vol_b = voice->vol_b, step_b = voice->vol_b_step;
     const float *ga = voice->mix_a, *gb = voice->mix_b;
-    int drive = voice->drive, model = voice->drive_model;
+    int drive = voice->drive;
+    float end = 0.f, end_b = vol_b;
+    if (drive) {
+        end = level_drive(voice, 0, ya, n, vol, step);
+        if (own_b_level)
+            end_b = level_drive(voice, 1, yb, n, vol_b, step_b);
+        else
+            level_drive(voice, 1, yb, n, vol, step);
+        vol = vol_b = 1.f;
+        step = step_b = 0.f;
+    }
     for (int i = 0; i < n; i++, mix += MIX_N) {
         float va = vol, vb = va;
         vol += step;
@@ -762,17 +790,13 @@ static void finish_pair_block(SynthVoiceNode *voice, const float *ya, const floa
             vol_b += step_b;
         }
         float a = ya[i] * va, b = yb[i] * vb;
-        if (drive) {
-            a = amp_drive_f(a, drive, model);
-            b = amp_drive_f(b, drive, model);
-        }
         mix[MIX_L] += a * ga[MIX_L] + b * gb[MIX_L];
         mix[MIX_R] += a * ga[MIX_R] + b * gb[MIX_R];
         mix[MIX_DELAY] += a * ga[MIX_DELAY] + b * gb[MIX_DELAY];
         mix[MIX_REVERB] += a * ga[MIX_REVERB] + b * gb[MIX_REVERB];
     }
-    voice->vol = vol;
-    voice->vol_b = vol_b;
+    voice->vol = drive ? end : vol;
+    voice->vol_b = drive ? end_b : vol_b;
 }
 
 /* SINGLE and SPREAD: OSC1 (SPREAD: its 4 detuned playheads, set by osc_prepare) + sub + noise -> FILTER1 */
@@ -783,7 +807,7 @@ static void render_single(SynthVoiceNode *v, float *mix, int n) {
     SPROF_START();
     osc_render_block(&v->osc1, o, n);
     SPROF_LAP(SPROF_OSC);
-    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, &v->noise[0], o, n);
+    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
     SPROF_LAP(SPROF_EXTRAS);
     q15_to_float(o, x, n);
     filter_core_render_block(&v->synth_filters.core[0], x, x, n);
@@ -803,7 +827,7 @@ static void render_dual_osc_pcm(SynthVoiceNode *v, float *mix, int n) {
     int32_t g1 = v->mix.osc1_gain_q15, g2 = v->mix.osc2_gain_q15;
     for (int i = 0; i < n; i++)
         o[i] = (((int32_t)(int16_t)w1[i] * g1) >> 15) + (((int32_t)(int16_t)w2[i] * g2) >> 15);
-    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, &v->noise[0], o, n);
+    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
     q15_to_float(o, x, n);
     filter_core_render_block(&v->synth_filters.core[0], x, x, n);
     finish_mono_block(v, x, mix, n);
@@ -817,7 +841,7 @@ static void render_dual_osc(SynthVoiceNode *v, float *mix, int n) {
         return;
     }
     for (int i = 0; i < n; i++)                /* the cross-modulation reads OSC1 sample by sample */
-        o[i] = osc_mixer_render(&v->mix, &v->osc1, &v->osc2, &v->sub_phase, &v->noise[0]);
+        o[i] = osc_mixer_render(&v->mix, &v->osc1, &v->osc2, &v->sub_phase, v->noise_at + i);
     q15_to_float(o, x, n);
     filter_core_render_block(&v->synth_filters.core[0], x, x, n);
     finish_mono_block(v, x, mix, n);
@@ -828,7 +852,7 @@ static void render_dual_filter(SynthVoiceNode *v, float *mix, int n) {
     int32_t o[VB];
     float x[VB];
     osc_render_block(&v->osc1, o, n);
-    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, &v->noise[0], o, n);
+    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
     q15_to_float(o, x, n);
     dual_filter_render_block(&v->synth_filters, x, x, n);
     finish_mono_block(v, x, mix, n);
@@ -840,7 +864,7 @@ static void render_stack(SynthVoiceNode *v, float *mix, int n) {
     float a[VB], b[VB];
     osc_render_block(&v->osc1, w1, n);
     osc_mixer_osc2_block(&v->mix, w1, &v->osc2, w2, n);   /* (a bank: osc_mixer_osc2 sample by sample) */
-    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, &v->noise[0], w1, n);   /* A: w1 + sub + noise */
+    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, w1, n);   /* A: w1 + sub + noise */
     q15_to_float(w1, a, n);
     for (int i = 0; i < n; i++) b[i] = (float)w2[i];
     filter_core_render_block(&v->synth_filters.core[0], a, a, n);
@@ -849,7 +873,7 @@ static void render_stack(SynthVoiceNode *v, float *mix, int n) {
 }
 
 /* BINAURAL: left ear OSC1 -> core 0, right ear (OSC2's playhead running OSC1's settings) -> core 1. The sub is
- * shared, each ear has its own noise generator so the noise decorrelates. */
+ * shared, each ear reads its own noise (ear 1 for the right) so the noise decorrelates. */
 static void render_binaural(SynthVoiceNode *v, float *mix, int n) {
     int32_t sub[VB], l[VB], r[VB];
     float fl[VB], fr[VB];
@@ -861,8 +885,8 @@ static void render_binaural(SynthVoiceNode *v, float *mix, int n) {
         l[i] += sub[i];
         r[i] += sub[i];
     }
-    osc_mixer_noise_block(&v->mix, &v->noise[0], l, n);
-    osc_mixer_noise_block(&v->mix, &v->noise[1], r, n);
+    osc_mixer_noise_block(&v->mix, 0, v->noise_at, l, n);
+    osc_mixer_noise_block(&v->mix, 1, v->noise_at, r, n);
     q15_to_float(l, fl, n);
     q15_to_float(r, fr, n);
     filter_core_render_block(&v->synth_filters.core[0], fl, fl, n);
@@ -881,7 +905,7 @@ void voice_attack_init(void) {
     for (int i = 0; i < 256; i++) atk_dec[i] = attack_mulaw[i];
 }
 
-static void finish_strike_block(SynthVoiceNode *voice, const float *y, float *mix, int n) {
+static void finish_strike_block(SynthVoiceNode *voice, float *y, float *mix, int n) {
     uint32_t pos = voice->atk_pos, step = voice->atk_step, end = voice->atk_end;
     int na = 0;
     if (voice->atk_p && pos < end)
@@ -889,14 +913,17 @@ static void finish_strike_block(SynthVoiceNode *voice, const float *y, float *mi
     if (na > n) na = n;
     if (na > 0) {
         const uint8_t *p = voice->atk_p;
-        float vol = voice->vol, vstep = voice->vol_step, av = voice->atk_vol, astep = voice->atk_vol_step;
+        float vol = voice->vol, vstep = voice->vol_step, av = voice->atk_vol, astep = voice->atk_vol_step, end = 0.f;
         const float g0 = voice->mix_a[MIX_L], g1 = voice->mix_a[MIX_R], g2 = voice->mix_a[MIX_DELAY],
                     g3 = voice->mix_a[MIX_REVERB];
-        int drive = voice->drive, model = voice->drive_model;
+        if (voice->drive) {
+            end = level_drive(voice, 0, y, na, vol, vstep);
+            vol = 1.f;
+            vstep = 0.f;
+        }
         for (int i = 0; i < na; i++, mix += MIX_N) {
             float s = y[i] * vol;
             vol += vstep;
-            if (drive) s = amp_drive_f(s, drive, model);
             uint32_t k = pos >> 16;
             float a = atk_dec[p[k]], b = atk_dec[p[k + 1u]];
             s += (a + (b - a) * (float)(pos & 0xFFFFu) * (1.f / 65536.f)) * av;
@@ -907,7 +934,7 @@ static void finish_strike_block(SynthVoiceNode *voice, const float *y, float *mi
             mix[MIX_DELAY] += s * g2;
             mix[MIX_REVERB] += s * g3;
         }
-        voice->vol = vol;
+        voice->vol = voice->drive ? end : vol;
         voice->atk_pos = pos;
         voice->atk_vol = av;
         y += na;
@@ -944,13 +971,16 @@ static void render_strike_split(SynthVoiceNode *v, const int32_t *o, float *mix,
     if (pos >= end)
         v->atk_p = NULL;
     filter_core_render_block(&v->synth_filters.core[0], x, x, n);
-    float vol = v->vol, vstep = v->vol_step, av = v->atk_vol, astep = v->atk_vol_step;
+    float vol = v->vol, vstep = v->vol_step, av = v->atk_vol, astep = v->atk_vol_step, vend = 0.f;
     const float g0 = v->mix_a[MIX_L], g1 = v->mix_a[MIX_R], g2 = v->mix_a[MIX_DELAY], g3 = v->mix_a[MIX_REVERB];
-    int drive = v->drive, model = v->drive_model;
+    if (v->drive) {
+        vend = level_drive(v, 0, x, na, vol, vstep);
+        vol = 1.f;
+        vstep = 0.f;
+    }
     for (int i = 0; i < na; i++, mix += MIX_N) {
         float s = x[i] * vol;
         vol += vstep;
-        if (drive) s = amp_drive_f(s, drive, model);
         s += att[i] * av;
         av += astep;
         mix[MIX_L] += s * g0;
@@ -958,7 +988,7 @@ static void render_strike_split(SynthVoiceNode *v, const int32_t *o, float *mix,
         mix[MIX_DELAY] += s * g2;
         mix[MIX_REVERB] += s * g3;
     }
-    v->vol = vol;
+    v->vol = v->drive ? vend : vol;
     v->atk_vol = av;
     if (na < n)
         finish_mono_block(v, x + na, mix, n - na);
@@ -970,7 +1000,7 @@ static void render_strike(SynthVoiceNode *v, float *mix, int n) {
     int32_t o[VB];
     float x[VB];
     osc_render_block(&v->osc1, o, n);
-    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, &v->noise[0], o, n);
+    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
     if (v->atk_p && (v->atk_pre != 0.f || v->atk_pre_step != 0.f)) {
         render_strike_split(v, o, mix, n);
         return;

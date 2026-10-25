@@ -456,7 +456,8 @@ int main(void)
     perf_state.clock_source = CLKSRC_MIDI;
     run(10);
     midi_clock_realtime(0xFA);
-    for (i = 0; i < 24 * 2; i++) { midi_clock_realtime(0xF8); run(919); }
+    /* the last wait stops short of where the clock's lock would play pulse 49 ahead of the sender */
+    for (i = 0; i < 24 * 2; i++) { midi_clock_realtime(0xF8); run(i < 24 * 2 - 1 ? 919 : 900); }
     CHECK(maq_playing(&q) && count(0x90) == 8, "MIDI Start + 2 beats of clock: 8 sixteenths (%d)", count(0x90));
     midi_clock_realtime(0xFC);
     run(2);

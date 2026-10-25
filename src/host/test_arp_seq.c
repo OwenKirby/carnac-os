@@ -319,6 +319,34 @@ int main(void)
         CHECK(sm.arp_knob[0] == ARPRATE_COUNT - 1u && strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/128") == 0,
               "RATE held to its list");
         *kb = ARP_RATE_DEFAULT; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
+        {   /* a held chord step's values on the knobs, the live dials back on release; a rest leaves them */
+            uint8_t oct0 = arp_state.steps[0].octave_range;
+            arp_state.steps[2].octave_range = 2;
+            ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);             /* step 3 (A3, 1/8, octave 2) */
+            CHECK(sm.arp_knob[0] == ARPRATE_1_8 && sm.arp_knob[1] == 2 && sm.arp_knob[2] == ARPSTYLE_DOWN &&
+                  strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/8") == 0, "step 3 held: its values on the knobs");
+            ui_sm_arp_key(&sm, 14, FM1_LOW + 14u, 1, 100);             /* + step 1 (a rest): still step 3's */
+            kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 1, &info);
+            *kb = 1; ui_sm_knob_written(&sm, UIPAGE_ARP, 1);
+            CHECK(sm.arp_knob[0] == ARPRATE_1_8 && arp_state.steps[2].octave_range == 1 &&
+                  arp_state.steps[0].octave_range == 1, "a knob turned edits the held steps");
+            ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
+            CHECK(sm.arp_knob[1] == 1, "a step key still held: the knobs stay");
+            ui_sm_arp_key(&sm, 14, FM1_LOW + 14u, 0, 0);
+            CHECK(sm.arp_knob[0] == ARP_RATE_DEFAULT && sm.arp_knob[1] == 0 && sm.arp_knob[3] == 13 &&
+                  arp_state.steps[2].octave_range == 1, "all let go: the live dials back, the step keeps its edit");
+            ui_sm_arp_key(&sm, 19, FM1_LOW + 19u, 1, 100);             /* step 4, a rest */
+            CHECK(sm.arp_knob[0] == ARP_RATE_DEFAULT && sm.arp_knob[1] == 0, "a rest held: the knobs stay live");
+            ui_sm_arp_key(&sm, 19, FM1_LOW + 19u, 0, 0);
+            ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);
+            ui_sm_goto(&sm, UIPAGE_HOME1);
+            ui_sm_goto(&sm, UIPAGE_ARP);
+            CHECK(sm.arp_knob[0] == ARP_RATE_DEFAULT && sm.arp_knob[1] == 0, "the page left with a step held: live back");
+            ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
+            arp_state.steps[0].octave_range = oct0;
+            arp_state.steps[2].octave_range = 0;
+            kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 0, &info);
+        }
         run(4);
         carp_chord_notes(arp_state.current_genre_bank, FM1_LOW + 4u, c);
         CHECK(count(&la, 0x90) == 4 && count(&la, 0x80) == 4 && on_note(0) == c[0] && la.ev[0].d2 == 90 && all_off(&la),

@@ -1,6 +1,5 @@
 
 #include "amplifier.h"
-#include "dsp_clamp.h"
 #include "PresetStructures.h"   /* DRIVE_* */
 #include <stdint.h>
 
@@ -27,67 +26,36 @@ int32_t amp_const_power_q15(int idx) {
     return (int32_t)pan_trig_lut[idx];
 }
 
-static int32_t clamp_q15_range(int32_t v, int32_t lo, int32_t hi) { return v > hi ? hi : (v < lo ? lo : v); }
+#include "drive_tables.h"
 
-/* Cubic soft clip, Q15: x - x^3/3. Unity slope at zero, flat at |x| = 1 (output 2/3). Input must be in -32767..32767. */
-static int32_t soft_cubic_q15(int32_t x) {
-    int32_t x3 = (((x * x) >> 15) * x) >> 15;
-    return x - div3_s32(x3);
+__attribute__((noinline)) void amp_drive_prepare(AmpDrive *d, int drive, int model) {   /* once a tick: one copy */
+    if (drive < 0) drive = 0;
+    if (drive > 127) drive = 127;
+    if (model < 0 || model >= DRIVE_COUNT) model = DRIVE_SOFT;
+    const int16_t *mk = drive_makeup_cdb[model] + (drive >> 3);     /* centi-dB every 8 steps, straight between */
+    int cdb = mk[0] + (((mk[1] - mk[0]) * (drive & 7)) >> 3);
+    d->g = amp_drive_gain(model, drive);
+    d->m = amp_exp2f((float)cdb * (1.f / 602.06f));           /* (the table holds the Q15 scale) */
+    d->a = amp_drive_tape_a(drive);
+    d->model = (uint8_t)model;
 }
 
-int32_t amp_drive_q15(int32_t input_q15, int drive, int model) {
-    if (drive <= 0) return input_q15;
-
-    /* Pre-gain: 1x at drive 0, about 5x at 127. */
-    int32_t pre_q8 = 256 + drive * 8;
-    if (model == DRIVE_FOLD) {               /* wave-folder: the peaks the pre-gain pushes past full scale reflect
-                                              * back inside it (up to ~5x: at most 3 folds). Not clamped first: the
-                                              * clamp it had made it a plain clipper (fixed 2026-10-15). */
-        int32_t y = (input_q15 * pre_q8) >> 8;
-        for (int i = 0; i < 4 && (y > 32767 || y < -32768); i++) {
-            if (y > 32767)  y = 2 * 32767 - y;
-            if (y < -32768) y = -2 * 32768 - y;
-        }
-        return clamp_q15(y);
+void amp_drive_block(const AmpDrive *d, float *s, float *x, int n) {
+    float st[2] = {s[0], s[1]};
+#define DRIVE_LOOP(m)                                                                                                  \
+    for (int i = 0; i < n; i++) x[i] = amp_drive_step(d, m, st, x[i]);                                                 \
+    break;
+    switch (d->model) {
+    case DRIVE_HARD: DRIVE_LOOP(DRIVE_HARD)
+    case DRIVE_FOLD: DRIVE_LOOP(DRIVE_FOLD)
+    case DRIVE_TAPE: DRIVE_LOOP(DRIVE_TAPE)
+    case DRIVE_TUBE: DRIVE_LOOP(DRIVE_TUBE)
+    case DRIVE_OVERDRIVE: DRIVE_LOOP(DRIVE_OVERDRIVE)
+    default: DRIVE_LOOP(DRIVE_SOFT)
     }
-    int32_t x = clamp_q15((input_q15 * pre_q8) >> 8);
-
-    switch (model) {
-    case DRIVE_HARD:                         /* hard overdrive, clipped at 3/4 scale */
-        return clamp_q15_range(x, -24576, 24576);
-    case DRIVE_TAPE: {                       /* soft saturation with a bias for even harmonics */
-        const int32_t bias = 2048;           /* 1/16 full scale */
-        return clamp_q15(soft_cubic_q15(clamp_q15(x + bias)) - soft_cubic_q15(bias));
-    }
-    default:                                 /* DRIVE_SOFT */
-        return soft_cubic_q15(x);
-    }
-}
-
-static inline float clampf_(float v, float lo, float hi) { return v > hi ? hi : (v < lo ? lo : v); }
-
-/* soft_cubic_q15 in float, Q15 units: x - x^3 / (3 * 32768^2) */
-static inline float soft_cubic_f(float x) { return x - x * x * x * (1.f / (3.f * 32768.f * 32768.f)); }
-
-float amp_drive_f(float x, int drive, int model) {
-    if (drive <= 0) return x;
-    x *= 1.f + (float)drive * (1.f / 32.f);                                /* 256 + drive * 8, Q8 */
-    if (model == DRIVE_FOLD) {                                             /* reflected, not clamped first */
-        for (int i = 0; i < 4 && (x > 32767.f || x < -32768.f); i++) {
-            if (x > 32767.f)  x = 2.f * 32767.f - x;
-            if (x < -32768.f) x = -2.f * 32768.f - x;
-        }
-        return clampf_(x, -32768.f, 32767.f);
-    }
-    x = clampf_(x, -32768.f, 32767.f);
-    switch (model) {
-    case DRIVE_HARD:
-        return clampf_(x, -24576.f, 24576.f);
-    case DRIVE_TAPE:
-        return clampf_(soft_cubic_f(clampf_(x + 2048.f, -32768.f, 32767.f)) - soft_cubic_f(2048.f), -32768.f, 32767.f);
-    default:
-        return soft_cubic_f(x);
-    }
+#undef DRIVE_LOOP
+    s[0] = st[0];
+    s[1] = st[1];
 }
 
 void amp_pan_gains(const StereoAmp *amp, int raw_pan, int32_t *left_q15, int32_t *right_q15) {

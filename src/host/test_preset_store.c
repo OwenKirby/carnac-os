@@ -63,6 +63,8 @@ static uint32_t st_crc32(const void *p, uint32_t n)  /* storage.c's, zlib CRC-32
 static SequencerLane syn_seq_bank[BANK_SLOTS][SEQ_NLANE];
 static ArpState syn_arp_bank[BANK_SLOTS];
 static uint8_t syn_perf_name[BANK_SLOTS][NAME_LEN];
+static uint8_t syn_seq_name[BANK_SLOTS][NAME_LEN];
+static uint8_t syn_arp_name[BANK_SLOTS][NAME_LEN];
 static uint8_t syn_used[UISAVE_COUNT][PATCH_SLOTS / 8u];
 static UIStateMachine sm;
 static uint8_t flash_ok = 1;
@@ -124,6 +126,9 @@ static void wipe_ram(void)                           /* a power cycle: the banks
         if (k != PERF)
             for (uint32_t s = 0; s < PS_KIND[k].slots; s++) fill(k, s, 0xEE);
     memset(syn_perf_name, 0xEE, sizeof syn_perf_name);
+    memset(syn_seq_name, 0xEE, sizeof syn_seq_name);
+    memset(syn_arp_name, 0xEE, sizeof syn_arp_name);
+    memset(ps_names_used, 0, sizeof ps_names_used);
     memset(&ps_perf_save, 0xEE, sizeof ps_perf_save);
     memset(syn_used, 0, sizeof syn_used);
 }
@@ -169,6 +174,45 @@ static void put_chunk(uint32_t chunk, uint8_t kind, uint8_t c, uint8_t ver, cons
     memcpy(nor + ps_sector(chunk, 0u), &h, sizeof h);
 }
 
+/* the sequence and arp names (2026-10-25): chunk 1, written only when a name changed; a power cycle brings back the
+ * names saved and leaves the others (the factory's) alone; a names chunk of another version is left out */
+static void test_names(void)
+{
+    uint8_t nq[NAME_LEN], na[NAME_LEN], fac[NAME_LEN];
+    uint32_t s;
+    memset(nq, 5, sizeof nq);
+    memset(na, 9, sizeof na);
+    wipe_ram();
+    ps_load();
+    CHECK(syn_seq_name[0][0] == 0xEE, "a names table read from a store that has none");
+    ps_name_save(UISAVE_SEQ_SETTINGS, 4, syn_seq_name[4]);
+    CHECK(!ps_dirty, "a SAVE with the same name marked the names chunk");
+    ps_name_save(UISAVE_SEQ_SETTINGS, 4, nq);
+    CHECK(save(UISAVE_SEQ_SETTINGS, 4, 0x31), "save sequence 4");
+    ps_name_save(UISAVE_ARP_SEQ, BANK_SLOTS - 1u, na);
+    CHECK(save(UISAVE_ARP_SEQ, BANK_SLOTS - 1u, 0x32), "save the last arp");
+    wipe_ram();
+    memset(fac, 0x11, sizeof fac);
+    for (s = 0; s < BANK_SLOTS; s++) {
+        memcpy(syn_seq_name[s], fac, NAME_LEN);       /* the factory's names, as factory_install leaves them */
+        memcpy(syn_arp_name[s], fac, NAME_LEN);
+    }
+    ps_load();
+    CHECK(memcmp(syn_seq_name[4], nq, NAME_LEN) == 0 && memcmp(syn_arp_name[BANK_SLOTS - 1u], na, NAME_LEN) == 0,
+          "the saved names did not come back");
+    CHECK(memcmp(syn_seq_name[3], fac, NAME_LEN) == 0 && memcmp(syn_arp_name[4], fac, NAME_LEN) == 0,
+          "a name never saved was overwritten");
+    CHECK(holds(UISAVE_SEQ_SETTINGS, 4, 0x31), "sequence 4 itself did not come back");
+    {   /* another version: left out */
+        uint8_t pay[PS_NAMES_LEN];
+        memset(pay, 0xFF, sizeof pay);
+        put_chunk(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, PS_NAMES_VER + 1u, pay, sizeof pay);
+        memset(syn_seq_name, 0x11, sizeof syn_seq_name);
+        ps_load();
+        CHECK(syn_seq_name[4][0] == 0x11, "a names chunk of another version was read");
+    }
+}
+
 /* the factory bank: every slot in range, in key, and whole */
 static void test_factory(void)
 {
@@ -190,6 +234,8 @@ static void test_factory(void)
         static uint8_t rec[WHOLE_PERF_STORED_SIZE];
         const FactoryArp *fa = &FA_TAB[s];
         CHECK(factory_perf(s, &w) == 0, "factory_perf %u", s);
+        CHECK(memcmp(syn_seq_name[s], syn_perf_name[s], NAME_LEN) == 0 && memcmp(syn_arp_name[s], syn_perf_name[s], NAME_LEN) == 0,
+              "factory sequence / arp %u: not named after its performance", s);
         {   /* the patch's settings: each a byte of the patch, once, and the values in range */
             const uint8_t *q = FV_TAB[s].set;
             uint8_t seen[sizeof(EngineState)] = {0};
@@ -609,6 +655,7 @@ int main(void)
     }
     flash_ok = 1;
 
+    test_names();
     test_factory();
 
     printf(failures ? "%d preset store checks failed\n" : "preset store tests: all passed\n", failures);

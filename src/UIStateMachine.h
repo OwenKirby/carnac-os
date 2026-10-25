@@ -119,8 +119,8 @@ enum {
 #define UI_KB_MS 2500u               /* SAVE: the letter keyboard stays up this long after the last name knob detent */
 #define UI_HOLD_MS 200u              /* HOME / SAVE held this long: the hold strip shows what OCT- / OCT+ do */
 #define UI_ROWPOP_MS 1500u           /* the parameter list stays up this long after the last Select / Algorithm detent */
-/* The store's answer for one slot of a save target (UISAVE_*): UISLOT_EMPTY / UISLOT_USED. For a used PATCH_PRESET or
- * WHOLE_PERF slot it fills name with the stored record's name (char_map indices); it leaves name alone otherwise. */
+/* The store's answer for one slot of a save target (UISAVE_*): UISLOT_EMPTY / UISLOT_USED. For a used slot it fills
+ * name with the stored record's name (char_map indices; a sequence's or arp's since 2026-10-25). */
 typedef uint8_t (*UiSlotQuery)(void *ctx, uint8_t target, uint8_t slot, uint8_t name[NAME_LEN]);
 /* the slots a save target's bank has: PATCH_SLOTS patches, BANK_SLOTS of the rest (2026-10-17) */
 static inline uint8_t ui_sm_bank_slots(uint8_t target)
@@ -181,6 +181,10 @@ typedef struct {
     EngineState *engine[NLAYER];
     SequencerLane *lanes;            /* SEQ_NLANE of them */
     ArpState *arp;
+    uint8_t seq_name[NAME_LEN];      /* the live sequence's and arp pattern's names (char_map; 2026-10-25): RENAME edits
+                                      * them, the caller's store saves them with the slot and sets them on a load */
+    uint8_t arp_name[NAME_LEN];
+    uint8_t clip_name[NAME_LEN];     /* .. COPY's of the one it took (a sequence or arp on the clipboard) */
     MaqSeq *seq;                     /* the sequencer engine (ui_sm_attach_seq); NULL: no transport, no step record */
     uint8_t seq_step0;               /* 7.1: the active lane's step on knob 1, 0..UISEQ_STEP0_MAX; knobs 2..4 the next
                                       * three (the Select Encoder moves it a group of 4 at a time, a step key to that
@@ -190,6 +194,9 @@ typedef struct {
     CarpSeq *carp;                   /* the ARP engine (ui_sm_attach_arp); NULL: chord keys capture but sound nothing */
     uint8_t arp_knob[4];             /* 2.2 ARP knobs, live: RATE ARPDIV_*, OCTAVE 0..3, STYLE ARPSTYLE_*, RHYTHM 0..23 */
     uint8_t arp_held;                /* 8.1: step keys held, bit n = step n */
+    uint8_t arp_peek;                /* a held step key's values are on the knobs (2026-10-25): arp_live holds the
+                                      * live dials to restore when the last step key is let go */
+    uint8_t arp_live[4];
     uint8_t arp_chord_key;           /* the chord key sounding or latched (its note), CARP_NOTE_NONE */
     uint8_t arp_chord_down;          /* the chord key physically down (its note), CARP_NOTE_NONE */
     uint8_t arp_chord_hold;          /* arp_chord_key is a live hold (latchable), not a capture's block chord */
@@ -284,7 +291,7 @@ uint8_t ui_sm_slot_query(const UIStateMachine *sm, uint8_t target, uint8_t slot,
 /* 1 when PASTE may run: the clipboard holds an item of save_target's kind */
 uint8_t ui_sm_paste_ok(const UIStateMachine *sm);
 /* the name RENAME edits for save_target: the focused layer's patch name (PATCH_PRESET), the performance name
- * (WHOLE_PERF), or NULL (ARP_SEQ, SEQ_SETTINGS have no name: RENAME is greyed) */
+ * (WHOLE_PERF), the live sequence's or arp pattern's (SEQ_SETTINGS, ARP_SEQ: sm->seq_name, sm->arp_name) */
 const uint8_t *ui_sm_rename_name(const UIStateMachine *sm);
 /* char_map indices as text into buf (at least NAME_LEN + 1 bytes), trailing spaces dropped; "" when all spaces */
 const char *ui_sm_name_text(const uint8_t name[NAME_LEN], char *buf);

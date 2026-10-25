@@ -33,8 +33,9 @@
 
 static const uint16_t SFX_REV_COMB[4] = {1116, 1188, 1277, 1356};
 static const uint16_t SFX_REV_AP[2] = {556, 441};
-/* sync divisions of the 120 BPM whole note (88200 samples): 1/2, 1/4, 1/8, 1/16, 1/3, 1/6, 1/12, 1/24 */
-static const uint16_t DELAY_SYNC_DEN[8] = {2, 4, 8, 16, 3, 6, 12, 24};
+/* sync divisions of the 120 BPM whole note (88200 samples), shortest to longest like unsynced DELAY TIME:
+ * 1/24, 1/16, 1/12, 1/8, 1/6, 1/4, 1/3, 1/2 */
+static const uint16_t DELAY_SYNC_DEN[8] = {24, 16, 12, 8, 6, 4, 3, 2};
 
 static int16_t tape[TAPE_LEN] SYNTH_POOL;
 static int16_t pre_buf[PRE_LEN] SYNTH_POOL;

@@ -218,13 +218,39 @@ int main(void)
     for (int i = 0; i < 6; i++) { synth_midi_3(0x90, (uint8_t)(48 + i), 100); synth_midi_3(0x91, (uint8_t)(60 + i), 100); }
     render(2048);
     CHECK(sounding(0) == 3 && sounding(1) == 3, "DUAL SINGLE+STACK: layer voices %d / %d, want 3 / 3", sounding(0), sounding(1));
-    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], 0) == 3, "limit");
+    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_POLY_REUSE, VMODE_POLY_REUSE, 0) == 3,
+          "limit");
     /* both SINGLE: the spec's 4 + 4 */
     all_off();
     engine_state[1].arch = VARCH_SINGLE;
     for (int i = 0; i < 6; i++) { synth_midi_3(0x90, (uint8_t)(48 + i), 100); synth_midi_3(0x91, (uint8_t)(60 + i), 100); }
     render(2048);
     CHECK(sounding(0) == 4 && sounding(1) == 4, "DUAL SINGLE+SINGLE: %d / %d, want 4 / 4", sounding(0), sounding(1));
+
+    /* a MONO layer takes one voice and gives the rest to the other: SINGLE + SINGLE 1 + 7, either way round (DUAL
+     * and SPLIT); SINGLE + STACK (cap 6) with layer 1 mono: 1 + floor(6 * 7 / 8) = 5 */
+    for (int pm = PERF_DUAL_SYNTH; pm <= PERF_SPLIT_SYNTH; pm++)
+        for (int ml = 0; ml < 2; ml++) {
+            synth_init();
+            perf_state.perf_mode = (uint8_t)pm;
+            perf_state.split_note = 60;
+            perf_state.split_fade = 0;
+            base_patch(&engine_state[0], VARCH_SINGLE);
+            base_patch(&engine_state[1], VARCH_SINGLE);
+            perf_state.voice_mode[ml] = VMODE_MONO_RETRIG;
+            for (int i = 0; i < 8; i++) {
+                synth_midi_3(0x90, (uint8_t)(36 + i), 100);
+                synth_midi_3(pm == PERF_DUAL_SYNTH ? 0x91 : 0x90, (uint8_t)(72 + i), 100);
+            }
+            render(2048);
+            CHECK(sounding(ml) == 1 && sounding(1 - ml) == 7, "%s mono L%d: %d / %d, want 1 / 7",
+                  pm == PERF_DUAL_SYNTH ? "DUAL" : "SPLIT", ml + 1, sounding(ml), sounding(1 - ml));
+        }
+    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_MONO_RETRIG, 1) == 1,
+          "both mono");
+    base_patch(&engine_state[1], VARCH_STACK);
+    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_UNISON_STACK, 1) == 5,
+          "mono SINGLE + STACK");
 
     /* 5. choke: lower the limit under held notes (SINGLE -> STACK), the extra voices fade without a click */
     synth_init();

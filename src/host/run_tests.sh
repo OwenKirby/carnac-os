@@ -40,11 +40,13 @@ build voice_arch $DSP src/host/test_voice_arch.c && run voice_arch "$OUT/voice_a
 build pcm_osc $DSP src/host/pcm_images_host.c src/host/test_pcm_osc.c && run pcm_osc "$OUT/pcm_osc.exe"
 build filter src/host/test_filter.c src/dsp/filter.c && run filter "$OUT/filter.exe"
 build ui_arch $DSP src/UIStateMachine.c src/host/test_ui_arch.c && run ui_arch "$OUT/ui_arch.exe"
+build midi_clock $DSP src/host/test_midi_clock.c && run midi_clock "$OUT/midi_clock.exe"
 build maq_seq $DSP src/UIStateMachine.c src/host/test_maq_seq.c && run maq_seq "$OUT/maq_seq.exe"
 build arp_seq $DSP src/UIStateMachine.c src/host/test_arp_seq.c && run arp_seq "$OUT/arp_seq.exe"
 build seq_idle $DSP src/host/test_seq_idle.c && build seq_idle_ref -DSYNTH_SEQ_NO_IDLE $DSP src/host/test_seq_idle.c \
     && "$OUT/seq_idle_ref.exe" >"$OUT/seq_idle_ref.txt" \
     && run seq_idle sh -c "'$OUT/seq_idle.exe' | diff - '$OUT/seq_idle_ref.txt' && echo 'MAQ / ARP idle fast paths: bit-exact'"
+build drive_tables src/host/gen_drive_tables.c && run drive_tables sh -c "'$OUT/drive_tables.exe' | diff - src/dsp/drive_tables.h && echo 'drive_tables.h matches its generator'"
 build fx_hash src/dsp/fx.c src/host/test_fx_hash.c && run fx_hash "$OUT/fx_hash.exe"
 build flash_record src/dsp/preset.c src/host/test_flash_record.c && run flash_record "$OUT/flash_record.exe"
 if python src/hardware/wt_store_upload.py syx src/dsp/wavetables_image.bin "$OUT/upload.syx" >/dev/null 2>&1; then

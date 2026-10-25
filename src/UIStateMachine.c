@@ -46,7 +46,6 @@ enum {                               /* how a row reads and writes its value */
                                       * PCM waves, attacks), shows the wave's name */
 };
 #define RF_LAYER2 (1u << 0)          /* a Layer 2 parameter: greyed under SINGL_SYNTH */
-#define RF_SPLIT_MIRROR (1u << 1)    /* "SAME AS LAYER1": greyed under SPLIT_SYNTH (5.3 View 2) */
 #define RF_BIPOLAR (1u << 2)         /* stored 0..127 with 64 = 0: shown as -64..+63 */
 #define RF_UNISON (1u << 3)          /* greyed unless the row's layer plays VOICE MODE UNISON */
 /* how a plain number reads (ui_sm_row_text): a note name, a MIDI channel 1..16, BPM, a 3-digit slot */
@@ -83,7 +82,8 @@ static const char *const FLT_NAMES[] = {"SH-2", "MULTI", "MS-20", "FORMANT"};
 static const char *const XMOD_NAMES[] = {"FM", "AM", "RING", "PM"};
 static const char *const SUBOCT_NAMES[] = {"-1 OCT", "-2 OCT"};
 static const char *const SUBWAVE_NAMES[] = {"SINE", "SQUARE", "CURRENT"};
-static const char *const DRIVE_NAMES[] = {"SOFT", "HARD", "FOLD", "TAPE"};
+static const char *const DRIVE_NAMES[] = {"SOFT", "HARD", "FOLD", "TAPE", "TUBE", "OVERDRIVE"};
+PS_STATIC_ASSERT(sizeof(DRIVE_NAMES) / sizeof(DRIVE_NAMES[0]) == DRIVE_COUNT, "one name per DRIVE_*");
 static const char *const REVTYPE_NAMES[] = {"SPRING", "TOMB", "MOD", "CELESTIAL", "DOLMEN", "TUMULUS"};
 static const char *const PERF_NAMES[] = {"SINGL", "DUAL", "SPLIT"};
 static const char *const VARCH_NAMES[] = {"SINGLE", "DUAL OSC", "SPREAD", "DUAL FILT", "STACK", "BINAURAL", "STRIKE"};
@@ -325,9 +325,9 @@ static const UiRow HOME1_ROWS[] = {
 static const UiRow HOME2_ROWS[] = {
     {"L2 ARCH", ENGB(arch), 0, VARCH_COUNT - 1, RK_ENG, RF_LAYER2, VARCH_NAMES, A_ALL},
     {"L2 ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, RF_LAYER2, NULL, A_ALL},
-    {"L2 VOICE MODE", (uint8_t)(PERF(voice_mode) + 1u), 0, VMODE_COUNT - 1, RK_BYTE, RF_LAYER2 | RF_SPLIT_MIRROR, VMODE_NAMES, A_ALL},
+    {"L2 VOICE MODE", (uint8_t)(PERF(voice_mode) + 1u), 0, VMODE_COUNT - 1, RK_BYTE, RF_LAYER2, VMODE_NAMES, A_ALL},
     {"L2 UNISON DETUNE", (uint8_t)(PERF(unison_detune) + 1u), 0, VAL_MAX, RK_BYTE,
-     RF_LAYER2 | RF_SPLIT_MIRROR | RF_UNISON, NULL, A_ALL},
+     RF_LAYER2 | RF_UNISON, NULL, A_ALL},
     {"L2 PORTA MODE", (uint8_t)(PERF(porta_mode) + 1u), 0, PORTA_COUNT - 1, RK_BYTE, RF_LAYER2, PORTA_NAMES, A_ALL},
     {"L2 PORTA TIME", (uint8_t)(PERF(porta_time) + 1u), 0, VAL_MAX, RK_BYTE, RF_LAYER2, NULL, A_ALL},
     {"L2 MAX VOICES", 0, 0, VOICE_POOL, RK_VOICES, RF_LAYER2, NULL, A_ALL},
@@ -803,11 +803,10 @@ static void row_step(UIStateMachine *sm, const UiRow *r, int16_t delta)
         row_set(sm, r, (uint8_t)v);
 }
 
-/* the voice mode a layer plays: in SPLIT layer 2 mirrors layer 1 (5.3 View 2) */
+/* the voice mode a layer plays (its own in SPLIT too since 2026-10-25) */
 static uint8_t layer_vmode(const UIStateMachine *sm, uint8_t layer)
 {
-    uint8_t l = perf_mode(sm) == PERF_SPLIT_SYNTH ? 0u : layer;
-    return sm->perf->voice_mode[l < NLAYER ? l : 0u];
+    return sm->perf->voice_mode[layer < NLAYER ? layer : 0u];
 }
 
 /* --------------------------------------------- rule 3: Layer 2 mask --- */
@@ -823,14 +822,12 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
     if (mode == PERF_SINGL_SYNTH &&
         ((flags & RF_LAYER2) != 0u || (pg->store == ST_ENGINE && sm->s.active_synth_layer != 0u)))
         return UIROW_GREYED;
-    if (mode == PERF_SPLIT_SYNTH && (flags & RF_SPLIT_MIRROR) != 0u)
-        return UIROW_GREYED;
     if ((flags & RF_UNISON) != 0u && layer_vmode(sm, row_layer(r)) != VMODE_UNISON_STACK)
         return UIROW_GREYED;
     if (r->kind == RK_VOICES || r->kind == RK_CHAIN)
         return UIROW_INFO;
     if (r->kind == RK_RENAME && ui_sm_rename_name(sm) == NULL)
-        return UIROW_GREYED;         /* 6.2.1: ARP_SEQ and SEQ_SETTINGS carry no name */
+        return UIROW_GREYED;         /* (every TARGET carries a name since 2026-10-25) */
     if (r->kind == RK_SEQ_TARGET && ui_sm_seq_target_count(sm, sm->s.active_seq_lane) <= 1u)
         return UIROW_HIDDEN;         /* 7.4: one option (a layer under SINGL) or none: nothing to pick */
     if (pg->store == ST_LANE && r->kind == RK_BYTE &&
@@ -890,6 +887,7 @@ static void sync_registers(UIStateMachine *sm)
 }
 
 static void ui_arp_chord_off(UIStateMachine *sm);
+static void arp_unpeek(UIStateMachine *sm);
 
 static void enter_page(UIStateMachine *sm, uint8_t page)
 {
@@ -905,6 +903,7 @@ static void enter_page(UIStateMachine *sm, uint8_t page)
     sm->seq_cap_held = 0u;           /* a 7.2 chord capture ends with the page */
     sm->seq_cap_n = 0u;
     sm->arp_held = 0u;               /* .. and so do the ARP's held step keys, function keys, REC and its sounding chord */
+    arp_unpeek(sm);
     sm->arp_fn = 0u;
     sm->arp_copy_src = CARP_POS_NONE;
     sm->arp_rec = 0u;
@@ -955,8 +954,14 @@ static void clip_copy(UIStateMachine *sm)
     UiClipboard *c = &sm->clip;
     switch (sm->save_target) {
     case UISAVE_PATCH_PRESET: c->patch = *sm->engine[layer]; break;
-    case UISAVE_SEQ_SETTINGS: for (i = 0u; i < SEQ_NLANE; i++) c->seq[i] = sm->lanes[i]; break;
-    case UISAVE_ARP_SEQ: c->arp = *sm->arp; break;
+    case UISAVE_SEQ_SETTINGS:
+        for (i = 0u; i < SEQ_NLANE; i++) c->seq[i] = sm->lanes[i];
+        for (i = 0u; i < NAME_LEN; i++) sm->clip_name[i] = sm->seq_name[i];
+        break;
+    case UISAVE_ARP_SEQ:
+        c->arp = *sm->arp;
+        for (i = 0u; i < NAME_LEN; i++) sm->clip_name[i] = sm->arp_name[i];
+        break;
     default:
         c->whole.perf = *sm->perf;
         for (i = 0u; i < NLAYER; i++) c->whole.engine[i] = *sm->engine[i];
@@ -977,8 +982,14 @@ static void clip_paste(UIStateMachine *sm)
         return;
     switch (sm->clip_kind) {
     case UISAVE_PATCH_PRESET: *sm->engine[sm->s.active_synth_layer] = c->patch; break;
-    case UISAVE_SEQ_SETTINGS: for (i = 0u; i < SEQ_NLANE; i++) sm->lanes[i] = c->seq[i]; break;
-    case UISAVE_ARP_SEQ: *sm->arp = c->arp; break;
+    case UISAVE_SEQ_SETTINGS:
+        for (i = 0u; i < SEQ_NLANE; i++) sm->lanes[i] = c->seq[i];
+        for (i = 0u; i < NAME_LEN; i++) sm->seq_name[i] = sm->clip_name[i];
+        break;
+    case UISAVE_ARP_SEQ:
+        *sm->arp = c->arp;
+        for (i = 0u; i < NAME_LEN; i++) sm->arp_name[i] = sm->clip_name[i];
+        break;
     default:
         *sm->perf = c->whole.perf;
         for (i = 0u; i < NLAYER; i++) *sm->engine[i] = c->whole.engine[i];
@@ -1420,6 +1431,37 @@ static void arp_capture(UIStateMachine *sm, uint8_t i, uint8_t note)
     s->variation = sm->arp_knob[3];
 }
 
+/* a step key held: its chord step's values onto the knobs, the live dials kept (2026-10-25); a rest or TIE leaves
+ * them. The last step key let go (or the page left) puts the live dials back. */
+static void arp_peek(UIStateMachine *sm, uint8_t i)
+{
+    const ArpChordStep *s = &sm->arp->steps[i];
+    uint8_t k;
+    if (sm->arp_peek || !ARP_ROOT_IS_CHORD(s->chord_root))
+        return;
+    for (k = 0u; k < 4u; k++)
+        sm->arp_live[k] = sm->arp_knob[k];
+    sm->arp_knob[0] = s->rate;
+    sm->arp_knob[1] = s->octave_range;
+    sm->arp_knob[2] = s->style;
+    sm->arp_knob[3] = s->variation;
+    sm->arp_peek = 1u;
+    if (sm->carp != 0)
+        carp_set_knobs(sm->carp, sm->arp_knob);
+}
+
+static void arp_unpeek(UIStateMachine *sm)
+{
+    uint8_t k;
+    if (!sm->arp_peek)
+        return;
+    for (k = 0u; k < 4u; k++)
+        sm->arp_knob[k] = sm->arp_live[k];
+    sm->arp_peek = 0u;
+    if (sm->carp != 0)
+        carp_set_knobs(sm->carp, sm->arp_knob);
+}
+
 /* TIE, CLEAR or ACCENT on step i */
 static void arp_step_fn(UIStateMachine *sm, uint8_t fn, uint8_t i)
 {
@@ -1524,6 +1566,8 @@ static void arp_step_key(UIStateMachine *sm, uint8_t w, uint8_t down)
     uint8_t f;
     if (!down) {
         sm->arp_held &= (uint8_t)~(1u << w);
+        if (sm->arp_held == 0u)
+            arp_unpeek(sm);
         return;
     }
     if ((sm->arp_fn >> ARPFN_COPY) & 1u) {          /* COPY: the first step tapped is the source */
@@ -1540,6 +1584,7 @@ static void arp_step_key(UIStateMachine *sm, uint8_t w, uint8_t down)
         return;
     }
     sm->arp_held |= (uint8_t)(1u << w);
+    arp_peek(sm, w);
 }
 
 /* a black key by the white keys below it in the step zone (ui_sm_arp_key, ui_sm_key_leds) */
@@ -1863,12 +1908,15 @@ uint8_t ui_sm_browse_slot(const UIStateMachine *sm)
 void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *layer1,
                 EngineState *layer2, SequencerLane *lanes, ArpState *arp)
 {
+    uint8_t i;
     sm->perf = perf;
     sm->theme = UITHEME_SAMHAIN;
     sm->engine[0] = layer1;
     sm->engine[1] = layer2;
     sm->lanes = lanes;
     sm->arp = arp;
+    for (i = 0u; i < NAME_LEN; i++)
+        sm->seq_name[i] = sm->arp_name[i] = sm->clip_name[i] = 0u;
     sm->seq = 0;
     sm->seq_step0 = 0u;
     sm->carp = 0;
@@ -1877,6 +1925,7 @@ void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *
     sm->arp_knob[2] = ARPSTYLE_UP;
     sm->arp_knob[3] = 0u;
     sm->arp_held = 0u;
+    sm->arp_peek = 0u;
     sm->arp_chord_key = CARP_NOTE_NONE;
     sm->arp_chord_down = CARP_NOTE_NONE;
     sm->arp_chord_hold = 0u;
@@ -2130,7 +2179,8 @@ uint8_t ui_sm_page_visible(const UIStateMachine *sm, uint8_t page, uint8_t layer
 
 uint8_t ui_sm_layer_voices(const UIStateMachine *sm, uint8_t layer)
 {
-    return layer < NLAYER ? layer_voice_limit(perf_mode(sm), sm->engine[0], sm->engine[1], layer) : (uint8_t)0u;
+    return layer < NLAYER ? layer_voice_limit(perf_mode(sm), sm->engine[0], sm->engine[1], sm->perf->voice_mode[0],
+                                              sm->perf->voice_mode[1], layer) : (uint8_t)0u;
 }
 
 const char *ui_sm_arch_name(uint8_t arch) { return VARCH_NAMES[arch < VARCH_COUNT ? arch : (uint8_t)VARCH_SINGLE]; }
@@ -2400,7 +2450,9 @@ const uint8_t *ui_sm_rename_name(const UIStateMachine *sm)
     uint8_t layer = sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u;
     if (sm->save_target == UISAVE_PATCH_PRESET)
         return sm->engine[layer]->name;
-    if (sm->save_target == UISAVE_ARP_SEQ || sm->save_target == UISAVE_SEQ_SETTINGS)
-        return NULL;
+    if (sm->save_target == UISAVE_SEQ_SETTINGS)
+        return sm->seq_name;
+    if (sm->save_target == UISAVE_ARP_SEQ)
+        return sm->arp_name;
     return sm->perf->name;           /* WHOLE_PERF (and an out-of-range target, read as WHOLE_PERF) */
 }

@@ -12,7 +12,8 @@
  * under another layout is left out, its slots empty, until a migration exists), so the old wavetable image there, and
  * a chunk of the 128-slot layout before 2026-10-17 where another bank's chunk sits now, read as nothing.
  * The payload: the chunk's used bits (PS_USED_BYTES), then its slots. Chunks: arp 0, sequences 2..5, performances
- * 6..13, patches 17..22 (where they always were: the patches outlive the change); 1 and 14..16 are free. Since
+ * 6..13, patches 17..22 (where they always were: the patches outlive the change); 14..16 are free (1: the sequence
+ * and arp names, below). Since
  * 2026-10-21 the store ends after chunk 22 (PS_NCHUNK 23): its old chunks 23 and 24 and the flash after them are PCM
  * wave area 1 (pcm_store_fm1.c).
  * A SAVE copies into the bank at once (syn_commit, inside syn_lock) and marks its chunk; the main loop writes it
@@ -28,7 +29,11 @@
  * A performance (WholePerformance: 883 bytes in RAM, WHOLE_PERF_STORED_SIZE packed) lives in flash only: the boot reads
  * its name (syn_perf_name) and that it is there, a load reads the one slot (ps_perf_read), and a SAVE stages the one
  * it writes (ps_perf_save), which ps_tick puts into its chunk over the chunk's copy before. A performance chunk's used
- * bits are the slots saved in flash; a factory performance (factory_presets.c) is made when it loads. */
+ * bits are the slots saved in flash; a factory performance (factory_presets.c) is made when it loads.
+ * Names of the sequences and arp patterns (2026-10-25): chunk 1, one table for both banks (syn_seq_name, syn_arp_name),
+ * so the sequence and arp chunks keep their layout (a 9-slot sequence chunk has no room for 9 names). Its used bits
+ * (PS_NAMES_USED: bit s a sequence slot, BANK_SLOTS + s an arp slot) mark the names a SAVE wrote; the others keep the
+ * factory's. A SAVE writes the table only when the slot's name changed (one erase, not two, for a plain re-save). */
 #define PS_BASE WT_STORE_BASE
 #define PS_SECTOR 4096u
 #define PS_PAYLOAD_OFF 256u
@@ -59,7 +64,11 @@ typedef struct {
 #define PS_FIRST_SEQ 2u
 #define PS_FIRST_PERF 6u
 #define PS_FIRST_PATCH 17u                          /* the 128-slot layout's: the saved patches stay */
-#define PS_NCHUNK 23u                               /* the chunks the store spans (1, 14..16 free); PCM waves after */
+#define PS_NCHUNK 23u                               /* the chunks the store spans (14..16 free); PCM waves after */
+#define PS_NAMES_CHUNK 1u                           /* the sequence and arp names */
+#define PS_NAMES_KIND UISAVE_COUNT                  /* its header's kind (no UISAVE_* bank) */
+#define PS_NAMES_VER 1u
+#define PS_NAMES_LEN (PS_USED_BYTES + 2u * BANK_SLOTS * NAME_LEN)
 PS_STATIC_ASSERT(UISAVE_ARP_SEQ == 0 && UISAVE_SEQ_SETTINGS == 1 && UISAVE_PATCH_PRESET == 2 && UISAVE_WHOLE_PERF == 3,
                  "PS_KIND is in UISAVE_* order");
 PS_STATIC_ASSERT(PS_N_ARP == 1u && PS_N_SEQ == 4u && PS_N_PERF == 8u && PS_N_PATCH == 6u, "the chunk counts above");
@@ -68,6 +77,8 @@ PS_STATIC_ASSERT(PS_FIRST_ARP + PS_N_ARP <= PS_FIRST_SEQ && PS_FIRST_SEQ + PS_N_
                  "the banks' chunks do not overlap");
 PS_STATIC_ASSERT(PS_NCHUNK <= 32u && PS_NCHUNK * 2u * PS_SECTOR <= WT_STORE_SIZE, "the chunks fit the store and ps_dirty");
 PS_STATIC_ASSERT(PATCH_SLOTS <= PS_USED_BYTES * 8u && BANK_SLOTS <= PATCH_SLOTS, "the used bits");
+PS_STATIC_ASSERT(PS_FIRST_ARP + PS_N_ARP <= PS_NAMES_CHUNK && PS_NAMES_CHUNK < PS_FIRST_SEQ &&
+                 2u * BANK_SLOTS <= PS_USED_BYTES * 8u && PS_NAMES_LEN <= PS_PAYLOAD_MAX, "the names chunk");
 PS_STATIC_ASSERT(offsetof(MasterPerformancePreset, name) == 0u, "ps_load reads a stored performance's name first");
 /* v5 .. v8 patches (2026-10-16/17/21, before STRIKE's attack bytes, BEND MOD or DRIVE) load through engine_from_v5 /
  * _v6 / _v7 / _v8: the same slots to a chunk as v9's packed ones, so their chunks sit where v8's do and the chunks after them never
@@ -84,6 +95,7 @@ static uint32_t ps_dirty;                           /* bit per chunk (PS_KIND[].
 static uint8_t ps_commit_wait;                      /* a SAVE waits for its chunk: ui_sm_commit_done after */
 static WholePerformance ps_perf_save;               /* the performance a SAVE took (syn_commit), for ps_tick to write */
 static uint8_t ps_perf_save_slot;
+static uint8_t ps_names_used[PS_USED_BYTES];        /* the names chunk's used bits: the names a SAVE wrote */
 
 static uint32_t ps_sector(uint32_t chunk, uint32_t copy) { return PS_BASE + (chunk * 2u + copy) * PS_SECTOR; }
 
@@ -197,14 +209,47 @@ static void ps_load(void)
                 }
         }
     }
+    if (ps_current(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, &h) < 0 || h.ver != PS_NAMES_VER || h.len != PS_NAMES_LEN)
+        return;                                     /* (none yet: every name the factory's) */
+    memcpy(ps_names_used, st_buf, PS_USED_BYTES);
+    for (i = 0; i < 2u * BANK_SLOTS; i++)
+        if ((ps_names_used[i >> 3] >> (i & 7u)) & 1u)
+            memcpy(i < BANK_SLOTS ? syn_seq_name[i] : syn_arp_name[i - BANK_SLOTS],
+                   st_buf + PS_USED_BYTES + i * NAME_LEN, NAME_LEN);
+}
+
+/* a SAVE of sequence / arp slot s (UISAVE_SEQ_SETTINGS / _ARP_SEQ) named name: into the bank's names; the names
+ * chunk marked when it changed (inside syn_lock, as syn_commit) */
+static void ps_name_save(uint8_t k, uint8_t s, const uint8_t name[NAME_LEN])
+{
+    uint8_t *dst = k == UISAVE_SEQ_SETTINGS ? syn_seq_name[s] : syn_arp_name[s];
+    uint32_t b = (k == UISAVE_SEQ_SETTINGS ? 0u : BANK_SLOTS) + s;
+    if (memcmp(dst, name, NAME_LEN) == 0)
+        return;
+    memcpy(dst, name, NAME_LEN);
+    ps_names_used[b >> 3] |= (uint8_t)(1u << (b & 7u));
+    ps_dirty |= 1u << PS_NAMES_CHUNK;
+}
+
+static int ps_write(uint32_t chunk, uint8_t kind, uint8_t c, uint8_t ver, uint32_t len, int cur, uint32_t seq);
+
+/* the names chunk to flash: 0 ok */
+static int ps_save_names(void)
+{
+    PsHdr h;
+    int cur = ps_current(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, &h);
+    uint32_t seq = cur < 0 ? 0u : h.seq;
+    memcpy(st_buf, ps_names_used, PS_USED_BYTES);
+    memcpy(st_buf + PS_USED_BYTES, syn_seq_name, BANK_SLOTS * NAME_LEN);
+    memcpy(st_buf + PS_USED_BYTES + BANK_SLOTS * NAME_LEN, syn_arp_name, BANK_SLOTS * NAME_LEN);
+    return ps_write(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, PS_NAMES_VER, PS_NAMES_LEN, cur, seq);
 }
 
 /* one chunk to flash, into the copy that is not current: 0 ok */
 static int ps_save_chunk(uint32_t k, uint32_t c)
 {
     const PsKind *pk = &PS_KIND[k];
-    uint32_t chunk = pk->first + c, first, n = ps_slots(pk, c, &first), len = PS_USED_BYTES + n * pk->stored, i, base,
-             off, seq;
+    uint32_t chunk = pk->first + c, first, n = ps_slots(pk, c, &first), len = PS_USED_BYTES + n * pk->stored, i, seq;
     int cur;
     PsHdr h;
     cur = ps_current(chunk, (uint8_t)k, (uint8_t)c, &h);
@@ -232,7 +277,14 @@ static int ps_save_chunk(uint32_t k, uint32_t c)
         else
             memcpy(st_buf + PS_USED_BYTES, pk->bank + first * pk->size, n * pk->size);
     }
-    base = ps_sector(chunk, cur == 0 ? 1u : 0u);
+    return ps_write(chunk, (uint8_t)k, (uint8_t)c, pk->ver, len, cur, seq);
+}
+
+/* the payload in st_buf (len bytes) to chunk's copy that is not current (cur), its header last, read back: 0 ok */
+static int ps_write(uint32_t chunk, uint8_t kind, uint8_t c, uint8_t ver, uint32_t len, int cur, uint32_t seq)
+{
+    uint32_t base = ps_sector(chunk, cur == 0 ? 1u : 0u), off;
+    PsHdr h;
     if (st_erase(base))
         return -1;
     for (off = 0; off < len; off += 256u)
@@ -240,9 +292,9 @@ static int ps_save_chunk(uint32_t k, uint32_t c)
             return -2;
     memset(&h, 0xFF, sizeof h);
     h.magic = PS_MAGIC;
-    h.kind = (uint8_t)k;
-    h.chunk = (uint8_t)c;
-    h.ver = pk->ver;
+    h.kind = kind;
+    h.chunk = c;
+    h.ver = ver;
     h.rsv0 = 0xFFu;
     h.seq = seq + 1u;
     h.len = len;
@@ -252,7 +304,7 @@ static int ps_save_chunk(uint32_t k, uint32_t c)
         return -3;
     {   /* read back: a failing part must not report SAVED */
         PsHdr chk;
-        if (ps_current(chunk, (uint8_t)k, (uint8_t)c, &chk) != (cur == 0 ? 1 : 0) || chk.seq != h.seq)
+        if (ps_current(chunk, kind, c, &chk) != (cur == 0 ? 1 : 0) || chk.seq != h.seq)
             return -4;
     }
     return 0;
@@ -271,6 +323,11 @@ static void ps_tick(void)
                     rc = 1;
                 ps_dirty &= ~(1u << (PS_KIND[k].first + c));
             }
+    if ((ps_dirty >> PS_NAMES_CHUNK) & 1u) {
+        if (!flash_ok || ps_save_names())
+            rc = 1;
+        ps_dirty &= ~(1u << PS_NAMES_CHUNK);
+    }
     if (ps_commit_wait) {
         syn_lock();
         ui_sm_commit_done(&sm, (uint8_t)!rc);

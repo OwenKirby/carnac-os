@@ -11,8 +11,13 @@
 #include "hardware/mem_section.h"             /* SYNTH_POOL */
 
 /* ---------------------------------------------------------- the store --- */
-/* The instrument's settings across a power cycle: the THEME (GLOBAL > THEME, UIStateMachine.theme; 2026-10-16) and
- * GLOBAL's MASTER TUNE, VEL CURVE and CLOCK OUT (dsp/preset.c instrument; 2026-10-17). In
+/* The instrument's settings across a power cycle: the THEME (GLOBAL > THEME, UIStateMachine.theme; 2026-10-16),
+ * GLOBAL's MASTER TUNE, VEL CURVE and CLOCK OUT (dsp/preset.c instrument; 2026-10-17), and since 2026-10-25 GLOBAL's
+ * MIDI CH LAYER1/2, CUSTOM CC1/2, BEND RANGE and CLOCK SOURCE. Those six live in the performance (perf_state, where the
+ * runtime reads them; MasterPerformancePreset's layout unchanged) but belong to the instrument: set_inst holds them and
+ * settings_apply puts them back onto every performance that loads, the power-on one too, so neither a load nor a power
+ * cycle drops the MIDI setup or the external clock. A performance that stacks its layers on one channel (the factory's
+ * DUAL ones) keeps stacking, on the instrument's layer-1 channel (settings_take). INT TEMPO and BASE VELOCITY stay the performance's. In
  * X0X's settings object (storage.c OBJ_SET: two 4 KiB sectors at 0xFC000, written in turn, the CRC'd header last, so a
  * save torn by a power cut leaves the one before in charge). The payload starts "CRNC": X0X's own settings loader
  * wants its PROJ_FORMAT word followed by three zero bytes and at least 20 bytes, so after a reinstall of X0X it takes
@@ -20,32 +25,72 @@
  * writes once); a save mutes the audio for the sector erase (tens of ms, audio_silence), and core 1 is idle in RAM
  * then (fm1_cpu1.h). Room for more instrument settings: rsv. */
 static UIStateMachine sm;                           /* (the panel's state machine, defined below) */
-#define SET_VER 2u                                  /* 2 (2026-10-17): + GLOBAL's MASTER TUNE, VEL CURVE, CLOCK OUT */
+#define SET_VER 3u                                  /* 3 (2026-10-25): + the MIDI channels, CCs, BEND RANGE, CLOCK SOURCE */
 #define SET_SAVE_MS 2000u
+typedef struct { uint8_t midi_ch[NLAYER], cc1, cc2, bend, clk; } SetInst;
 typedef struct {
     uint8_t magic[4];                               /* "CRNC" */
-    uint8_t ver;                                    /* SET_VER (1: the THEME alone) */
+    uint8_t ver;                                    /* SET_VER (1: the THEME alone; 2: + InstrumentSettings) */
     uint8_t theme;                                  /* UITHEME_* */
     uint8_t master_tune, vel_curve, clock_out;      /* InstrumentSettings (ver 2) */
-    uint8_t rsv[7];
+    SetInst inst;                                   /* set_inst (ver 3) */
+    uint8_t rsv[1];
 } SynSettings;
-static uint8_t set_saved[4] = {0xFFu, 0xFFu, 0xFFu, 0xFFu};   /* what flash holds: theme, tune, curve, clock out */
+PS_STATIC_ASSERT(sizeof(SynSettings) == 16u, "SynSettings: the record in flash");
+#define SET_N (4u + sizeof(SetInst))                /* the settings compared: theme, tune, curve, clock out, set_inst */
+static SetInst set_inst = {{0u, 1u}, 0u, 0u, 2u, CLKSRC_INTERNAL};   /* perf_defaults' */
+static uint8_t set_saved[SET_N];                    /* what flash holds (0xFF: nothing yet, settings_load) */
 static uint32_t set_changed_ms;
 static uint8_t set_pending;
 
-static void settings_now(uint8_t s[4])
+static uint8_t set_stacked;                         /* 1: the live performance plays both layers on one channel */
+
+/* the live performance's instrument settings into set_inst. Stacked, layer 2 follows layer 1's channel and keeps the
+ * instrument's own for the next performance that is not; MIDI CH LAYER2 set apart unstacks it */
+static void settings_take(void)
+{
+    MasterPerformancePreset *p = &perf_state;
+    if (set_stacked && p->midi_ch[0] != p->midi_ch[1]) {
+        if (p->midi_ch[1] == set_inst.midi_ch[0])
+            p->midi_ch[1] = p->midi_ch[0];          /* (one byte: the audio side reads it whole) */
+        else
+            set_stacked = 0;
+    }
+    set_inst.midi_ch[0] = p->midi_ch[0] & 0x0Fu;
+    if (!set_stacked)
+        set_inst.midi_ch[1] = p->midi_ch[1] & 0x0Fu;
+    set_inst.cc1 = p->cc1_num;
+    set_inst.cc2 = p->cc2_num;
+    set_inst.bend = p->bend_range;
+    set_inst.clk = p->clock_source;
+}
+
+/* a performance just loaded: the instrument's settings onto it */
+static void settings_apply(MasterPerformancePreset *p)
+{
+    set_stacked = (uint8_t)((p->midi_ch[1] & 0x0Fu) == (p->midi_ch[0] & 0x0Fu));
+    p->midi_ch[0] = set_inst.midi_ch[0];
+    p->midi_ch[1] = set_stacked ? set_inst.midi_ch[0] : set_inst.midi_ch[1];
+    p->cc1_num = set_inst.cc1;
+    p->cc2_num = set_inst.cc2;
+    p->bend_range = set_inst.bend;
+    p->clock_source = set_inst.clk;
+}
+
+static void settings_now(uint8_t s[SET_N])
 {
     s[0] = sm.theme;
     s[1] = instrument.master_tune;
     s[2] = instrument.vel_curve;
     s[3] = instrument.clock_out;
+    memcpy(&s[4], &set_inst, sizeof set_inst);
 }
 
 /* the stored settings, when valid: 1 */
 static int settings_read(SynSettings *r)
 {
     return st_load(OBJ_SET, r, sizeof *r) == (int)sizeof *r && r->magic[0] == 'C' && r->magic[1] == 'R' &&
-           r->magic[2] == 'N' && r->magic[3] == 'C' && (r->ver == 1u || r->ver == SET_VER) && r->theme < UITHEME_COUNT;
+           r->magic[2] == 'N' && r->magic[3] == 'C' && r->ver >= 1u && r->ver <= SET_VER && r->theme < UITHEME_COUNT;
 }
 
 /* the THEME of the last session, for the splash before anything else is up (flash only read); SAMHAIN without one */
@@ -55,17 +100,22 @@ static uint32_t settings_theme(void)
     return flash_ok && settings_read(&r) ? r.theme : UITHEME_SAMHAIN;
 }
 
+/* power-on, before syn_boot_perf (which puts set_inst onto performance 0) */
 static void settings_load(void)
 {
     SynSettings r;
+    memset(set_saved, 0xFF, sizeof set_saved);
     if (settings_read(&r)) {
         sm.theme = r.theme;
-        if (r.ver == SET_VER && r.master_tune >= MASTER_TUNE_MIN && r.master_tune <= MASTER_TUNE_MAX &&
+        if (r.ver >= 2u && r.master_tune >= MASTER_TUNE_MIN && r.master_tune <= MASTER_TUNE_MAX &&
             r.vel_curve < VELCURVE_COUNT && r.clock_out < CLKOUT_COUNT) {
             instrument.master_tune = r.master_tune;
             instrument.vel_curve = r.vel_curve;
             instrument.clock_out = r.clock_out;
         }
+        if (r.ver >= 3u && r.inst.midi_ch[0] < 16u && r.inst.midi_ch[1] < 16u && r.inst.cc1 <= VAL_MAX &&
+            r.inst.cc2 <= VAL_MAX && r.inst.bend <= VAL_MAX && r.inst.clk < CLKSRC_COUNT)
+            set_inst = r.inst;
         settings_now(set_saved);
     }
 }
@@ -74,7 +124,9 @@ static void settings_load(void)
 static void settings_tick(void)
 {
     SynSettings r;
-    uint8_t now[4];
+    uint8_t now[SET_N];
+    if (pt_state() != PT_RUN)                       /* (PERF TEST plays the defaults, then puts the live state back) */
+        settings_take();
     settings_now(now);
     if (memcmp(now, set_saved, sizeof now) == 0) {
         set_pending = 0;
@@ -94,6 +146,7 @@ static void settings_tick(void)
     r.master_tune = now[1];
     r.vel_curve = now[2];
     r.clock_out = now[3];
+    r.inst = set_inst;
     if (st_save(OBJ_SET, &r, sizeof r) == 0)
         memcpy(set_saved, now, sizeof now);         /* (a failed save retries SET_SAVE_MS later) */
     else
@@ -107,6 +160,8 @@ static void settings_tick(void)
 static SequencerLane syn_seq_bank[BANK_SLOTS][SEQ_NLANE] SYNTH_POOL;
 static ArpState syn_arp_bank[BANK_SLOTS] SYNTH_POOL;
 static uint8_t syn_perf_name[BANK_SLOTS][NAME_LEN];
+static uint8_t syn_seq_name[BANK_SLOTS][NAME_LEN];  /* the sequences' and arp patterns' names (2026-10-25), char_map */
+static uint8_t syn_arp_name[BANK_SLOTS][NAME_LEN];
 static uint8_t syn_used[UISAVE_COUNT][PATCH_SLOTS / 8u];
 static WholePerformance syn_perf_load SYNTH_POOL;   /* a performance being loaded: read outside syn_lock, taken inside */
 static uint8_t syn_perf_req;                        /* 1: a performance load waits for the main loop (syn_perf_tick) */
@@ -128,6 +183,8 @@ static uint8_t syn_slot_query(void *ctx, uint8_t target, uint8_t slot, uint8_t n
         return UISLOT_EMPTY;
     if (target == UISAVE_PATCH_PRESET) memcpy(name, patch_bank[slot].name, NAME_LEN);
     else if (target == UISAVE_WHOLE_PERF) memcpy(name, syn_perf_name[slot], NAME_LEN);
+    else if (target == UISAVE_SEQ_SETTINGS) memcpy(name, syn_seq_name[slot], NAME_LEN);
+    else memcpy(name, syn_arp_name[slot], NAME_LEN);
     return UISLOT_USED;
 }
 
@@ -144,8 +201,14 @@ static void syn_commit(void)
     }
     switch (t) {
     case UISAVE_PATCH_PRESET: patch_store(sm.s.active_synth_layer, s); break;
-    case UISAVE_SEQ_SETTINGS: memcpy(syn_seq_bank[s], seq_lanes, sizeof syn_seq_bank[s]); break;
-    case UISAVE_ARP_SEQ: syn_arp_bank[s] = arp_state; break;
+    case UISAVE_SEQ_SETTINGS:
+        memcpy(syn_seq_bank[s], seq_lanes, sizeof syn_seq_bank[s]);
+        ps_name_save(t, s, sm.seq_name);
+        break;
+    case UISAVE_ARP_SEQ:
+        syn_arp_bank[s] = arp_state;
+        ps_name_save(t, s, sm.arp_name);
+        break;
     default:
         ps_perf_save.perf = perf_state;
         ps_perf_save.engine[0] = engine_state[0];
@@ -174,11 +237,28 @@ static void syn_load(void)
     if (ok) {
         switch (t) {
         case UISAVE_PATCH_PRESET: patch_load(sm.load_layer, s); break;
-        case UISAVE_SEQ_SETTINGS: memcpy(seq_lanes, syn_seq_bank[s], sizeof seq_lanes); break;
-        default: arp_state = syn_arp_bank[s]; break;
+        case UISAVE_SEQ_SETTINGS:
+            memcpy(seq_lanes, syn_seq_bank[s], sizeof seq_lanes);
+            memcpy(sm.seq_name, syn_seq_name[s], NAME_LEN);
+            break;
+        default:
+            arp_state = syn_arp_bank[s];
+            memcpy(sm.arp_name, syn_arp_name[s], NAME_LEN);
+            break;
         }
     }
     ui_sm_load_done(&sm, ok);
+}
+
+/* a performance just loaded: the live sequence and arp pattern take the names of the slots they came from (seq_link,
+ * arp_link), or none */
+static void syn_link_names(void)
+{
+    uint8_t q = perf_state.seq_link, a = perf_state.arp_link;
+    if (q < BANK_SLOTS && syn_slot_used(UISAVE_SEQ_SETTINGS, q)) memcpy(sm.seq_name, syn_seq_name[q], NAME_LEN);
+    else memset(sm.seq_name, 0, NAME_LEN);
+    if (a < BANK_SLOTS && syn_slot_used(UISAVE_ARP_SEQ, a)) memcpy(sm.arp_name, syn_arp_name[a], NAME_LEN);
+    else memset(sm.arp_name, 0, NAME_LEN);
 }
 
 /* the main loop's: the performance load syn_load left. Its slot from flash, outside syn_lock (a factory slot never
@@ -193,12 +273,14 @@ static void syn_perf_tick(void)
     syn_lock();
     if (ok) {
         perf_state = syn_perf_load.perf;
+        settings_apply(&perf_state);                /* the instrument's MIDI channels, CLOCK SOURCE .. */
         engine_state[0] = syn_perf_load.engine[0];
         engine_state[1] = syn_perf_load.engine[1];
         engine_load_count[0]++;
         engine_load_count[1]++;
         memcpy(seq_lanes, syn_perf_load.seq, sizeof seq_lanes);
         arp_state = syn_perf_load.arp;
+        syn_link_names();
     }
     ui_sm_load_done(&sm, ok);
     syn_unlock();
@@ -215,12 +297,14 @@ static void syn_boot_perf(void)
     if (factory_perf(0u, &syn_perf_load) != 0)
         return;
     perf_state = syn_perf_load.perf;
+    settings_apply(&perf_state);
     engine_state[0] = syn_perf_load.engine[0];
     engine_state[1] = syn_perf_load.engine[1];
     engine_load_count[0]++;
     engine_load_count[1]++;
     memcpy(seq_lanes, syn_perf_load.seq, sizeof seq_lanes);
     arp_state = syn_perf_load.arp;
+    syn_link_names();
     sm.perf_slot = 0u;
     ui_sm_enforce(&sm);                             /* the performance's mode, its patches' architectures */
 }

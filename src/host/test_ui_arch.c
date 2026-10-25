@@ -415,7 +415,11 @@ int main(void)
     press(BTN_SEQ);
     press(BTN_SAVE);
     CHECK(sm.save_target == UISAVE_SEQ_SETTINGS, "SAVE on SEQ saves the sequence (%u)", sm.save_target);
-    CHECK(ui_sm_knob(&sm, UIPAGE_SAVE_COMMIT, 0, 3, &i) == NULL, "a sequence has no name: knob 4 off");
+    CHECK(ui_sm_knob(&sm, UIPAGE_SAVE_COMMIT, 0, 3, &i) == &sm.seq_name[sm.name_cursor] &&
+          ui_sm_rename_name(&sm) == sm.seq_name, "a sequence is named: knob 4 edits sm.seq_name (2026-10-25)");
+    sm.save_target = UISAVE_ARP_SEQ;
+    CHECK(ui_sm_knob(&sm, UIPAGE_SAVE_COMMIT, 0, 3, &i) == &sm.arp_name[sm.name_cursor], ".. an arp: sm.arp_name");
+    sm.save_target = UISAVE_SEQ_SETTINGS;
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 100);
     CHECK(sm.save_slot == BANK_SLOTS - 1u, "a sequence's slots end at 31 (%u)", sm.save_slot);
     sm.save_target = UISAVE_PATCH_PRESET;

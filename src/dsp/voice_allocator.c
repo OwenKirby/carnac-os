@@ -26,11 +26,7 @@ void voice_allocator_init(void) {
         adsr_init(&n->aux_env);
         dual_filter_init(&n->synth_filters);
         amp_init(&n->master_amp);
-        noise_state_init(&n->noise[0]);
-        noise_state_init(&n->noise[1]);
         analog_voice_init(&n->analog, (unsigned)v);
-        noise_seed_init(&n->noise[0], 2u * (uint32_t)v);
-        noise_seed_init(&n->noise[1], 2u * (uint32_t)v + 1u);
         n->active_note = 33;
         n->is_gate_open = 0;
         n->age_counter = 0;
@@ -87,8 +83,18 @@ void voice_allocator_init(void) {
 
 void pool_range(uint8_t layer, int *first, int *count) {
     uint8_t mode = perf_state.perf_mode < PERF_COUNT ? perf_state.perf_mode : (uint8_t)PERF_SINGL_SYNTH;
-    *first = layer ? POLYPHONY_VOICES / 2 : 0;
-    *count = layer < NLAYER ? layer_voice_limit(mode, &engine_state[0], &engine_state[1], layer) : 0;
+    int n[NLAYER];
+    for (uint8_t l = 0; l < NLAYER; l++)
+        n[l] = layer_voice_limit(mode, &engine_state[0], &engine_state[1], perf_state.voice_mode[0],
+                                 perf_state.voice_mode[1], l);
+    /* layer 2 from the second half, earlier when a mono layer 1 leaves it more than half (it always fits: the two
+     * limits never sum past the pool) */
+    if (layer == 0) *first = 0;
+    else {
+        *first = POLYPHONY_VOICES - n[1] < POLYPHONY_VOICES / 2 ? POLYPHONY_VOICES - n[1] : POLYPHONY_VOICES / 2;
+        if (*first < n[0]) *first = n[0];
+    }
+    *count = layer < NLAYER ? n[layer] : 0;
     if (voice_shed && *count > 1)
         *count = *count > (int)voice_shed + 1 ? *count - (int)voice_shed : 1;
 }

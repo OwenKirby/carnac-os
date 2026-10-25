@@ -61,6 +61,11 @@ static uint32_t voices_done;           /* (defined with the render, below) */
 static struct { uint8_t st, d1, d2; } seq_q[SEQ_Q_MAX];
 static uint8_t seq_qn;
 static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2);
+/* Timed MIDI in (synth_midi_at, 2026-10-24): each event waits here for its frame, in order, and the render applies it
+ * there (the voices brought up to it first). A full queue applies the event at once, as synth_midi_3 would. */
+#define EXT_Q_MAX 64u                          /* the FM1 drains at most 64 a half */
+static struct { uint32_t at; uint8_t st, d1, d2; } ext_q[EXT_Q_MAX];
+static uint8_t ext_h, ext_n;
 static MaqSeq maq;                             /* the MAQ 16/4 sequencer (spec 7), clocked from the render below */
 static CarpSeq carp;                           /* the ARP chord pattern (spec 8), on the same clock (its own transport) */
 
@@ -84,18 +89,17 @@ static int channel_routed(uint8_t channel)
     return channel == c1 || (rt_perf_mode() != PERF_SINGL_SYNTH && channel == c2);
 }
 
-/* spec 5.3 View 2: in SPLIT, layer 2 takes layer 1's voice mode ("SAME AS LAYER1"). */
+/* Each layer's own voice mode, SPLIT included (2026-10-25: a mono bass under poly chords; the spec's 5.3 View 2 had
+ * SPLIT's layer 2 take layer 1's). */
 static uint8_t layer_voice_mode(uint8_t layer)
 {
-    uint8_t l = rt_perf_mode() == PERF_SPLIT_SYNTH ? 0u : layer;
-    uint8_t m = perf_state.voice_mode[l];
+    uint8_t m = perf_state.voice_mode[layer];
     return m < VMODE_COUNT ? m : (uint8_t)VMODE_POLY_REUSE;
 }
 
-/* UNISON DETUNE follows the voice mode: in SPLIT, layer 2 takes layer 1's. */
 static uint8_t layer_unison_detune(uint8_t layer)
 {
-    return perf_state.unison_detune[rt_perf_mode() == PERF_SPLIT_SYNTH ? 0u : layer];
+    return perf_state.unison_detune[layer];
 }
 
 static uint8_t layer_porta_mode(uint8_t layer)
@@ -230,7 +234,7 @@ static void glide_to(SynthVoiceNode *v, int from_note, int to_note, uint8_t port
 }
 
 /* Points one voice at a note. retrig = 0 keeps the envelopes running (a legato note over a held one). A voice that is
- * fading out, or still on another architecture, always restarts clean: envelopes from 0, and its filters and noise
+ * fading out, or still on another architecture, always restarts clean: envelopes from 0, and its filters
  * cleared when the architecture changes, so no path starts half-initialised. */
 static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t velocity, int32_t route,
                        int retrig, int other_held, uint16_t boost)
@@ -248,8 +252,6 @@ static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t v
         }
         if (v->arch != arch) {
             dual_filter_init(&v->synth_filters);
-            noise_state_init(&v->noise[0]);
-            noise_state_init(&v->noise[1]);
             v->arch = arch;
         }
     }
@@ -448,12 +450,14 @@ void synth_restart(void)
     midi_io_init(&master_midi);
     midi_clock_init();
     voice_allocator_init();
+    noise_shared_init();
     fx_init();
     for (unsigned l = 0; l < NLAYER; l++) {
         global_lfo1_state[l].phase_accumulator = 0;
         global_lfo1_state[l].envelope_amp_q15 = 32767;
     }
     seq_qn = 0;
+    ext_h = ext_n = 0;
     maq_init(&maq, seq_lanes, &perf_state, synth_midi_3);   /* its notes and controllers take the MIDI path */
     carp_init(&carp, &arp_state, &perf_state, synth_midi_3);
     sample_clock = AUTO_DECAY_WINDOW;          /* the first note counts as an isolated one */
@@ -483,6 +487,25 @@ void synth_midi_3(uint8_t status, uint8_t data1, uint8_t data2)
         voices_up_to(pass_frame);              /* on a boundary (no-op), realtime, or the queue full: exact */
     }
     midi_apply(status, data1, data2);
+}
+
+void synth_midi_at(uint32_t delay, uint8_t status, uint8_t data1, uint8_t data2)
+{
+    uint32_t at = sample_clock + delay;
+    if (in_pass || ext_n >= EXT_Q_MAX || (status & 0xF0u) == 0xC0u) {   /* (a Program Change loads between renders) */
+        synth_midi_3(status, data1, data2);
+        return;
+    }
+    if (ext_n) {                               /* never before the event ahead of it: the order is kept */
+        uint32_t prev = ext_q[(ext_h + ext_n - 1u) % EXT_Q_MAX].at;
+        if ((int32_t)(at - prev) < 0) at = prev;
+    }
+    uint8_t i = (uint8_t)((ext_h + ext_n) % EXT_Q_MAX);
+    ext_q[i].at = at;
+    ext_q[i].st = status;
+    ext_q[i].d1 = data1;
+    ext_q[i].d2 = data2;
+    ext_n++;
 }
 
 static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2)
@@ -596,6 +619,7 @@ static void render_voice_run(MixBus *bus, uint32_t set, uint32_t from, uint32_t 
             if (n > voice->ctrl_left) n = voice->ctrl_left;
             if (voice_is_free(voice)) n = 1u;      /* its tick ended it: the one frame the per-sample loop counted */
             SPROF_START();
+            voice->noise_at = (uint8_t)f;
             voice_render_block(voice, bus->mix[f], (int)n);   /* routed, mix gain and sends included (tick gains) */
             SPROF_LAP(SPROF_VOICE);
             voice->ctrl_left = (uint8_t)(voice->ctrl_left - n);
@@ -643,6 +667,26 @@ static void voices_up_to(uint32_t frame)
     seq_qn = 0;
 }
 
+/* The shared noise for the pass (oscmixer.h noise_buf), before any voice reads it: an ear and its colours only when a
+ * playing voice's layer can make them (its noise level, or a source on it; its colour morph, or a source on that). */
+static void noise_pass_fill(uint32_t frames)
+{
+    uint8_t want[2] = {0, 0};                  /* bit 0 white, 1 pink, 2 brown */
+    for (int v = 0; v < POLYPHONY_VOICES; v++) {
+        const SynthVoiceNode *s = &poly_bank[v];
+        if (voice_is_free(s)) continue;
+        const OscMixerParams *m = &engine_state[s->layer < NLAYER ? s->layer : 0u].oscmix;
+        if (m->noise_level == 0 && m->noise_mod_amt == BIPOLAR_CENTER) continue;
+        int col_mod = m->noise_col_mod_amt != BIPOLAR_CENTER;
+        uint8_t w = (uint8_t)(1u | (m->noise_colour > 0 || col_mod ? 2u : 0u) |
+                              (m->noise_colour > NOISE_PINK || col_mod ? 4u : 0u));
+        want[0] |= w;
+        if (s->arch == VARCH_BINAURAL) want[1] |= w;
+    }
+    for (int e = 0; e < 2; e++)
+        if (want[e]) noise_shared_fill(e, frames, want[e] & 2u, want[e] & 4u);
+}
+
 static void render_pass(int32_t *out, uint32_t frames)
 {
 #if defined(SYNTH_PROF)
@@ -666,15 +710,23 @@ static void render_pass(int32_t *out, uint32_t frames)
             z[3] = 0.f;
         }
     }
+    noise_pass_fill(frames);
     pass_base = sample_clock;
     voices_done = 0;
     in_pass = 1;
     for (uint32_t f = 0; f < frames; ++f) {
         pass_frame = f;
         sample_clock = pass_base + f;
-        if (midi_clock_frame_changes()) voices_up_to(f);   /* a pulse: the voices before it read the old grid */
+        uint8_t ext_now = ext_n && (int32_t)(ext_q[ext_h].at - sample_clock) <= 0;
+        if (ext_now || midi_clock_frame_changes()) voices_up_to(f);   /* a pulse or an event: the voices before it as they were */
         SPROF_START();
         midi_clock_frame(sample_clock);            /* the clock is stamped before the LFOs read it this frame */
+        while (ext_now) {                          /* timed MIDI in on this frame (a 0xF8 after the clock's own pulse) */
+            midi_apply(ext_q[ext_h].st, ext_q[ext_h].d1, ext_q[ext_h].d2);
+            ext_h = (uint8_t)((ext_h + 1u) % EXT_Q_MAX);
+            ext_n--;
+            ext_now = ext_n && (int32_t)(ext_q[ext_h].at - sample_clock) <= 0;
+        }
         SPROF_LAP(SPROF_CLOCK);
         maq_frame(&maq, sample_clock);             /* sequencer events land on this frame (synth_midi_3 catches up) */
         carp_frame(&carp, sample_clock, &maq);     /* the ARP: its own transport, a start synced to the MAQ's bar */

@@ -153,7 +153,7 @@ static const uint8_t FV_HYPOGEUM[] = {
 static const uint8_t FV_SKARA[] = {
     V_(arch, VARCH_BINAURAL),
     V_OSC(0, W_HEARTH, 60, 0), V_(osc[0].scan_mod_src, MSRC_LFO1), V_(osc[0].scan_mod_amt, 16),
-    V_(oscmix.bin_beat, 20), V_(oscmix.bin_scan_offset, FP_BIP(10)),
+    V_(oscmix.bin_beat, 40), V_(oscmix.bin_scan_offset, FP_BIP(10)),
     V_(oscmix.noise_level, 14), V_(oscmix.noise_colour, 110), V_(oscmix.noise_mod_src, MSRC_MODSLOT1),
     V_(oscmix.noise_mod_amt, FP_BIP(30)),
     V_FLT(0, MULTI, 10, 36, 76, 20, 14), V_KT(0, 40),
@@ -189,7 +189,7 @@ static const uint8_t FV_GOBEKLI[] = {
 static const uint8_t FV_LUNAR[] = {
     V_(arch, VARCH_BINAURAL),
     V_OSC(0, W_STARS, 8, 0), V_(osc[0].scan_mod_amt, 92),
-    V_(oscmix.bin_beat, 4), V_(oscmix.bin_scan_offset, FP_BIP(12)),
+    V_(oscmix.bin_beat, 8), V_(oscmix.bin_scan_offset, FP_BIP(12)),
     V_FLT(0, MULTI, 0, 54, 84, 12, 0),
     V_(fltmix.bin_width, 127), V_(fltmix.bin_phase_mod_src, MSRC_MODWHEEL), V_(fltmix.bin_phase_mod_amt, FP_BIP(40)),
     V_ENV(0, 84, 100, 120, 104), V_ENV(2, 112, 112, 110, 104),
@@ -602,7 +602,7 @@ static const FactoryVoice FV_TAB[FP_N] = {
  FV_ROW("CONCH CALL",       FV_CONCH,      POLY_REUSE,  0,                       0,   SINGL_SYNTH,17, TUMULUS,  100, 70, 30, 42, 30, TAPE, 0, 36, 0),
  FV_ROW("LOG DRUM",        FV_LOGDRUM,    POLY_RESET,  0,                       0,   SINGL_SYNTH,18, DOLMEN,    70, 60,  4, 36, 30, BBD,  1, 36, 0),
  FV_ROW("CAIRN DRUMS",      FV_CAIRN,      POLY_RESET,  0,                       0,   SINGL_SYNTH,19, DOLMEN,    70, 70,  2, 36, 25, TAPE, 0, 50, 0),
- FV_ROW("ANCESTOR",        FV_PULSE,      POLY_REUSE,  0,                       0,   SINGL_SYNTH,20, MOD,       90, 50, 10, 40, 50, TAPE, 1, 36, 1),
+ FV_ROW("ANCESTOR",        FV_PULSE,      POLY_REUSE,  0,                       0,   SINGL_SYNTH,20, MOD,       90, 50, 10, 56, 50, TAPE, 1, 36, 1),
  FV_ROW("SILBURY BASS",     FV_SILBURY,    MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 20), 0, SINGL_SYNTH,21, TOMB,      40, 70,  0, 33, 30, BBD,  0, 36, 0),
  FV_ROW("QUOIT GROWL",      FV_QUOIT,      MONO_RETRIG, 0,                       0,   SINGL_SYNTH,22, DOLMEN,    50, 80,  0, 42, 20, TAPE, 0, 36, 0),
  FV_ROW("ANTLER PICK",      FV_ANTLER,     MONO_RETRIG, 0,                       0,   SINGL_SYNTH,23, TOMB,      40, 70,  0, 35, 20, BBD,  0, 36, 0),
@@ -870,7 +870,7 @@ static int factory_perf(uint32_t s, WholePerformance *w)
     p->arp_link = FA_TAB[s].maq ? (uint8_t)s : (uint8_t)127u;   /* SEQ-led: no arp pattern */
     p->perf_mode = f->pmode;
     p->voice_mode[0] = f->vmode;
-    p->voice_mode[1] = f->pmode == PERF_DUAL_SYNTH ? FV_TAB[l2].vmode : f->vmode;   /* (SPLIT: layer 2 mirrors 1) */
+    p->voice_mode[1] = f->pmode == PERF_DUAL_SYNTH ? FV_TAB[l2].vmode : f->vmode;   /* (SPLIT: layer 2 as layer 1) */
     p->porta_mode[0] = p->porta_mode[1] = (uint8_t)(f->porta >> 7);
     p->porta_time[0] = p->porta_time[1] = (uint8_t)(f->porta & 127u);
     if (f->vmode == VMODE_UNISON_STACK)
@@ -891,8 +891,8 @@ static int factory_perf(uint32_t s, WholePerformance *w)
     return 0;
 }
 
-/* boot, before ps_load: the patches, sequences and arp patterns into their banks and the performances' names, all
- * marked used (a factory performance is made whole when it loads: factory_perf) */
+/* boot, before ps_load: the patches, sequences and arp patterns into their banks, the performances', sequences' and
+ * arps' names, all marked used (a factory performance is made whole when it loads: factory_perf) */
 static void factory_install(void)
 {
     EngineState base;
@@ -903,6 +903,8 @@ static void factory_install(void)
         factory_seq(s, syn_seq_bank[s]);
         factory_arp(s, &syn_arp_bank[s]);
         factory_name(syn_perf_name[s], FV_TAB[s].name);
+        factory_name(syn_seq_name[s], FV_TAB[s].name);   /* (a performance's sequence and arp pattern: its name) */
+        factory_name(syn_arp_name[s], FV_TAB[s].name);
         syn_used[UISAVE_PATCH_PRESET][s >> 3] |= (uint8_t)(1u << (s & 7u));
         syn_used[UISAVE_SEQ_SETTINGS][s >> 3] |= (uint8_t)(1u << (s & 7u));
         syn_used[UISAVE_ARP_SEQ][s >> 3] |= (uint8_t)(1u << (s & 7u));

@@ -77,7 +77,7 @@ enum {                               /* voice architecture, per patch: the signa
 };
 #define VARCH_BIT(a) (1u << (a))
 #define VARCH_ALL ((1u << VARCH_COUNT) - 1u)
-enum { DRIVE_SOFT, DRIVE_HARD, DRIVE_FOLD, DRIVE_TAPE, DRIVE_COUNT };       /* AMP drive model */
+enum { DRIVE_SOFT, DRIVE_HARD, DRIVE_FOLD, DRIVE_TAPE, DRIVE_TUBE, DRIVE_OVERDRIVE, DRIVE_COUNT };   /* AMP drive model (TUBE, OVERDRIVE 2026-10-25: new ones at the end) */
 /* reverb type (2026-10-16: PLATE and HALL removed, ROOM renamed TOMB, numbers shifted, FREC_VER_PERF 5; new ones at the end). MOD: Lexicon-inspired, chorused;
  * CELESTIAL: was SHIMMER; DOLMEN: a cave (a small stone chamber); TUMULUS: a cavern (Tumulus Saint-Michel, Carnac) */
 enum { REVTYPE_SPRING, REVTYPE_TOMB, REVTYPE_MOD, REVTYPE_CELESTIAL, REVTYPE_DOLMEN, REVTYPE_TUMULUS, REVTYPE_COUNT };
@@ -337,7 +337,7 @@ typedef struct {                     /* OSCMIXER; which knob a field sits on dep
     uint8_t noise_mod_amt;           /* (bip) */
     /* BINAURAL: how the right ear's oscillator differs from the left's */
     uint8_t bin_mod_phase;           /* knob 1: LFO phase offset of the right ear's pitch / scan mod, 0..127 = 0..357 deg */
-    uint8_t bin_beat;                /* knob 2: right ear pitch offset, 0..127 = 0..31.75 Hz in 0.25 Hz steps */
+    uint8_t bin_beat;                /* knob 2: right ear pitch offset, 0..127 = 0..15.875 Hz in 0.125 Hz steps */
     uint8_t bin_scan_offset;         /* (bip): right ear wavetable scan offset */
     /* noise colour modulation (4.1) */
     uint8_t noise_col_mod_src;       /* MSRC_* (default MODWHEEL): moves the noise colour morph */
@@ -509,15 +509,33 @@ static inline uint8_t varch_voice_cap(const EngineState *e)
     return cap[varch_of(e)];
 }
 
+/* the voice modes that sound one voice (UNISON stacks the layer's voices, so it is not one of them) */
+static inline uint8_t vmode_one_voice(uint8_t m)
+{
+    return (uint8_t)(m == VMODE_MONO_RETRIG || m == VMODE_MONO_LEGATO);
+}
+
 /* Voices one layer may use (5.3). SINGL_SYNTH: layer 1 gets its patch's cap, layer 2 none. DUAL / SPLIT: both
  * layers sound at once, so the pair shares the lower cap of the two patches, layer 1 taking the odd voice (two
  * 8-voice patches: 4 + 4, the spec's split; 5: 3 + 2; 4: 2 + 2). Every voice then costs at most what the more
- * expensive patch's voice costs, so the pair stays inside that patch's budget. Never below 1. */
-static inline uint8_t layer_voice_limit(uint8_t perf_mode, const EngineState *l1, const EngineState *l2, uint8_t layer)
+ * expensive patch's voice costs, so the pair stays inside that patch's budget. Never below 1.
+ * A MONO layer (vm1 / vm2, 2026-10-25) needs one voice, so the other layer gets the rest of the budget: a voice of a
+ * patch with cap c costs at most 1/c of it, so the mono voice leaves (1 - 1/c_mono) for c_other-cap voices, i.e.
+ * floor(c_other * (c_mono - 1) / c_mono) (SINGLE + SINGLE: 1 + 7; mono DUAL OSC + SINGLE: 1 + 6; both mono: 1 + 1). */
+static inline uint8_t layer_voice_limit(uint8_t perf_mode, const EngineState *l1, const EngineState *l2,
+                                        uint8_t vm1, uint8_t vm2, uint8_t layer)
 {
     uint8_t c1 = varch_voice_cap(l1), c2 = varch_voice_cap(l2), lo, n;
+    uint8_t m1 = vmode_one_voice(vm1), m2 = vmode_one_voice(vm2);
     if (perf_mode != PERF_DUAL_SYNTH && perf_mode != PERF_SPLIT_SYNTH)
         return layer == 0u ? c1 : (uint8_t)0u;
+    if (m1 || m2) {
+        uint8_t cm = m1 ? c1 : c2, co = m1 ? c2 : c1;
+        if (layer == 0u ? m1 : m2)
+            return 1u;
+        n = (uint8_t)(co * (cm - 1u) / cm);
+        return n > 0u ? n : (uint8_t)1u;
+    }
     lo = c1 < c2 ? c1 : c2;
     n = (uint8_t)(layer == 0u ? (lo + 1u) >> 1 : lo >> 1);
     return n > 0u ? n : (uint8_t)1u;
@@ -558,7 +576,7 @@ typedef struct {
     uint8_t arp_link;                /* 8-step arp / chord slot */
     /* voice allocation (5.3) */
     uint8_t perf_mode;               /* PERF_* */
-    uint8_t voice_mode[NLAYER];      /* VMODE_*; layer 2 mirrors layer 1 in SPLIT_SYNTH */
+    uint8_t voice_mode[NLAYER];      /* VMODE_*, per layer in DUAL and SPLIT (SPLIT mirrored layer 1 until 2026-10-25) */
     uint8_t porta_mode[NLAYER];      /* PORTA_* */
     uint8_t porta_time[NLAYER];
     uint8_t unison_detune[NLAYER];   /* UNISON voice mode: 0 = no detune, 127 = outer voices +-50 cents */

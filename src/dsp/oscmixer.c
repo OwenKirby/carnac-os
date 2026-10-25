@@ -23,14 +23,15 @@ void osc_mixer_init(OscillatorMixer *mixer) {
     mixer->noise_colour = NOISE_WHITE;
 }
 
-/* The colour filters restart at note-on; the seed does not, so a repeated note does not repeat its noise. */
-void noise_state_init(NoiseState *ns) {
-    ns->b0 = ns->b1 = ns->b2 = ns->b3 = 0;
-}
+NoiseBuf noise_buf[2];
+static NoiseState noise_gen[2];
 
-/* Once at boot: each generator starts at its own point of the sequence (generator = 2 x voice + ear). */
-void noise_seed_init(NoiseState *ns, uint32_t generator) {
-    ns->seed = 12345u + generator * 0x9E3779B9u;
+void noise_shared_init(void) {
+    for (int e = 0; e < 2; e++) {
+        noise_gen[e].b0 = noise_gen[e].b1 = noise_gen[e].b2 = noise_gen[e].b3 = 0;
+        noise_gen[e].seed = 12345u + (uint32_t)e * 0x9E3779B9u;
+        noise_shared_fill(e, NOISE_PASS_FRAMES, 1, 1);   /* every colour holds noise from the start */
+    }
 }
 
 void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t freq1_q16, uint32_t freq2_q16,
@@ -153,40 +154,65 @@ static int32_t noise_brown(NoiseState *ns, int32_t w) {
     return clamp_q15((ns->b3 * NOISE_BROWN_GAIN_Q8) >> 8);
 }
 
-/* The colour morph runs only the filters of its segment: white alone, white + pink, pink alone, pink + brown or brown
- * alone. A filter that joins mid-morph starts from where it stopped, at a weight near 0, so it cannot click. */
-/* one noise sample (the gain checked by the caller) */
-static inline int32_t noise_sample(const OscMixVoice *mv, NoiseState *ns) {
-    ns->seed = ns->seed * 1103515245u + 12345u;
-    int32_t w = (int16_t)(ns->seed >> 16);
+/* The generator runs the filters asked for this pass; a filter that joins starts from where it stopped. */
+void noise_shared_fill(int ear, uint32_t frames, int pink, int brown) {
+    NoiseState g = noise_gen[ear];             /* in registers over the pass */
+    NoiseBuf *nb = &noise_buf[ear];
+    for (uint32_t i = 0; i < frames; i++) {
+        g.seed = g.seed * 1103515245u + 12345u;
+        int32_t w = (int16_t)(g.seed >> 16);
+        nb->w[i] = (int16_t)w;
+        if (pink) nb->p[i] = (int16_t)noise_pink(&g, w);
+        if (brown) nb->b[i] = (int16_t)noise_brown(&g, w);
+    }
+    noise_gen[ear] = g;
+}
+
+/* one voice's noise sample at pass frame i: the colour morph between the pass's colours, white alone, white + pink,
+ * pink alone, pink + brown or brown alone (the gain checked by the caller) */
+static inline int32_t noise_sample(const OscMixVoice *mv, const NoiseBuf *nb, int i) {
     int32_t n, t = mv->noise_t_q8;
     if (mv->noise_seg == 0) {
-        n = w;
+        n = nb->w[i];
         if (t != 0)
-            n += ((noise_pink(ns, w) - w) * t) >> 8;
+            n += ((nb->p[i] - n) * t) >> 8;
     } else if (t >= 256) {
-        n = noise_brown(ns, w);
+        n = nb->b[i];
     } else {
-        n = noise_pink(ns, w);
+        n = nb->p[i];
         if (t != 0)
-            n += ((noise_brown(ns, w) - n) * t) >> 8;
+            n += ((nb->b[i] - n) * t) >> 8;
     }
     return (n * mv->noise_gain_q15) >> 15;
 }
 
-int32_t osc_mixer_noise(const OscMixVoice *mv, NoiseState *ns) {
+int32_t osc_mixer_noise(const OscMixVoice *mv, int ear, int at) {
     if (mv->noise_gain_q15 <= 0)
         return 0;
-    return noise_sample(mv, ns);
+    return noise_sample(mv, &noise_buf[ear], at);
 }
 
-void osc_mixer_noise_block(const OscMixVoice *mv, NoiseState *ns, int32_t *acc, int n) {
-    if (mv->noise_gain_q15 <= 0)
+/* the block picks its two colours once: x alone, or x + (y - x) * t; (n * gain) >> 16 is noise_sample's value >> 1 */
+void osc_mixer_noise_block(const OscMixVoice *mv, int ear, int at, int32_t *acc, int n) {
+    int32_t g = mv->noise_gain_q15, t = mv->noise_t_q8;
+    if (g <= 0)
         return;
-    NoiseState s = *ns;                        /* the generator in registers over the block */
-    for (int i = 0; i < n; i++)
-        acc[i] += noise_sample(mv, &s) >> 1;
-    *ns = s;
+    const NoiseBuf *nb = &noise_buf[ear];
+    const int16_t *x, *y;
+    if (mv->noise_seg == 0) {
+        x = nb->w + at; y = nb->p + at;
+    } else if (t >= 256) {
+        x = y = nb->b + at; t = 0;
+    } else {
+        x = nb->p + at; y = nb->b + at;
+    }
+    if (t == 0) {
+        for (int i = 0; i < n; i++)
+            acc[i] += (x[i] * g) >> 16;
+    } else {
+        for (int i = 0; i < n; i++)
+            acc[i] += ((x[i] + (((y[i] - x[i]) * t) >> 8)) * g) >> 16;
+    }
 }
 
 int32_t osc_mixer_sub(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase) {
@@ -231,23 +257,23 @@ void osc_mixer_sub_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32
     *sub_phase = phase;
 }
 
-void osc_mixer_extras_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, NoiseState *ns,
+void osc_mixer_extras_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, int at,
                             int32_t *acc, int n) {
     osc_mixer_sub_block(mv, osc1, sub_phase, acc, n);   /* (o + sub/2) + noise/2: o + (sub/2 + noise/2), in int */
-    osc_mixer_noise_block(mv, ns, acc, n);
+    osc_mixer_noise_block(mv, 0, at, acc, n);
 }
 
-int32_t osc_mixer_extras(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, NoiseState *ns) {
+int32_t osc_mixer_extras(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, int at) {
     /* the sub and the noise, each balanced in at half weight */
-    return (osc_mixer_sub(mv, osc1, sub_phase) >> 1) + (osc_mixer_noise(mv, ns) >> 1);
+    return (osc_mixer_sub(mv, osc1, sub_phase) >> 1) + (osc_mixer_noise(mv, 0, at) >> 1);
 }
 
 int16_t osc_mixer_render(const OscMixVoice *mv, WavetableOsc *osc1, WavetableOsc *osc2, uint32_t *sub_phase,
-                         NoiseState *ns) {
+                         int at) {
     /* OSC1 is always the modulator / first source. */
     int16_t wave1_q15 = osc_render(osc1);
     int16_t wave2_q15 = osc_mixer_osc2(mv, wave1_q15, osc2);
     int32_t mixed_q15 = (((int32_t)wave1_q15 * mv->osc1_gain_q15) >> 15) +
                         (((int32_t)wave2_q15 * mv->osc2_gain_q15) >> 15);
-    return (int16_t)clamp_q15(mixed_q15 + osc_mixer_extras(mv, osc1, sub_phase, ns));
+    return (int16_t)clamp_q15(mixed_q15 + osc_mixer_extras(mv, osc1, sub_phase, at));
 }

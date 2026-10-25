@@ -18,10 +18,10 @@
  * hands it half the voices each run (synth_set_core2, docs/dual-core-plan.md). Not in safe mode, not after a failed
  * boot, not once barred (a crash beside it, or bad reads): then one core renders everything, the same sound.
  *
- * Who touches the synth: the audio ISR (ALNK0) renders and drains USB / TRS MIDI into synth_midi_3. The main loop
- * reads the panel and calls the UI state machine, which writes the patch bytes and drives the MAQ / ARP; every such
- * call runs inside syn_lock() (interrupts off, a few microseconds), so the render never sees half an event. The screen
- * drawing only reads, outside the lock.
+ * Who touches the synth: the audio ISR (ALNK0) renders and drains USB / TRS MIDI into synth_midi_at (each event timed
+ * to its frame). The main loop reads the panel and calls the UI state machine, which writes the patch bytes and drives
+ * the MAQ / ARP; every such call runs inside syn_lock() (interrupts off, a few microseconds), so the render never sees
+ * half an event. The screen drawing only reads, outside the lock.
  *
  * The panel (spec 2, 3, 5, 7, 8; src/hardware/synth_panel.c, which the browser emulator, web/emu, runs too):
  *   FX SEL ENV LFO EDIT GLO HOME ARP SAVE SEQ   section buttons (UIEV_BUTTON)
@@ -154,21 +154,65 @@ struct syn_dbg {
 } syn_dbg __attribute__((section(".noinit")));
 static uint8_t safe_mode;
 
-/* USB and TRS MIDI in (plat_midi_in: USB-MIDI event packets, byte 0 = cable / CIN) into the synth. ISR only. */
-static void midi_drain(void)
+/* Tight MIDI in (2026-10-24). Every packet in X0X's MIDI-in queue (usb.c midi_in_q, fed by USB and the TRS jack in
+ * the TIMER5 ISR) is stamped with the time it was read (midi_stamp), and the MIDI is read during the render too
+ * (midi_in_render), so no stamp waits for a render to end. Each half then plays the packets read during the half
+ * before it, each at its own frame (synth_midi_at): a constant 2 halves (23.2 ms) from arrival to sound, within the
+ * 0.5 ms of the read, where it used to be 11.6..23.2 ms, every packet on a half's first frame. */
+#define HALF_TICKS (HALF_FRAMES * 1000000u / 44118u * FM1_TICKS_PER_US)   /* a half at the I2S's 44,117.6 Hz */
+static uint32_t midi_stamp_q[MQ], midi_stamp_w;   /* fm1_ticks() at each queued packet's read, by queue index */
+static uint32_t half_t;                             /* fm1_ticks() at the start of the last half */
+
+static void midi_stamp(void)                        /* TIMER5, after each read: the packets it queued */
 {
-    uint32_t pkt, guard = 64;
-    while (guard-- && plat_midi_in(&pkt)) {
-        uint32_t cin = pkt & 0x0Fu;
-        uint8_t st = (uint8_t)(pkt >> 8);
+    uint32_t now = fm1_ticks();
+    while (midi_stamp_w != mi_w) {
+        midi_stamp_q[midi_stamp_w % MQ] = now;
+        midi_stamp_w++;
+    }
+}
+
+/* TIMER5 during the render, which usb_poll must not run in: only the MIDI-in endpoint (its own RxPktRdy, not the
+ * interrupt flags usb_poll reads) and the TRS ring. Nothing in the audio ISR touches the USB controller. */
+static void midi_in_render(void)
+{
+    if (usb.up && usb.config)
+        ep1_rx();
+#if X0X_TRS
+    uart_midi_poll();
+#endif
+}
+
+/* The packets read before this half began (t0) into the synth, timed into it (USB-MIDI event packets, byte 0 = cable
+ * / CIN). ISR only. */
+static void midi_drain(uint32_t t0)
+{
+    uint32_t pkt, guard = 64, prev = half_t, span = t0 - half_t;
+    half_t = t0;
+    if (span < HALF_TICKS / 2u || span > 2u * HALF_TICKS) {   /* the first half, or one missed: a nominal one */
+        span = HALF_TICKS;
+        prev = t0 - HALF_TICKS;
+    }
+    while (guard-- && mi_r != mi_w) {
+        uint32_t s = midi_stamp_q[mi_r % MQ], off = s - prev, delay, cin;
+        uint8_t st;
+        if ((int32_t)(s - t0) >= 0)
+            break;                                  /* read in this half: the next one plays it */
+        if ((int32_t)off < 0)
+            off = 0;                                /* (left over from a missed half: at once) */
+        delay = off >= span ? HALF_FRAMES - 1u : off * HALF_FRAMES / span;
+        if (!plat_midi_in(&pkt))
+            break;
+        cin = pkt & 0x0Fu;
+        st = (uint8_t)(pkt >> 8);
         if (cin >= 0x8u && cin <= 0xEu && st >= 0x80u && st < 0xF0u) {   /* a channel message */
             uint8_t d2 = (uint8_t)((pkt >> 24) & 0x7Fu);
             if ((st & 0xF0u) == 0x90u)
                 d2 = instrument_velocity(d2);       /* GLOBAL > VEL CURVE (0 stays a note-off) */
-            synth_midi_3(st, (uint8_t)((pkt >> 16) & 0x7Fu), d2);
+            synth_midi_at(delay, st, (uint8_t)((pkt >> 16) & 0x7Fu), d2);
         }
         else if (cin == 0xFu && st >= 0xF8u)                               /* realtime: clock, start, stop */
-            synth_midi_3(st, 0, 0);
+            synth_midi_at(delay, st, 0, 0);
     }
 }
 
@@ -222,8 +266,8 @@ static uint32_t render_block(int32_t *o)            /* ALNK0: one half, measured
 #if FELUCCA_UAC
     uac_render_start();
 #endif
+    midi_drain(t0);
     for (k = 0; k < HALF_FRAMES; k += REND_FRAMES) {
-        midi_drain();
         if (ok) {
             synth_render_q15(o + 2u * k, REND_FRAMES);
         } else {
@@ -335,6 +379,10 @@ void fm1_timer5_irq(void)                           /* 10 kHz: the panel scan, U
         if (syn_dbg.in_audio)
             uac_service();                          /* one packet per 1 ms frame: cannot wait for the render */
 #endif
+        if (syn_dbg.in_audio) {
+            midi_in_render();                       /* MIDI in keeps its time through the render */
+            midi_stamp();
+        }
     }
     if (usb_due && !syn_dbg.in_audio) {             /* usb_poll shares the MIDI queues with the audio ISR */
         usb_due = 0;
@@ -342,6 +390,7 @@ void fm1_timer5_irq(void)                           /* 10 kHz: the panel scan, U
 #if X0X_TRS
         uart_midi_poll();
 #endif
+        midi_stamp();
     }
     if (++sub == 10u)
         sub = 0;

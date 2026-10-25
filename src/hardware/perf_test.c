@@ -68,6 +68,8 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_PCM 512u                   /* PCM waves (needs the store uploaded): OSC1 CHOIR at SCAN 64 (both loops read),
                                       * OSC2 WOOD CHIMES; with K_RS / K_SEQ OSC1 plays WOOD CHIMES too (the attack
                                       * at every note). gen_pcm_waves.py's wave order: WOOD CHIMES 0, CHOIR 4 */
+#define F_DRIVE 1024u                /* AMP DRIVE 80 through the model in bits 11..13 (F_DRV) */
+#define F_DRV(m) (F_DRIVE | (uint16_t)((m) << 11))
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
 
@@ -157,6 +159,17 @@ static const PtScen SCEN[] = {
     {"DUALOSC RS", K_RS, VARCH_DUAL_OSC, FLT_MULTI, 0, UIPAGE_HOME1},
     {"DUALOSC RS PCM", K_RS, VARCH_DUAL_OSC, FLT_MULTI, F_PCM, UIPAGE_HOME1},
     {"SEQ+ARP HOME PCM", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_PCM, UIPAGE_HOME1},
+    /* AMP DRIVE (2026-10-25): every model on SINGLE at its cap, the dearest on the two-path, STRIKE and SEQ rows */
+    {"SINGLE DRV SOFT", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DRV(DRIVE_SOFT), UIPAGE_HOME1},
+    {"SINGLE DRV HARD", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DRV(DRIVE_HARD), UIPAGE_HOME1},
+    {"SINGLE DRV FOLD", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DRV(DRIVE_FOLD), UIPAGE_HOME1},
+    {"SINGLE DRV TAPE", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DRV(DRIVE_TAPE), UIPAGE_HOME1},
+    {"SINGLE DRV TUBE", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
+    {"SINGLE DRV OD", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DRV(DRIVE_OVERDRIVE), UIPAGE_HOME1},
+    {"STACK HEAVY TUBE", K_HELD, VARCH_STACK, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
+    {"BINAUR HEAVY OD", K_HELD, VARCH_BINAURAL, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_OVERDRIVE), UIPAGE_HOME1},
+    {"STRIKE HEAVY TUBE", K_HELD, VARCH_STRIKE, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
+    {"SEQ+ARP HOME TUBE", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -273,6 +286,10 @@ static void patch(EngineState *e, const PtScen *s)
         e->mod[2] = (ModSlotParams){MSRC_MODSLOT2, MFN_MUL, MSRC_LFO1, 110};
         e->filter[0].mod_src = MSRC_MODSLOT3;
         e->filter[0].mod_amt = 120;
+    }
+    if (s->flags & F_DRIVE) {
+        e->amp.drive = 80;
+        e->amp.drive_model = (uint8_t)((s->flags >> 11) & 7u);
     }
     if (s->flags & F_PCM) {
         e->osc[0].wavebank = (uint8_t)(WAVE_PCM_FIRST + (s->kind == K_HELD ? 4u : 0u));

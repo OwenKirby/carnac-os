@@ -23,6 +23,8 @@
 static SequencerLane syn_seq_bank[BANK_SLOTS][SEQ_NLANE];
 static ArpState syn_arp_bank[BANK_SLOTS];
 static uint8_t syn_perf_name[BANK_SLOTS][NAME_LEN];
+static uint8_t syn_seq_name[BANK_SLOTS][NAME_LEN];
+static uint8_t syn_arp_name[BANK_SLOTS][NAME_LEN];
 static uint8_t syn_used[UISAVE_COUNT][PATCH_SLOTS / 8u];
 #include "factory_presets.c"
 

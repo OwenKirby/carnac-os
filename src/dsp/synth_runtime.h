@@ -11,6 +11,10 @@ void synth_init(void);
  * live patches as they are now. Not from inside a render (the audio ISR's caller holds it off). */
 void synth_restart(void);
 void synth_midi_3(uint8_t status, uint8_t data1, uint8_t data2);
+/* An incoming MIDI event (a channel message or a realtime byte) timed `delay` frames into the audio the next
+ * synth_render_q15 renders: it applies on that frame, after any queued before it. Outside a render only (the FM1's
+ * audio ISR drains its stamped input before rendering; inside one it acts as synth_midi_3). */
+void synth_midi_at(uint32_t delay, uint8_t status, uint8_t data1, uint8_t data2);
 /* the panel's CC1 / CC2 knobs (LAYER): the CUSTOMCC1 / 2 mod sources' value 0..127, as an incoming CUSTOM CC sets it */
 void synth_custom_cc(uint8_t which, uint8_t value);
 void synth_render_q15(int32_t *interleaved_lr, uint32_t frames);

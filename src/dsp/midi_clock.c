@@ -10,6 +10,17 @@ static const uint8_t div_ticks[MIDI_CLOCK_NDIV] = { 96, 48, 24, 12, 8, 6, 4, 3 }
 /* a MIDI clock silent for this long (0.5 s) is treated as stopped */
 #define EXTERNAL_TIMEOUT_FRAMES 22050u
 #define PERIOD_MIN_Q8 256u           /* at least one frame per tick, so a zero-gap burst cannot divide by zero */
+/* The MIDI clock's lock (2026-10-24). Pulses reached the render on the FM1's 11.6 ms block grid, and each re-based the
+ * grid and the period where it landed: steps up to ~6 ms off, the tempo wobbling 10-30 %. Now the pulses that come in
+ * steer a prediction (a delay-locked loop: each one's error moves the next expected pulse by 1/8 of it and the period
+ * by 1/64), and every pulse plays at its predicted frame: one that comes early waits for it, one that is late is
+ * played by the prediction (at most one ahead of those received). A run's first beat (and the beat after a tempo jump:
+ * two errors in a row past half a period; one alone is jitter and counts as half a period) plays the pulses as they
+ * come and takes the period as the average over all of them, which one gap on a coarse grid cannot give. Pulses
+ * played always equal pulses received. */
+#define DLL_PHASE_SHIFT 3            /* 1/8 */
+#define DLL_PERIOD_SHIFT 6           /* 1/64 */
+#define ACQ_PULSES 24u               /* a beat: the period measured over the run before the loop takes over */
 
 static uint32_t now_frame;           /* the frame the render loop is on */
 static uint32_t last_tick_frame;     /* the frame of the latest pulse */
@@ -22,6 +33,13 @@ static uint32_t internal_acc_q8;     /* engine clock accumulator */
 static uint8_t internal_bpm_seen;    /* INT TEMPO the internal period was computed for */
 static uint8_t ticks_seen;           /* 0 / 1 / 2: a period is only measured from the second pulse on */
 static uint8_t source_seen;          /* CLKSRC_* the state above was gathered for */
+static uint32_t ext_rx_frame;        /* MIDI: the frame of the latest pulse received */
+static uint32_t ext_next_q8;         /* MIDI, locked: the frame (Q8) the next pulse is expected to come in */
+static int8_t ext_lead;              /* MIDI, locked: pulses played minus received, -1 .. 1 */
+static uint8_t ext_miss;             /* MIDI, locked: pulses in a row past half a period from the prediction */
+static uint32_t ext_miss_frame;      /* MIDI: the frame of the pulse before the first of those */
+static uint8_t ext_acq;              /* MIDI: gaps measured since ext_acq_frame, while under ACQ_PULSES; 0 = the loop */
+static uint32_t ext_acq_frame;       /* MIDI: the frame the period is measured from */
 static uint32_t base_q32[MIDI_CLOCK_NDIV];   /* cycle phase at the latest pulse */
 static uint32_t step_q32[MIDI_CLOCK_NDIV];   /* cycle phase advance per frame */
 
@@ -65,32 +83,91 @@ static void clock_reset(uint8_t src)
     source_seen = src;
     ticks_seen = 0;
     pulses = 0;
+    ext_lead = 0;
     internal_acc_q8 = internal_period_q8() - 256u;   /* the engine clock's first pulse lands on the first frame: pulse 0 */
     internal_bpm_seen = internal_bpm();
     period_q8 = internal_period_q8();
 }
 
-/* one pulse of the clock, at `frame` */
+/* one pulse of the clock, at `frame`: the engine clock's, or one the MIDI clock's lock plays */
 static void clock_pulse(uint32_t frame)
 {
     uint32_t latest = pulses++;
     pulse_total++;
-
-    if (source_seen == CLKSRC_MIDI) {
-        if (ticks_seen == 2 && frame - last_tick_frame > EXTERNAL_TIMEOUT_FRAMES)
-            ticks_seen = 0;                           /* a long gap is a new run, not a period */
-        if (ticks_seen == 1 || ticks_seen == 2) {
-            int32_t measured = (int32_t)((frame - last_tick_frame) << 8);
-            if (measured < (int32_t)PERIOD_MIN_Q8) measured = (int32_t)PERIOD_MIN_Q8;
-            if (ticks_seen == 1) period_q8 = (uint32_t)measured;
-            else period_q8 = (uint32_t)((int32_t)period_q8 + ((measured - (int32_t)period_q8) >> 2));   /* smooth jitter */
-        }
-    }
-    /* the engine clock keeps its exact period: no measurement to take */
-
     ticks_seen = ticks_seen < 2 ? (uint8_t)(ticks_seen + 1u) : 2;
     last_tick_frame = frame;
     recompute_grid(latest);
+}
+
+/* MIDI, locked, with no pulse played ahead: whether the next one is due at `frame`. With one received and not yet
+ * played (ext_lead -1) it is due at its own predicted frame, one period before the next expected. */
+static uint8_t ext_due(uint32_t frame)
+{
+    uint32_t due;
+    if (ticks_seen != 2 || ext_lead > 0 || frame - ext_rx_frame > EXTERNAL_TIMEOUT_FRAMES)
+        return 0;
+    due = ext_lead == 0 ? ext_next_q8 : ext_next_q8 - period_q8;
+    return (int32_t)((frame << 8) - due) >= 0;
+}
+
+/* MIDI, measuring: the period over every gap since ext_acq_frame (n of them), the next pulse a period on, and the
+ * pulses owed played now */
+static void ext_measure(uint32_t frame, uint32_t n)
+{
+    uint32_t p = ((frame - ext_acq_frame) << 8) / n;
+    period_q8 = p < PERIOD_MIN_Q8 ? PERIOD_MIN_Q8 : p;
+    ext_next_q8 = (frame << 8) + period_q8;
+    while (ext_lead < 0) {
+        ext_lead++;
+        clock_pulse(frame);
+    }
+    ext_lead = 0;
+    ext_miss = 0;
+}
+
+/* a 0xF8 received, at `frame` */
+static void ext_pulse(uint32_t frame)
+{
+    int32_t e, half;
+    uint32_t prev = ext_rx_frame;
+    if (ticks_seen == 2 && frame - prev > EXTERNAL_TIMEOUT_FRAMES)
+        ticks_seen = 0;                               /* a long gap is a new run, not a period */
+    ext_rx_frame = frame;
+    if (ticks_seen == 0) {                            /* a run's first pulse: plays as it comes */
+        ext_lead = 0;
+        ext_miss = 0;
+        ext_acq = 0;
+        ext_acq_frame = frame;
+        clock_pulse(frame);
+        return;
+    }
+    ext_lead--;
+    if (ticks_seen == 1 || ext_acq) {                 /* the first beat: as they come, the period averaged */
+        ext_acq = ext_acq + 1u >= ACQ_PULSES ? (uint8_t)0u : (uint8_t)(ext_acq + 1u);
+        ext_measure(frame, ext_acq ? ext_acq : ACQ_PULSES);
+        return;
+    }
+    e = (int32_t)((frame << 8) - ext_next_q8);
+    half = (int32_t)(period_q8 >> 1);
+    if (e > half || e < -half) {
+        if (++ext_miss >= 2u) {                       /* a tempo jump: measure again from before the first miss */
+            ext_acq_frame = ext_miss_frame;
+            ext_acq = 2u;
+            ext_measure(frame, 2u);
+            return;
+        }
+        ext_miss_frame = prev;
+        e = e > 0 ? half : -half;                     /* one alone: jitter, at most half a period */
+    } else {
+        ext_miss = 0;
+    }
+    ext_next_q8 += period_q8 + (uint32_t)(e >> DLL_PHASE_SHIFT);
+    period_q8 = (uint32_t)((int32_t)period_q8 + (e >> DLL_PERIOD_SHIFT));
+    if (period_q8 < PERIOD_MIN_Q8) period_q8 = PERIOD_MIN_Q8;
+    while (ext_lead < -1) {                           /* two owed (a burst): the older one now */
+        ext_lead++;
+        clock_pulse(frame);
+    }
 }
 
 void midi_clock_init(void)
@@ -116,6 +193,9 @@ void midi_clock_frame(uint32_t frame)
             internal_acc_q8 -= period_q8;
             clock_pulse(frame);
         }
+    } else if (ext_due(frame)) {                      /* MIDI: the lock plays the pulse at its predicted frame */
+        ext_lead++;
+        clock_pulse(frame);
     }
 }
 
@@ -124,7 +204,9 @@ uint8_t midi_clock_frame_changes(void)
     uint8_t src = clock_source();
     if (src != source_seen)
         return 1;                                     /* clock_reset */
-    return src == CLKSRC_INTERNAL && internal_acc_q8 + 256u >= internal_period_now();   /* clock_pulse */
+    if (src == CLKSRC_MIDI)
+        return ext_due(now_frame + 1u);               /* the render's next frame */
+    return internal_acc_q8 + 256u >= internal_period_now();   /* clock_pulse */
 }
 
 void midi_clock_realtime(uint8_t status)
@@ -133,7 +215,7 @@ void midi_clock_realtime(uint8_t status)
         return;
     switch (status) {
     case 0xF8:                                        /* timing clock */
-        clock_pulse(now_frame);
+        ext_pulse(now_frame);
         break;
     case 0xFA:                                        /* start: the next pulse is beat 1, tick 0 */
         pulses = 0;
@@ -156,7 +238,7 @@ void midi_clock_realtime(uint8_t status)
 
 static uint8_t clock_valid(uint32_t frame)
 {
-    return ticks_seen >= 2 && !(source_seen == CLKSRC_MIDI && frame - last_tick_frame > EXTERNAL_TIMEOUT_FRAMES);
+    return ticks_seen >= 2 && !(source_seen == CLKSRC_MIDI && frame - ext_rx_frame > EXTERNAL_TIMEOUT_FRAMES);
 }
 
 uint8_t midi_clock_phase_at(uint8_t division, uint32_t frame, uint32_t *phase_q32)

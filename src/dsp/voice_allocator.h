@@ -71,7 +71,7 @@ typedef struct __attribute__((aligned(64))) {
      * gain, the FX sends). Path B is STACK's B / BINAURAL's right ear. */
     float vol, vol_step, vol_b, vol_b_step;
     float mix_a[4], mix_b[4];
-    NoiseState noise[2];          // noise generator colour memory; [1] is BINAURAL's right ear
+    uint8_t noise_at;             // the block's first frame in the render pass: where it reads the shared noise
     /* STRIKE's attack (dsp/attacks.h): restarted by each new note (synth_runtime.c voice_play), played once at atk_step
      * (Q16 bytes of the sound per sample, set each tick from OSC1's pitch), mixed after the amp envelope at atk_vol
      * (ramped by atk_vol_step: velocity, level, amp mod, choke) through mix_a. atk_p NULL: nothing playing. */
@@ -88,7 +88,9 @@ typedef struct __attribute__((aligned(64))) {
     int32_t choke_q15;            // choke fade: 32767 = untouched, ramps to 0 over CHOKE_TICKS ticks, then silence
     uint8_t choke;                // 1 = fading out: over its layer's voice limit, or the layer's architecture changed
     uint8_t arch;                 // VARCH_* the note was started with: picks the control tick and render function
-    uint8_t drive, drive_model;   // AMP drive stage
+    uint8_t drive;                // AMP DRIVE (0: bypassed); drv its tick's constants, drv_s each path's state (A, B)
+    AmpDrive drv;
+    float drv_s[2][2];
     uint8_t ctrl_left;            // samples until this voice's next control tick; 0 = tick before the next sample
     uint8_t snap;                 // 1 = a new note: the next tick sets the filter coefficients without a ramp
     uint8_t silent;               // 1 = the last tick found the voice finished: it renders silence
@@ -102,7 +104,8 @@ extern SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 
 // --- ALLOCATOR WRAPPERS ---
 // The voices a layer may use (spec 5.3, PresetStructures.h layer_voice_limit): layer 1 from voice 0, layer 2 from
-// the second half of the pool, count = the limit its architecture and the performance mode allow (0 = none).
+// the second half of the pool (earlier when layer 2 has more than half), count = the limit its architecture, the
+// performance mode and the two voice modes allow (0 = none).
 void pool_range(uint8_t layer, int *first, int *count);
 /* Overload shedding (the FM1 glue sets it; 0 everywhere else, so the host and the browser are unchanged): each layer
  * may use this many voices fewer than its limit, never fewer than one. A voice the lower limit leaves out is choked

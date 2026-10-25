@@ -57,7 +57,7 @@ void engine_defaults(EngineState *e)
     e->oscmix.noise_mod_src = MSRC_MODWHEEL;
     e->oscmix.noise_mod_amt = BIPOLAR_CENTER;
     e->oscmix.bin_mod_phase = 64;        /* 180 deg: the ears' LFO mod alternates */
-    e->oscmix.bin_beat = 16;             /* 4 Hz */
+    e->oscmix.bin_beat = 32;             /* 4 Hz */
     e->oscmix.bin_scan_offset = BIPOLAR_CENTER;
     e->oscmix.noise_col_mod_src = MSRC_MODWHEEL;
     e->oscmix.noise_col_mod_amt = BIPOLAR_CENTER;
