@@ -349,7 +349,7 @@ class Updater {
 }
 
 const $ = (id) => document.getElementById(id);
-const meta = {"version": "0.9.3", "product": "FM-1_900", "name": "carnac-0.9.3.fwsc", "sha256": "cb76875d78a3d43207749d4177ff894c0d9d157fde4ad1bfac007de9635ce7f6", "tip": "https://ko-fi.com/orbvorgis", "pkg": "../firmware/carnac-0.9.3.fwsc", "pcm": [{"area": 0, "file": "../firmware/pcm_area0.bin", "sha256": "b5b5c8fc3b830aa1f2a31f2863012fa90ec14e03134d251ccc6213c92a90a96f", "count": 12, "len": 36677}, {"area": 1, "file": "../firmware/pcm_area1.bin", "sha256": "0d9ffca98acc0ea08c9676355b320b2df23c648a75c9d54c7a4f9ddbc7a7f6ad", "count": 9, "len": 53263}]};
+const meta = {"version": "0.9.4", "product": "FM-1_900", "name": "carnac-0.9.4.fwsc", "sha256": "7ef06985cb9565d4ed5bc93445c07401ca6278e21b9032ab0491fa1bd6c1c02f", "tip": "https://ko-fi.com/orbvorgis", "pkg": "../firmware/carnac-0.9.4.fwsc", "pcm": [{"area": 0, "file": "../firmware/pcm_area0.bin", "sha256": "b5b5c8fc3b830aa1f2a31f2863012fa90ec14e03134d251ccc6213c92a90a96f", "count": 12, "len": 36677}, {"area": 1, "file": "../firmware/pcm_area1.bin", "sha256": "0d9ffca98acc0ea08c9676355b320b2df23c648a75c9d54c7a4f9ddbc7a7f6ad", "count": 9, "len": 53263}]};
 const IS_LOADER = (id) => /^ota-/i.test(id.model);
 const INFO_REQ = [0xF0, 0x7D, 0x46, 0x4C, 0x01, 0xF7];   /* (sleep() comes with fm1ota.js) */
 
