@@ -336,22 +336,7 @@ static int32_t sq_rune_in(int32_t x0, int32_t y, int32_t w, const char *s, uint1
     return sq_rune(x0 + HALF_UP(w - sq_rune_w(s, track)), y, s, c, track);
 }
 
-/* the rune face sc times the size (blocks, no smoothing: 2x is 10 x 18, 12 px a letter), its top row at y - oy. At
- * most max letters (the rest cut); returns where its ink ends */
-#define PU_RUNE_N_W(n, sc) ((n) > 0 ? (n) * (sc) * (SQ_RUNE_W + 1) - (sc) : 0)
-static int32_t pu_rune_n(int32_t x, int32_t y, const char *s, uint16_t c, int32_t sc, int32_t max, int32_t oy)
-{
-    int32_t i, j;
-    const uint8_t *g;
-    for (; *s && max > 0; s++, max--, x += sc * (SQ_RUNE_W + 1)) {
-        g = sq_rune_glyph(*s);
-        for (j = 0; j < SQ_RUNE_H; j++)
-            for (i = 0; i < SQ_RUNE_W; i++)
-                if ((g[j] >> (SQ_RUNE_W - 1 - i)) & 1u)
-                    cv_rect(x + sc * i, y + sc * j - oy, sc, sc, c);
-    }
-    return x - sc;
-}
+/* (pu_rune_n, the rune face at 2x: ui_arp_draw.c, which the unity build includes first) */
 
 static int32_t pu_strlen(const char *s)
 {

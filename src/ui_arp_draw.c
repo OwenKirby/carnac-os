@@ -27,8 +27,8 @@
 #define AR_HEAD_H 20
 #define AR_KNOB_Y 21
 #define AR_MENU_Y 56
-#define AR_ROW_H 11                  /* 6 rows: 66 px, 2 px margin above, 1 below */
-#define AR_NROW 6
+#define AR_ROW_H 20                  /* 3 rows of runes at 2x (as every page's menu): 60 px, 4 px margin above, 5 below */
+#define AR_NROW 3
 #define AR_MENU_H 69
 #define AR_CHORD_Y 127
 #define AR_CHORD_H 17
@@ -132,6 +132,23 @@ static void ar_draw_knobs(UIStateMachine *sm)
     cv_blit(0, AR_KNOB_Y);
 }
 
+/* the rune face sc times the size (blocks, no smoothing: 2x is 10 x 18, 12 px a letter), its top row at y - oy. At
+ * most max letters (the rest cut); returns where its ink ends */
+#define PU_RUNE_N_W(n, sc) ((n) > 0 ? (n) * (sc) * (SQ_RUNE_W + 1) - (sc) : 0)
+static int32_t pu_rune_n(int32_t x, int32_t y, const char *s, uint16_t c, int32_t sc, int32_t max, int32_t oy)
+{
+    int32_t i, j;
+    const uint8_t *g;
+    for (; *s && max > 0; s++, max--, x += sc * (SQ_RUNE_W + 1)) {
+        g = sq_rune_glyph(*s);
+        for (j = 0; j < SQ_RUNE_H; j++)
+            for (i = 0; i < SQ_RUNE_W; i++)
+                if ((g[j] >> (SQ_RUNE_W - 1 - i)) & 1u)
+                    cv_rect(x + sc * i, y + sc * j - oy, sc, sc, c);
+    }
+    return x - sc;
+}
+
 /* -------------------------------------------------------------- menu --- */
 /* 8.2's rows, label left and value right; the cursor row on the SEQ page's noisy ground in white (the one white thing
  * on the page), as every page's menu. AR_NROW at a time: past them the window follows the cursor down. */
@@ -142,26 +159,30 @@ static void ar_draw_menu(const UIStateMachine *sm)
     uint8_t top = f >= AR_NROW ? (uint8_t)(f - (AR_NROW - 1u)) : 0u;
     int32_t y;
     const char *t;
-    uint16_t lc, vc, bg;
+    uint16_t lc, vc;
     cv_begin(240, AR_MENU_H, SQC(BG));
     for (r = top; r < n && r < top + AR_NROW; r++) {
-        y = 2 + (r - top) * AR_ROW_H;
+        y = 4 + (r - top) * AR_ROW_H;
         st = ui_sm_row_state(sm, r);
-        bg = SQC(BG);
         lc = st == UIROW_ACTIVE ? SQC(MID) : SQC(DIM);
         vc = st == UIROW_ACTIVE ? SQC(TEXT) : SQC(DIM);
         if (r == sm->s.current_param_focus) {
-            bg = SQ_PAL_LANE[sq_pal][SQC_BG];
             lc = vc = SQC(HI);
-            sq_noise_block(2, y, 236, AR_ROW_H, 0u, AR_MENU_Y, 1u);
+            sq_noise_block(2, y, 230, AR_ROW_H, 0u, AR_MENU_Y, 1u);
         }
         t = ui_sm_row_text(sm, r);
         if (t == NULL) {
             ar_num(b, ui_sm_row_value(sm, r));
             t = b;
         }
-        sq_text_on(8, y + CAP_IN(S, AR_ROW_H), &AF_S, ui_sm_row_label(sm, r), lc, bg);
-        sq_text_r(232, y + CAP_IN(S, AR_ROW_H), &AF_S, t, vc, bg);
+        {   /* label and value at 2x, as every page's menu (18 letters across 6 .. 230; past that the label is cut) */
+            int32_t nt = 0, vw;
+            while (t[nt])
+                nt++;
+            vw = PU_RUNE_N_W(nt, 2);
+            pu_rune_n(6, y + 1, ui_sm_row_label(sm, r), lc, 2, (214 - vw) / 12, 0);
+            pu_rune_n(230 - vw, y + 1, t, vc, 2, nt, 0);
+        }
     }
     cv_blit(0, AR_MENU_Y);
 }
