@@ -2,7 +2,9 @@
  *
  * The app slot is nearly full (wavetables + attacks), so the PCM waves live in the FM1's data area instead, in "areas"
  * the preset store does not use (src/hardware/pcm_store_fm1.c lists them). Each area holds one image of its own, so
- * uploading one never touches another:
+ * uploading one never touches another. Since 2026-10-27 a third area, PCM_AREA_FW, is linked into the firmware itself
+ * (src/dsp/pcm_area_fw.c, the app flash Hollow Reeds left): never uploaded, it attaches itself with the first area
+ * attached. An image:
  *
  *   +0      PcmHdr      32 B, written last: an upload cut off leaves the area empty, never half a wave
  *   +32     PcmEntry    x count, 36 B each
@@ -26,7 +28,9 @@
 
 #define PCM_MAGIC 0x57505243u               /* "CRPW" */
 #define PCM_VERSION 2u
-#define PCM_AREAS 2u
+#define PCM_AREAS 3u
+#define PCM_FLASH_AREAS 2u                  /* areas 0, 1: in the store flash, uploaded */
+#define PCM_AREA_FW 2u                      /* in the firmware (pcm_area_fw.c) */
 #define PCM_NAME_LEN 12u                    /* NUL-padded; a full 12 has no NUL */
 #define PCM_MAX_ENTRIES 63u                 /* in one area (a reference's index is 6 bits, 63 is NONE's) */
 #define PCM_HDR_SIZE 32u
@@ -80,12 +84,12 @@ int pcm_store_attach(uint32_t a, const uint8_t *img, uint32_t size);
 void pcm_store_detach(uint32_t a);          /* before the area is erased or written */
 uint32_t pcm_area_count(uint32_t a);        /* the entries area a holds now */
 uint32_t pcm_area_used(uint32_t a);         /* its image's bytes (0: empty) */
-/* every entry in order, area 0's then area 1's; entry i, and its samples in *data (NULL for a WAVE) */
+/* every entry in order, area 0's, then 1's, then 2's; entry i, and its samples in *data (NULL for a WAVE) */
 uint32_t pcm_entry_count(void);
 const PcmEntry *pcm_entry(uint32_t i, const uint8_t **data);
 /* the sample a reference names, if that area holds it and it is of `kind`; its samples in *data; else NULL */
 const PcmEntry *pcm_sample(uint8_t ref, uint8_t kind, const uint8_t **data);
-/* the WAVE entries in order (area 0's, then area 1's): the PCM part of the oscillator's wave list */
+/* the WAVE entries in order (area 0's, then 1's, then 2's): the PCM part of the oscillator's wave list */
 uint32_t pcm_wave_count(void);
 const PcmEntry *pcm_wave(uint32_t i);
 

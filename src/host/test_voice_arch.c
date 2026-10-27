@@ -61,7 +61,7 @@ static void all_off(void)
     render(44100);
 }
 
-static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STACK", "BINAURAL", "STRIKE"};
+static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL_SPREAD"};
 
 static void base_patch(EngineState *e, uint8_t arch)
 {
@@ -74,7 +74,7 @@ static void base_patch(EngineState *e, uint8_t arch)
     e->osc[1].wavebank = 3;
     /* LFO1 on the filter cutoff so BINAURAL's phase offset has something to shift */
     e->filter[0].mod_src = MSRC_LFO1;
-    e->filter[0].mod_amt = 120;
+    e->filter[0].mod_amt = 112;
     e->filter[0].cutoff = 70;
     e->filter[1].cutoff = 90;
     e->lfo[0].rate = 70;
@@ -140,7 +140,7 @@ static void tw_start(EngineState *e) { e->oscmix.atk_start = 127; }
 static void tw_vel0(EngineState *e) { e->oscmix.atk_vel = 0; }
 static void tw_fixed(EngineState *e) { e->oscmix.atk_track = ATKTRK_FIXED; }
 static void tw_track(EngineState *e) { e->oscmix.atk_track = ATKTRK_TRACK; }
-static void tw_dark(EngineState *e) { e->env[0].attack = 0; e->filter[0].cutoff = 15; e->filter[0].mod_amt = 64; }
+static void tw_dark(EngineState *e) { e->env[0].attack = 0; e->filter[0].cutoff = 15; e->filter[0].mod_amt = 0; }
 static void tw_dark_filt(EngineState *e) { tw_dark(e); e->oscmix.atk_filter = 127; }
 static void tw_slow_filt(EngineState *e) { e->oscmix.atk_filter = 127; }
 static void tw_bend(EngineState *e) { e->oscmix.atk_bend = 64 + 24; }   /* +12 semitones */
@@ -252,10 +252,38 @@ int main(void)
     CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_UNISON_STACK, 1) == 5,
           "mono SINGLE + STACK");
 
+    /* 4b. a full layer steals by source (2026-10-26): ARP below SEQ below the keys, never upward; inside the ARP / SEQ
+     * the outer notes are kept, the keys lose their oldest */
+    synth_init();
+    base_patch(&engine_state[0], VARCH_SINGLE);
+    {
+        static const uint8_t SRC[8] = {VSRC_SEQ, VSRC_ARP, VSRC_ARP, VSRC_ARP, VSRC_ARP, VSRC_ARP, VSRC_ARP, VSRC_ARP};
+        static const uint8_t AGE[8] = {90, 10, 80, 70, 20, 30, 40, 50};
+        for (int v = 0; v < 8; v++) {
+            SynthVoiceNode *n = &poly_bank[v];
+            n->is_gate_open = 1; n->silent = 0; n->choke = 0; n->layer = 0;
+            n->src = SRC[v]; n->active_note = v == 0 ? 36 : 58 + v; n->age_counter = AGE[v];
+        }
+        /* ARP notes 59..65: 59 (voice 1) and 65 (voice 7) kept, the oldest of the rest is voice 2 (age 80) */
+        CHECK(allocate_voice_slot(0, VSRC_ARP) == 2, "ARP over ARP: took %d, want the oldest inner voice 2",
+              allocate_voice_slot(0, VSRC_ARP));
+        CHECK(allocate_voice_slot(0, VSRC_SEQ) == 2, "SEQ over SEQ + ARP: took %d, want ARP voice 2",
+              allocate_voice_slot(0, VSRC_SEQ));
+        for (int v = 0; v < 8; v++) poly_bank[v].src = VSRC_SEQ;
+        CHECK(allocate_voice_slot(0, VSRC_ARP) == -1, "ARP over a full SEQ layer: not dropped");
+        CHECK(allocate_voice_slot(0, VSRC_KEYS) == 2, "keys over SEQ: took %d, want SEQ's oldest inner voice 2",
+              allocate_voice_slot(0, VSRC_KEYS));
+        for (int v = 0; v < 8; v++) poly_bank[v].src = VSRC_KEYS;
+        CHECK(allocate_voice_slot(0, VSRC_SEQ) == -1, "SEQ over a full keys layer: not dropped");
+        CHECK(allocate_voice_slot(0, VSRC_KEYS) == 0, "keys over keys: took %d, want the oldest, voice 0",
+              allocate_voice_slot(0, VSRC_KEYS));
+        for (int v = 0; v < 8; v++) poly_bank[v].is_gate_open = 0;
+    }
+
     /* 5. choke: lower the limit under held notes (SINGLE -> STACK), the extra voices fade without a click */
     synth_init();
     base_patch(&engine_state[0], VARCH_SINGLE);
-    engine_state[0].filter[0].mod_amt = BIPOLAR_CENTER;
+    engine_state[0].filter[0].mod_amt = 0;
     for (int i = 0; i < 8; i++) synth_midi_3(0x90, (uint8_t)(48 + i * 2), 100);
     render(4096);
     {
@@ -278,7 +306,7 @@ int main(void)
     /* 6. unison: stack size = limit, detune spreads symmetrically, level close to one voice */
     synth_init();
     base_patch(&engine_state[0], VARCH_SINGLE);
-    engine_state[0].filter[0].mod_amt = BIPOLAR_CENTER;
+    engine_state[0].filter[0].mod_amt = 0;
     synth_midi_3(0x90, 60, 100);
     render(2048);
     Stats one = render(44100);
@@ -352,7 +380,7 @@ int main(void)
         uint8_t col = colours[ci];
         synth_init();
         base_patch(&engine_state[0], VARCH_SINGLE);
-        engine_state[0].filter[0].mod_amt = BIPOLAR_CENTER;
+        engine_state[0].filter[0].mod_amt = 0;
         engine_state[0].filter[0].cutoff = 127;
         engine_state[0].oscmix.balance = 0;
         engine_state[0].oscmix.noise_level = 127;
@@ -372,7 +400,7 @@ int main(void)
         /* (a) SINGLE, a low LP cutoff: the morph mod opens it towards BP / HP, the level changes */
         synth_init();
         base_patch(&engine_state[0], VARCH_SINGLE);
-        engine_state[0].filter[0].mod_amt = BIPOLAR_CENTER;
+        engine_state[0].filter[0].mod_amt = 0;
         engine_state[0].filter[0].cutoff = 40;
         engine_state[0].filter[0].morph = 0;
         engine_state[0].filter[0].morph_mod_src = MSRC_MODWHEEL;
@@ -393,7 +421,7 @@ int main(void)
          * real poles at 14 kHz took more of white's top octave than pink's) */
         synth_init();
         base_patch(&engine_state[0], VARCH_SINGLE);
-        engine_state[0].filter[0].mod_amt = BIPOLAR_CENTER;
+        engine_state[0].filter[0].mod_amt = 0;
         engine_state[0].filter[0].flavour = FLT_SH2;
         engine_state[0].filter[0].morph = 127;
         engine_state[0].filter[0].cutoff = 0;
@@ -420,7 +448,7 @@ int main(void)
          * at wheel 0 */
         synth_init();
         base_patch(&engine_state[0], VARCH_BINAURAL);
-        engine_state[0].filter[0].mod_amt = BIPOLAR_CENTER;
+        engine_state[0].filter[0].mod_amt = 0;
         engine_state[0].filter[0].cutoff = 60;
         engine_state[0].oscmix.bin_beat = 0;
         engine_state[0].fltmix.bin_cutoff_mod_src = MSRC_MODWHEEL;
@@ -615,7 +643,7 @@ int main(void)
         for (int t = 0; t < 2; t++) {
             synth_init();
             base_patch(&engine_state[0], VARCH_SINGLE);
-            engine_state[0].filter[0].mod_amt = 64;   /* (no LFO on the cutoff: the pitch alone) */
+            engine_state[0].filter[0].mod_amt = 0;   /* (no LFO on the cutoff: the pitch alone) */
             instrument.master_tune = t ? MASTER_TUNE_MAX : 64u;
             synth_midi_3(0x90, 57, 100);
             render(4096);
@@ -660,6 +688,59 @@ int main(void)
             synth_mod_watch = -1;
             CHECK(C[k].live ? peak > 8000 : peak == 0, "MOD slot a*b, %s: peak %d", C[k].what, (int)peak);
         }
+    }
+
+    /* VEL > LEVEL (2026-10-26): ENV1's sets how much quieter a soft note is (0: none); ENV2's scales ENV2 for the note.
+     * DEPTH MOD: 127 on the mod wheel, the wheel down stops LFO2, up gives it full; an LFO as the source reads as none */
+    {
+        double rms[2][2];
+        for (int amt = 0; amt < 2; amt++)
+            for (int vi = 0; vi < 2; vi++) {
+                synth_init();
+                base_patch(&engine_state[0], VARCH_SINGLE);
+                engine_state[0].filter[0].mod_amt = 0;
+                engine_state[0].env_vel_level[0] = amt ? 127u : 0u;
+                synth_midi_3(0x90, 60, vi ? 127 : 20);
+                render(2048);
+                rms[amt][vi] = render(8192).rms_l;
+                all_off();
+            }
+        CHECK(fabs(rms[0][0] - rms[0][1]) < 0.01 * rms[0][1], "VEL > LEVEL 0: velocity moved the level (%.0f vs %.0f)",
+              rms[0][0], rms[0][1]);
+        CHECK(rms[1][0] < 0.1 * rms[1][1] && rms[1][1] > 0.99 * rms[0][1], "VEL > LEVEL 127: soft %.0f, loud %.0f",
+              rms[1][0], rms[1][1]);
+
+        synth_init();
+        base_patch(&engine_state[0], VARCH_SINGLE);
+        engine_state[0].env_vel_level[1] = 127u;
+        engine_state[0].lfo_depth_src[1] = MSRC_MODWHEEL;
+        engine_state[0].lfo_depth_amt[1] = 127u;
+        engine_state[0].lfo_depth_src[2] = MSRC_LFO1;  /* refused: reads as none */
+        engine_state[0].lfo_depth_amt[2] = 127u;
+        engine_state[0].lfo[1].rate = 100;
+        synth_midi_3(0xB0, 1, 0);
+        synth_midi_3(0x90, 60, 64);
+        int32_t lfo_peak = 0;
+        for (int i = 0; i < 64; i++) {
+            render(256);
+            if (abs(poly_bank[0].lfo_q15[0]) > lfo_peak) lfo_peak = abs(poly_bank[0].lfo_q15[0]);
+        }
+        int32_t want_env = 32768 - (((32768 - ((64 * 64 * 16645) >> 13)) * (127 * 258)) >> 15);
+        CHECK(poly_bank[0].env_vel_q15[1] == want_env && poly_bank[0].env_vel_q15[2] == 32768,
+              "VEL > LEVEL: ENV2 gain %d (want %d), ENV3 %d", (int)poly_bank[0].env_vel_q15[1], (int)want_env,
+              (int)poly_bank[0].env_vel_q15[2]);
+        CHECK(poly_bank[0].lfo_gain_q15[1] < 100 && lfo_peak < 100 && poly_bank[0].lfo_gain_q15[2] == 32768,
+              "DEPTH MOD, wheel down: LFO2 gain %d, peak %d; LFO3 on LFO1 %d", (int)poly_bank[0].lfo_gain_q15[1],
+              (int)lfo_peak, (int)poly_bank[0].lfo_gain_q15[2]);
+        synth_midi_3(0xB0, 1, 127);
+        lfo_peak = 0;
+        for (int i = 0; i < 64; i++) {
+            render(256);
+            if (abs(poly_bank[0].lfo_q15[0]) > lfo_peak) lfo_peak = abs(poly_bank[0].lfo_q15[0]);
+        }
+        CHECK(poly_bank[0].lfo_gain_q15[1] > 32000 && lfo_peak > 20000, "DEPTH MOD, wheel up: LFO2 gain %d, peak %d",
+              (int)poly_bank[0].lfo_gain_q15[1], (int)lfo_peak);
+        all_off();
     }
 
     printf(fails ?"\n%d FAILED\n" : "\nall checks passed\n", fails);

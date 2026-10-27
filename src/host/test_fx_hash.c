@@ -1,7 +1,8 @@
 /* Host test: the effects' output hashes (src/dsp/fx.c), every reverb type with the tape echo, PING PONG off and on,
  * TAPE DEGRADE, over 8 s of noise then silence, compared with src/host/fx_hash_golden.txt. "hot" rows send the noise
  * at about 4x full scale, as a loud chord's summed sends do: the sends' limiters (2026-10-16) and the headroom after.
- * "bbd" rows: the BBD delay (DELAY TYPE, 2026-10-16) with PING PONG and a worn DEGRADE. The render hashes play the
+ * "bbd" rows: the BBD delay (DELAY TYPE, 2026-10-16) with PING PONG and a worn DEGRADE. "hp" rows (2026-10-26): DELAY HP
+ * in the feedback, the tape at 127 with PING PONG and FEEDBACK 112, the BBD at 64 and FEEDBACK 116. The render hashes play the
  * factory effects only (TOMB = the old ROOM network); this covers the tank (MOD, CELESTIAL, DOLMEN, TUMULUS) and the
  * stereo delay. A change meant to keep the sound must leave every line; one meant to alter it: listen, then --write.
  *   test_fx_hash [--write] [golden file]     (default src/host/fx_hash_golden.txt, run from the repo root) */
@@ -23,15 +24,16 @@ int main(int argc, char **argv)
     FILE *golden = fopen(path, writing ? "w" : "r");
     if (!golden) { printf("cannot open %s\n", path); return 1; }
     for (unsigned k = 0; k < sizeof types / sizeof types[0]; k++)
-        for (int pp = 0; pp < 4; pp++) {
-            int hot = pp == 2, bbd = pp == 3;
+        for (int pp = 0; pp < 6; pp++) {
+            int hot = pp == 2, bbd = pp == 3 || pp == 5, hp = pp >= 4;
             static MasterPerformancePreset p;
             memset(&p, 0, sizeof p);
             p.reverb_type = (uint8_t)types[k];
             p.reverb_decay = 100; p.reverb_damp = 50; p.reverb_predelay = 20;
-            p.delay_time = 40; p.delay_feedback = 80; p.delay_degrade = (uint8_t)(pp ? 110 : 36);
-            p.delay_pingpong = (uint8_t)(pp & 1);
+            p.delay_time = 59;   /* ~0.47 s: past TAPE_GAP_MAX, the slowed tape */ p.delay_feedback = 80; p.delay_degrade = (uint8_t)(pp ? 110 : 36);
+            p.delay_pingpong = (uint8_t)((pp & 1) | (pp == 4 ? 127 << 1 : pp == 5 ? 64 << 1 : 0));
             p.delay_type = (uint8_t)(bbd ? DELAYTYPE_BBD : DELAYTYPE_TAPE);
+            if (hp) p.delay_feedback = (uint8_t)(pp == 4 ? 112 : 116);
             fx_init();
             unsigned h = 2166136261u, seed = 1;
             int32_t d[128], r[128], w[128];
@@ -49,7 +51,9 @@ int main(int argc, char **argv)
                 }
             }
             char line[64], want[64];
-            if (hot)
+            if (hp)
+                snprintf(line, sizeof line, "reverb %d hp %d       %08x", types[k], pp - 4, h);
+            else if (hot)
                 snprintf(line, sizeof line, "reverb %d hot         %08x", types[k], h);
             else if (bbd)
                 snprintf(line, sizeof line, "reverb %d bbd         %08x", types[k], h);

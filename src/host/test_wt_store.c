@@ -40,8 +40,8 @@ static int req(uint32_t cmd, const uint8_t *a, uint32_t na)
 static int frames_on_image(void)
 {
     const int16_t *data = (const int16_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF);
-    for (int i = 0; i < NUM_BANKS * NUM_MORPH_STEPS; i++)
-        if (wavetable_frames[i] != data + i * WT_FRAME_SAMPLES) return 0;
+    for (int i = 0; i < NUM_IMAGE_BANKS * NUM_MORPH_STEPS; i++)     /* banks 1..16; bank 0 has an image of its own */
+        if (wavetable_frames[WT_BANK_FIRST_IMAGE * NUM_MORPH_STEPS + i] != data + i * WT_FRAME_SAMPLES) return 0;
     return 1;
 }
 

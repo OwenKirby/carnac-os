@@ -65,7 +65,8 @@ PS_STATIC_ASSERT(FLT_MULTI == 1, "filter_feedback_q12 (dsp/filter.h) tests flavo
 #define NOISE_PINK 64u
 #define NOISE_BROWN 127u
 enum {                               /* voice architecture, per patch: the signal path every voice runs (4.0) */
-    VARCH_SINGLE,                    /* OSC1 -> FILTER1 */
+    VARCH_SINGLE,                    /* OSC1 -> FILTER1. Not offered since 2026-10-26: loads as SPREAD at SPREAD 0, the same path
+                                      * (varch_single_to_spread) */
     VARCH_DUAL_OSC,                  /* OSC1 + OSC2 (cross-mod) -> FILTER1 */
     VARCH_SPREAD,                    /* OSC1 as 4 detuned playheads -> FILTER1 */
     VARCH_DUAL_FILTER,               /* OSC1 -> FILTER1 -> FILTER2 (serial .. parallel) */
@@ -73,6 +74,10 @@ enum {                               /* voice architecture, per patch: the signa
     VARCH_BINAURAL,                  /* OSC1 -> FILTER1 once per ear; the right ear is beat-offset, its LFO mod phase-offset */
     VARCH_STRIKE,                    /* SINGLE + a one-shot attack sample (dsp/attacks.h) at each note start, unfiltered:
                                       * the LA synth's PCM attack in front of its partial (2026-10-16) */
+    VARCH_FULL,                      /* OSC1 + OSC2 (cross-mod) -> FILTER1 / FILTER2 (serial .. parallel): DUAL OSC into
+                                      * DUAL FILTER (2026-10-26) */
+    VARCH_DUAL_SPREAD,               /* OSC1 + OSC2, each as 4 detuned playheads (SPREAD), by OSC MIX, no cross-mod -> FILTER1
+                                      * (2026-10-26) */
     VARCH_COUNT
 };
 #define VARCH_BIT(a) (1u << (a))
@@ -252,7 +257,8 @@ typedef struct {
 PS_STATIC_ASSERT(sizeof(ArpState) == 54u, "ArpState flash layout");
 
 /* the factory arp slot: every step empty (captured steps start from the default knob values), 1/4 steps (8.3's
- * rhythm cells are then the 16ths its table names), 8 steps, layer 1, no MAQ transpose, Phrygian, no accents */
+ * rhythm cells are then the 16ths its table names), 8 steps, layer 2 (2026-10-26: the SEQ has layer 1), no MAQ
+ * transpose, Phrygian, no accents */
 #define ARP_GATE_DEFAULT 96u
 #define ARP_RATE_DEFAULT ARPRATE_1_16  /* .. a 4-cell rhythm a beat long: one TIMING 1/4 step */
 #define ARP_TIMING_DEFAULT ARPDIV_1_4
@@ -293,7 +299,7 @@ static inline void arp_defaults(ArpState *a)
         a->steps[i].variation = 0u;
         a->steps[i].accent = 0u;
     }
-    a->layer_timing = (uint8_t)(ARPLAYER_L1 | ARP_TIMING_DEFAULT << 4);
+    a->layer_timing = (uint8_t)(ARPLAYER_L2 | ARP_TIMING_DEFAULT << 4);   /* L2, the SEQ's L1 (SINGL: plays on L1) */
     a->gate_length = ARP_GATE_DEFAULT;
     a->sequence_length = ARP_NSTEP;
     a->transpose_maq_option = 0u;
@@ -457,13 +463,23 @@ typedef struct {
                                           * keys about C4, 127 = an octave an octave. Here, not in FilterParams, so no
                                           * offset moves; stored in the high nibbles of the filter's two MSRC_* bytes,
                                           * which v9 left 0, so a v9 patch reads as 0 (no version bump) */
+    /* v10 (2026-10-26), at the end so no offset moves: */
+    uint8_t env_vel_level[NENV];     /* ENV1..3 VEL > LEVEL 0..127: how far a soft note lowers the envelope's level
+                                      * (0 none; ENV1's replaces the old fixed velocity-to-amp curve) */
+    uint8_t lfo_depth_src[NLFO];     /* LFO1..3 DEPTH MOD SRC, MSRC_* (no LFO or MOD slot: those read as none) */
+    uint8_t lfo_depth_amt[NLFO];     /* LFO1..3 DEPTH MOD AMT 0..127: 0 the LFO at full depth, 127 the source alone
+                                      * sets the depth (as AMP MOD) */
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 186u, "EngineState layout");
+PS_STATIC_ASSERT(sizeof(EngineState) == 195u, "EngineState layout");
+#define ENGINE_V9_RAM 186u           /* the v9 patch: today's without the v10 bytes at the end */
+#define ENV1_VEL_LEVEL_V9 111u       /* ENV1 VEL > LEVEL that plays as v9's fixed curve did (-18 dB at velocity 1) */
 /* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 173 is the most that keeps 22
  * patches to a store chunk (preset_store_fm1.c: (3840 - 16) / 173), so the chunks stay where they were. Since v7 the
  * stored form packs the name 6 bits a character and leaves out OSC1's SYNC and ENV1's INVERT (nothing reads them); v8
  * also packs the three LFOs' CLOCK SYNC and KEY RESET into one byte: 181 in RAM, 171 + 2 spare in flash; v9 spends the
- * two on the filters' DRIVE: 183 in RAM, 172 stored + 1 spare; ANALOG (2026-10-21, 184 in RAM) takes the spare; the filters' KEY TRACK (186 in RAM) the MSRC_* bytes' high nibbles. v8 (ENGINE_V8_RAM), v7 (179 in
+ * two on the filters' DRIVE: 183 in RAM, 172 stored + 1 spare; ANALOG (2026-10-21, 184 in RAM) takes the spare; the filters' KEY TRACK (186 in RAM) the MSRC_* bytes' high nibbles.
+ * v10 (2026-10-26, 195 in RAM) packs the envelopes' eight 0 / 1 bytes into one, which pays for VEL > LEVEL and DEPTH
+ * MOD AMT; each LFO's DEPTH MOD SRC rides in its SPD MOD SRC byte's high nibble: 172 stored + 1 spare. v8 (ENGINE_V8_RAM), v7 (179 in
  * RAM, atk_bend in the last stored byte) lacked the two BEND MOD bytes, v6 (173, stored as in RAM) atk_filter on,
  * v5 (170 bytes) all the attack bytes. */
 #define ENGINE_STORED_SIZE 173u
@@ -483,12 +499,31 @@ static inline uint8_t varch_of(const EngineState *e)
     return e->arch < VARCH_COUNT ? e->arch : (uint8_t)VARCH_SINGLE;
 }
 
+/* SINGLE left the ARCH list (2026-10-26): SPREAD at SPREAD 0 renders exactly its path (osc_render_block's undetuned
+ * playhead alone). A patch that still says SINGLE (a stored one, a factory one) becomes SPREAD with its spread and spread
+ * mod at 0, so it sounds as it did; SINGLE ignored both, so they may hold leftovers. New patches never say SINGLE, and an
+ * older firmware reads SPREAD as it is, so no record version moves. */
+static inline void varch_single_to_spread(EngineState *e)
+{
+    if (e->arch == VARCH_SINGLE) {
+        e->arch = VARCH_SPREAD;
+        e->oscmix.spread = 0;
+        e->oscmix.spread_mod_amt = 0;
+    }
+}
+
 /* the pages an architecture uses; the UI hides the rest (OSC1, OSCMIXER and FILTER1 always show) */
-static inline uint8_t varch_uses_osc2(uint8_t a) { return (uint8_t)(a == VARCH_DUAL_OSC || a == VARCH_STACK); }
-static inline uint8_t varch_uses_filter2(uint8_t a) { return (uint8_t)(a == VARCH_DUAL_FILTER || a == VARCH_STACK); }
+static inline uint8_t varch_uses_osc2(uint8_t a)
+{
+    return (uint8_t)(a == VARCH_DUAL_OSC || a == VARCH_STACK || a == VARCH_FULL || a == VARCH_DUAL_SPREAD);
+}
+static inline uint8_t varch_uses_filter2(uint8_t a)
+{
+    return (uint8_t)(a == VARCH_DUAL_FILTER || a == VARCH_STACK || a == VARCH_FULL);
+}
 static inline uint8_t varch_uses_fltmix(uint8_t a)
 {
-    return (uint8_t)(a == VARCH_DUAL_FILTER || a == VARCH_STACK || a == VARCH_BINAURAL);
+    return (uint8_t)(a == VARCH_DUAL_FILTER || a == VARCH_STACK || a == VARCH_BINAURAL || a == VARCH_FULL);
 }
 
 /* The most voices one patch may sound so its worst case still renders in real time, by architecture. The filter
@@ -499,12 +534,18 @@ static inline uint8_t varch_voice_cap(const EngineState *e)
 {
     static const uint8_t cap[VARCH_COUNT] = {
         8u,                          /* SINGLE */
-        5u,                          /* DUAL OSC */
-        6u,                          /* SPREAD (7 -> 6 2026-10-15: 7 with CELESTIAL went over budget) */
+        6u,                          /* DUAL OSC (5 -> 6 2026-10-26, measured: 5 and 6 both put 3 voices on the busier core;
+                                      * every row within 0.2 of 5, worst H CEL+PP 68.5) */
+        8u,                          /* SPREAD (7 -> 6 2026-10-15; 6 -> 8 2026-10-26 measured: 4 a core 57.5 .. 69.6 % heavy, only
+                                      * SH-2 + CELESTIAL over, 74.3) */
         7u,                          /* DUAL FILTER (5 -> 7 2026-10-15, measured) */
         6u,                          /* STACK (4 -> 6 2026-10-15, measured) */
         6u,                          /* BINAURAL: FILTER1's settings run twice, once per ear (4 -> 6 2026-10-15) */
         8u,                          /* STRIKE: SINGLE + an 8-bit sample read (~5 % of a voice on the host; to measure) */
+        4u,                          /* FULL: DUAL OSC's oscillators + DUAL FILTER's filters (2026-10-26 measured: 4 = 2 a core,
+                                      * worst 62 % (SH-2 heavy); 6 = 3 a core 71..82 %, and 5 still puts 3 on a core) */
+        4u,                          /* DUAL SPREAD: SPREAD's playheads on both oscillators (2026-10-26: 6 = 3 a core passed held
+                                      * notes but SEQ+ARP + CELESTIAL hit 95.6 %; 4 = 2 a core, held rows 47..59 %) */
     };
     return cap[varch_of(e)];
 }
@@ -595,7 +636,9 @@ typedef struct {
     uint8_t reverb_predelay;
     uint8_t delay_degrade;           /* TAPE DEGRADE: one macro over wow, flutter and the playback filtering (fx.c
                                       * tape_degrade): 0 = a new tape, 127 = worn out, default 36 */
-    uint8_t delay_pingpong;          /* PING PONG: 0 / 1, the echoes alternate left and right */
+    uint8_t delay_pingpong;          /* bit 0 PING PONG: the echoes alternate left and right; bits 1..7 DELAY HP
+                                      * (2026-10-26): the feedback's high-pass, 0 = off (older records: 0, no
+                                      * version bump). Read them through DELAY_PINGPONG / DELAY_HP */
     uint8_t delay_type;              /* DELAYTYPE_*: TAPE (default) or BBD */
     /* GLOBAL (4.6) */
     uint8_t midi_ch[NLAYER];         /* 0..15 = channel 1..16 (defaults 1, 2) */
@@ -606,6 +649,8 @@ typedef struct {
     uint8_t int_tempo;               /* INT TEMPO when CLOCK SOURCE is INTERNAL: BPM = 40 + value (default 80 = 120 BPM) */
 } MasterPerformancePreset;
 PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 51u, "MasterPerformancePreset flash layout");
+#define DELAY_PINGPONG(p) ((uint8_t)((p)->delay_pingpong & 1u))
+#define DELAY_HP(p) ((uint8_t)((p)->delay_pingpong >> 1))
 
 /* WHOLE_PERF (2026-10-17): a performance and everything it plays, as SAVE took it. The FM1 keeps these in flash only
  * (preset_store_fm1.c, both patches packed there: WHOLE_PERF_STORED_SIZE) and reads one when it is loaded; the
@@ -616,7 +661,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 893u, "WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 911u, "WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */

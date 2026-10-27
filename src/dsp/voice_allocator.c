@@ -38,6 +38,7 @@ void voice_allocator_init(void) {
         osc_set_phase(&n->osc2, ph);
         n->sub_phase = ph >> 1;
         n->layer = 0;
+        n->src = VSRC_KEYS;
         n->release_boost_q15 = 0;
 
         n->amp_env.level_q15 = 0;
@@ -71,6 +72,7 @@ void voice_allocator_init(void) {
         n->snap = 1;
         n->silent = 1;
         n->lfo_q15[0] = n->lfo_q15[1] = 0;
+        for (int k = 0; k < 3; k++) n->env_vel_q15[k] = n->lfo_gain_q15[k] = 32768;   /* unity */
 
         for (int i = 0; i < 2; i++) {
             n->poly_lfos.engines[i].phase_accumulator = 0;
@@ -108,8 +110,8 @@ int check_if_any_other_voice_held(int current_voice_index, uint8_t layer) {
     return 0;
 }
 
-/* -1 when the layer has no voices (layer 2 under SINGL_SYNTH) */
-int allocate_voice_slot(uint8_t layer) {
+/* -1 when the layer has no voices (layer 2 under SINGL_SYNTH), or a higher rank holds them all */
+int allocate_voice_slot(uint8_t layer, uint8_t src) {
     int first, count, end;
     pool_range(layer, &first, &count);
     if (count <= 0) return -1;
@@ -136,12 +138,27 @@ int allocate_voice_slot(uint8_t layer) {
     }
     if (oldest_released_voice != -1) return oldest_released_voice;
 
-    // Stage 3: Emergency Stealing (Active Held Notes)
-    int oldest_active_voice = first;
+    /* Stage 3: steal a held note (2026-10-26), from the lowest-ranked source holding one, never above the new note's
+     * (none: the note is dropped). Inside the ARP or the SEQ the middle goes first: with three or more notes their
+     * lowest and highest are kept, so a chord thins from the inside and a bass line or a top melody survives. Oldest of
+     * the rest; the keys' oldest, as always. */
+    int victim_src = -1, held_n = 0, lo = -1, hi = -1;
+    for (int v = first; v < end; v++)
+        if (poly_bank[v].src <= src && (victim_src < 0 || poly_bank[v].src < victim_src))
+            victim_src = poly_bank[v].src;
+    if (victim_src < 0) return -1;
+    for (int v = first; v < end && victim_src != VSRC_KEYS; v++) {
+        if (poly_bank[v].src != victim_src) continue;
+        held_n++;
+        if (lo < 0 || poly_bank[v].active_note < poly_bank[lo].active_note) lo = v;
+        if (hi < 0 || poly_bank[v].active_note >= poly_bank[hi].active_note) hi = v;
+    }
+    int oldest_active_voice = -1;
     uint32_t maximum_active_age = 0;
     for (int v = first; v < end; v++) {
+        if (poly_bank[v].src != victim_src || (held_n > 2 && (v == lo || v == hi))) continue;
         // FIXED: Using >= ensures chord notes don't stack up onto the same index slot during peak polyphony choke
-        if (poly_bank[v].age_counter >= maximum_active_age) {
+        if (oldest_active_voice < 0 || poly_bank[v].age_counter >= maximum_active_age) {
             maximum_active_age = poly_bank[v].age_counter;
             oldest_active_voice = v;
         }

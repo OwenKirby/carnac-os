@@ -170,6 +170,24 @@ static const PtScen SCEN[] = {
     {"BINAUR HEAVY OD", K_HELD, VARCH_BINAURAL, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_OVERDRIVE), UIPAGE_HOME1},
     {"STRIKE HEAVY TUBE", K_HELD, VARCH_STRIKE, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
     {"SEQ+ARP HOME TUBE", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
+    /* FULL (2026-10-26): DUAL OSC into DUAL FILTER at its cap (4: 2 voices a core; 6 measured 71..82 %) */
+    {"FULL", K_HELD, VARCH_FULL, FLT_MULTI, 0, UIPAGE_HOME1},
+    {"FULL HEAVY", K_HELD, VARCH_FULL, FLT_FORMANT, F_HEAVY, UIPAGE_HOME1},
+    {"FULL MULTI H", K_HELD, VARCH_FULL, FLT_MULTI, F_HEAVY, UIPAGE_HOME1},
+    {"FULL SH2 H", K_HELD, VARCH_FULL, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
+    {"FULL H CEL+PP", K_HELD, VARCH_FULL, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    {"FULL MULTI H PCM", K_HELD, VARCH_FULL, FLT_MULTI, F_HEAVY | F_PCM, UIPAGE_HOME1},
+    {"FULL SH2 H PCM", K_HELD, VARCH_FULL, FLT_SH2, F_HEAVY | F_PCM, UIPAGE_HOME1},
+    {"FULL SH2 CEL+PP", K_HELD, VARCH_FULL, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    /* DUAL SPREAD (2026-10-26): SPREAD on both oscillators -> FILTER1, at its cap (4: 2 a core; at 6 SEQ+ARP CEL was 95.6 %) */
+    {"DSPRD", K_HELD, VARCH_DUAL_SPREAD, FLT_MULTI, 0, UIPAGE_HOME1},
+    {"DSPRD HEAVY", K_HELD, VARCH_DUAL_SPREAD, FLT_FORMANT, F_HEAVY, UIPAGE_HOME1},
+    {"DSPRD MULTI H", K_HELD, VARCH_DUAL_SPREAD, FLT_MULTI, F_HEAVY, UIPAGE_HOME1},
+    {"DSPRD SH2 H", K_HELD, VARCH_DUAL_SPREAD, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
+    {"DSPRD H CEL+PP", K_HELD, VARCH_DUAL_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    {"DSPRD MULTI H PCM", K_HELD, VARCH_DUAL_SPREAD, FLT_MULTI, F_HEAVY | F_PCM, UIPAGE_HOME1},
+    {"DSPRD SH2 CEL+PP", K_HELD, VARCH_DUAL_SPREAD, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    {"SEQ+ARP DSPRD CEL", K_SEQ, VARCH_DUAL_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -263,7 +281,7 @@ static void patch(EngineState *e, const PtScen *s)
     e->oscmix.spread = 60;
     e->oscmix.xmod_amt = 20;
     e->filter[0].mod_src = MSRC_LFO1;
-    e->filter[0].mod_amt = 100;
+    e->filter[0].mod_amt = 72;
     e->filter[0].flavour = e->filter[1].flavour = s->flavour;
     e->filter[0].resonance = e->filter[1].resonance = 90;
     if (s->flags & F_HP)
@@ -285,7 +303,7 @@ static void patch(EngineState *e, const PtScen *s)
         e->mod[1] = (ModSlotParams){MSRC_MODSLOT1, MFN_LAG, MSRC_ENV2, 100};
         e->mod[2] = (ModSlotParams){MSRC_MODSLOT2, MFN_MUL, MSRC_LFO1, 110};
         e->filter[0].mod_src = MSRC_MODSLOT3;
-        e->filter[0].mod_amt = 120;
+        e->filter[0].mod_amt = 112;
     }
     if (s->flags & F_DRIVE) {
         e->amp.drive = 80;

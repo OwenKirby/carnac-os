@@ -63,7 +63,7 @@ int main(int argc, char **argv)
     e->lfo[0].speed_mod_amt = BIPOLAR_CENTER;     /* no speed modulation */
     e->lfo[0].key_reset = 0;                      /* grid-locked: cycles on the bar grid */
     e->filter[0].mod_src = MSRC_ENV2;
-    e->filter[0].mod_amt = 100;
+    e->filter[0].mod_amt = 72;
     e->filter[0].cutoff = 60;
     e->env[1].attack = 0;
     e->env[1].decay = 60;

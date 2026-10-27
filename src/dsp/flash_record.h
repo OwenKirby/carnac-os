@@ -18,8 +18,8 @@
 #include "global.h"
 
 /* the current layout of each kind: 1..0xFE */
-#define FREC_VER_ENGINE 9u           /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; 9: the filters' DRIVE, SH-2 for the SVF, one MS-20 (2026-10-21); v5 .. v8 migrate (engine_from_v5 / _v6 / _v7 / _v8) */
-#define FREC_VER_PERF   9u           /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4; 8: the patches' v9 (proto/sh2-filter builds); 9: the arp's v5 (2026-10-21); v6 .. v8 migrate: whole_perf_from_old */
+#define FREC_VER_ENGINE 10u          /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; 9: the filters' DRIVE, SH-2 for the SVF, one MS-20 (2026-10-21); 10: VEL > LEVEL, LFO DEPTH MOD, the cutoff MOD AMOUNT 0..127, the envelope flags packed (2026-10-26); v5 .. v9 migrate (engine_from_v5 / _v6 / _v7 / _v8 / _v9_stored) */
+#define FREC_VER_PERF   10u          /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4; 8: the patches' v9 (proto/sh2-filter builds); 9: the arp's v5 (2026-10-21); 10: the patches' v10 (2026-10-26); v6 .. v9 migrate: whole_perf_from_old */
 #define FREC_VER_SEQ    3u           /* SequencerLane[SEQ_NLANE], one sequencer slot (SEQ_SETTINGS); 2: scale, scale_root; 3: the 32-slot bank (2026-10-17, the lane unchanged: the 128-slot bank's chunks are left out, so the factory sequences show) */
 #define FREC_VER_ARP    5u           /* ArpState, one arp slot (ARP_SEQ); 2: chord_root (a MIDI note) and the 24-way variation; 3: TIE, accents; 4: each step's RATE where its gate was, the pattern's GATE where TIME DIVISION was (v3 migrates: arp_from_v3); 5: RATE the notes' rate, TIMING the steps' length (in LAYER's byte), HOLD the first style, its strum none / up / down (v4 migrates: arp_from_v4) */
 #define FREC_VER_GLOBAL 1u           /* GlobalSystemConfig */
@@ -86,63 +86,90 @@ static inline void frec_pack(FrecKind k, const void *payload, uint8_t *rec)
 /* the version byte of a stored record, for a migration that needs to know which layout it holds */
 static inline uint8_t frec_stored_version(const uint8_t *rec) { return rec[0]; }
 
-/* ---- a patch in flash (v8, v9): ENGINE_STORED_SIZE bytes. Every EngineState byte in order, but for the name, the two
- * bytes nothing reads (OSC1's SYNC: only OSC2 syncs; ENV1's INVERT: ENV1 is never inverted) and the three LFOs' CLOCK
- * SYNC and KEY RESET (0 / 1 each), then those six as bits of one byte, then the name at 6 bits a character
- * (UI_CHAR_MAP has 41), then 0s, ANALOG in the last byte (v9 left it 0: a v9 patch reads ANALOG 0, so it kept the version).
- * Each filter's KEY TRACK (2026-10-21) rides in the high nibbles of its MOD SRC (bits 0..3) and MORPH MOD SRC (bits
- * 4..7) bytes, which v9 left 0 (a source fits 4 bits): a v9 patch reads KEY TRACK 0, as it played.
- * Unpacked, the two unread bytes are 0. */
+/* ---- a patch in flash (v10): ENGINE_STORED_SIZE bytes. Every EngineState byte in order, but for the name, the two
+ * bytes nothing reads (OSC1's SYNC: only OSC2 syncs; ENV1's INVERT: ENV1 is never inverted), the three LFOs' CLOCK SYNC
+ * and KEY RESET, the envelopes' RETRIG SYNC and LEGATO and ENV2 / ENV3's INVERT (0 / 1 each) and the LFOs' DEPTH MOD
+ * SRC; then the LFO flags as bits of one byte, the envelope flags as bits of the next, then the name at 6 bits a
+ * character (UI_CHAR_MAP has 41), then 0s, ANALOG in the last byte. Each filter's KEY TRACK (2026-10-21) rides in the
+ * high nibbles of its MOD SRC (bits 0..3) and MORPH MOD SRC (bits 4..7) bytes, each LFO's DEPTH MOD SRC (v10) in the
+ * high nibble of its SPD MOD SRC byte (a source fits 4 bits). v9 (engine_store_unpack_v, v10 = 0) kept the envelope
+ * flags as bytes and had none of the v10 bytes. Unpacked, the two unread bytes are 0. */
 #define ENG_OFS_NAME ((uint32_t)offsetof(EngineState, name))
 #define ENG_OFS_UNREAD1 ((uint32_t)offsetof(EngineState, osc[0].sync))
 #define ENG_OFS_UNREAD2 ((uint32_t)offsetof(EngineState, env[0].invert))
 #define ENG_OFS_BEND ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_bend))
 #define ENG_OFS_LFO ((uint32_t)offsetof(EngineState, lfo))
+#define ENG_OFS_ENV ((uint32_t)offsetof(EngineState, env))
 #define ENG_OFS_ANALOG ((uint32_t)offsetof(EngineState, analog))
 #define ENG_OFS_FKT ((uint32_t)offsetof(EngineState, filter_key_track))
+#define ENG_OFS_V10 ((uint32_t)offsetof(EngineState, env_vel_level))
+#define ENG_OFS_LDSRC ((uint32_t)offsetof(EngineState, lfo_depth_src))
 #define ENG_OFS_FMSRC(i) ((uint32_t)offsetof(EngineState, filter[i].mod_src))
 #define ENG_OFS_FMMSRC(i) ((uint32_t)offsetof(EngineState, filter[i].morph_mod_src))
+#define ENG_OFS_LSPD(i) ((uint32_t)offsetof(EngineState, lfo[i].speed_mod_src))
 #define ENG_NAME_PACKED ((NAME_LEN * 6u + 7u) / 8u)
 #define ENG_NFLAG (2u * NLFO)
+#define ENG_NEFLAG (2u * NENV + 2u)
 PS_STATIC_ASSERT(CHAR_MAP_LEN <= 64u, "a name character fits 6 bits");
-PS_STATIC_ASSERT(ENG_NFLAG <= 8u, "the LFO flags fit a byte");
-PS_STATIC_ASSERT(MSRC_COUNT <= 16u, "a mod source fits 4 bits: the filters' KEY TRACK has the high nibbles");
-PS_STATIC_ASSERT(NFILTER == 2u && ENG_OFS_FKT + NFILTER == sizeof(EngineState), "KEY TRACK ends the patch");
-PS_STATIC_ASSERT(sizeof(EngineState) - 3u - NFILTER - ENG_NFLAG - NAME_LEN + 1u + ENG_NAME_PACKED < ENGINE_STORED_SIZE,
-                 "the packed patch fits ENGINE_STORED_SIZE, ANALOG's byte after it");
+PS_STATIC_ASSERT(ENG_NFLAG <= 8u && ENG_NEFLAG <= 8u, "the LFO flags and the envelope flags fit a byte each");
+PS_STATIC_ASSERT(MSRC_COUNT <= 16u, "a mod source fits 4 bits: KEY TRACK and DEPTH MOD SRC have the high nibbles");
+PS_STATIC_ASSERT(NFILTER == 2u && NENV == 3u && ENG_OFS_FKT + NFILTER == ENG_OFS_V10 && ENG_OFS_V10 == ENGINE_V9_RAM,
+                 "KEY TRACK ends the v9 patch, the v10 bytes after it");
+PS_STATIC_ASSERT(sizeof(EngineState) - 3u - NFILTER - ENG_NFLAG - ENG_NEFLAG - NLFO - NAME_LEN + 2u + ENG_NAME_PACKED <
+                 ENGINE_STORED_SIZE && ENGINE_V9_RAM - 3u - NFILTER - ENG_NFLAG - NAME_LEN + 1u + ENG_NAME_PACKED <
+                 ENGINE_STORED_SIZE, "the packed patch (v10 and v9) fits ENGINE_STORED_SIZE, ANALOG's byte after it");
 /* flag f (0..5): LFO f / 2's CLOCK SYNC (even) or KEY RESET (odd) */
 static inline uint32_t engine_flag_ofs(uint32_t f)
 {
     return ENG_OFS_LFO + (f >> 1) * (uint32_t)sizeof(LfoParams) +
            ((f & 1u) ? (uint32_t)offsetof(LfoParams, key_reset) : (uint32_t)offsetof(LfoParams, clock_sync));
 }
-static inline int engine_byte_stored(uint32_t i)
+/* envelope flag f (0..7): ENV f / 2's RETRIG SYNC (even) or LEGATO (odd); 6, 7: ENV2's, ENV3's INVERT */
+static inline uint32_t engine_eflag_ofs(uint32_t f)
+{
+    if (f >= 2u * NENV)
+        return ENG_OFS_ENV + (f - 5u) * (uint32_t)sizeof(EnvParams) + (uint32_t)offsetof(EnvParams, invert);
+    return ENG_OFS_ENV + (f >> 1) * (uint32_t)sizeof(EnvParams) +
+           ((f & 1u) ? (uint32_t)offsetof(EnvParams, legato) : (uint32_t)offsetof(EnvParams, retrig_sync));
+}
+static inline int engine_byte_stored_v(uint32_t i, int v10)
 {
     uint32_t f;
-    if (i == ENG_OFS_UNREAD1 || i == ENG_OFS_UNREAD2 || i == ENG_OFS_ANALOG || i >= ENG_OFS_FKT ||
+    if (i == ENG_OFS_UNREAD1 || i == ENG_OFS_UNREAD2 || i == ENG_OFS_ANALOG || (i >= ENG_OFS_FKT && i < ENG_OFS_V10) ||
         (i >= ENG_OFS_NAME && i < ENG_OFS_NAME + NAME_LEN))
         return 0;
+    if (i >= ENG_OFS_V10)
+        return v10 && !(i >= ENG_OFS_LDSRC && i < ENG_OFS_LDSRC + NLFO);
     for (f = 0; f < ENG_NFLAG; f++)
         if (i == engine_flag_ofs(f))
+            return 0;
+    for (f = 0; v10 && f < ENG_NEFLAG; f++)
+        if (i == engine_eflag_ofs(f))
             return 0;
     return 1;
 }
 static inline void engine_store_pack(const EngineState *e, uint8_t *out)
 {
     const uint8_t *d = (const uint8_t *)e;
-    uint32_t i, j = 0, acc = 0, bits = 0, fl = 0;
+    uint32_t i, k, j = 0, acc = 0, bits = 0, fl = 0, efl = 0;
     for (i = 0; i < sizeof(EngineState); i++)
-        if (engine_byte_stored(i)) {
+        if (engine_byte_stored_v(i, 1)) {
             uint8_t b = d[i];
             if (i == ENG_OFS_FMSRC(0) || i == ENG_OFS_FMSRC(1))
                 b = (uint8_t)((b & 15u) | (e->filter_key_track[i == ENG_OFS_FMSRC(1)] & 15u) << 4);
             else if (i == ENG_OFS_FMMSRC(0) || i == ENG_OFS_FMMSRC(1))
                 b = (uint8_t)((b & 15u) | (e->filter_key_track[i == ENG_OFS_FMMSRC(1)] >> 4) << 4);
+            for (k = 0; k < NLFO; k++)
+                if (i == ENG_OFS_LSPD(k))
+                    b = (uint8_t)((b & 15u) | (e->lfo_depth_src[k] & 15u) << 4);
             out[j++] = b;
         }
     for (i = 0; i < ENG_NFLAG; i++)
         fl |= (d[engine_flag_ofs(i)] ? 1u : 0u) << i;
     out[j++] = (uint8_t)fl;
+    for (i = 0; i < ENG_NEFLAG; i++)
+        efl |= (d[engine_eflag_ofs(i)] ? 1u : 0u) << i;
+    out[j++] = (uint8_t)efl;
     for (i = 0; i < NAME_LEN; i++) {
         acc |= (uint32_t)(e->name[i] & 63u) << bits;
         bits += 6u;
@@ -171,15 +198,27 @@ static inline void engine_name_unpack(const uint8_t *in, uint8_t *name)
         bits -= 6u;
     }
 }
-static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
+/* a stored v10 patch (v10 = 1), or a v9 one (0: its v10 bytes are left 0, engine_from_v9 gives them values) */
+static inline void engine_store_unpack_v(const uint8_t *in, EngineState *e, int v10)
 {
     uint8_t *d = (uint8_t *)e;
     uint32_t i, j = 0;
     for (i = 0; i < sizeof(EngineState); i++)
-        d[i] = engine_byte_stored(i) ? in[j++] : 0u;
+        d[i] = engine_byte_stored_v(i, v10) ? in[j++] : 0u;
     for (i = 0; i < ENG_NFLAG; i++)
         d[engine_flag_ofs(i)] = (uint8_t)((in[j] >> i) & 1u);
-    engine_name_unpack(in + j + 1u, e->name);
+    j++;
+    if (v10) {
+        for (i = 0; i < ENG_NEFLAG; i++)
+            d[engine_eflag_ofs(i)] = (uint8_t)((in[j] >> i) & 1u);
+        j++;
+        for (i = 0; i < NLFO; i++) {
+            LfoParams *l = &e->lfo[i];
+            e->lfo_depth_src[i] = (uint8_t)(l->speed_mod_src >> 4);
+            l->speed_mod_src &= 15u;
+        }
+    }
+    engine_name_unpack(in + j, e->name);
     e->analog = in[ENGINE_STORED_SIZE - 1u] <= VAL_MAX ? in[ENGINE_STORED_SIZE - 1u] : (uint8_t)0u;
     for (i = 0; i < NFILTER; i++) {
         FilterParams *f = &e->filter[i];
@@ -188,6 +227,58 @@ static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
         f->mod_src &= 15u;
         f->morph_mod_src &= 15u;
     }
+    varch_single_to_spread(e);
+}
+static inline void engine_store_unpack(const uint8_t *in, EngineState *e) { engine_store_unpack_v(in, e, 1); }
+
+/* ---- v9 -> v10 (2026-10-26): the v10 bytes as v9 played (ENV1's velocity at the old fixed curve, ENV2 / ENV3 none,
+ * the LFOs at full depth) and the cutoff's MOD AMOUNT from bipolar (64 = 0) to 0..127 (twice the steps): a positive
+ * amount keeps its depth, a negative one becomes 0. Every older patch ends here too. */
+static inline void engine_from_v9(EngineState *e)
+{
+    uint32_t i;
+    for (i = 0; i < NENV; i++)
+        e->env_vel_level[i] = i == 0u ? (uint8_t)ENV1_VEL_LEVEL_V9 : 0u;
+    for (i = 0; i < NLFO; i++) {
+        e->lfo_depth_src[i] = MSRC_MODWHEEL;
+        e->lfo_depth_amt[i] = 0u;
+    }
+    for (i = 0; i < NFILTER; i++) {
+        uint8_t a = e->filter[i].mod_amt;
+        e->filter[i].mod_amt = a <= BIPOLAR_CENTER ? 0u : a >= 127u ? (uint8_t)126u : (uint8_t)((a - BIPOLAR_CENTER) * 2u);
+    }
+}
+/* a patch as v9 stored it (engine_store_unpack_v's v10 = 0 layout; the host tests write old patches with it): the envelope flags as bytes, none of the v10 bytes,
+ * KEY TRACK in the filters' MSRC high nibbles, the LFO flags as bits, the name at 6 bits, ANALOG last */
+static inline void engine_store_pack_v9(const EngineState *e, uint8_t *out)
+{
+    const uint8_t *d = (const uint8_t *)e;
+    uint32_t i, j = 0, acc = 0, bits = 0, fl = 0;
+    for (i = 0; i < ENGINE_V9_RAM; i++)
+        if (engine_byte_stored_v(i, 0)) {
+            uint8_t b = d[i];
+            if (i == ENG_OFS_FMSRC(0) || i == ENG_OFS_FMSRC(1))
+                b = (uint8_t)((b & 15u) | (e->filter_key_track[i == ENG_OFS_FMSRC(1)] & 15u) << 4);
+            else if (i == ENG_OFS_FMMSRC(0) || i == ENG_OFS_FMMSRC(1))
+                b = (uint8_t)((b & 15u) | (e->filter_key_track[i == ENG_OFS_FMMSRC(1)] >> 4) << 4);
+            out[j++] = b;
+        }
+    for (i = 0; i < ENG_NFLAG; i++)
+        fl |= (d[engine_flag_ofs(i)] ? 1u : 0u) << i;
+    out[j++] = (uint8_t)fl;
+    for (i = 0; i < NAME_LEN; i++) {
+        acc |= (uint32_t)(e->name[i] & 63u) << bits;
+        for (bits += 6u; bits >= 8u; bits -= 8u, acc >>= 8) out[j++] = (uint8_t)acc;
+    }
+    if (bits) out[j++] = (uint8_t)acc;
+    while (j < ENGINE_STORED_SIZE - 1u) out[j++] = 0u;
+    out[j] = e->analog;
+}
+
+static inline void engine_from_v9_stored(const uint8_t *in, EngineState *e)
+{
+    engine_store_unpack_v(in, e, 0);
+    engine_from_v9(e);
 }
 
 /* ---- v8 -> v9 (2026-10-21): each FilterParams gained DRIVE, its last byte; the SVF became the SH-2 and MS-20 LOW /
@@ -200,7 +291,7 @@ static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
 #define ENG_OFS_DRIVE1 ((uint32_t)offsetof(EngineState, filter[1].drive))
 #define ENG_V8_OFS_UNREAD2 (ENG_OFS_UNREAD2 - 2u)
 #define ENG_V8_OFS_NAME (ENG_OFS_NAME - 2u)
-PS_STATIC_ASSERT(sizeof(EngineState) == ENGINE_V8_RAM + 3u + NFILTER && ENG_OFS_ANALOG == ENGINE_V8_RAM + 2u && ENG_OFS_DRIVE1 == ENG_OFS_DRIVE0 + sizeof(FilterParams) &&
+PS_STATIC_ASSERT(ENGINE_V9_RAM == ENGINE_V8_RAM + 3u + NFILTER && ENG_OFS_ANALOG == ENGINE_V8_RAM + 2u && ENG_OFS_DRIVE1 == ENG_OFS_DRIVE0 + sizeof(FilterParams) &&
                  ENG_OFS_DRIVE0 + 1u == (uint32_t)offsetof(EngineState, filter[1]) &&
                  ENG_OFS_UNREAD1 < ENG_OFS_DRIVE0 && ENG_OFS_UNREAD2 > ENG_OFS_DRIVE1 && ENG_OFS_LFO > ENG_OFS_DRIVE1 &&
                  ENG_OFS_NAME > ENG_OFS_DRIVE1, "v9: DRIVE ends each FilterParams, before the bytes the store leaves out");
@@ -251,6 +342,7 @@ static inline void engine_from_v8_ram(const uint8_t *v8, EngineState *e)
     e->analog = 0u;
     memset(e->filter_key_track, 0, sizeof e->filter_key_track);
     engine_filters_from_v8(e);
+    engine_from_v9(e);
 }
 /* a stored v8 patch -> today's stored form (both ENGINE_STORED_SIZE), in place: the two DRIVE bytes go in where the
  * store keeps them (only OSC1's SYNC, left out, sits before them), the 2 spare 0s at the end drop */
@@ -270,8 +362,9 @@ static inline void engine_from_v8(const uint8_t *in, EngineState *e)
     uint8_t st[ENGINE_STORED_SIZE];
     memcpy(st, in, sizeof st);
     engine_stored_from_v8(st);
-    engine_store_unpack(st, e);
+    engine_store_unpack_v(st, e, 0);
     engine_filters_from_v8(e);
+    engine_from_v9(e);
 }
 
 /* A v7 patch (ENGINE_STORED_SIZE bytes): its RAM layout (ENGINE_V7_RAM) was v8's without the two BEND MOD bytes
@@ -402,25 +495,29 @@ static inline void arp_from_v4(ArpState *a)
         }
     }
 }
-/* a stored v6, v7 or v8 whole performance (WHOLE_PERF_STORED_SIZE bytes, the same size: the patches after its own
- * settings, its arp last) to today's, in place: v6's arp to v4; (v6, v7) both patches from v8 to v9; (v6 .. v8)
- * the arp from v4 to v5. v8 is proto/sh2-filter's (patches v9, arp v4): main's first v8 (arp v5, patches v8) was
- * never installed, and is v9 now. */
+/* a stored v6 .. v9 whole performance (WHOLE_PERF_STORED_SIZE bytes, the same size: the patches after its own
+ * settings, its arp last) to today's, in place: v6's arp to v4; both patches to v10 ((v6, v7) from v8, (v8, v9) from
+ * v9); (v6 .. v8) the arp from v4 to v5. v8 is proto/sh2-filter's (patches v9, arp v4): main's first v8 (arp v5,
+ * patches v8) was never installed, and is v9 now. */
 static inline void whole_perf_from_old(uint8_t *stored, uint8_t ver)
 {
     uint32_t l;
     ArpState *a = (ArpState *)(void *)(stored + WHOLE_PERF_STORED_SIZE - sizeof(ArpState));
     if (ver == 6u)
         arp_from_v3(a);
-    for (l = 0; ver <= 7u && l < NLAYER; l++) {
+    for (l = 0; l < NLAYER; l++) {
         uint8_t *p = stored + sizeof(MasterPerformancePreset) + l * ENGINE_STORED_SIZE;
         EngineState t;
-        engine_from_v8(p, &t);
+        if (ver <= 7u)
+            engine_from_v8(p, &t);
+        else
+            engine_from_v9_stored(p, &t);
         engine_store_pack(&t, p);
     }
-    arp_from_v4(a);
+    if (ver <= 8u)
+        arp_from_v4(a);
 }
-#define WHOLE_PERF_OLD(ver) ((ver) >= 6u && (ver) <= 8u)   /* the stored versions whole_perf_from_old takes */
+#define WHOLE_PERF_OLD(ver) ((ver) >= 6u && (ver) <= 9u)   /* the stored versions whole_perf_from_old takes */
 
 /* record -> payload. Copies only on FREC_OK; otherwise the payload is left as it was. */
 static inline FrecStatus frec_unpack(FrecKind k, const uint8_t *rec, void *payload)

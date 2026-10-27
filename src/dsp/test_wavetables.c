@@ -67,7 +67,7 @@ static void test_levels(void)
 static void test_names(void)
 {
     CHECK(strcmp(wavetable_bank_names[0], "Menhir") == 0, "bank 0 name is '%s'", wavetable_bank_names[0]);
-    CHECK(strcmp(wavetable_bank_names[NUM_BANKS - 1], "Hearth") == 0,
+    CHECK(strcmp(wavetable_bank_names[NUM_BANKS - 1], "Dust") == 0,
           "last bank name is '%s'", wavetable_bank_names[NUM_BANKS - 1]);
 }
 

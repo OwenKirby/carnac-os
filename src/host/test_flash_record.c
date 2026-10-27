@@ -38,6 +38,17 @@ static void roundtrip(FrecKind k, const char *name, const void *src, uint16_t pa
     printf("%-8s record %3u B (version %u + %u B)\n", name, frec_size(k), frec_version(k), payload);
 }
 
+/* what engine_from_v9 makes of a v9 patch's v10 bytes and cutoff amounts */
+static void want_from_v9(EngineState *w)
+{
+    for (uint32_t i = 0; i < NENV; i++) w->env_vel_level[i] = i == 0u ? (uint8_t)ENV1_VEL_LEVEL_V9 : 0u;
+    for (uint32_t i = 0; i < NLFO; i++) { w->lfo_depth_src[i] = MSRC_MODWHEEL; w->lfo_depth_amt[i] = 0u; }
+    for (uint32_t f = 0; f < NFILTER; f++) {
+        uint8_t a = w->filter[f].mod_amt;
+        w->filter[f].mod_amt = a <= 64u ? 0u : a >= 127u ? 126u : (uint8_t)((a - 64u) * 2u);
+    }
+}
+
 int main(void)
 {
     SequencerLane seq[SEQ_NLANE];
@@ -78,6 +89,12 @@ int main(void)
                 e.filter[f].morph_mod_src &= 15u;
                 e.filter_key_track[f] = (uint8_t)(pass == 2 ? VAL_MAX - f : (f * 77u + (uint32_t)pass * 45u) & VAL_MAX);
             }
+            for (uint32_t f = 0; f < ENG_NEFLAG; f++)   /* v10: the envelope flags 0 / 1, as bits */
+                d[engine_eflag_ofs(f)] = (uint8_t)(((f * 5u + (uint32_t)pass) >> 1) & 1u);
+            for (uint32_t l = 0; l < NLFO; l++) {        /* v10: DEPTH MOD SRC in SPD MOD SRC's high nibble */
+                e.lfo[l].speed_mod_src &= 15u;
+                e.lfo_depth_src[l] = (uint8_t)((l * 7u + (uint32_t)pass * 3u) & 15u);
+            }
             frec_pack(FREC_ENGINE, &e, rec);
             CHECK(rec[FREC_SIZE_ENGINE - 1u] == e.analog, "ENGINE: ANALOG not in the last stored byte (pass %d)", pass);
             CHECK(rec[0] == FREC_VER_ENGINE, "ENGINE: version byte %u", rec[0]);
@@ -87,10 +104,61 @@ int main(void)
         }
         for (uint32_t f = 0; f < ENG_NFLAG; f++) {      /* each flag on its own: its own bit, the others stay 0 */
             memset(&e, 0, sizeof e);
+            e.arch = VARCH_SPREAD;                      /* (all zero is SINGLE, which loads as SPREAD) */
             ((uint8_t *)&e)[engine_flag_ofs(f)] = 1u;
             frec_pack(FREC_ENGINE, &e, rec);
             frec_unpack(FREC_ENGINE, rec, &back);
             CHECK(memcmp(&back, &e, sizeof e) == 0, "ENGINE: LFO flag %u alone", (unsigned)f);
+        }
+        for (uint32_t f = 0; f < ENG_NEFLAG; f++) {     /* v10: each envelope flag on its own */
+            memset(&e, 0, sizeof e);
+            e.arch = VARCH_SPREAD;                      /* (all zero is SINGLE, which loads as SPREAD) */
+            ((uint8_t *)&e)[engine_eflag_ofs(f)] = 1u;
+            frec_pack(FREC_ENGINE, &e, rec);
+            frec_unpack(FREC_ENGINE, rec, &back);
+            CHECK(memcmp(&back, &e, sizeof e) == 0, "ENGINE: envelope flag %u alone", (unsigned)f);
+        }
+        {                                               /* a SINGLE patch loads as SPREAD at SPREAD 0 (2026-10-26) */
+            memset(&e, 0, sizeof e);
+            e.oscmix.spread = 70;                       /* leftovers SINGLE ignored */
+            e.oscmix.spread_mod_amt = 30;
+            e.oscmix.spread_mod_src = MSRC_LFO1;
+            frec_pack(FREC_ENGINE, &e, rec);
+            frec_unpack(FREC_ENGINE, rec, &back);
+            CHECK(back.arch == VARCH_SPREAD && back.oscmix.spread == 0 && back.oscmix.spread_mod_amt == 0 &&
+                  back.oscmix.spread_mod_src == MSRC_LFO1, "ENGINE: SINGLE -> SPREAD at 0 (arch %u spread %u mod %u)",
+                  back.arch, back.oscmix.spread, back.oscmix.spread_mod_amt);
+            e.arch = VARCH_SPREAD;                      /* a SPREAD patch keeps its spread */
+            frec_pack(FREC_ENGINE, &e, rec);
+            frec_unpack(FREC_ENGINE, rec, &back);
+            CHECK(back.arch == VARCH_SPREAD && back.oscmix.spread == 70 && back.oscmix.spread_mod_amt == 30,
+                  "ENGINE: SPREAD patch lost its spread");
+        }
+        CHECK(engine_eflag_ofs(6) == offsetof(EngineState, env[1].invert) &&
+              engine_eflag_ofs(7) == offsetof(EngineState, env[2].invert) &&
+              engine_eflag_ofs(5) == offsetof(EngineState, env[2].legato), "ENGINE: the envelope flags' bytes");
+        /* a stored v9 patch -> v10: every byte where it was, the v10 bytes as v9 played, the cutoff amount doubled from
+         * its centre (a negative one 0) */
+        {
+            EngineState want;
+            uint8_t st9[ENGINE_STORED_SIZE], *w = (uint8_t *)&want;
+            for (uint32_t i = 0; i < sizeof want; i++) w[i] = (uint8_t)(i * 11u + 3u);
+            want.osc[0].sync = 0u; want.env[0].invert = 0u;
+            for (uint32_t f = 0; f < NFILTER; f++) {
+                want.filter[f].mod_src &= 15u; want.filter[f].morph_mod_src &= 15u;
+                want.filter_key_track[f] = (uint8_t)(30u + f * 50u);
+            }
+            for (uint32_t l = 0; l < NLFO; l++) { want.lfo[l].clock_sync = (uint8_t)(l & 1u); want.lfo[l].key_reset = 1u; }
+            for (uint32_t i = 0; i < NAME_LEN; i++) want.name[i] = (uint8_t)((i * 3u + 1u) % CHAR_MAP_LEN);
+            want.analog = 77u;
+            want.filter[0].mod_amt = 100u;   /* +36 -> 72 */
+            want.filter[1].mod_amt = 20u;    /* -44 -> 0 */
+            engine_store_pack_v9(&want, st9);
+            want_from_v9(&want);
+            CHECK(want.filter[0].mod_amt == 72u && want.filter[1].mod_amt == 0u, "ENGINE: v9 cutoff amounts");
+            memset(&back, 0xA5, sizeof back);
+            engine_from_v9_stored(st9, &back);
+            CHECK(memcmp(&back, &want, sizeof want) == 0, "ENGINE: a v9 patch to v10");
         }
         e.osc[0].sync = 1;
         e.env[0].invert = 1;
@@ -136,7 +204,7 @@ int main(void)
                 if (k >= (uint32_t)offsetof(EngineState, filter[0]) && r < 2u * sizeof(FilterParams)) {
                     r %= (uint32_t)sizeof(FilterParams);
                     if (r == offsetof(FilterParams, flavour) || r == offsetof(FilterParams, morph) ||
-                        r == offsetof(FilterParams, morph_mod_amt))
+                        r == offsetof(FilterParams, morph_mod_amt) || r == offsetof(FilterParams, mod_amt))
                         continue;                                                     /* converted: below */
                 }
                 ok &= b[k] == v7[i];
@@ -166,16 +234,17 @@ int main(void)
             for (uint32_t i = 0; i < NAME_LEN; i++) want.name[i] = (uint8_t)((i * 5u + 2u) % CHAR_MAP_LEN);
             want.filter[0].flavour = 3u; want.filter[0].morph = 40u; want.filter[0].drive = 0u;
             want.filter[1].flavour = 4u; want.filter[1].drive = 0u;
-            engine_store_pack(&want, st9);
+            engine_store_pack_v9(&want, st9);
             for (uint32_t i = 0; i < ENGINE_STORED_SIZE; i++)
                 if (i != ENG_ST_DRIVE0 && i != ENG_ST_DRIVE1) st8[j++] = st9[i];
             while (j < ENGINE_STORED_SIZE) st8[j++] = 0u;
             want.filter[0].flavour = FLT_MS20; want.filter[0].drive = 40u; want.filter[0].morph = (uint8_t)VAL_MAX;
             want.filter[0].morph_mod_amt = BIPOLAR_CENTER;
             want.filter[1].flavour = FLT_FORMANT;
+            want_from_v9(&want);
             memset(&back, 0xA5, sizeof back);
             engine_from_v8(st8, &back);
-            CHECK(memcmp(&back, &want, sizeof want) == 0, "ENGINE: a v8 patch to v9");
+            CHECK(memcmp(&back, &want, sizeof want) == 0, "ENGINE: a v8 patch to v10");
         }
         CHECK(filter_svf_to_multi(0u) == 36u && filter_svf_to_multi(64u) == 73u && filter_svf_to_multi(127u) == 91u &&
               !strcmp(filter_multi_mode_name(36), "LP12") && !strcmp(filter_multi_mode_name(73), "BP") &&

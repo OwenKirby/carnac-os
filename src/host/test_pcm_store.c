@@ -3,11 +3,14 @@
  * an upload through the editor commands attaches and survives a reboot; the waves read back byte for byte; a cut-off
  * upload, a damaged byte, writes out of order or past the area, and images with a bad entry leave the area empty; an
  * upload never writes outside its area; the WAVE entries list in order and their references find their samples (format
- * version 2); then the .syx pcm_store_upload.py makes from gen_pcm_waves.py's area 1 image replays.
+ * version 2); then the .syx pcm_store_upload.py makes from gen_pcm_waves.py's area 1 image replays. Area 2, wavetable
+ * bank 0's image (2026-10-26, Foundations): it uploads, attaches and survives a reboot; anything else there leaves bank 0
+ * on the sine; the other banks and the PCM areas never move.
  *   python src/dsp/gen_pcm_waves.py --images-only
  *   python src/hardware/pcm_store_upload.py syx src/dsp/pcm_area1.bin demo.syx --area 1
  *   gcc -O1 -Wall -Wextra -Isrc -Isrc/dsp -Isrc/hardware src/host/test_pcm_store.c src/dsp/pcm_store.c \
- *       src/dsp/wavetable_attach.c src/dsp/wavetables.c src/dsp/wavetables_image.c -o test_pcm_store \
+ *       src/dsp/wavetable_attach.c src/dsp/wavetables.c src/dsp/wavetables_image.c \
+ *       src/host/foundations_image_host.c -o test_pcm_store \
  *       && ./test_pcm_store demo.syx src/dsp/pcm_area1.bin
  * Exit status: the number of failed checks. */
 #include <stdio.h>
@@ -142,9 +145,114 @@ static const uint8_t *l2d(const PcmEntry *e, uint32_t a)
 {
     return (const uint8_t *)(const void *)(nor + (a ? 0xCE000u : 0x97000u)) + e->u.s.off;
 }
-static void reboot(void) { for (uint32_t a = 0; a < PCM_AREAS; a++) pcm_store_detach(a); pcm_boot(); }
+static void reboot(void)
+{
+    for (uint32_t a = 0; a < PCM_AREAS; a++) pcm_store_detach(a);
+    wavetable_bank_detach();
+    pcm_boot();
+}
+
+/* ---- area 2: bank 0's image */
+extern const uint8_t wavetable_image_host[WT_STORE_IMAGE_LEN];
+extern const uint8_t foundations_image_host[];
+extern const uint32_t foundations_image_host_len;
+static int bank0_sine(void)
+{
+    for (int f = 0; f < NUM_MORPH_STEPS; f++)
+        if (wavetable_frame(0, f, 0) != wavetable_sine) return 0;
+    return 1;
+}
+static int bank0_in_flash(void)
+{
+    for (int f = 0; f < NUM_MORPH_STEPS; f++)
+        if (wavetable_frame(0, f, 0) != (const int16_t *)(const void *)(nor + 0xBC000u + WT_BANK_HDR_SIZE) + f * WT_FRAME_SAMPLES)
+            return 0;
+    return 1;
+}
+static int image_banks_linked(void)
+{
+    for (int b = WT_BANK_FIRST_IMAGE; b < NUM_BANKS; b++)
+        if (wavetable_frame(b, 7, 0) != (const int16_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF) +
+                                          ((b - WT_BANK_FIRST_IMAGE) * NUM_MORPH_STEPS + 7) * WT_FRAME_SAMPLES)
+            return 0;
+    return 1;
+}
+/* PCM_ID: area a -> held (or -1 when the command is not handled); id_hcrc: the hcrc of that reply */
+static int id_of(uint32_t a)
+{
+    args[0] = (uint8_t)a;
+    reply_n = 0;
+    if (!ed_pcm_handle(ED_PCM_ID, args, 1) || reply[0] != a) return -1;
+    return reply[1];
+}
+static uint32_t id_hcrc(void)
+{
+    uint32_t w = 0;
+    for (uint32_t i = 0; i < 5u; i++) w |= (uint32_t)reply[2 + i] << (7u * i);
+    return w;
+}
+static void bank_tests(void)
+{
+    uint32_t i;
+    memset(nor, 0xFF, sizeof nor);
+    reboot();
+    CHECK(bank0_sine() && !wavetable_bank_used() && image_banks_linked(), "erased area 2: bank 0 plays the sine");
+    for (i = 0; i < 0x6000u; i++) nor[0xBC000u + i] = (uint8_t)(i * 13u + 1u);   /* old preset chunks */
+    reboot();
+    CHECK(bank0_sine(), "foreign data in area 2: bank 0 plays the sine");
+
+    memcpy(img, foundations_image_host, foundations_image_host_len);
+    img_len = foundations_image_host_len;
+    CHECK(img_len == WT_BANK_IMAGE_LEN, "the host image is one bank (%u B)", (unsigned)img_len);
+    for (int at = 0; at <= 64; at += at < 3 ? 1 : at < 58 ? 11 : 6) {  /* cut off up to the header (program 65) */
+        cut = 0; progs_left = at;
+        upload(2);
+        cut = 0; progs_left = -1;
+        reboot();
+        CHECK(bank0_sine(), "bank upload cut after %d programs: bank 0 plays the sine", at);
+    }
+    CHECK(upload(2) == 0 && reply[1] == 1u, "Foundations uploads to area 2 (rc 0, 1 bank)");
+    CHECK(bank0_in_flash() && wavetable_bank_used() == WT_BANK_IMAGE_LEN && image_banks_linked(),
+          "bank 0 reads area 2; banks 1..16 stay on the linked image");
+    CHECK(!memcmp(nor + 0xBC000u, foundations_image_host, foundations_image_host_len), "area 2 holds the image");
+    reboot();
+    CHECK(bank0_in_flash(), "bank 0 survives a reboot");
+    reply_n = 0;
+    args[0] = 2; args[1] = 0;
+    CHECK(ed_pcm_handle(ED_PCM_INFO, args, 2) && reply[0] == 3u && reply[1] == 2u && reply[2] == 1u &&
+          !strcmp((const char *)reply + 8, "Foundations"), "PCM_INFO area 2: 3 areas, 1 bank, its name");
+
+    CHECK(id_of(2) == 1 && id_hcrc() == ((const wt_bank_hdr_t *)(const void *)foundations_image_host)->hcrc,
+          "PCM_ID area 2: held, the image's hcrc");
+    CHECK(id_of(3) == 0 && reply_n == 7u, "PCM_ID area 3: not held");
+
+    nor[0xBC000u + WT_BANK_IMAGE_LEN - 1u] ^= 0x01u;
+    reboot();
+    CHECK(bank0_sine(), "a flipped data bit in area 2: bank 0 plays the sine (CRC)");
+    CHECK(id_of(2) == 0 && id_hcrc() == 0, "PCM_ID area 2 after the refused image: not held");
+
+    make(4, 1);
+    CHECK(upload(2) == 5 && reply[1] == 8u + 1u && bank0_sine(), "a PCM image in area 2: refused, the sine");
+    memcpy(img, foundations_image_host, foundations_image_host_len);
+    img_len = foundations_image_host_len;
+    ((wt_bank_hdr_t *)(void *)img)->bank_id ^= 1u;
+    ((wt_bank_hdr_t *)(void *)img)->hcrc = wavetable_crc32(0, img, WT_BANK_HDR_SIZE - 4u);
+    CHECK(upload(2) == 5 && reply[1] == 8u + 3u && bank0_sine(), "an image of another bank: refused (reason 3)");
+    memcpy(img, foundations_image_host, foundations_image_host_len);
+    CHECK(upload(2) == 0 && bank0_in_flash(), "Foundations again");
+
+    make(4, 1);
+    CHECK(upload(1) == 0 && pcm_area_count(1) == 4 && bank0_in_flash(), "a PCM upload to area 1 leaves bank 0");
+    CHECK(id_of(1) == 1 && id_hcrc() == ((const PcmHdr *)(const void *)img)->hcrc, "PCM_ID area 1: the PCM image's hcrc");
+    reboot();
+    CHECK(pcm_area_count(1) == 4 && bank0_in_flash() && image_banks_linked(), "both after a reboot");
+    CHECK(begin(3) == 1, "no area 3: rc 1");
+}
 
 /* every entry of img is entry first + i, with the same entry and samples (a LOOP's guard byte too) */
+/* the entries of the uploaded areas: the firmware's own area (PCM_AREA_FW) is always there, listed after them */
+static uint32_t flash_entries(void) { return pcm_entry_count() - pcm_area_count(PCM_AREA_FW); }
+
 static void same_waves(uint32_t first, uint32_t n, const char *what)
 {
     for (uint32_t i = 0; i < n; i++) {
@@ -193,11 +301,13 @@ int main(int argc, char **argv)
     /* fresh flash, then X0X's objects in area 0 and the old preset chunks in area 1: no image anywhere */
     memset(nor, 0xFF, sizeof nor);
     reboot();
-    CHECK(pcm_entry_count() == 0 && !pcm_entry(0, NULL) && pcm_wave_count() == 0, "erased flash: no entries");
+    CHECK(flash_entries() == 0 && pcm_wave_count() == 0, "erased flash: no entries");
+    CHECK(pcm_area_count(PCM_AREA_FW) > 0 && pcm_entry(0, NULL) && !pcm_wave(0),
+          "erased flash: the firmware's area still attached (%u entries), no waves", (unsigned)pcm_area_count(PCM_AREA_FW));
     for (i = 0; i < 0x9000u; i++) nor[0x97000u + i] = (uint8_t)(i * 31u);
     memcpy(nor + 0xCE000u, "CRNP", 4);
     reboot();
-    CHECK(pcm_entry_count() == 0, "foreign data: no entries");
+    CHECK(flash_entries() == 0, "foreign data: no entries");
 
     /* an upload to each area; nothing outside the area changes; the waves come back after a reboot */
     for (i = 0; i < sizeof nor; i++) nor[i] = (uint8_t)(i * 13u + 5u);
@@ -210,7 +320,7 @@ int main(int argc, char **argv)
     CHECK(!memcmp(nor + 0xCE000u, img, img_len), "area 1 holds the image");
     same_waves(0, 5, "area 1, attached");
     reboot();
-    CHECK(pcm_entry_count() == 5, "area 1 after a reboot: %u entries", (unsigned)pcm_entry_count());
+    CHECK(flash_entries() == 5, "area 1 after a reboot: %u entries", (unsigned)flash_entries());
     same_waves(0, 5, "area 1, after a reboot");
     memcpy(ref, nor, sizeof nor);
     make(3, 0);
@@ -219,7 +329,7 @@ int main(int argc, char **argv)
     CHECK(!memcmp(nor, ref, 0x97000u) && !memcmp(nor + 0xA0000u, ref + 0xA0000u, sizeof nor - 0xA0000u),
           "area 0 upload writes inside 0x97000..0x9FFFF only");
     reboot();
-    CHECK(pcm_entry_count() == 8 && pcm_area_count(0) == 3 && pcm_area_count(1) == 5, "both areas: 3 + 5 entries");
+    CHECK(flash_entries() == 8 && pcm_area_count(0) == 3 && pcm_area_count(1) == 5, "both areas: 3 + 5 entries");
     same_waves(0, 3, "area 0 first in the list");
 
     /* the wave list: area 0's WAVE (entry 2), then area 1's (entry 5); a reference finds its sample, of its kind only */
@@ -231,7 +341,8 @@ int main(int argc, char **argv)
         CHECK(l == pcm_entry(4, NULL) && d == l2d(l, 1), "area 1's wave: its loop A");
         CHECK(pcm_sample(w->u.w.atk_ref, PCM_ONESHOT, &d) == pcm_entry(3, NULL), "area 1's wave: its attack");
         CHECK(!pcm_sample(w->u.w.atk_ref, PCM_LOOP, &d) && !d, "a reference of the wrong kind: none");
-        CHECK(!pcm_sample(PCM_REF(1, 9), PCM_LOOP, NULL) && !pcm_sample(PCM_REF(2, 0), PCM_LOOP, NULL),
+        CHECK(!pcm_sample(PCM_REF(1, 9), PCM_LOOP, NULL) && !pcm_sample(PCM_REF(PCM_AREA_FW, 62), PCM_LOOP, NULL) &&
+              !pcm_sample(PCM_REF(PCM_AREAS, 0), PCM_LOOP, NULL),
               "a reference past the entries or the areas: none");
     }
 
@@ -239,7 +350,7 @@ int main(int argc, char **argv)
     args[0] = 1; args[1] = 0;
     reply_n = 0;
     ed_pcm_handle(ED_PCM_INFO, args, 2);
-    CHECK(reply[0] == PCM_AREAS && reply[1] == 1 && reply[2] == 5 && reply[3] == 56 && !strcmp((char *)reply + 8, "ENTRY 0"),
+    CHECK(reply[0] == PCM_ALL_AREAS && reply[1] == 1 && reply[2] == 5 && reply[3] == 56 && !strcmp((char *)reply + 8, "ENTRY 0"),
           "PCM_INFO area 1: 5 entries, 56 KiB, ENTRY 0 first");
 
     /* the biggest image an area holds, and one byte too many */
@@ -273,7 +384,7 @@ int main(int argc, char **argv)
     CHECK(begin(1) == 0 && write_at(PCM_HDR_SIZE + 256u, 64) == 3, "a write that skips bytes: rc 3");
     CHECK(begin(1) == 0 && write_at(PCM_HDR_SIZE, 64) == 0 && end() == 3, "an END before every byte: rc 3");
     CHECK(end() == 3, "an END with no upload: rc 3");
-    CHECK(begin(2) == 1, "no area 2: rc 1");
+    CHECK(begin(3) == 1, "no area 3: rc 1");
     reboot();
     CHECK(pcm_area_count(1) == 0, "after the refused uploads: area 1 empty");
 
@@ -300,6 +411,8 @@ int main(int argc, char **argv)
         reboot();
         CHECK(pcm_area_count(1) == 0, "%s: area 1 empty after a reboot", bad[i]);
     }
+
+    bank_tests();
 
     /* the tool's own upload */
     if (argc > 2) {

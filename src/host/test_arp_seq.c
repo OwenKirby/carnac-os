@@ -449,7 +449,7 @@ int main(void)
         }
     }
 
-    /* ---- LAYER BOTH in DUAL: both channels; under SINGL the row falls back to L1 ---- */
+    /* ---- LAYER BOTH in DUAL: both channels; under SINGL the row keeps BOTH (it plays L1) ---- */
     reset();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     arp_set_layer(&arp_state, ARPLAYER_BOTH);
@@ -460,7 +460,7 @@ int main(void)
     CHECK(count(&la, 0x90) == 8 && (la.ev[0].st & 0x0Fu) == 0 && (la.ev[1].st & 0x0Fu) == 1, "BOTH: the chord on channels 1 and 2");
     perf_state.perf_mode = PERF_SINGL_SYNTH;
     ui_sm_enforce(&sm);
-    CHECK(ARP_LAYER(&arp_state) == ARPLAYER_L1, "SINGL: LAYER back to L1");
+    CHECK(ARP_LAYER(&arp_state) == ARPLAYER_BOTH, "SINGL: LAYER kept for the next DUAL");
     play(0);
     run(2);
     CHECK(all_off(&la) && la.stuck == 0, "no stuck notes after a layer change");

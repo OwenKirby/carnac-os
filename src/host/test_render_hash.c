@@ -8,7 +8,7 @@
  * meant to alter it: check by ear that it is right, then rewrite the golden file with --write and say why.
  *
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
- *       src/host/test_render_hash.c -o test_render_hash
+ *       src/host/foundations_image_host.c src/host/test_render_hash.c -o test_render_hash
  *   test_render_hash [--write] [golden file]     (default src/host/render_hash_golden.txt, run from the repo root) */
 #include <stdio.h>
 #include <stdint.h>
@@ -18,6 +18,7 @@
 #include "dsp/synth_runtime.h"
 #include "dsp/voice_allocator.h"
 #include "dsp/maq_seq.h"
+#include "dsp/wavetables.h"
 
 /* --core2: a stand-in second core (synth_set_core2) that runs the job when it is waited for, as the FM1's does after
  * core 0's share; --core2-fail: one that takes the job and fails, so core 0 does it. Same hashes either way. */
@@ -81,9 +82,9 @@ static void patch(EngineState *e, uint8_t arch, int noise, int slots)
         e->mod[0] = (ModSlotParams){MSRC_LFO2, MFN_SAMPLE_B_ON_A, MSRC_LFO3, 120};
         e->mod[1] = (ModSlotParams){MSRC_MODSLOT1, MFN_LAG, MSRC_ENV2, 100};
         e->mod[2] = (ModSlotParams){MSRC_MODSLOT2, MFN_MUL, MSRC_LFO1, 110};
-        e->filter[0].mod_src = MSRC_MODSLOT3; e->filter[0].mod_amt = 120;
+        e->filter[0].mod_src = MSRC_MODSLOT3; e->filter[0].mod_amt = 112;
     } else {
-        e->filter[0].mod_src = MSRC_LFO1; e->filter[0].mod_amt = 120;
+        e->filter[0].mod_src = MSRC_LFO1; e->filter[0].mod_amt = 112;
     }
 }
 
@@ -112,6 +113,14 @@ int main(int argc, char **argv)
     }
     golden = fopen(path, writing ? "w" : "r");
     if (!golden) { printf("cannot open %s\n", path); return 1; }
+    {   /* wavetable bank 0, Foundations, as on a unit it was uploaded to (2026-10-26) */
+        extern const uint8_t foundations_image_host[];
+        extern const uint32_t foundations_image_host_len;
+        if (wavetable_bank_attach(foundations_image_host, foundations_image_host_len) != 1) {
+            printf("the Foundations image does not attach\n");
+            return 1;
+        }
+    }
 
     for (uint8_t a = 0; a < VARCH_COUNT; a++)
         for (int noise = 0; noise < 3; noise++)

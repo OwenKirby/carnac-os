@@ -67,7 +67,7 @@ VER=$(printf %s "${SYNTH_VERSION:-WEB}" | tr a-z A-Z)
 # shellcheck disable=SC2086
 emcc -O2 -ffp-contract=off -std=gnu99 -Wall -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
     "-DSYNTH_VERSION=\"$VER\"" -Isrc -Isrc/dsp -Isrc/hardware -I$FW/src -I"$GEN" \
-    $SOURCES src/host/pcm_images_host.c src/host/carnac_web.c \
+    $SOURCES src/host/pcm_images_host.c src/host/foundations_image_host.c src/host/carnac_web.c \
     --no-entry -sSTANDALONE_WASM -sSTACK_SIZE=1048576 -sINITIAL_MEMORY=33554432 -sFILESYSTEM=0 \
     -o web/emu/carnac.wasm
 

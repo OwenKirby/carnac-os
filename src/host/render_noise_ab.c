@@ -63,7 +63,7 @@ static void patch(int scene)
     perf_state.perf_mode = PERF_SINGL_SYNTH;
     e->amp.reverb_send = 30;
     e->env[0].attack = 40; e->env[0].sustain = 120; e->env[0].release = 60;
-    e->filter[0].mod_amt = BIPOLAR_CENTER;
+    e->filter[0].mod_amt = 0;
     if (scene == 1) {
         e->arch = VARCH_SINGLE;
         e->filter[0].cutoff = 80; e->filter[0].resonance = 20;
@@ -82,7 +82,7 @@ static void patch(int scene)
 
 static void render(const char *dir, const char *label, int scene)
 {
-    static const uint32_t perf_of[9] = {0, 0, 0, 0, 0, 3, 4, 9, 15};   /* HYPOGEUM, SKARA BRAE, CURSUS, BONE FLUTE */
+    static const uint32_t perf_of[9] = {0, 0, 0, 0, 0, 0, 1, 2, 3};   /* (2026-10-27: RITES OF STONE's noise perfs are gone) */
     char path[512], name[40];
     uint32_t len, play = 0, frame = 0;
     double sum = 0.0, peak = 0.0;
@@ -96,8 +96,8 @@ static void render(const char *dir, const char *label, int scene)
     } else {
         uint32_t s = perf_of[scene], i;
         snprintf(name, sizeof name, "%d_", scene);
-        for (i = 0; FV_TAB[s].name[i] && i < 16; i++)
-            name[2 + i] = FV_TAB[s].name[i] == ' ' ? '_' : FV_TAB[s].name[i];
+        for (i = 0; FP_TAB[s].name[i] && i < 16; i++)
+            name[2 + i] = FP_TAB[s].name[i] == ' ' ? '_' : FP_TAB[s].name[i];
         name[2 + i] = 0;
         load_perf(s);
         synth_restart();

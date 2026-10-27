@@ -79,7 +79,7 @@ int main(void)
 
     /* HOME View 1 rows: ARCH, UNISON DETUNE greyed until UNISON, MAX VOICES read-only */
     dump("HOME1");
-    int arch_row = find_row("L1 ARCH"), det_row = find_row("L1 UNISON DETUNE"), vox_row = find_row("L1 MAX VOICES");
+    int arch_row = find_row("ARCH"), det_row = find_row("UNISON DETUNE"), vox_row = find_row("MAX VOICES");
     CHECK(arch_row >= 0 && det_row >= 0 && vox_row >= 0, "HOME1 rows missing");
     CHECK(ui_sm_row_state(&sm, (uint8_t)det_row) == UIROW_GREYED, "UNISON DETUNE should be greyed in POLY");
     CHECK(ui_sm_row_state(&sm, (uint8_t)vox_row) == UIROW_INFO, "MAX VOICES should be info");
@@ -105,7 +105,7 @@ int main(void)
     press(BTN_FX); CHECK(sm.page == UIPAGE_OSCMIX, "FX 3");
     dump("OSCMIX STACK"); knobs(UIPAGE_OSCMIX, "OSCMIX STACK");
     CHECK(find_row("XMOD TYPE") < 0 && find_row("XMOD MOD SRC") >= 0 && find_row("MIX MOD SRC") < 0 &&
-          find_row("SPREAD MOD SRC") < 0, "STACK OSCMIX rows (XMOD TYPE is knob 1)");
+          find_row("SPR MOD SRC") < 0, "STACK OSCMIX rows (XMOD TYPE is knob 1)");
     {
         UiKnobInfo i;
         uint8_t *p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i);
@@ -122,7 +122,7 @@ int main(void)
     press(BTN_SEL); press(BTN_SEL); press(BTN_SEL);
     CHECK(sm.page == UIPAGE_FLTMIX, "SEL to FLTMIX under STACK: %u", sm.page);
     dump("FLTMIX STACK"); knobs(UIPAGE_FLTMIX, "FLTMIX STACK");
-    CHECK(find_row("BLEND MOD SRC") >= 0 && find_row("ROUTING MOD SRC") < 0, "STACK FLTMIX rows");
+    CHECK(find_row("BLEND MOD SRC") >= 0 && find_row("RTG MOD SRC") < 0, "STACK FLTMIX rows");
 
     /* switch to SINGLE while on FILTER MIXER: the page vanishes, fall back to FILTER1 */
     engine_state[0].arch = VARCH_SINGLE;
@@ -138,7 +138,7 @@ int main(void)
     CHECK(sm.page == UIPAGE_OSCMIX, "FX skips OSC2 under SINGLE: %u", sm.page);
     dump("OSCMIX SINGLE"); knobs(UIPAGE_OSCMIX, "OSCMIX SINGLE");
     CHECK(find_row("NOISE COLOUR") < 0 && find_row("SUB OCTAVE") < 0 && find_row("XMOD TYPE") < 0 &&
-          find_row("COLOUR MOD SRC") >= 0 && find_row("COLOUR MOD AMT") >= 0 && find_row("SUB WAVE") >= 0,
+          find_row("COL MOD SRC") >= 0 && find_row("COL MOD AMT") >= 0 && find_row("SUB WAVE") >= 0,
           "SINGLE OSCMIX rows (colour and sub octave are knobs; the colour mod rows)");
     {
         UiKnobInfo i;
@@ -170,7 +170,7 @@ int main(void)
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == &engine_state[0].oscmix.noise_level &&
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i) == &engine_state[0].oscmix.sub_level &&
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i) == &engine_state[0].oscmix.spread_mod_amt, "SPREAD knobs");
-        CHECK(find_row("NOISE LEVEL") < 0 && find_row("SPREAD MOD AMT") < 0 && find_row("SPREAD MOD SRC") >= 0 &&
+        CHECK(find_row("NOISE LEVEL") < 0 && find_row("SPREAD MOD AMT") < 0 && find_row("SPR MOD SRC") >= 0 &&
               find_row("NOISE COLOUR") >= 0 && find_row("SUB OCTAVE") >= 0, "SPREAD rows");
     }
 
@@ -183,14 +183,14 @@ int main(void)
     press(BTN_SEL); press(BTN_SEL);
     CHECK(sm.page == UIPAGE_FLTMIX, "SEL FILTER1 -> FLTMIX under BINAURAL (skips FILTER2): %u", sm.page);
     dump("FLTMIX BINAURAL"); knobs(UIPAGE_FLTMIX, "FLTMIX BINAURAL");
-    CHECK(find_row("CUT L/R MOD SRC") >= 0 && find_row("CUT L/R MOD AMT") >= 0 && find_row("PHASE MOD SRC") >= 0,
+    CHECK(find_row("CUT L/R SRC") >= 0 && find_row("CUT L/R AMT") >= 0 && find_row("PHASE MOD SRC") >= 0,
           "BINAURAL FLTMIX: CUTOFF L/R's mod rows");
 
     /* DUAL FILTER: FILTER MIXER keeps the spec's balance / routing */
     engine_state[0].arch = VARCH_DUAL_FILTER;
     ui_sm_enforce(&sm);
     dump("FLTMIX DUAL FILTER"); knobs(UIPAGE_FLTMIX, "FLTMIX DUAL FILTER");
-    CHECK(find_row("ROUTING MOD SRC") >= 0 && find_row("CUT L/R MOD SRC") < 0, "DUAL FILTER routing row, no L/R mod");
+    CHECK(find_row("RTG MOD SRC") >= 0 && find_row("CUT L/R SRC") < 0, "DUAL FILTER routing row, no L/R mod");
     {
         uint8_t pg = sm.page;
         sm.page = UIPAGE_FILTER2;
@@ -219,7 +219,7 @@ int main(void)
      * (PERF PRESET, PERF MODE, the links) -> GLOBAL. Layered voices = min cap / 2 */
     press(BTN_HOME);
     CHECK(sm.page == UIPAGE_HOME2, "HOME with L2 in focus -> HOME2 (%u)", sm.page);
-    CHECK(find_row("PERF MODE") < 0 && find_row("L2 ARCH") == 0, "HOME2 starts with L2 ARCH");
+    CHECK(find_row("PERF MODE") < 0 && find_row("ARCH") == 0, "HOME2 starts with ARCH");
     {
         UiKnobInfo i;
         CHECK(ui_sm_knob(&sm, UIPAGE_HOME2, 1, 0, &i) == &sm.perf_knob[UIPERF_VELOCITY] &&
@@ -241,7 +241,7 @@ int main(void)
     /* SPLIT: L2 VOICE MODE and L2 UNISON DETUNE mirror layer 1 */
     perf_state.perf_mode = PERF_SPLIT_SYNTH;
     ui_sm_enforce(&sm);
-    CHECK(ui_sm_row_state(&sm, (uint8_t)find_row("L2 UNISON DETUNE")) == UIROW_GREYED, "L2 detune mirrored in SPLIT");
+    CHECK(ui_sm_row_state(&sm, (uint8_t)find_row("UNISON DETUNE")) == UIROW_GREYED, "L2 detune mirrored in SPLIT");
     /* SINGL: back to View 1, layer 2 voices 0 */
     perf_state.perf_mode = PERF_SINGL_SYNTH;
     ui_sm_enforce(&sm);
@@ -281,6 +281,20 @@ int main(void)
     ui_sm_enforce(&sm);
     press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
     CHECK(sm.page == UIPAGE_AMP, "GLO cycles AMP -> EFFECTS -> AMP (%u)", sm.page);
+    /* DELAY HP and PING PONG share delay_pingpong (bits 1..7, bit 0): each row turns its own bits */
+    press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_EFFECTS, "GLO -> EFFECTS (%u)", sm.page);
+    perf_state.delay_pingpong = 1u;
+    sm.s.current_param_focus = (uint8_t)find_row("DELAY HP");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 127);
+    CHECK(perf_state.delay_pingpong == 255u && DELAY_HP(&perf_state) == 127u && DELAY_PINGPONG(&perf_state) == 1u,
+          "DELAY HP to 127 keeps PING PONG (%u)", perf_state.delay_pingpong);
+    sm.s.current_param_focus = (uint8_t)find_row("PING PONG");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
+    CHECK(perf_state.delay_pingpong == 254u && ui_sm_row_value(&sm, (uint8_t)find_row("DELAY HP")) == 127u,
+          "PING PONG off keeps DELAY HP (%u)", perf_state.delay_pingpong);
+    perf_state.delay_pingpong = 0u;
+    press(BTN_GLO);
     press(BTN_SAVE);
     CHECK(sm.page == UIPAGE_SAVE_COMMIT, "SAVE opens the save page (%u)", sm.page);
     perf_state.perf_mode = PERF_SINGL_SYNTH;

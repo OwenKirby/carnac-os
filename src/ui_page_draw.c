@@ -8,7 +8,7 @@
  *               battery) at the right end
  *   y  22..78   knobs 1..4: each a stone circle (13 stones over 270 degrees, lit up to the value; bipolar values lit
  *               outwards from the top stone) with a pointer, its name above and its value below
- *   y  81..160  the menu list, 6 rows; the row under the Select Encoder cursor on the SEQ page's noisy ground, in white
+ *   y  81..160  the menu list, 4 rows in the runes at 2x (2026-10-26, was 6 at 1x); the row under the Select Encoder cursor on the SEQ page's noisy ground, in white
  *   y 163..234  the page's visualizer (below); MOD1..4 have no menu, so theirs takes y 81..234
  *   y 235..239  the ground: a dotted horizon, with a small stone tracking a playhead on ENV, LFO and OSC pages
  *
@@ -79,13 +79,13 @@
 #define PU_KNOB_Y 22
 #define PU_KNOB_H 57
 #define PU_KNOB_W 60                 /* 4 cells, 0 .. 239 */
-#define PU_DIAL_CY 29                /* the stone circle's centre in its cell */
-#define PU_DIAL_R 14
-#define PU_PTR_R 8
-#define PU_VAL_Y 44                  /* the value's band: rows 44 .. 56 */
+#define PU_DIAL_CY 30                /* the stone circle's centre in its cell */
+#define PU_DIAL_R 17                 /* (2026-10-26, was 14) its stones on rows 12 .. 45 */
+#define PU_PTR_R 10
+#define PU_VAL_Y 45                  /* the value's band: rows 45 .. 57 */
 #define PU_MENU_Y 81
-#define PU_ROW_H 13
-#define PU_MENU_ROWS 6u
+#define PU_ROW_H 20                  /* a row of runes at 2x (18 px) */
+#define PU_MENU_ROWS 4u
 #define PU_MENU_H 80
 #define PU_VIZ_Y 163
 #define PU_VIZ_H 72
@@ -652,8 +652,8 @@ static void pu_draw_menu(const UIStateMachine *sm)
 {
     char b[8];
     uint8_t n = ui_sm_row_count(sm), i, r, st, cur;
-    int32_t y, lw, ty;
-    uint16_t lc, vc, bg;
+    int32_t y;
+    uint16_t lc, vc;
     cv_begin(240, PU_MENU_H, SQC(BG));
     if (sm->page == UIPAGE_SAVE_COMMIT) {            /* (its one row, the name, is drawn large) */
         pu_draw_save_menu(sm);
@@ -668,31 +668,26 @@ static void pu_draw_menu(const UIStateMachine *sm)
         st = ui_sm_row_state(sm, r);
         if (st == UIROW_HIDDEN)
             continue;
-        y = 1 + (int32_t)i * PU_ROW_H;
-        ty = y + CAP_IN(S, PU_ROW_H);
+        y = (int32_t)i * PU_ROW_H;
         cur = (uint8_t)(r == sm->s.current_param_focus);
-        bg = SQC(BG);
         lc = st == UIROW_GREYED ? SQC(DIM) : SQC(MID);
         vc = st == UIROW_GREYED ? SQC(DIM) : SQC(TEXT);
         if (cur) {
-            bg = PUC_HL;
             lc = vc = SQC(HI);
             sq_noise_block(2, y, 230, PU_ROW_H, 0u, PU_MENU_Y, 1u);
         }
-        lw = sq_text_on(8, ty, &AF_S, ui_sm_row_label(sm, r), lc, bg);
-        {
-            const char *t = pu_row_text(sm, r, b);
-            int32_t w = sq_text_w(&AF_S, t), room = 226 - lw - 8;
-            if (w <= room)
-                sq_text_r(226, ty, &AF_S, t, vc, bg);
-            else
-                sq_text_fit(226 - room, ty, &AF_S, t, vc, bg, room);
+        {   /* label and value at 2x across 6 .. 230, a letter apart: 18 letters in all, which every row's label and
+             * longest value keep to (src/host/test_ui_rows_fit.c); past that the label is cut */
+            const char *l = ui_sm_row_label(sm, r), *t = pu_row_text(sm, r, b);
+            int32_t nt = pu_strlen(t), vw = PU_RUNE_N_W(nt, 2);
+            pu_rune_n(6, y + 1, l, lc, 2, (214 - vw) / 12, 0);
+            pu_rune_n(230 - vw, y + 1, t, vc, 2, nt, 0);
         }
     }
     if (n > PU_MENU_ROWS) {                          /* the scroll bar */
         int32_t h = PU_MENU_ROWS * PU_ROW_H, th = h * (int32_t)PU_MENU_ROWS / n, t0 = h * pu_top / n;
-        cv_rect(237, 1, 1, h, PUC_STONE);
-        cv_rect(236, 1 + t0, 3, th, SQC(MID));
+        cv_rect(237, 0, 1, h, PUC_STONE);
+        cv_rect(236, t0, 3, th, SQC(MID));
     }
     cv_blit(0, PU_MENU_Y);
 }
@@ -806,7 +801,7 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
     int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2;
     uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;
     uint32_t seed = 0x1234567u, sstep = 0xFFFFFFFFu / PV_W, step = sstep * (uint32_t)ncyc;
-    if (arch == VARCH_DUAL_OSC) { w2 = m->balance; w1 = 127 - w2; }
+    if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL || arch == VARCH_DUAL_SPREAD) { w2 = m->balance; w1 = 127 - w2; }
     if (arch == VARCH_STACK) { w2 = e->fltmix.balance; w1 = 127 - w2; }
     for (x = 0; x < PV_W; x++) {
         uint32_t ph = (uint32_t)x * step, sph = (uint32_t)x * sstep;
@@ -2444,7 +2439,8 @@ static uint32_t pu_glyph_sig(const UIStateMachine *sm, uint32_t h)
     return 0u;
 }
 
-static void page_draw(UIStateMachine *sm, uint32_t force)
+/* kept out of ui_screen_draw: inlined there it grows the -Os flash image by ~640 B (2026-10-26) */
+__attribute__((noinline)) static void page_draw(UIStateMachine *sm, uint32_t force)
 {
     static uint8_t pal_drawn = 0xFFu;
     uint8_t page = sm->page, layer = sm->s.active_synth_layer, k, dlg = (uint8_t)(sm->dialog != UIDLG_NONE);

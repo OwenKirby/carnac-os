@@ -9,8 +9,9 @@
   install/index.html            the web installer (web/site/installer.html with X0X's fm1pkg.js and fm1ota.js
                                 and the package's metadata inlined; Chrome or Edge, Web MIDI)
   firmware/carnac-VER.fwsc      the package the installer writes; also the download (+ .sha256)
-  firmware/pcm_areaN.bin        the PCM waves (src/dsp/pcm_area0.bin, pcm_area1.bin), which the installer writes after
-                                the firmware (src/hardware/pcm_store_upload.py's protocol)
+  firmware/pcm_areaN.bin        the PCM waves (src/dsp/pcm_area0.bin, pcm_area1.bin) and wavetable bank 0
+  firmware/foundations_bank.bin (Foundations, src/dsp/foundations_bank.bin), which the installer writes after the
+                                firmware where the FM1 lacks them (src/hardware/pcm_store_upload.py's protocol)
   manual/index.html             the manual: docs/manual.md (the Claude Doc's export) in web/site/manual.html
   guide/index.html              the button guide (web/site/guide.html, self-contained: its own rune font and drawing)
   play/                         the browser synth (web/emu, built by web/emu/build.sh), unless --no-emu
@@ -46,8 +47,10 @@ REPO = "https://github.com/OwenKirby/carnac-os"
 TIP = "https://ko-fi.com/orbvorgis"
 LOOK_FILES = ("carnac.css", "stones.js", "carnac-rune.woff", "splash.png")   # the FM1's look, shared by both pages
 EMU_FILES = ("index.html", "worklet.js", "carnac.wasm")
-PCM_IMAGES = {0: REPO_DIR / "src" / "dsp" / "pcm_area0.bin", 1: REPO_DIR / "src" / "dsp" / "pcm_area1.bin"}
-PCM_AREA_SIZE = {0: 0x9000, 1: 0xE000}          # src/hardware/pcm_store_fm1.c PCM_AREA
+PCM_IMAGES = {0: REPO_DIR / "src" / "dsp" / "pcm_area0.bin", 1: REPO_DIR / "src" / "dsp" / "pcm_area1.bin",
+              2: REPO_DIR / "src" / "dsp" / "foundations_bank.bin"}
+PCM_AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000}          # src/hardware/pcm_store_fm1.c PCM_AREA
+BANK_AREA = 2                                              # wavetable bank 0's image, not PCM (wavetables.h WT_BANK_*)
 MANUAL = REPO_DIR / "docs" / "manual.md"
 EMU_CARD = ('    <a class="tablet" href="play/"><strong>Play it in the browser</strong><span>The same synth engine, with sound: '
             'mouse, touch or keyboard, no FM1 needed.</span></a>\n')
@@ -101,11 +104,13 @@ def main():
     for area, src in PCM_IMAGES.items():
         img = src.read_bytes()
         magic, ver, count, n, crc = struct.unpack_from("<IHHII", img)
-        if magic != 0x57505243 or ver != 2 or n != len(img) or zlib.crc32(img[32:]) != crc or len(img) > PCM_AREA_SIZE[area]:
-            raise SystemExit(f"{src}: not a good version 2 PCM image for area {area} (src/dsp/gen_pcm_waves.py)")
+        want = (0x42575243, 1) if area == BANK_AREA else (0x57505243, 2)
+        if (magic, ver) != want or n != len(img) or zlib.crc32(img[32:]) != crc or len(img) > PCM_AREA_SIZE[area] or \
+                zlib.crc32(img[:28]) != struct.unpack_from("<I", img, 28)[0]:
+            raise SystemExit(f"{src}: not a good image for area {area} (src/dsp/gen_pcm_waves.py, gen_foundations.py)")
         shutil.copy(src, out / "firmware" / src.name)
         pcm.append({"area": area, "file": "../firmware/" + src.name, "sha256": hashlib.sha256(img).hexdigest(),
-                    "count": count, "len": n})
+                    "count": count, "len": n, "hcrc": struct.unpack_from("<I", img, 28)[0]})
     (out / "firmware" / (name + ".sha256")).write_text(f"{sha}  {name}\n", encoding="utf-8")
 
     page = (HERE / "installer.html").read_text(encoding="utf-8")

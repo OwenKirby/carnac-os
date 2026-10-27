@@ -22,7 +22,7 @@
 PS_STATIC_ASSERT((UI_QUEUE_LEN & (UI_QUEUE_LEN - 1u)) == 0u && UI_QUEUE_LEN <= 128u, "UI_QUEUE_LEN power of 2");
 PS_STATIC_ASSERT(UIPAGE_MOD3 - UIPAGE_MOD1 + 1 == NMODSLOT, "one EDIT page per mod slot");
 PS_STATIC_ASSERT(sizeof(EngineState) <= 256u && sizeof(MasterPerformancePreset) <= 256u, "uint8_t row offsets");
-PS_STATIC_ASSERT(VARCH_COUNT <= 8u, "UiRow.archs is a uint8_t mask");
+PS_STATIC_ASSERT(VARCH_COUNT <= 16u, "UiRow.archs is a uint16_t mask");
 
 /* ------------------------------------------------------- row tables --- */
 enum {                               /* how a row reads and writes its value */
@@ -42,8 +42,11 @@ enum {                               /* how a row reads and writes its value */
     RK_THEME,                        /* GLOBAL > THEME: UIStateMachine.theme */
     RK_INST,                         /* the byte at offset in the instrument settings (GLOBAL, sm->inst) */
     RK_FINE,                         /* RK_BYTE shown in cents (OSC FINE TUNE, osc_fine_cents) */
-    RK_WAVE                          /* RK_BYTE holding a wave code (pcm_osc.h): steps through the wave list (banks,
+    RK_PINGPONG,                     /* PING PONG: bit 0 of the byte at offset (delay_pingpong, DELAY_PINGPONG) */
+    RK_DELAY_HP,                     /* DELAY HP: bits 1..7 of the byte at offset (delay_pingpong, DELAY_HP) */
+    RK_WAVE,                         /* RK_BYTE holding a wave code (pcm_osc.h): steps through the wave list (banks,
                                       * PCM waves, attacks), shows the wave's name */
+    RK_DEPTH_SRC                     /* RK_BYTE holding an LFO's DEPTH MOD SRC: steps over the LFOs and MOD slots */
 };
 #define RF_LAYER2 (1u << 0)          /* a Layer 2 parameter: greyed under SINGL_SYNTH */
 #define RF_BIPOLAR (1u << 2)         /* stored 0..127 with 64 = 0: shown as -64..+63 */
@@ -63,20 +66,21 @@ typedef struct {
     uint8_t kind;                    /* RK_* */
     uint8_t flags;                   /* RF_* */
     const char *const *names;        /* value text for list values: names[value], NULL for a plain number */
-    uint8_t archs;                   /* VARCH_BIT mask of the architectures that show the row (VARCH_ALL: always) */
+    uint16_t archs;                  /* VARCH_BIT mask of the architectures that show the row (VARCH_ALL: always) */
     uint8_t via;                     /* MOD pages: 1 + the EngineState offset of the source selector that must name
                                       * the page's slot for the row to show; 0: every other row */
 } UiRow;
 
 #define OFS(type, member) ((uint8_t)offsetof(type, member))
 #define SRC_MAX ((uint8_t)(MSRC_COUNT - 1))
-#define A_ALL ((uint8_t)VARCH_ALL)
-#define A(x) ((uint8_t)VARCH_BIT(VARCH_##x))
+#define A_ALL ((uint16_t)VARCH_ALL)
+#define A(x) ((uint16_t)VARCH_BIT(VARCH_##x))
 
 /* value names for the row tables below, in enum order (the value is the index) */
+/* at most 5 letters: a source row's label and its value fit the menu at 2x (src/host/test_ui_rows_fit.c) */
 static const char *const MSRC_NAMES[] = {
-    "none", "velocity", "keyboard", "mod wheel", "aftertouch", "env1", "env2", "env3",
-    "lfo1", "lfo2", "lfo3", "modslot1", "modslot2", "modslot3", "customcc1", "customcc2",
+    "none", "velo", "keyb", "modwh", "aftch", "env1", "env2", "env3",
+    "lfo1", "lfo2", "lfo3", "mod1", "mod2", "mod3", "cc1", "cc2",
 };
 static const char *const FLT_NAMES[] = {"SH-2", "MULTI", "MS-20", "FORMANT"};
 static const char *const XMOD_NAMES[] = {"FM", "AM", "RING", "PM"};
@@ -86,7 +90,7 @@ static const char *const DRIVE_NAMES[] = {"SOFT", "HARD", "FOLD", "TAPE", "TUBE"
 PS_STATIC_ASSERT(sizeof(DRIVE_NAMES) / sizeof(DRIVE_NAMES[0]) == DRIVE_COUNT, "one name per DRIVE_*");
 static const char *const REVTYPE_NAMES[] = {"SPRING", "TOMB", "MOD", "CELESTIAL", "DOLMEN", "TUMULUS"};
 static const char *const PERF_NAMES[] = {"SINGL", "DUAL", "SPLIT"};
-static const char *const VARCH_NAMES[] = {"SINGLE", "DUAL OSC", "SPREAD", "DUAL FILT", "STACK", "BINAURAL", "STRIKE"};
+static const char *const VARCH_NAMES[] = {"SINGLE", "DUAL OSC", "SPREAD", "DUAL FILT", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL SPRD"};
 static const char *const VMODE_NAMES[] = {"MONO RETRIG", "MONO LEGATO", "POLY REUSE", "POLY RESET", "UNISON"};
 static const char *const PORTA_NAMES[] = {"CONST RATE", "CONST TIME", "LEGATO TIED"};
 static const char *const CLKSRC_NAMES[] = {"INTERNAL", "MIDI"};
@@ -151,13 +155,13 @@ PS_STATIC_ASSERT(sizeof(VARCH_NAMES) / sizeof(VARCH_NAMES[0]) == VARCH_COUNT, "o
 
 /* OSC1 / OSC2: knobs 1..4 are not rows (3: the knob frame cannot be highlighted); sync last, OSC2 only */
 /* SINGLE, SPREAD and STRIKE (2026-10-17): knob 3 is SCAN AMT, so FINE TUNE is a row there (OSC_KNOBS_SCAN) */
-#define A_SCANKNOB ((uint8_t)(VARCH_BIT(VARCH_SINGLE) | VARCH_BIT(VARCH_SPREAD) | VARCH_BIT(VARCH_STRIKE)))
+#define A_SCANKNOB ((uint16_t)(VARCH_BIT(VARCH_SINGLE) | VARCH_BIT(VARCH_SPREAD) | VARCH_BIT(VARCH_STRIKE)))
 static const UiRow OSC_ROWS[] = {
     {"WAVE", OFS(OscParams, wavebank), 0, 255, RK_WAVE, 0, NULL, A_ALL},
     {"FINE TUNE", OFS(OscParams, fine), 0, VAL_MAX, RK_FINE, 0, NULL, A_SCANKNOB},
     {"SCAN MOD SRC", OFS(OscParams, scan_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"SCAN MOD AMT", OFS(OscParams, scan_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, (uint8_t)(VARCH_ALL & ~A_SCANKNOB)},
-    {"PITCH MOD SRC", OFS(OscParams, pitch_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
+    {"SCAN MOD AMT", OFS(OscParams, scan_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, (uint16_t)(VARCH_ALL & ~A_SCANKNOB)},
+    {"PCH MOD SRC", OFS(OscParams, pitch_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"KEY TRACK", OFS(OscParams, key_track), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"OSC SYNC", OFS(OscParams, sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
 };
@@ -165,22 +169,22 @@ static const UiRow OSC_ROWS[] = {
  * cross-mod need OSC2 (STACK has XMOD TYPE on knob 1), SPREAD has its source row (spread and its amount are knobs),
  * BINAURAL adds the right ear's scan offset. The noise generator and the sub show everywhere; SINGLE has the noise
  * colour and the sub octave on knobs. */
-#define A_NOT_SINGLE ((uint8_t)(VARCH_ALL & ~(VARCH_BIT(VARCH_SINGLE) | VARCH_BIT(VARCH_STRIKE))))   /* NOISE COLOUR: a knob in both */
+#define A_NOT_SINGLE ((uint16_t)(VARCH_ALL & ~(VARCH_BIT(VARCH_SINGLE) | VARCH_BIT(VARCH_STRIKE))))   /* NOISE COLOUR: a knob in both */
 static const UiRow OSCMIX_ROWS[] = {
-    {"MIX MOD SRC", OFS(OscMixerParams, mix_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_OSC)},
-    {"MIX MOD AMT", OFS(OscMixerParams, mix_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC)},
-    {"XMOD MOD SRC", OFS(OscMixerParams, xmod_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_OSC) | A(STACK)},
-    {"XMOD TYPE", OFS(OscMixerParams, xmod_type), 0, XMOD_COUNT - 1, RK_BYTE, 0, XMOD_NAMES, A(DUAL_OSC)},
-    {"XMOD MOD AMT", OFS(OscMixerParams, xmod_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(STACK)},
-    {"SPREAD MOD SRC", OFS(OscMixerParams, spread_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(SPREAD)},
+    {"MIX MOD SRC", OFS(OscMixerParams, mix_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_OSC) | A(FULL) | A(DUAL_SPREAD)},
+    {"MIX MOD AMT", OFS(OscMixerParams, mix_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(FULL) | A(DUAL_SPREAD)},
+    {"XMOD MOD SRC", OFS(OscMixerParams, xmod_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_OSC) | A(STACK) | A(FULL)},
+    {"XMOD TYPE", OFS(OscMixerParams, xmod_type), 0, XMOD_COUNT - 1, RK_BYTE, 0, XMOD_NAMES, A(DUAL_OSC) | A(FULL)},
+    {"XMOD MOD AMT", OFS(OscMixerParams, xmod_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(STACK) | A(FULL)},
+    {"SPR MOD SRC", OFS(OscMixerParams, spread_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(SPREAD) | A(DUAL_SPREAD)},
     {"NOISE COLOUR", OFS(OscMixerParams, noise_colour), 0, VAL_MAX, RK_BYTE, 0, NULL, A_NOT_SINGLE},
-    {"COLOUR MOD SRC", OFS(OscMixerParams, noise_col_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"COLOUR MOD AMT", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    {"COL MOD SRC", OFS(OscMixerParams, noise_col_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
+    {"COL MOD AMT", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
     {"NOISE MOD SRC", OFS(OscMixerParams, noise_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"NOISE MOD AMT", OFS(OscMixerParams, noise_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
     {"R SCAN OFFSET", OFS(OscMixerParams, bin_scan_offset), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A(BINAURAL)},
     {"SUB OCTAVE", OFS(OscMixerParams, sub_octave), 0, SUBOCT_COUNT - 1, RK_BYTE, 0, SUBOCT_NAMES,
-     (uint8_t)(VARCH_ALL & ~VARCH_BIT(VARCH_SINGLE))},
+     (uint16_t)(VARCH_ALL & ~VARCH_BIT(VARCH_SINGLE))},
     {"SUB WAVE", OFS(OscMixerParams, sub_waveform), 0, SUBWAVE_COUNT - 1, RK_BYTE, 0, SUBWAVE_NAMES, A_ALL},
 };
 /* ATTACK (STRIKE only, 2026-10-16): the attack sound's settings beyond its knobs, in OscMixerParams; BEND MOD's source
@@ -213,35 +217,53 @@ PS_STATIC_ASSERT(offsetof(EngineState, filter_key_track) + 1u - offsetof(EngineS
 /* FILTER MIXER (4.2): DUAL FILTER's balance / routing sources, STACK's blend source, BINAURAL's phase mod source and
  * CUTOFF L/R's own mod source and amount */
 static const UiRow FLTMIX_ROWS[] = {
-    {"BALANCE MOD SRC", OFS(FilterMixerParams, balance_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_FILTER)},
-    {"ROUTING MOD SRC", OFS(FilterMixerParams, routing_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_FILTER)},
+    {"BAL MOD SRC", OFS(FilterMixerParams, balance_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_FILTER) | A(FULL)},
+    {"RTG MOD SRC", OFS(FilterMixerParams, routing_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_FILTER) | A(FULL)},
     {"BLEND MOD SRC", OFS(FilterMixerParams, balance_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(STACK)},
     {"PHASE MOD SRC", OFS(FilterMixerParams, bin_phase_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(BINAURAL)},
-    {"CUT L/R MOD SRC", OFS(FilterMixerParams, bin_cutoff_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(BINAURAL)},
-    {"CUT L/R MOD AMT", OFS(FilterMixerParams, bin_cutoff_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A(BINAURAL)},
+    {"CUT L/R SRC", OFS(FilterMixerParams, bin_cutoff_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(BINAURAL)},
+    {"CUT L/R AMT", OFS(FilterMixerParams, bin_cutoff_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A(BINAURAL)},
 };
-/* invert last, ENV2 / ENV3 only */
-static const UiRow ENV_ROWS[] = {
-    {"VEL > TIME", OFS(EnvParams, vel_to_time), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
-    {"KEY > TIME", OFS(EnvParams, key_to_time), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
-    {"RETRIG RATE", OFS(EnvParams, retrig_rate), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"RETRIG SYNC", OFS(EnvParams, retrig_sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
-    {"LEGATO", OFS(EnvParams, legato), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
-    {"AUTO DECAY", OFS(EnvParams, auto_decay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"INVERT", OFS(EnvParams, invert), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
-};
-static const UiRow LFO_ROWS[] = {
-    {"SPEED MOD SRC", OFS(LfoParams, speed_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"SPEED MOD AMT", OFS(LfoParams, speed_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
-    {"CLOCK SYNC", OFS(LfoParams, clock_sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
-    {"PHASE", OFS(LfoParams, phase), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"KEY RESET", OFS(LfoParams, key_reset), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
-};
+/* invert last, ENV2 / ENV3 only. VEL > LEVEL lives at the patch's end (EngineState.env_vel_level, v10), so each
+ * envelope page has its own table, as the FILTER pages: the row's offset counts from that envelope's block. */
+#define ENV_X_OFS(i) ((uint8_t)(offsetof(EngineState, env_vel_level) + (i) - offsetof(EngineState, env) - \
+                                (i) * sizeof(EnvParams)))
+#define ENV_ROWS(i) {                                                                                      \
+    {"VEL > LEVEL", ENV_X_OFS(i), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},                                     \
+    {"VEL > TIME", OFS(EnvParams, vel_to_time), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},              \
+    {"KEY > TIME", OFS(EnvParams, key_to_time), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},              \
+    {"RETRIG RATE", OFS(EnvParams, retrig_rate), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},                      \
+    {"RETRIG SYNC", OFS(EnvParams, retrig_sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},                      \
+    {"LEGATO", OFS(EnvParams, legato), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},                                \
+    {"AUTO DECAY", OFS(EnvParams, auto_decay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},                        \
+    {"INVERT", OFS(EnvParams, invert), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},                                \
+}
+static const UiRow ENV1_ROWS[] = ENV_ROWS(0);
+static const UiRow ENV2_ROWS[] = ENV_ROWS(1);
+static const UiRow ENV3_ROWS[] = ENV_ROWS(2);
+/* DEPTH MOD SRC / AMT (v10) live at the patch's end too (EngineState.lfo_depth_src / _amt): a table per LFO page */
+#define LFO_X_OFS(member, i) ((uint8_t)(offsetof(EngineState, member) + (i) - offsetof(EngineState, lfo) - \
+                                        (i) * sizeof(LfoParams)))
+#define LFO_ROWS(i) {                                                                                      \
+    {"DEPTH MOD SRC", LFO_X_OFS(lfo_depth_src, i), 0, SRC_MAX, RK_DEPTH_SRC, 0, MSRC_NAMES, A_ALL},        \
+    {"DEPTH MOD AMT", LFO_X_OFS(lfo_depth_amt, i), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},                   \
+    {"SPD MOD SRC", OFS(LfoParams, speed_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},              \
+    {"SPD MOD AMT", OFS(LfoParams, speed_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},           \
+    {"CLOCK SYNC", OFS(LfoParams, clock_sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},                        \
+    {"PHASE", OFS(LfoParams, phase), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},                                  \
+    {"KEY RESET", OFS(LfoParams, key_reset), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},                          \
+}
+static const UiRow LFO1_ROWS[] = LFO_ROWS(0);
+static const UiRow LFO2_ROWS[] = LFO_ROWS(1);
+static const UiRow LFO3_ROWS[] = LFO_ROWS(2);
+PS_STATIC_ASSERT(offsetof(EngineState, lfo_depth_amt) + 2u - offsetof(EngineState, lfo[2]) <= 255u &&
+                 offsetof(EngineState, env_vel_level) + 2u - offsetof(EngineState, env[2]) <= 255u,
+                 "VEL > LEVEL and DEPTH MOD in reach of a row offset");
 static const UiRow AMP_ROWS[] = {
     {"AMP MOD SRC", OFS(AmpParams, amp_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"PAN MOD SRC", OFS(AmpParams, pan_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"PAN MOD DEPTH", OFS(AmpParams, pan_mod_depth), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"DRIVE MODEL", OFS(AmpParams, drive_model), 0, DRIVE_COUNT - 1, RK_BYTE, 0, DRIVE_NAMES, A_ALL},
+    {"DRV MODEL", OFS(AmpParams, drive_model), 0, DRIVE_COUNT - 1, RK_BYTE, 0, DRIVE_NAMES, A_ALL},
 };
 /* MOD1..3 (4.5): the slot's own parameters are the knobs; the rows are where its output goes. A row per source
  * selector in the patch (the *_ROWS above carry the same selectors), shown while that selector names this page's slot
@@ -250,25 +272,25 @@ static const UiRow AMP_ROWS[] = {
 #define EOFS(member) OFS(EngineState, member)
 #define MDEST(label, src, amt, flags, archs) {label, EOFS(amt), 0, VAL_MAX, RK_BYTE, flags, NULL, archs, (uint8_t)(EOFS(src) + 1u)}
 #define MCHAIN(label, src) {label, EOFS(src), 0, 0, RK_CHAIN, 0, NULL, A_ALL, (uint8_t)(EOFS(src) + 1u)}
-#define A_OSC2 ((uint8_t)(A(DUAL_OSC) | A(STACK)))
-#define A_FLT2 ((uint8_t)(A(DUAL_FILTER) | A(STACK)))
+#define A_OSC2 ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL) | A(DUAL_SPREAD)))
+#define A_FLT2 ((uint16_t)(A(DUAL_FILTER) | A(STACK) | A(FULL)))
 static const UiRow MOD_ROWS[] = {
     MDEST("OSC1 SCAN", osc[0].scan_mod_src, osc[0].scan_mod_amt, 0, A_ALL),
     MDEST("OSC1 PITCH", osc[0].pitch_mod_src, osc[0].pitch_mod_amt, 0, A_ALL),
     MDEST("OSC2 SCAN", osc[1].scan_mod_src, osc[1].scan_mod_amt, 0, A_OSC2),
     MDEST("OSC2 PITCH", osc[1].pitch_mod_src, osc[1].pitch_mod_amt, 0, A_OSC2),
-    MDEST("OSC MIX", oscmix.mix_mod_src, oscmix.mix_mod_amt, 0, A(DUAL_OSC)),
-    MDEST("CROSS-MOD", oscmix.xmod_mod_src, oscmix.xmod_mod_amt, 0, A_OSC2),
-    MDEST("SPREAD", oscmix.spread_mod_src, oscmix.spread_mod_amt, 0, A(SPREAD)),
+    MDEST("OSC MIX", oscmix.mix_mod_src, oscmix.mix_mod_amt, 0, A(DUAL_OSC) | A(FULL) | A(DUAL_SPREAD)),
+    MDEST("CROSS-MOD", oscmix.xmod_mod_src, oscmix.xmod_mod_amt, 0, A(DUAL_OSC) | A(STACK) | A(FULL)),
+    MDEST("SPREAD", oscmix.spread_mod_src, oscmix.spread_mod_amt, 0, A(SPREAD) | A(DUAL_SPREAD)),
     MDEST("NOISE LEVEL", oscmix.noise_mod_src, oscmix.noise_mod_amt, RF_BIPOLAR, A_ALL),
     MDEST("NOISE COLOUR", oscmix.noise_col_mod_src, oscmix.noise_col_mod_amt, RF_BIPOLAR, A_ALL),
-    MDEST("F1 CUTOFF", filter[0].mod_src, filter[0].mod_amt, RF_BIPOLAR, A_ALL),
+    MDEST("F1 CUTOFF", filter[0].mod_src, filter[0].mod_amt, 0, A_ALL),
     MDEST("F1 MORPH", filter[0].morph_mod_src, filter[0].morph_mod_amt, RF_BIPOLAR, A_ALL),
-    MDEST("F2 CUTOFF", filter[1].mod_src, filter[1].mod_amt, RF_BIPOLAR, A_FLT2),
+    MDEST("F2 CUTOFF", filter[1].mod_src, filter[1].mod_amt, 0, A_FLT2),
     MDEST("F2 MORPH", filter[1].morph_mod_src, filter[1].morph_mod_amt, RF_BIPOLAR, A_FLT2),
-    MDEST("BALANCE", fltmix.balance_mod_src, fltmix.balance_mod_amt, RF_BIPOLAR, A(DUAL_FILTER)),
+    MDEST("BALANCE", fltmix.balance_mod_src, fltmix.balance_mod_amt, RF_BIPOLAR, A(DUAL_FILTER) | A(FULL)),
     MDEST("BLEND A/B", fltmix.balance_mod_src, fltmix.balance_mod_amt, RF_BIPOLAR, A(STACK)),
-    MDEST("ROUTING", fltmix.routing_mod_src, fltmix.routing_mod_amt, RF_BIPOLAR, A(DUAL_FILTER)),
+    MDEST("ROUTING", fltmix.routing_mod_src, fltmix.routing_mod_amt, RF_BIPOLAR, A(DUAL_FILTER) | A(FULL)),
     MDEST("PHASE", fltmix.bin_phase_mod_src, fltmix.bin_phase_mod_amt, RF_BIPOLAR, A(BINAURAL)),
     MDEST("CUTOFF L/R", fltmix.bin_cutoff_mod_src, fltmix.bin_cutoff_mod_amt, RF_BIPOLAR, A(BINAURAL)),
     MDEST("LFO1 SPEED", lfo[0].speed_mod_src, lfo[0].speed_mod_amt, RF_BIPOLAR, A_ALL),
@@ -287,12 +309,14 @@ PS_STATIC_ASSERT(sizeof(EngineState) < 255u, "MOD_ROWS: via = 1 + an EngineState
 #define PERF(member) OFS(MasterPerformancePreset, member)
 #define ENGB(member) OFS(EngineState, member)
 static const UiRow EFFECTS_ROWS[] = {
+    /* the delay's rows first, then the reverb's (2026-10-26) */
     {"DELAY TYPE", PERF(delay_type), 0, DELAYTYPE_COUNT - 1, RK_BYTE, 0, DELAYTYPE_NAMES, A_ALL},
     {"DELAY SYNC", PERF(delay_sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
-    {"REVERB TYPE", PERF(reverb_type), 0, REVTYPE_COUNT - 1, RK_BYTE, 0, REVTYPE_NAMES, A_ALL},
-    {"REVERB PREDELAY", PERF(reverb_predelay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"DEGRADE", PERF(delay_degrade), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"PING PONG", PERF(delay_pingpong), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
+    {"PING PONG", PERF(delay_pingpong), 0, 1, RK_PINGPONG, 0, BOOL_NAMES, A_ALL},
+    {"DELAY HP", PERF(delay_pingpong), 0, VAL_MAX, RK_DELAY_HP, 0, NULL, A_ALL},
+    {"REV TYPE", PERF(reverb_type), 0, REVTYPE_COUNT - 1, RK_BYTE, 0, REVTYPE_NAMES, A_ALL},
+    {"REV PREDELAY", PERF(reverb_predelay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
 };
 #define INST(member) OFS(InstrumentSettings, member)
 static const UiRow GLOBAL_ROWS[] = {
@@ -305,7 +329,7 @@ static const UiRow GLOBAL_ROWS[] = {
     {"CUSTOM CC2", PERF(cc2_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"BASE VELOCITY", PERF(base_velocity), 12, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"BEND RANGE", PERF(bend_range), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"CLOCK SOURCE", PERF(clock_source), 0, CLKSRC_COUNT - 1, RK_BYTE, 0, CLKSRC_NAMES, A_ALL},
+    {"CLOCK SRC", PERF(clock_source), 0, CLKSRC_COUNT - 1, RK_BYTE, 0, CLKSRC_NAMES, A_ALL},
     {"INT TEMPO", PERF(int_tempo), 0, VAL_MAX, RK_BYTE, RF_BPM, NULL, A_ALL},
     {"THEME", 0, 0, UITHEME_COUNT - 1, RK_THEME, 0, THEME_NAMES, A_ALL},
 };
@@ -314,23 +338,23 @@ static const UiRow GLOBAL_ROWS[] = {
  * rows in the same order (the cursor stays on its row across a layer switch). PERF MODE is on the performance browser
  * (UIPAGE_PERF) since 2026-10-17 */
 static const UiRow HOME1_ROWS[] = {
-    {"L1 ARCH", ENGB(arch), 0, VARCH_COUNT - 1, RK_ENG, 0, VARCH_NAMES, A_ALL},
-    {"L1 ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, 0, NULL, A_ALL},
-    {"L1 VOICE MODE", PERF(voice_mode), 0, VMODE_COUNT - 1, RK_BYTE, 0, VMODE_NAMES, A_ALL},
-    {"L1 UNISON DETUNE", PERF(unison_detune), 0, VAL_MAX, RK_BYTE, RF_UNISON, NULL, A_ALL},
-    {"L1 PORTA MODE", PERF(porta_mode), 0, PORTA_COUNT - 1, RK_BYTE, 0, PORTA_NAMES, A_ALL},
-    {"L1 PORTA TIME", PERF(porta_time), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"L1 MAX VOICES", 0, 0, VOICE_POOL, RK_VOICES, 0, NULL, A_ALL},
+    {"ARCH", ENGB(arch), VARCH_DUAL_OSC, VARCH_COUNT - 1, RK_ENG, 0, VARCH_NAMES, A_ALL},   /* SINGLE: SPREAD at 0 */
+    {"ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, 0, NULL, A_ALL},
+    {"VOICING", PERF(voice_mode), 0, VMODE_COUNT - 1, RK_BYTE, 0, VMODE_NAMES, A_ALL},
+    {"UNISON DETUNE", PERF(unison_detune), 0, VAL_MAX, RK_BYTE, RF_UNISON, NULL, A_ALL},
+    {"PORTA", PERF(porta_mode), 0, PORTA_COUNT - 1, RK_BYTE, 0, PORTA_NAMES, A_ALL},
+    {"PORTA TIME", PERF(porta_time), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"MAX VOICES", 0, 0, VOICE_POOL, RK_VOICES, 0, NULL, A_ALL},
 };
 static const UiRow HOME2_ROWS[] = {
-    {"L2 ARCH", ENGB(arch), 0, VARCH_COUNT - 1, RK_ENG, RF_LAYER2, VARCH_NAMES, A_ALL},
-    {"L2 ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, RF_LAYER2, NULL, A_ALL},
-    {"L2 VOICE MODE", (uint8_t)(PERF(voice_mode) + 1u), 0, VMODE_COUNT - 1, RK_BYTE, RF_LAYER2, VMODE_NAMES, A_ALL},
-    {"L2 UNISON DETUNE", (uint8_t)(PERF(unison_detune) + 1u), 0, VAL_MAX, RK_BYTE,
+    {"ARCH", ENGB(arch), VARCH_DUAL_OSC, VARCH_COUNT - 1, RK_ENG, RF_LAYER2, VARCH_NAMES, A_ALL},
+    {"ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, RF_LAYER2, NULL, A_ALL},
+    {"VOICING", (uint8_t)(PERF(voice_mode) + 1u), 0, VMODE_COUNT - 1, RK_BYTE, RF_LAYER2, VMODE_NAMES, A_ALL},
+    {"UNISON DETUNE", (uint8_t)(PERF(unison_detune) + 1u), 0, VAL_MAX, RK_BYTE,
      RF_LAYER2 | RF_UNISON, NULL, A_ALL},
-    {"L2 PORTA MODE", (uint8_t)(PERF(porta_mode) + 1u), 0, PORTA_COUNT - 1, RK_BYTE, RF_LAYER2, PORTA_NAMES, A_ALL},
-    {"L2 PORTA TIME", (uint8_t)(PERF(porta_time) + 1u), 0, VAL_MAX, RK_BYTE, RF_LAYER2, NULL, A_ALL},
-    {"L2 MAX VOICES", 0, 0, VOICE_POOL, RK_VOICES, RF_LAYER2, NULL, A_ALL},
+    {"PORTA", (uint8_t)(PERF(porta_mode) + 1u), 0, PORTA_COUNT - 1, RK_BYTE, RF_LAYER2, PORTA_NAMES, A_ALL},
+    {"PORTA TIME", (uint8_t)(PERF(porta_time) + 1u), 0, VAL_MAX, RK_BYTE, RF_LAYER2, NULL, A_ALL},
+    {"MAX VOICES", 0, 0, VOICE_POOL, RK_VOICES, RF_LAYER2, NULL, A_ALL},
 };
 static const UiRow HOME3_ROWS[] = {
     {"SPLIT NOTE", PERF(split_note), 0, VAL_MAX, RK_BYTE, RF_LAYER2 | RF_NOTE, NULL, A_ALL},
@@ -392,12 +416,12 @@ static const UiPage UI_PAGES[] = {
     SYNTH(FILTER1_ROWS, NROWS(FILTER1_ROWS), filter, 0, FilterParams),
     SYNTH(FILTER2_ROWS, NROWS(FILTER2_ROWS), filter, 1, FilterParams),
     SYNTH(FLTMIX_ROWS, NROWS(FLTMIX_ROWS), fltmix, 0, FilterMixerParams),
-    SYNTH(ENV_ROWS, NROWS(ENV_ROWS) - 1u, env, 0, EnvParams),           /* ENV1: no invert */
-    SYNTH(ENV_ROWS, NROWS(ENV_ROWS), env, 1, EnvParams),
-    SYNTH(ENV_ROWS, NROWS(ENV_ROWS), env, 2, EnvParams),
-    SYNTH(LFO_ROWS, NROWS(LFO_ROWS), lfo, 0, LfoParams),
-    SYNTH(LFO_ROWS, NROWS(LFO_ROWS), lfo, 1, LfoParams),
-    SYNTH(LFO_ROWS, NROWS(LFO_ROWS), lfo, 2, LfoParams),
+    SYNTH(ENV1_ROWS, NROWS(ENV1_ROWS) - 1u, env, 0, EnvParams),         /* ENV1: no invert */
+    SYNTH(ENV2_ROWS, NROWS(ENV2_ROWS), env, 1, EnvParams),
+    SYNTH(ENV3_ROWS, NROWS(ENV3_ROWS), env, 2, EnvParams),
+    SYNTH(LFO1_ROWS, NROWS(LFO1_ROWS), lfo, 0, LfoParams),
+    SYNTH(LFO2_ROWS, NROWS(LFO2_ROWS), lfo, 1, LfoParams),
+    SYNTH(LFO3_ROWS, NROWS(LFO3_ROWS), lfo, 2, LfoParams),
     MODPAGE, MODPAGE, MODPAGE,
     SYNTH(AMP_ROWS, NROWS(AMP_ROWS), amp, 0, AmpParams),
     {EFFECTS_ROWS, NROWS(EFFECTS_ROWS), ST_PERF, 0, UICTX_SYNTH},
@@ -465,6 +489,10 @@ static const UiKnob OSCMIX_KNOBS[VARCH_COUNT][4] = {
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* BINAURAL */
     {KMIX(atk_level, "ATK LEVEL", UIKNOB_RAW), KMIX(noise_colour, "NOISE COLOUR", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* STRIKE */
+    {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* FULL */
+    {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(spread, "SPREAD", UIKNOB_RAW),
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* DUAL SPREAD */
 };
 /* ATTACK (STRIKE, 2026-10-17): how soon it fades, how much of it goes into FILTER1, its pitch bend, and how far the
  * BEND MOD SRC row's source moves that bend (knob 4, as OSC1's PITCH MOD). The sound and START are rows; the level
@@ -475,7 +503,7 @@ static const UiKnob ATTACK_KNOBS[4] = {
 };
 static const UiKnob FILTER_KNOBS[4] = {
     KFLT(morph, "TYPE MORPH", UIKNOB_RAW), KFLT(cutoff, "CUTOFF", UIKNOB_RAW),
-    KFLT(resonance, "RESONANCE", UIKNOB_RAW), KFLT(mod_amt, "MOD AMOUNT", UIKNOB_BIP),
+    KFLT(resonance, "RESONANCE", UIKNOB_RAW), KFLT(mod_amt, "MOD AMOUNT", UIKNOB_RAW),
 };
 /* FILTER MIXER by architecture (the page is hidden for SINGLE, DUAL OSC and SPREAD) */
 static const UiKnob FLTMIX_KNOBS[VARCH_COUNT][4] = {
@@ -489,6 +517,9 @@ static const UiKnob FLTMIX_KNOBS[VARCH_COUNT][4] = {
     {KFMX(bin_mod_phase, "FLT PHASE", UIKNOB_RAW), KFMX(bin_width, "WIDTH", UIKNOB_RAW),
      KFMX(bin_cutoff_offset, "CUTOFF L/R", UIKNOB_BIP), KFMX(bin_phase_mod_amt, "PHASE MOD", UIKNOB_BIP)},    /* BINAURAL */
     {KNONE, KNONE, KNONE, KNONE},                                                                               /* STRIKE */
+    {KFMX(balance, "BALANCE", UIKNOB_BIP), KFMX(routing, "ROUTING", UIKNOB_RAW),
+     KFMX(balance_mod_amt, "BALANCE MOD", UIKNOB_BIP), KFMX(routing_mod_amt, "ROUTING MOD", UIKNOB_BIP)},     /* FULL */
+    {KNONE, KNONE, KNONE, KNONE},                                                                               /* DUAL SPREAD */
 };
 static const UiKnob ENV_KNOBS[4] = {
     UIK("ATTACK", OFS(EnvParams, attack), UIKNOB_RAW), UIK("DECAY", OFS(EnvParams, decay), UIKNOB_RAW),
@@ -732,6 +763,8 @@ static uint8_t value_allowed(const UIStateMachine *sm, const UiRow *r, uint8_t v
     case RK_ARP_LAYER:
         return v == ARPLAYER_L1 || (v == ARPLAYER_L2 && mode != PERF_SINGL_SYNTH) ||
                (v == ARPLAYER_BOTH && mode == PERF_DUAL_SYNTH);
+    case RK_DEPTH_SRC:               /* an LFO or a MOD slot would scale the LFOs it is worked out before */
+        return (uint8_t)(v < MSRC_LFO1 || v > MSRC_MODSLOT3);
     case RK_SAVE_ACTION:             /* PASTE needs a clipboard of the TARGET's kind */
         return (uint8_t)(v != UIACT_PASTE || ui_sm_paste_ok(sm));
     default:
@@ -754,6 +787,8 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     case RK_VOICES: return ui_sm_layer_voices(sm, row_layer(r));
     case RK_ARP_LAYER: return ARP_LAYER(sm->arp);
     case RK_ARP_TIMING: return ARP_TIMING(sm->arp);
+    case RK_PINGPONG: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] & 1u);
+    case RK_DELAY_HP: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] >> 1);
     default: return page_block(sm, ui_cur_page(sm))[r->offset];
     }
 }
@@ -770,6 +805,11 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
     case RK_SEQ_EVENT: seq_lane_set_event(cur_lane(sm), v); break;   /* also restarts TARGET: */
     case RK_ARP_LAYER: arp_set_layer(sm->arp, v); break;
     case RK_ARP_TIMING: arp_set_timing(sm->arp, v); break;
+    case RK_PINGPONG: case RK_DELAY_HP: {
+        uint8_t *b = &page_block(sm, ui_cur_page(sm))[r->offset];
+        *b = r->kind == RK_PINGPONG ? (uint8_t)((*b & 0xFEu) | (v & 1u)) : (uint8_t)((*b & 1u) | (uint8_t)(v << 1));
+        break;
+    }
     default: page_block(sm, ui_cur_page(sm))[r->offset] = v; break;
     }
 }
@@ -1337,9 +1377,9 @@ uint8_t ui_sm_seq_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t dow
             ln->loop_start = w;                      /* 7.1: OCT- + white key n: step n is the first */
         } else if (mods & UISEQ_MOD_OCT_UP) {
             ln->loop_end = w;                        /* OCT+ + white key n: the last */
-        } else {                                     /* (2026-10-21) white key n: steps n .. n + 3 on the
-                                                      * knobs, held to 13..16 at the end; the cursor on STEPS */
-            sm->seq_step0 = w < UISEQ_STEP0_MAX ? w : (uint8_t)UISEQ_STEP0_MAX;
+        } else {                                     /* (2026-10-26) white key n: its block of four on the
+                                                      * knobs (1..4, 5..8, 9..12, 13..16); the cursor on STEPS */
+            sm->seq_step0 = (uint8_t)(w & ~3u);
             sm->s.current_param_focus = 0u;
         }
     }
@@ -2105,6 +2145,7 @@ void ui_sm_enforce(UIStateMachine *sm)
         sm->s.active_seq_lane = 0u;
     if (sm->seq_step0 > UISEQ_STEP0_MAX)
         sm->seq_step0 = UISEQ_STEP0_MAX;
+    sm->seq_step0 &= (uint8_t)~3u;                   /* the knob window is always a block of four (2026-10-26) */
     if (sm->save_target >= UISAVE_COUNT)
         sm->save_target = UISAVE_WHOLE_PERF;
     if (sm->save_slot >= ui_sm_bank_slots(sm->save_target))   /* a TARGET with a smaller bank (2026-10-17) */
@@ -2117,10 +2158,9 @@ void ui_sm_enforce(UIStateMachine *sm)
     if (sm->name_cursor >= NAME_LEN)
         sm->name_cursor = NAME_LEN - 1u;
     seq_target_settle(sm);
-    {                                /* 8.2 LAYER: a mode change can take its layer away (the engine plays L1 then) */
-        uint8_t t = ARP_LAYER(sm->arp);
-        if (t >= ARPLAYER_COUNT || (t == ARPLAYER_L2 && mode == PERF_SINGL_SYNTH) ||
-            (t == ARPLAYER_BOTH && mode != PERF_DUAL_SYNTH))
+    {                                /* 8.2 LAYER: a mode without its layer plays L1 (the engine), the choice kept for
+                                      * the next mode that has it, as a SEQ lane's (2026-10-26) */
+        if (ARP_LAYER(sm->arp) >= ARPLAYER_COUNT)
             arp_set_layer(sm->arp, ARPLAYER_L1);
         if (ARP_TIMING(sm->arp) >= ARPDIV_COUNT)
             arp_set_timing(sm->arp, ARP_TIMING_DEFAULT);

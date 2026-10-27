@@ -150,13 +150,13 @@ int main(int argc, char **argv)
         printf("FAIL: the cursor should sit on lane 2's TARGET\n"); fails = 1;
     }
 
-    /* live play, ORANGE, the cursor on STEPS: lane 2 active, its knob window (steps 7..10, a step key's) lit; lane 2
+    /* live play, ORANGE, the cursor on STEPS: lane 2 active, its knob window (steps 5..8, a step key's) lit; lane 2
      * loops steps 3..13 so the grass runs short of both ends */
     seq_palette_set(SQPAL_ORANGE);
     pattern();
     lanes[1].loop_start = 2; lanes[1].loop_end = 12;
     ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);           /* lane 1 -> 2 */
-    sm.seq_step0 = 6;
+    sm.seq_step0 = 4;
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
     run(5512u * 3u + 100u);
     fails |= shot(dir, "lane");

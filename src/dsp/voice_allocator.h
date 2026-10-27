@@ -15,6 +15,11 @@
 #define POLYPHONY_VOICES 8   /* the physical pool; how many a layer may use is layer_voice_limit (see pool_range) */
 PS_STATIC_ASSERT(POLYPHONY_VOICES == VOICE_POOL, "the allocator's pool is PresetStructures.h's VOICE_POOL");
 
+/* Who struck a voice's note (2026-10-26), lowest rank first: a note-off releases only its own source's notes (the ARP
+ * and the SEQ on one pitch no longer cut each other), and a full layer steals from the lowest rank it may (the ARP
+ * never takes what the SEQ holds, neither what the keys hold). The keys are the panel and MIDI in. */
+enum { VSRC_ARP, VSRC_SEQ, VSRC_KEYS };
+
 // FIXED: Explicit structural array mapping to store your per-voice layer properties
 typedef struct {
     LfoRuntimeState engines[2]; // Index 0 = LFO2 playhead, Index 1 = LFO3 playhead
@@ -64,6 +69,8 @@ typedef struct __attribute__((aligned(64))) {
     /* set by the control tick (synth_voice.c voice_control_tick), read every sample by voice_render_sample */
     OscMixVoice mix;              // the oscillator mixer's settings
     int32_t lfo_q15[2];           // LFO2 / LFO3 outputs, depth and fade applied
+    int32_t env_vel_q15[3];       // ENV1..3's level for this note's velocity (VEL > LEVEL), 32768 = unity, each tick
+    int32_t lfo_gain_q15[3];      // LFO1..3's depth for this voice (DEPTH MOD SRC / AMT), 32768 = unity, each tick
     /* The amp, in float (2026-10-15: the FM1's FPU beats its integer multiplies, synth_voice.c finish_mono). vol is the
      * amp level (envelope, amp mod, velocity, 0..1), ramped by vol_step each sample; vol_b is STACK's second amp (ENV2).
      * mix_a / mix_b take a path's amped (and driven) sample straight into the mix bus, MIX_* order: everything that
@@ -94,7 +101,8 @@ typedef struct __attribute__((aligned(64))) {
     uint8_t ctrl_left;            // samples until this voice's next control tick; 0 = tick before the next sample
     uint8_t snap;                 // 1 = a new note: the next tick sets the filter coefficients without a ramp
     uint8_t silent;               // 1 = the last tick found the voice finished: it renders silence
-    AnalogVoice analog;           // ANALOG: this slot's character, drift and note scatter (dsp/analog.h)
+    uint8_t src;                  // VSRC_*: who struck the note
+    AnalogVoice analog;          // ANALOG: this slot's character, drift and note scatter (dsp/analog.h)
 } SynthVoiceNode;
 
 /* a voice nobody hears and nobody holds: free to take (STACK's ENV2 path keeps a voice sounding after ENV1 ends) */
@@ -111,7 +119,9 @@ void pool_range(uint8_t layer, int *first, int *count);
  * may use this many voices fewer than its limit, never fewer than one. A voice the lower limit leaves out is choked
  * (a few ms fade) at the next layer tick, as for any limit change. */
 extern volatile uint8_t voice_shed;
-int allocate_voice_slot(uint8_t layer);
+/* a voice for a note of source src (VSRC_*), -1 when there is none: the layer has no voices, or every one is held by
+ * a higher rank */
+int allocate_voice_slot(uint8_t layer, uint8_t src);
 int check_if_any_other_voice_held(int current_voice_index, uint8_t layer);
 void voice_allocator_init(void);
 

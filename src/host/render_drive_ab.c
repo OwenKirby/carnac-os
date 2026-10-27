@@ -108,8 +108,8 @@ static void render(const char *dir, const char *label, int scene)
     } else {
         uint32_t s = (uint32_t)(scene - 2 * NMODEL), i;
         snprintf(name, sizeof name, "p%02u_", (unsigned)s);
-        for (i = 0; FV_TAB[s].name[i] && i < 16; i++)
-            name[4 + i] = FV_TAB[s].name[i] == ' ' ? '_' : FV_TAB[s].name[i];
+        for (i = 0; FP_TAB[s].name[i] && i < 16; i++)
+            name[4 + i] = FP_TAB[s].name[i] == ' ' ? '_' : FP_TAB[s].name[i];
         name[4 + i] = 0;
         load_perf(s);
         synth_restart();
@@ -181,7 +181,7 @@ int main(int argc, char **argv)
     factory_install();
     printf("%s:\n", argv[2]);
     for (int s = -2; s < 2 * NMODEL; s++) render(argv[1], argv[2], s);
-    for (uint32_t p = 0; p < FP_N; p++)
+    for (uint32_t p = 0; p < FP_NPERF; p++)
         if (perf_driven(p)) render(argv[1], argv[2], 2 * NMODEL + (int)p);
     double c0 = cost(0, 0);
     printf("  host cost, 8 voices: no drive %.0f ns/sample;", c0);

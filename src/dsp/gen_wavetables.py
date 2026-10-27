@@ -416,8 +416,8 @@ def hearth(t, seed):
 
 # ------------------------------------------------------------------- build --- #
 
-# Bank-number order. Changing a name changes the set id (wavetables.c), so the firmware refuses an image built
-# from another list until the matching one is uploaded. Names go to the screen and the USB info reply (20 chars).
+# Drawing order: bank b's seed (SEED_BASE + b) and dither stream follow its place here, so this list only grows; a
+# retired bank stays here and leaves IMAGE_BANKS. Names go to the screen and the USB info reply (20 chars).
 BANK_DEFS = [
     ("Menhir", menhir), ("Barrow", barrow), ("Trilithon", trilithon), ("Ley Line", ley_line),
     ("Solstice", solstice), ("Moonstone", moonstone), ("Star Chart", star_chart),
@@ -429,10 +429,27 @@ BANK_DEFS = [
 ]
 assert all(len(name) <= 20 for name, _ in BANK_DEFS)
 
-# The store image (wavetables.h WT_STORE_*): header sector, then len(BANK_DEFS) x FRAMES x FRAME_LEN int16 little-endian.
+# Bank-number order of the image (banks 1..). Changing it changes the set id (wavetables.c), so the firmware refuses
+# an image of another list. 2026-10-27: Menhir retired (its sine -> soft saw is Foundations / Solstice / Hearth
+# ground; 16 KB of app flash back), Hollow Reeds moved into its slot so every other bank keeps its number. Later the
+# same day Hollow Reeds retired too (the PCM PAN FLUTE plays its part; its 16 KB went to the firmware's PCM area,
+# gen_pcm_waves.py), and Hearth, the last bank, moved into slot 1.
+IMAGE_BANKS = ["Hearth", "Barrow", "Trilithon", "Ley Line", "Solstice", "Moonstone", "Star Chart", "Druid Chant",
+               "Overtone Rite", "Votive Choir", "Bone Flute", "Erosion", "Frost Shatter", "Dust"]
+assert set(IMAGE_BANKS) <= {name for name, _ in BANK_DEFS} and len(set(IMAGE_BANKS)) == len(IMAGE_BANKS)
+
+# Banks ahead of the image, each its own image in the store flash (wavetables.h WT_BANK_*), uploaded over USB-MIDI:
+# the app slot has no room for them. Since 2026-10-26 Foundations (gen_foundations.py) is bank 0, so the image's
+# banks are 1..16; the image itself, its set id and its dither are unchanged.
+STORE_BANKS = ["Foundations"]
+assert all(len(name) <= 12 for name in STORE_BANKS)   # pcm_store_fm1.c's PCM_INFO sends 12 characters
+
+# The store image (wavetables.h WT_STORE_*): the 32-byte header, then len(BANK_DEFS) x FRAMES x FRAME_LEN int16
+# little-endian. Since 2026-10-26 the data follows the header at once: the 4 KiB header sector of the uploaded image
+# was 4,064 bytes of padding in the app slot.
 STORE_BASE = 0xA0000
 STORE_SIZE = 0x48000          # wavetables.h WT_IMAGE_MAX: the image is linked into the app (build_fm1 checks the slot)
-STORE_DATA_OFF = 0x1000
+STORE_DATA_OFF = 0x20
 STORE_MAGIC = 0x42545746      # "FWTB"
 STORE_VERSION = 1
 
@@ -521,15 +538,18 @@ def write_c(path, names, sine, square):
         " * The bank data is not here: it is the store image (wavetables_image.bin, wavetable_attach.c). */",
         '#include "wavetables.h"',
         "",
-        f'_Static_assert(NUM_BANKS == {len(names)}, "wavetables.h NUM_BANKS != gen_wavetables.py BANK_DEFS");',
+        f'_Static_assert(NUM_BANKS == {len(STORE_BANKS) + len(names)} && NUM_IMAGE_BANKS == {len(names)} && '
+        f'WT_BANK_FIRST_IMAGE == {len(STORE_BANKS)},',
+        '               "wavetables.h bank counts != gen_wavetables.py STORE_BANKS + BANK_DEFS");',
         "",
         "const uint16_t wavetable_level_start[WT_LEVELS] = {" + ", ".join(str(s) for s in LEVEL_START) + "};",
         "",
-        f"const uint32_t wavetable_set_id = 0x{set_id(names):08X}u;   /* CRC-32 of the names, one per line */",
+        f"const uint32_t wavetable_set_id = 0x{set_id(names):08X}u;   /* CRC-32 of the image's names, one per line */",
+        f"const uint32_t wavetable_store_bank_id = 0x{set_id(STORE_BANKS[:1]):08X}u;   /* CRC-32 of bank 0's name */",
         "",
         "const char *const wavetable_bank_names[NUM_BANKS] = {",
     ]
-    out += [f'    "{name}",' for name in names]
+    out += [f'    "{name}",' for name in STORE_BANKS + names]
     out += [
         "};",
         "",
@@ -568,12 +588,11 @@ def write_image_c(path, image, names):
         " * The wavetable image (wavetables_image.bin), linked into every build: wavetable_attach.c starts on it. On the",
         " * FM1 it sits in the firmware (read in place through XIP) since 2026-10-16; before, it was uploaded to the store",
         f" * flash at 0x{STORE_BASE:05X}, which now holds the saved presets.",
-        " * Banks: " + ", ".join(f"{b} {n}" for b, n in enumerate(names)) + ". */",
+        " * Banks: " + ", ".join(f"{b + len(STORE_BANKS)} {n}" for b, n in enumerate(names)) + ". */",
         '#include "wavetables.h"',
         "",
         f"_Alignas(4) const uint8_t wavetable_image_host[{len(image)}] = {{",
-        "    " + ", ".join(str(b) for b in image[:32]) + ",",
-        f"    [{STORE_DATA_OFF}] =   /* (the rest of the header sector is never read: zero here, erased in flash) */",
+        "    " + ", ".join(str(b) for b in image[:STORE_DATA_OFF]) + ",",
     ]
     for i in range(STORE_DATA_OFF, len(image), 32):
         out.append("    " + ",".join(str(b) for b in image[i:i + 32]) + ",")
@@ -613,7 +632,7 @@ def main():
     ap.add_argument("--preview-hz", type=float, default=110.0)
     args = ap.parse_args()
 
-    names = [name for name, _ in BANK_DEFS]
+    names = [name for name, _ in BANK_DEFS]          # the drawing order: seeds and dither streams follow it
     frames = np.stack([build_bank(b, fn) for b, (_, fn) in enumerate(BANK_DEFS)])
     # The first DITHER_BANKS banks draw their dither in one stream, as they always have; banks added later draw from
     # their own, so adding a bank leaves every existing table (and the render hashes) bit-identical.
@@ -626,6 +645,8 @@ def main():
         rng_added = np.random.default_rng(DITHER_SEED + 1 + (b - DITHER_BANKS))
         added = np.concatenate([quantise(level[b:b + 1], rng_added) for level in levels], axis=-1)
         table = np.concatenate([table, added], axis=0)
+    order = [names.index(n) for n in IMAGE_BANKS]     # the image's order: retired banks dropped, every table as drawn
+    table, names = table[order], list(IMAGE_BANKS)
 
     image = store_image(table, names)
     write_c(args.out, names, sine, square)

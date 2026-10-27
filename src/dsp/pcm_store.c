@@ -7,6 +7,8 @@ static const uint8_t *pcm_img[PCM_AREAS];
 static uint32_t pcm_n[PCM_AREAS];
 static const PcmEntry *pcm_waves[PCM_AREAS * PCM_MAX_ENTRIES];   /* the WAVE entries in order, rebuilt on (de)attach */
 static uint32_t pcm_nwaves;
+extern const uint8_t pcm_image_fw[];        /* pcm_area_fw.c: the firmware's own area */
+extern const uint32_t pcm_image_fw_len;
 
 static const PcmEntry *entry_at(const uint8_t *img, uint32_t i)
 {
@@ -86,6 +88,8 @@ int pcm_store_attach(uint32_t a, const uint8_t *img, uint32_t size)
     int n;
     if (a >= PCM_AREAS)
         return -1;
+    if (a != PCM_AREA_FW && !pcm_img[PCM_AREA_FW])     /* the firmware's area comes with the first one */
+        pcm_store_attach(PCM_AREA_FW, pcm_image_fw, pcm_image_fw_len);
     pcm_store_detach(a);
     n = pcm_store_check(a, img, size);
     if (n > 0) {

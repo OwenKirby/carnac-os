@@ -19,14 +19,14 @@
  * A SAVE copies into the bank at once (syn_commit, inside syn_lock) and marks its chunk; the main loop writes it
  * (ps_tick, outside the lock: the erase stops the flash, and the audio with it, for tens of ms), then reports the save
  * done, so SAVED means it is in flash. The boot loads every chunk (ps_load). Patches are stored packed (engine_store_pack,
- * ENGINE_STORED_SIZE a slot); a patch chunk still in the v5 .. v8 layout loads through engine_from_v5 / _v6 / _v7 / _v8
+ * ENGINE_STORED_SIZE a slot); a patch chunk still in the v5 .. v9 layout loads through engine_from_v5 .. _v9_stored
  * and is written as the current version the next time one of its slots is saved.
- * An arp chunk of FREC_VER_ARP 3 / 4 and a performance chunk of FREC_VER_PERF 6 / 7 / 8 (2026-10-17: knob 1 became
+ * An arp chunk of FREC_VER_ARP 3 / 4 and a performance chunk of FREC_VER_PERF 6 .. 9 (2026-10-17: knob 1 became
  * each step's RATE, GATE the pattern's; 2026-10-21: the patches' v9 (8, proto/sh2-filter), then RATE the notes' rate
  * and TIMING the steps' length (arp 5, perf 9)) are the same size as now: they load through arp_from_v3 / _v4 and
  * whole_perf_from_old, and a
  * performance chunk is converted whole in st_buf before a SAVE writes one of its slots, so its other slots stay.
- * A performance (WholePerformance: 883 bytes in RAM, WHOLE_PERF_STORED_SIZE packed) lives in flash only: the boot reads
+ * A performance (WholePerformance: 901 bytes in RAM, WHOLE_PERF_STORED_SIZE packed) lives in flash only: the boot reads
  * its name (syn_perf_name) and that it is there, a load reads the one slot (ps_perf_read), and a SAVE stages the one
  * it writes (ps_perf_save), which ps_tick puts into its chunk over the chunk's copy before. A performance chunk's used
  * bits are the slots saved in flash; a factory performance (factory_presets.c) is made when it loads.
@@ -64,7 +64,7 @@ typedef struct {
 #define PS_FIRST_SEQ 2u
 #define PS_FIRST_PERF 6u
 #define PS_FIRST_PATCH 17u                          /* the 128-slot layout's: the saved patches stay */
-#define PS_NCHUNK 23u                               /* the chunks the store spans (14..16 free); PCM waves after */
+#define PS_NCHUNK 23u                               /* the chunks the store spans (14..16: bank 0, pcm_store_fm1.c) */
 #define PS_NAMES_CHUNK 1u                           /* the sequence and arp names */
 #define PS_NAMES_KIND UISAVE_COUNT                  /* its header's kind (no UISAVE_* bank) */
 #define PS_NAMES_VER 1u
@@ -80,8 +80,8 @@ PS_STATIC_ASSERT(PATCH_SLOTS <= PS_USED_BYTES * 8u && BANK_SLOTS <= PATCH_SLOTS,
 PS_STATIC_ASSERT(PS_FIRST_ARP + PS_N_ARP <= PS_NAMES_CHUNK && PS_NAMES_CHUNK < PS_FIRST_SEQ &&
                  2u * BANK_SLOTS <= PS_USED_BYTES * 8u && PS_NAMES_LEN <= PS_PAYLOAD_MAX, "the names chunk");
 PS_STATIC_ASSERT(offsetof(MasterPerformancePreset, name) == 0u, "ps_load reads a stored performance's name first");
-/* v5 .. v8 patches (2026-10-16/17/21, before STRIKE's attack bytes, BEND MOD or DRIVE) load through engine_from_v5 /
- * _v6 / _v7 / _v8: the same slots to a chunk as v9's packed ones, so their chunks sit where v8's do and the chunks after them never
+/* v5 .. v9 patches (2026-10-16/17/21, before STRIKE's attack bytes, BEND MOD, DRIVE or VEL > LEVEL) load through
+ * engine_from_v5 / _v6 / _v7 / _v8 / _v9_stored: the same slots to a chunk as v9's packed ones, so their chunks sit where v8's do and the chunks after them never
  * moved */
 PS_STATIC_ASSERT(PS_PER(ENGINE_V5_SIZE) == PS_PER(ENGINE_STORED_SIZE) && PS_PER(ENGINE_V6_SIZE) == PS_PER(ENGINE_STORED_SIZE),
                  "v5, v6 and v7 patch chunks hold the same slots");
@@ -176,7 +176,7 @@ static void ps_load(void)
             if (ps_current(pk->first + c, (uint8_t)k, (uint8_t)c, &h) < 0)
                 continue;                           /* never written, or damaged: empty */
             old = 0u;                               /* a patch chunk of an older layout that migrates: its slot size */
-            if (k == UISAVE_PATCH_PRESET && h.ver >= 5u && h.ver <= 8u)
+            if (k == UISAVE_PATCH_PRESET && h.ver >= 5u && h.ver <= 9u)
                 old = h.ver == 5u ? ENGINE_V5_SIZE : (h.ver == 6u ? ENGINE_V6_SIZE : ENGINE_STORED_SIZE);
             arp3 = (uint8_t)(k == UISAVE_ARP_SEQ && (h.ver == 3u || h.ver == 4u));   /* same-size layouts that */
             perf_old = (uint8_t)(k == UISAVE_WHOLE_PERF && WHOLE_PERF_OLD(h.ver));   /* migrate in place */
@@ -195,8 +195,10 @@ static void ps_load(void)
                         engine_from_v6(src, (EngineState *)(void *)dst);
                     else if (old && h.ver == 7u)
                         engine_from_v7(src, (EngineState *)(void *)dst);
-                    else if (old)
+                    else if (old && h.ver == 8u)
                         engine_from_v8(src, (EngineState *)(void *)dst);
+                    else if (old)
+                        engine_from_v9_stored(src, (EngineState *)(void *)dst);
                     else if (k == UISAVE_PATCH_PRESET)
                         engine_store_unpack(src, (EngineState *)(void *)dst);
                     else

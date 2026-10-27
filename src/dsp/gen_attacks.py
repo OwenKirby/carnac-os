@@ -458,11 +458,39 @@ def mulaw_roundtrip(x):
     return mulaw_decode(mulaw_encode(x))
 
 
-def build_all():
+# The rate each attack is stored at, where it is lower than the rate its recipe draws at (2026-10-27): about 2.2x the
+# band holding 99.9 % of its energy, never under 11025. Saves ~21 KB of app flash; the voice reads any rate (its
+# AttackInfo rate), so only the bytes change. The bright ones (FLINT, PEBBLES, BONE CLACK, ANTLER RASP, SEED RATTLE,
+# CRACKLE) keep 32 kHz; HORN BLAT and CONCH sit higher than their band says, because at that rate the voice's linear
+# interpolation images their rasp up as grit (+5..9 dB above the cut; BONE CLACK did so even at 22050).
+STORE_SR = {
+    "BONE CHIFF": 24000, "REED CHIFF": 27000, "HORN BLAT": 16000, "STONE KNOCK": 11025, "MENHIR THUD": 11025,
+    "LITHOPHONE": 11025, "WOOD BLOCK": 15000, "LOG DRUM": 11025,
+    "FRAME DRUM": 11025, "CAVE CLAP": 15000, "BOW PLUCK": 16000, "MOUTH BOW": 19000, "POT DRUM": 11025,
+    "CONCH": 16000,
+}
+
+
+def resample(x, sr, new_sr):
+    """Band-limited rate change of a one-shot: zero-padded FFT (no wrap), a short cosine roll-off below the new
+    Nyquist so nothing rings at the cut."""
+    n, n2 = len(x), 2 * len(x)
+    m2 = int(round(n2 * new_sr / sr))
+    spec = np.fft.rfft(x, n=n2)[:m2 // 2 + 1]
+    f = np.arange(len(spec)) / (len(spec) - 1)              # 0 .. the new Nyquist
+    spec = spec * np.where(f < 0.9, 1.0, 0.5 * (1.0 + np.cos(np.pi * (f - 0.9) / 0.1)))
+    return np.fft.irfft(spec, n=m2)[:int(round(n * new_sr / sr))] * (m2 / n2)
+
+
+def build_all(rerate=True):
     out = []
     for i, (name, group, fn, root) in enumerate(ATTACK_DEFS):
         x, sr = fn(np.random.default_rng(SEED_BASE + i))
-        out.append((name, group, root, sr, mulaw_roundtrip(finish(np.asarray(x, dtype=float), sr))))
+        x = finish(np.asarray(x, dtype=float), sr)
+        if rerate and STORE_SR.get(name, sr) < sr:
+            x, sr = resample(x, sr, STORE_SR[name]), STORE_SR[name]
+            x = x / (np.abs(x).max() + 1e-12) * PEAK
+        out.append((name, group, root, sr, mulaw_roundtrip(x)))
     return out
 
 

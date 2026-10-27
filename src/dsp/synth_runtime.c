@@ -29,7 +29,7 @@ static const int16_t unison_gain_q15[POLYPHONY_VOICES] = { 32767, 23170, 18919, 
 /* Keys held per layer, for last-note priority in the mono modes. */
 #define HELD_MAX 10u
 
-typedef struct { uint8_t note; uint8_t velocity; } HeldNote;
+typedef struct { uint8_t note; uint8_t velocity; uint8_t src; } HeldNote;   /* src: VSRC_* */
 
 extern MidiInterfaceState master_midi;
 #if !defined(FELUCCA_ID)
@@ -58,9 +58,11 @@ static uint32_t voices_done;           /* (defined with the render, below) */
  * notes) applies at once, exactly as before; one between waits here and applies at the next boundary, at most
  * SYNTH_CTRL_PERIOD - 1 frames (0.34 ms) later, in order. A full queue falls back to the exact catch-up. */
 #define SEQ_Q_MAX 48u
-static struct { uint8_t st, d1, d2; } seq_q[SEQ_Q_MAX];
+static struct { uint8_t st, d1, d2, src; } seq_q[SEQ_Q_MAX];
 static uint8_t seq_qn;
-static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2);
+static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2, uint8_t src);
+static void rt_seq_out(uint8_t status, uint8_t data1, uint8_t data2);
+static void rt_arp_out(uint8_t status, uint8_t data1, uint8_t data2);
 /* Timed MIDI in (synth_midi_at, 2026-10-24): each event waits here for its frame, in order, and the render applies it
  * there (the voices brought up to it first). A full queue applies the event at once, as synth_midi_3 would. */
 #define EXT_Q_MAX 64u                          /* the FM1 drains at most 64 a half */
@@ -116,10 +118,10 @@ static int is_mono_mode(uint8_t mode)
 
 /* ----------------------------------------------------------- held keys --- */
 
-static void held_remove(uint8_t layer, uint8_t note)
+static void held_remove(uint8_t layer, uint8_t note, uint8_t src)
 {
     for (uint8_t i = 0; i < held_count[layer]; i++) {
-        if (held[layer][i].note != note) continue;
+        if (held[layer][i].note != note || held[layer][i].src != src) continue;
         for (uint8_t j = i; j + 1u < held_count[layer]; j++)
             held[layer][j] = held[layer][j + 1u];
         held_count[layer]--;
@@ -127,9 +129,9 @@ static void held_remove(uint8_t layer, uint8_t note)
     }
 }
 
-static void held_push(uint8_t layer, uint8_t note, uint8_t velocity)
+static void held_push(uint8_t layer, uint8_t note, uint8_t velocity, uint8_t src)
 {
-    held_remove(layer, note);
+    held_remove(layer, note, src);
     if (held_count[layer] == HELD_MAX) {                       /* full: forget the oldest key */
         for (uint8_t j = 0; j + 1u < HELD_MAX; j++)
             held[layer][j] = held[layer][j + 1u];
@@ -137,6 +139,7 @@ static void held_push(uint8_t layer, uint8_t note, uint8_t velocity)
     }
     held[layer][held_count[layer]].note = note;
     held[layer][held_count[layer]].velocity = velocity;
+    held[layer][held_count[layer]].src = src;
     held_count[layer]++;
 }
 
@@ -236,7 +239,7 @@ static void glide_to(SynthVoiceNode *v, int from_note, int to_note, uint8_t port
 /* Points one voice at a note. retrig = 0 keeps the envelopes running (a legato note over a held one). A voice that is
  * fading out, or still on another architecture, always restarts clean: envelopes from 0, and its filters
  * cleared when the architecture changes, so no path starts half-initialised. */
-static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t velocity, int32_t route,
+static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t velocity, uint8_t src, int32_t route,
                        int retrig, int other_held, uint16_t boost)
 {
     const EngineState *e = &engine_state[layer];
@@ -259,6 +262,7 @@ static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t v
     v->is_gate_open = 1;
     v->velocity = velocity;
     v->layer = layer;
+    v->src = src;
     v->route_q15 = route;
     v->ctrl_left = 0;                          /* the new pitch (and envelopes) take effect from the next sample */
     if (!retrig) return;
@@ -301,7 +305,7 @@ static void voice_release_one(SynthVoiceNode *v)
 }
 
 /* A layer's note-on (spec 5.3 View 1: Layer 1 Voice Mode). */
-static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, int32_t route)
+static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_t src, int32_t route)
 {
     const EngineState *e = &engine_state[layer];
     uint8_t mode = layer_voice_mode(layer);
@@ -315,20 +319,22 @@ static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, int32_
     int first, count;
     pool_range(layer, &first, &count);                         /* count: the layer's voice limit (5.3) */
     if (count <= 0) return;                                    /* the layer has no voices (LAYER2 under SINGL) */
-    held_push(layer, note, velocity);
+    held_push(layer, note, velocity, src);
 
     if (!is_mono_mode(mode)) {
         int slot = -1;
         if (mode == VMODE_POLY_REUSE) {
-            /* restriking a pitch that still sounds recycles its voice (spec 5.3) */
+            /* restriking a pitch that still sounds recycles its voice (spec 5.3); one another source still holds is
+             * left alone */
             for (int v = first; v < first + count && slot < 0; v++) {
                 SynthVoiceNode *s = &poly_bank[v];
-                if (s->layer == layer && s->active_note == note && !voice_is_free(s) && !s->choke)
+                if (s->layer == layer && s->active_note == note && (s->src == src || !s->is_gate_open) &&
+                    !voice_is_free(s) && !s->choke)
                     slot = v;
             }
         }
         if (slot < 0)
-            slot = allocate_voice_slot(layer);
+            slot = allocate_voice_slot(layer, src);
         if (slot < 0) return;
         SynthVoiceNode *v = &poly_bank[slot];
         v->glide_q16 = 0;
@@ -339,10 +345,15 @@ static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, int32_
         v->unison_gain_q15 = 32767;
         v->unison_pan = 0;
         int other = check_if_any_other_voice_held(slot, layer);
-        voice_play(v, layer, note, velocity, route, 1, other, boost);
+        voice_play(v, layer, note, velocity, src, route, 1, other, boost);
         lfo_key_reset(&e->lfo[0], &global_lfo1_state[layer]);
         return;
     }
+
+    /* a higher rank holds the mono voice: the note waits on the held stack, and sounds if it is still down when that
+     * one is let go (note_off_layer) */
+    SynthVoiceNode *lead = &poly_bank[first];
+    if (lead->is_gate_open && !lead->choke && lead->src > src) return;
 
     /* Mono modes: one voice, or every voice the layer may use stacked for UNISON_STACK (so the stack size follows
      * the architecture's voice limit). UNISON DETUNE spreads the stack evenly between +-its outer cents; 0 is no
@@ -360,14 +371,15 @@ static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, int32_
         v->detune_cents = n > 1 ? (outer * (2 * i - (n - 1))) / (n - 1) : 0;
         v->unison_pan = varch_unison_pan(i, n);
         v->unison_gain_q15 = unison_gain_q15[n - 1];
-        voice_play(v, layer, note, velocity, route, retrig, 0, boost);
+        voice_play(v, layer, note, velocity, src, route, retrig, 0, boost);
     }
     if (retrig)
         lfo_key_reset(&e->lfo[0], &global_lfo1_state[layer]);
 }
 
-/* A note-off for one layer. Mono modes fall back to the newest key still held (last-note priority). */
-static void note_off_layer(uint8_t layer, uint8_t note)
+/* A note-off for one layer, its own source's notes only. Mono modes fall back to the newest key still held of the
+ * highest rank held (last-note priority within it). */
+static void note_off_layer(uint8_t layer, uint8_t note, uint8_t src)
 {
     uint8_t mode = layer_voice_mode(layer);
     int first, count;
@@ -377,14 +389,14 @@ static void note_off_layer(uint8_t layer, uint8_t note)
     if (!is_mono_mode(mode)) {
         for (int v = first; v < first + count; v++) {
             SynthVoiceNode *s = &poly_bank[v];
-            if (s->is_gate_open && s->active_note == note) voice_release_one(s);
+            if (s->is_gate_open && s->active_note == note && s->src == src) voice_release_one(s);
         }
         return;
     }
 
     int n = mode == VMODE_UNISON_STACK ? count : 1;
     SynthVoiceNode *lead = &poly_bank[first];
-    if (!(lead->is_gate_open && lead->active_note == note)) return;   /* that key is not the one sounding */
+    if (!(lead->is_gate_open && lead->active_note == note && lead->src == src)) return;   /* not the one sounding */
 
     if (held_count[layer] == 0) {
         for (int i = 0; i < n; i++)
@@ -393,21 +405,23 @@ static void note_off_layer(uint8_t layer, uint8_t note)
     }
 
     HeldNote top = held[layer][held_count[layer] - 1u];
+    for (uint8_t i = held_count[layer]; i-- > 0u;)
+        if (held[layer][i].src > top.src) top = held[layer][i];
     uint8_t porta_mode = layer_porta_mode(layer);
     uint8_t porta_time = perf_state.porta_time[layer];
     int retrig = mode != VMODE_MONO_LEGATO;
     for (int i = 0; i < n; i++) {
         SynthVoiceNode *v = &poly_bank[first + i];
         glide_to(v, v->active_note, top.note, porta_mode, porta_time, 1);
-        voice_play(v, layer, top.note, top.velocity, v->route_q15, retrig, 0, v->release_boost_q15);
+        voice_play(v, layer, top.note, top.velocity, top.src, v->route_q15, retrig, 0, v->release_boost_q15);
     }
 }
 
-static void note_off(uint8_t note)
+static void note_off(uint8_t note, uint8_t src)
 {
     for (uint8_t l = 0; l < NLAYER; l++) {
-        held_remove(l, note);
-        note_off_layer(l, note);
+        held_remove(l, note, src);
+        note_off_layer(l, note, src);
     }
 }
 
@@ -458,8 +472,8 @@ void synth_restart(void)
     }
     seq_qn = 0;
     ext_h = ext_n = 0;
-    maq_init(&maq, seq_lanes, &perf_state, synth_midi_3);   /* its notes and controllers take the MIDI path */
-    carp_init(&carp, &arp_state, &perf_state, synth_midi_3);
+    maq_init(&maq, seq_lanes, &perf_state, rt_seq_out);     /* its notes and controllers take the MIDI path */
+    carp_init(&carp, &arp_state, &perf_state, rt_arp_out);
     sample_clock = AUTO_DECAY_WINDOW;          /* the first note counts as an isolated one */
     limit_env_q8 = (int32_t)LIMIT_CEILING << 8;
     layer_ctrl_left = 0;
@@ -474,20 +488,30 @@ void synth_custom_cc(uint8_t which, uint8_t value)
     else master_midi.custom_cc2_val = value;
 }
 
-void synth_midi_3(uint8_t status, uint8_t data1, uint8_t data2)
+static void midi_in(uint8_t status, uint8_t data1, uint8_t data2, uint8_t src)
 {
     if (in_pass) {                             /* a MAQ / ARP event mid-pass */
         if (status < 0xF8u && voices_done < pass_frame && seq_qn < SEQ_Q_MAX) {
             seq_q[seq_qn].st = status;         /* between boundaries: at the next one (voices_up_to) */
             seq_q[seq_qn].d1 = data1;
             seq_q[seq_qn].d2 = data2;
+            seq_q[seq_qn].src = src;
             seq_qn++;
             return;
         }
         voices_up_to(pass_frame);              /* on a boundary (no-op), realtime, or the queue full: exact */
     }
-    midi_apply(status, data1, data2);
+    midi_apply(status, data1, data2, src);
 }
+
+void synth_midi_3(uint8_t status, uint8_t data1, uint8_t data2)
+{
+    midi_in(status, data1, data2, VSRC_KEYS);
+}
+
+/* the sequencers' MIDI out, each note tagged with its source (VSRC_*) */
+static void rt_seq_out(uint8_t status, uint8_t data1, uint8_t data2) { midi_in(status, data1, data2, VSRC_SEQ); }
+static void rt_arp_out(uint8_t status, uint8_t data1, uint8_t data2) { midi_in(status, data1, data2, VSRC_ARP); }
 
 void synth_midi_at(uint32_t delay, uint8_t status, uint8_t data1, uint8_t data2)
 {
@@ -508,7 +532,7 @@ void synth_midi_at(uint32_t delay, uint8_t status, uint8_t data1, uint8_t data2)
     ext_n++;
 }
 
-static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2)
+static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2, uint8_t src)
 {
     uint8_t kind = status & 0xF0u;
     uint8_t channel = status & 0x0Fu;
@@ -523,10 +547,10 @@ static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2)
         route_note(channel, data1, data2, weight);
         midi_parse_three_bytes(&master_midi, status, data1, data2);
         for (uint8_t l = 0; l < NLAYER; l++)
-            if (weight[l] > 0) rt_voice_start(l, data1, data2, weight[l]);
+            if (weight[l] > 0) rt_voice_start(l, data1, data2, src, weight[l]);
     } else if (kind == 0x80u || (kind == 0x90u && data2 == 0u)) {
         midi_parse_three_bytes(&master_midi, status, data1, data2);
-        note_off(data1);
+        note_off(data1, src);
     } else if (kind == 0xC0u) {                    /* Program Change: the stored patch into every layer on this channel */
         for (uint8_t l = 0; l < NLAYER; l++)
             if ((perf_state.midi_ch[l] & 0x0Fu) == channel && (l == 0u || rt_perf_mode() != PERF_SINGL_SYNTH))
@@ -663,7 +687,7 @@ static void voices_up_to(uint32_t frame)
         core1_job(0u);                         /* one core (or the second failed): here */
     voices_done = frame;
     for (uint8_t i = 0; i < seq_qn; i++)       /* the sequencers' events that waited for this boundary, in order */
-        midi_apply(seq_q[i].st, seq_q[i].d1, seq_q[i].d2);
+        midi_apply(seq_q[i].st, seq_q[i].d1, seq_q[i].d2, seq_q[i].src);
     seq_qn = 0;
 }
 
@@ -722,7 +746,7 @@ static void render_pass(int32_t *out, uint32_t frames)
         SPROF_START();
         midi_clock_frame(sample_clock);            /* the clock is stamped before the LFOs read it this frame */
         while (ext_now) {                          /* timed MIDI in on this frame (a 0xF8 after the clock's own pulse) */
-            midi_apply(ext_q[ext_h].st, ext_q[ext_h].d1, ext_q[ext_h].d2);
+            midi_apply(ext_q[ext_h].st, ext_q[ext_h].d1, ext_q[ext_h].d2, VSRC_KEYS);
             ext_h = (uint8_t)((ext_h + 1u) % EXT_Q_MAX);
             ext_n--;
             ext_now = ext_n && (int32_t)(ext_q[ext_h].at - sample_clock) <= 0;

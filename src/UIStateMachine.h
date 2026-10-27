@@ -134,7 +134,7 @@ typedef union {
     ArpState arp;                    /* ARP_SEQ: the live arp pattern */
     WholePerformance whole;          /* WHOLE_PERF: the performance and everything it plays */
 } UiClipboard;
-PS_STATIC_ASSERT(sizeof(UiClipboard) == 893u, "the clipboard's RAM (spec 6.2.3)");   /* 893: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK) */
+PS_STATIC_ASSERT(sizeof(UiClipboard) == 911u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD) */
 /* spec 1: the name characters; MasterPerformancePreset.name holds indices into it (0 = space) */
 #define UI_CHAR_MAP " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/"
 /* 5.1: the play controllers. LAYER's knobs (2026-10-17): VELOCITY, MOD WHEEL, CC1, (2026-10-21) PORTA TIME, not CC2;
@@ -187,8 +187,8 @@ typedef struct {
     uint8_t clip_name[NAME_LEN];     /* .. COPY's of the one it took (a sequence or arp on the clipboard) */
     MaqSeq *seq;                     /* the sequencer engine (ui_sm_attach_seq); NULL: no transport, no step record */
     uint8_t seq_step0;               /* 7.1: the active lane's step on knob 1, 0..UISEQ_STEP0_MAX; knobs 2..4 the next
-                                      * three (the Select Encoder moves it a group of 4 at a time, a step key to that
-                                      * step, 2026-10-21) */
+                                      * three; always 0, 4, 8 or 12 (the Select Encoder moves it a group of 4 at a time,
+                                      * a step key to its group, 2026-10-26) */
     uint8_t seq_cap_held;            /* 7.2 chord capture: keys still down since the chord began */
     uint8_t seq_cap_n;               /* .. and the notes written into it so far */
     CarpSeq *carp;                   /* the ARP engine (ui_sm_attach_arp); NULL: chord keys capture but sound nothing */
@@ -302,7 +302,7 @@ void ui_sm_attach_seq(UIStateMachine *sm, MaqSeq *seq);
 
 /* A note key, on the SEQ page. key: 0 = the lowest key; note: its MIDI note; down: press 1 / release 0; mods:
  * UISEQ_MOD_*. Live (7.1, 2026-10-21): the bottom UISEQ_SELECTOR_KEYS white keys, counted from the lowest key, are the
- * active lane's steps 1..16: white key n puts steps n .. n + 3 on the knobs (from key 13 on, 13..16) and the Select
+ * active lane's steps 1..16: white key n puts its block of four on the knobs (1..4, 5..8, 9..12, 13..16) and the Select
  * Encoder cursor on STEPS (the lane itself is the SEQ button's: each press on the page, the next lane). With OCT- /
  * OCT+ held, white key n (0..15) sets the active lane's loop start / end to step n instead. The black keys among them
  * do nothing. Returns 1 for every key of that span (the caller must not play it); keys above it play. Step record

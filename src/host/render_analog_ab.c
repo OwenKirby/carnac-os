@@ -34,25 +34,25 @@ static void patch(int scene, uint8_t analog)
     switch (scene) {
     case 1:                                          /* DUAL OSC pad: both oscillators at the same pitch */
         e->arch = VARCH_DUAL_OSC;
-        e->filter[0].cutoff = 72; e->filter[0].resonance = 30; e->filter[0].mod_amt = BIPOLAR_CENTER;
+        e->filter[0].cutoff = 72; e->filter[0].resonance = 30; e->filter[0].mod_amt = 0;
         e->env[0].attack = 50; e->env[0].decay = 60; e->env[0].sustain = 120; e->env[0].release = 70;
         break;
     case 2:                                          /* SINGLE bass, ENV2 into the cutoff */
         e->arch = VARCH_SINGLE;
-        e->filter[0].cutoff = 38; e->filter[0].resonance = 70; e->filter[0].mod_amt = 110;
+        e->filter[0].cutoff = 38; e->filter[0].resonance = 70; e->filter[0].mod_amt = 92;
         e->env[1].attack = 0; e->env[1].decay = 38; e->env[1].sustain = 0; e->env[1].release = 30;
         e->env[0].attack = 0; e->env[0].decay = 50; e->env[0].sustain = 80; e->env[0].release = 20;
         e->osc[0].octave = 46;                       /* -1 octave */
         break;
     case 3:                                          /* SINGLE stabs */
         e->arch = VARCH_SINGLE;
-        e->filter[0].cutoff = 55; e->filter[0].resonance = 50; e->filter[0].mod_amt = 100;
+        e->filter[0].cutoff = 55; e->filter[0].resonance = 50; e->filter[0].mod_amt = 72;
         e->env[1].attack = 0; e->env[1].decay = 45; e->env[1].sustain = 10; e->env[1].release = 40;
         e->env[0].attack = 0; e->env[0].decay = 55; e->env[0].sustain = 40; e->env[0].release = 45;
         break;
     default:                                         /* SINGLE pad, one long note */
         e->arch = VARCH_SINGLE;
-        e->filter[0].cutoff = 80; e->filter[0].resonance = 20; e->filter[0].mod_amt = BIPOLAR_CENTER;
+        e->filter[0].cutoff = 80; e->filter[0].resonance = 20; e->filter[0].mod_amt = 0;
         e->env[0].attack = 30; e->env[0].sustain = 127; e->env[0].release = 60;
         break;
     }

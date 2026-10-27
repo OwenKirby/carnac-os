@@ -91,6 +91,19 @@ static int src_is_bipolar(int src) {
            src == MSRC_MODSLOT1 || src == MSRC_MODSLOT2 || src == MSRC_MODSLOT3;
 }
 
+/* ENV2 / ENV3 with INVERT run 0 -> -1 (2026-10-27): the knob is their rest point and they dip below it */
+static int src_is_inverted_env(const EngineState *e, int src) {
+    return (src == MSRC_ENV2 || src == MSRC_ENV3) && e->env[src - MSRC_ENV1].invert;
+}
+
+/* A level read from a source for DEPTH MOD: 0..32767. An inverted envelope reads as 1 -> 0 here, so it still opens
+ * the depth rather than holding it shut. */
+static int32_t source_level_q15(const EngineState *e, int src, int32_t s) {
+    if (src == MSRC_KEYBOARD) s = (s + 32768) >> 1;                     /* from the keyboard's bottom to its top */
+    else if (src_is_inverted_env(e, src)) s += 32767;
+    return clamp32(s, 0, 32767);
+}
+
 /* MODSLOT n (spec 4.5): function of two sources, scaled by the slot amount */
 static int32_t tune_cents_now;                      /* GLOBAL > MASTER TUNE, read once a tick */
 
@@ -127,7 +140,7 @@ static int32_t slot_output(const SourceCtx *c, int slot, int depth) {
     case MFN_ABS_DIFF: out = a > b ? a - b : b - a; break;
     case MFN_SAMPLE_B_ON_A: {
         /* B is latched each time A crosses its midpoint; the output holds the latched value between crossings. */
-        int side = a >= (src_is_bipolar(m->src_a) ? 0 : 16384);
+        int side = a >= (src_is_bipolar(m->src_a) ? 0 : src_is_inverted_env(c->eng, m->src_a) ? -16384 : 16384);
         if (!st->init) {
             st->held_q15 = b;
             st->prev_side = (uint8_t)side;
@@ -192,17 +205,27 @@ static int32_t resolve_source_any(const SourceCtx *c, int src, int depth) {
     case MSRC_KEYBOARD:   return in ? (in->note - 60) * 512 : 0;      /* bipolar, C4 = 0 */
     case MSRC_MODWHEEL:   return in ? in->mod_wheel * 258 : 0;
     case MSRC_AFTERTOUCH: return in ? in->aftertouch * 258 : 0;
-    case MSRC_ENV1:       return v ? v->amp_env.level_q15 : 0;        /* hardwired, never inverted */
-    case MSRC_ENV2:       return v ? (c->eng->env[1].invert ? 32767 - v->mod_env.level_q15 : v->mod_env.level_q15) : 0;
-    case MSRC_ENV3:       return v ? (c->eng->env[2].invert ? 32767 - v->aux_env.level_q15 : v->aux_env.level_q15) : 0;
-    case MSRC_LFO1:
-        if (c->lfo_offset) return lfo_offset_q15(&global_lfo1_state[c->layer], c->eng->lfo[0].shape, c->lfo_offset);
-        return lfo1_out_q15[c->layer];
+    /* an envelope at this note's VEL > LEVEL; ENV2 / ENV3 then invert (a soft note dips less) */
+    case MSRC_ENV1:       return v ? (v->amp_env.level_q15 * v->env_vel_q15[0]) >> 15 : 0;   /* never inverted */
+    case MSRC_ENV2:
+    case MSRC_ENV3: {
+        int i = src - MSRC_ENV1;
+        if (!v) return 0;
+        int32_t l = ((i == 1 ? v->mod_env.level_q15 : v->aux_env.level_q15) * v->env_vel_q15[i]) >> 15;
+        return c->eng->env[i].invert ? -l : l;                        /* inverted: 0 -> -1, the knob is the rest point */
+    }
+    case MSRC_LFO1:                                                    /* the layer's, at this voice's depth */
+        if (c->lfo_offset)
+            return (lfo_offset_q15(&global_lfo1_state[c->layer], c->eng->lfo[0].shape, c->lfo_offset) *
+                    (v ? v->lfo_gain_q15[0] : 32768)) >> 15;
+        return v ? (lfo1_out_q15[c->layer] * v->lfo_gain_q15[0]) >> 15 : lfo1_out_q15[c->layer];
     case MSRC_LFO2:                                                    /* worked out once per tick */
     case MSRC_LFO3: {
         int i = src - MSRC_LFO2;
         if (!v) return 0;
-        if (c->lfo_offset) return lfo_offset_q15(&v->poly_lfos.engines[i], c->eng->lfo[i + 1].shape, c->lfo_offset);
+        if (c->lfo_offset)
+            return (lfo_offset_q15(&v->poly_lfos.engines[i], c->eng->lfo[i + 1].shape, c->lfo_offset) *
+                    v->lfo_gain_q15[i + 1]) >> 15;
         return v->lfo_q15[i];
     }
     case MSRC_MODSLOT1:
@@ -226,8 +249,41 @@ void update_poly_lfo_engines(SynthVoiceNode *voice, const VoiceInput *in) {
                     in->frame);                                     /* REL: waits for the key release */
         /* once per tick: the shape also redraws its random values here, so it must not be read twice */
         int32_t raw = compute_morphed_lfo_fixed(state, cfg->shape);
-        voice->lfo_q15[i] = (raw * state->envelope_amp_q15) >> 15;
+        voice->lfo_q15[i] = (((raw * state->envelope_amp_q15) >> 15) * voice->lfo_gain_q15[i + 1]) >> 15;
     }
+}
+
+/* The gains below are Q15 with 32768 = unity, so a gain of "no change" leaves a level exactly as it was. */
+#define GAIN_UNITY 32768
+
+/* VEL > LEVEL (2026-10-26): an envelope's level for velocity v, unity at 127 and with an amount of 0. The amount sets
+ * how far a soft note falls, on a square law: 127 goes to silence at velocity 1, ENV1_VEL_LEVEL_V9 (111) to -18 dB as
+ * the old fixed velocity-to-amp curve did. */
+static int32_t vel_level_q15(uint8_t amt, int velocity) {
+    if (amt == 0u) return GAIN_UNITY;
+    int32_t v = clampi(velocity, 1, 127);
+    int32_t sq = (v * v * 16645) >> 13;                             /* v^2 * 32768 / 127^2 */
+    if (sq > GAIN_UNITY) sq = GAIN_UNITY;
+    return GAIN_UNITY - (((GAIN_UNITY - sq) * ((int32_t)amt * 258)) >> 15);   /* 258 / 32768 ~ 1 / 127 */
+}
+
+/* DEPTH MOD (2026-10-26): an LFO's depth, as AMP MOD sets the amp's level: amount 0 full depth, 127 the source alone
+ * (unipolar; the keyboard from its bottom to its top). An LFO or a MOD slot reads as none: depth is worked out before
+ * the LFOs it would scale. */
+static int32_t lfo_depth_q15(const SourceCtx *c, uint8_t src, uint8_t amt) {
+    if (amt == 0u || src == MSRC_NONE || (src >= MSRC_LFO1 && src <= MSRC_MODSLOT3)) return GAIN_UNITY;
+    int32_t s = resolve_source(c, src, 0), d = (int32_t)amt * 258;
+    s = clamp32(source_level_q15(c->eng, src, s), 0, GAIN_UNITY);
+    return clamp32(GAIN_UNITY - d + ((s * d) >> 15), 0, GAIN_UNITY);
+}
+
+/* a voice's VEL > LEVEL and DEPTH MOD gains for the tick, before anything reads its envelopes or LFOs */
+static void voice_mod_gains(SynthVoiceNode *voice, const SourceCtx *c) {
+    const EngineState *e = c->eng;
+    for (int i = 0; i < 3; i++)
+        voice->env_vel_q15[i] = vel_level_q15(e->env_vel_level[i], c->in->velocity);
+    for (int i = 0; i < 3; i++)
+        voice->lfo_gain_q15[i] = lfo_depth_q15(c, e->lfo_depth_src[i], e->lfo_depth_amt[i]);
 }
 
 /* Whether any voice of the layer holds its key. LFO1 is per layer, so its REL mode waits on this. */
@@ -391,10 +447,11 @@ static int cutoff_q8(const SourceCtx *c, int fi, int32_t mod_q8) {   /* FILTER f
     return clampi((int)glide_q8(knob_glide[c->layer].cutoff[fi]) + (int)mod_q8, 0, 127 << 8);
 }
 
-/* a filter's own mod source and amount (spec 4.2), as a Q8 cutoff offset. Kept in Q8 so the filter interpolates
+/* a filter's own mod source and amount (spec 4.2), as a Q8 cutoff offset: the amount 0..127, positive only (2026-10-26,
+ * was bipolar; twice the steps). Kept in Q8 so the filter interpolates
  * between the table steps and a modulated cutoff does not zipper. */
 static int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f) {
-    return (resolve_source(c, f->mod_src, 0) * bip(f->mod_amt)) >> 7;
+    return (resolve_source(c, f->mod_src, 0) * (int32_t)f->mod_amt) >> 8;
 }
 
 /* A FILTER page's type morph plus its own mod source and amount (spec 4.2, every architecture), the knob's way round
@@ -460,7 +517,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     voice->amp_env.time_dk_q16 = voice->mod_env.time_dk_q16 = voice->aux_env.time_dk_q16 =
         analog ? an->time_k_q16 - 65536 : 0;
 
-    /* LFO2/3 first, so their phases never stall while the voice is still rendering. */
+    /* VEL > LEVEL and DEPTH MOD, then LFO2/3 first, so their phases never stall while the voice is still rendering. */
+    voice_mod_gains(voice, &c);
     update_poly_lfo_engines(voice, in);
     SPROF_LAP(SPROF_C_LFO);
 
@@ -489,21 +547,23 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     }
     voice->silent = 0;
 
-    /* 2. ENV1 (and ENV2 for STACK B) and the note's velocity are hardwired to the amp. The amp's secondary mod source
+    /* 2. ENV1 (and ENV2 for STACK B), each at its VEL > LEVEL, is hardwired to the amp. The amp's secondary mod source
      * scales it: depth 0 = no effect, depth 127 = the source alone sets the level (a unipolar source; negative values
-     * count as 0). A unison stack and a choke fade scale the level too. */
+     * count as 0; an inverted envelope reads 1 -> 0). A unison stack and a choke fade scale the level too. */
     const AmpParams *a = &e->amp;
     int32_t amp_gain_q15 = 32767;
     if (a->amp_mod_src != MSRC_NONE) {
         int32_t depth_q15 = (int32_t)a->amp_mod_depth * 258;
-        int32_t mod_uni_q15 = clamp32(resolve_source(&c, a->amp_mod_src, 0), 0, 32767);
+        int32_t mod_uni_q15 = resolve_source(&c, a->amp_mod_src, 0);
+        if (src_is_inverted_env(e, a->amp_mod_src)) mod_uni_q15 += 32767;
+        mod_uni_q15 = clamp32(mod_uni_q15, 0, 32767);
         amp_gain_q15 = clamp32(32767 - depth_q15 + ((mod_uni_q15 * depth_q15) >> 15), 0, 32767);
     }
-    int32_t level_q15 = (((amp_gain_q15 * velocity_gain_q15(in->velocity)) >> 15) * voice->unison_gain_q15) >> 15;
+    int32_t level_q15 = (amp_gain_q15 * voice->unison_gain_q15) >> 15;
     if (voice->choke) level_q15 = (level_q15 * voice->choke_q15) >> 15;
     if (analog) level_q15 = (level_q15 * an->level_q15) >> 15;      /* (a little over 32767 is fine: float from here) */
-    int32_t vol_q15 = (amp_env_q15 * level_q15) >> 15;
-    int32_t vol_b_q15 = (amp_b_env_q15 * level_q15) >> 15;
+    int32_t vol_q15 = (((amp_env_q15 * voice->env_vel_q15[0]) >> 15) * level_q15) >> 15;
+    int32_t vol_b_q15 = (((amp_b_env_q15 * voice->env_vel_q15[1]) >> 15) * level_q15) >> 15;
 
     /* 3. Oscillators. Pitch is in cents: fine tune, pitch bend, key track and pitch mod add together. Portamento and
      * unison detune come from the voice, not the patch: every oscillator of the voice moves together. */
@@ -541,17 +601,17 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     int32_t noise_off = (resolve_source(&c, mx->noise_mod_src, 0) * bip(mx->noise_mod_amt)) >> 15, colour_off = 0;
     if (mx->noise_col_mod_amt != BIPOLAR_CENTER)
         colour_off = (resolve_source(&c, mx->noise_col_mod_src, 0) * bip(mx->noise_col_mod_amt)) >> 15;
-    if (arch == VARCH_DUAL_OSC)
+    if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL || arch == VARCH_DUAL_SPREAD)
         balance_off = (resolve_source(&c, mx->mix_mod_src, 0) * mx->mix_mod_amt) >> 15;
     if (varch_uses_osc2(arch))
         xmod_off = (resolve_source(&c, mx->xmod_mod_src, 0) * mx->xmod_mod_amt) >> 15;
-    if (arch == VARCH_SPREAD)
+    if (arch == VARCH_SPREAD || arch == VARCH_DUAL_SPREAD)
         spread = clampi(mx->spread + ((resolve_source(&c, mx->spread_mod_src, 0) * mx->spread_mod_amt) >> 15), 0, 127);
     osc_mixer_prepare(&voice->mix, &osc_mixer[voice->layer], freq1_q16, freq2_q16,
                       (int)balance_off, (int)xmod_off, (int)noise_off, (int)colour_off);
     osc_prepare(&voice->osc1, freq1_q16, (int)spread);
     if (varch_uses_osc2(arch))
-        osc_prepare(&voice->osc2, freq2_q16, 0);
+        osc_prepare(&voice->osc2, freq2_q16, arch == VARCH_DUAL_SPREAD ? (int)spread : 0);
     SPROF_LAP(SPROF_C_OSC);
 
     /* 5. Filters: each architecture prepares only the cores its path runs. A new note's first tick sets the
@@ -568,7 +628,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         phase_mod = (resolve_source(&c, fm->bin_phase_mod_src, 0) * bip(fm->bin_phase_mod_amt)) >> 15;
 
     switch (arch) {
-    case VARCH_DUAL_FILTER: {
+    case VARCH_DUAL_FILTER:
+    case VARCH_FULL: {
         /* FILTER MIXER: balance and routing with their own mod sources (spec 4.2) */
         int32_t balance_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt)) >> 15;
         int32_t routing_mod = (resolve_source(&c, fm->routing_mod_src, 0) * bip(fm->routing_mod_amt)) >> 15;
@@ -816,33 +877,30 @@ static void render_single(SynthVoiceNode *v, float *mix, int n) {
     SPROF_LAP(SPROF_AMP);
 }
 
-/* DUAL OSC: OSC1 + cross-modulated OSC2 by balance, + sub + noise -> FILTER1 */
-/* DUAL OSC with a PCM wave on either oscillator: OSC1 as a block, OSC2 against it (osc_mixer_osc2_block), mixed as
- * osc_mixer_render mixes */
-static void render_dual_osc_pcm(SynthVoiceNode *v, float *mix, int n) {
-    int32_t w1[VB], w2[VB], o[VB];
-    float x[VB];
-    osc_render_block(&v->osc1, w1, n);
-    osc_mixer_osc2_block(&v->mix, w1, &v->osc2, w2, n);
-    int32_t g1 = v->mix.osc1_gain_q15, g2 = v->mix.osc2_gain_q15;
-    for (int i = 0; i < n; i++)
-        o[i] = (((int32_t)(int16_t)w1[i] * g1) >> 15) + (((int32_t)(int16_t)w2[i] * g2) >> 15);
-    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
+/* DUAL OSC and FULL: OSC1 + cross-modulated OSC2 by balance, + sub + noise, as the filter's float input. With a PCM
+ * wave on either oscillator: OSC1 as a block, OSC2 against it (osc_mixer_osc2_block), mixed as osc_mixer_render
+ * mixes; otherwise the cross-modulation reads OSC1 sample by sample */
+static void dual_osc_block(SynthVoiceNode *v, float *x, int n) {
+    int32_t o[VB];
+    if (v->osc1.pcm.on || v->osc2.pcm.on) {
+        int32_t w1[VB], w2[VB];
+        osc_render_block(&v->osc1, w1, n);
+        osc_mixer_osc2_block(&v->mix, w1, &v->osc2, w2, n);
+        int32_t g1 = v->mix.osc1_gain_q15, g2 = v->mix.osc2_gain_q15;
+        for (int i = 0; i < n; i++)
+            o[i] = (((int32_t)(int16_t)w1[i] * g1) >> 15) + (((int32_t)(int16_t)w2[i] * g2) >> 15);
+        osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
+    } else {
+        for (int i = 0; i < n; i++)
+            o[i] = osc_mixer_render(&v->mix, &v->osc1, &v->osc2, &v->sub_phase, v->noise_at + i);
+    }
     q15_to_float(o, x, n);
-    filter_core_render_block(&v->synth_filters.core[0], x, x, n);
-    finish_mono_block(v, x, mix, n);
 }
 
+/* DUAL OSC: the two oscillators -> FILTER1 */
 static void render_dual_osc(SynthVoiceNode *v, float *mix, int n) {
-    int32_t o[VB];
     float x[VB];
-    if (v->osc1.pcm.on || v->osc2.pcm.on) {
-        render_dual_osc_pcm(v, mix, n);
-        return;
-    }
-    for (int i = 0; i < n; i++)                /* the cross-modulation reads OSC1 sample by sample */
-        o[i] = osc_mixer_render(&v->mix, &v->osc1, &v->osc2, &v->sub_phase, v->noise_at + i);
-    q15_to_float(o, x, n);
+    dual_osc_block(v, x, n);
     filter_core_render_block(&v->synth_filters.core[0], x, x, n);
     finish_mono_block(v, x, mix, n);
 }
@@ -855,6 +913,30 @@ static void render_dual_filter(SynthVoiceNode *v, float *mix, int n) {
     osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
     q15_to_float(o, x, n);
     dual_filter_render_block(&v->synth_filters, x, x, n);
+    finish_mono_block(v, x, mix, n);
+}
+
+/* FULL: the two oscillators -> FILTER1 / FILTER2, serial .. parallel, balanced */
+static void render_full(SynthVoiceNode *v, float *mix, int n) {
+    float x[VB];
+    dual_osc_block(v, x, n);
+    dual_filter_render_block(&v->synth_filters, x, x, n);
+    finish_mono_block(v, x, mix, n);
+}
+
+/* DUAL SPREAD: OSC1 and OSC2, each its 4 detuned playheads, as blocks, by balance (no cross-mod), + sub + noise
+ * -> FILTER1 */
+static void render_dual_spread(SynthVoiceNode *v, float *mix, int n) {
+    int32_t w1[VB], w2[VB];
+    float x[VB];
+    osc_render_block(&v->osc1, w1, n);
+    osc_render_block(&v->osc2, w2, n);
+    int32_t g1 = v->mix.osc1_gain_q15, g2 = v->mix.osc2_gain_q15;
+    for (int i = 0; i < n; i++)
+        w1[i] = ((w1[i] * g1) >> 15) + ((w2[i] * g2) >> 15);
+    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, w1, n);
+    q15_to_float(w1, x, n);
+    filter_core_render_block(&v->synth_filters.core[0], x, x, n);
     finish_mono_block(v, x, mix, n);
 }
 
@@ -1020,6 +1102,8 @@ static void (*const render_arch[VARCH_COUNT])(SynthVoiceNode *, float *, int) = 
     render_stack,        /* STACK */
     render_binaural,     /* BINAURAL */
     render_strike,       /* STRIKE */
+    render_full,         /* FULL */
+    render_dual_spread,  /* DUAL SPREAD */
 };
 
 void voice_render_block(SynthVoiceNode *voice, float *mix, int n) {

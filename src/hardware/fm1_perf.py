@@ -3,7 +3,8 @@
 """The synth's PERF TEST on a real FM1, from the PC (Windows Python with mido + python-rtmidi).
 
   fm1_perf.py build              build build/fm1/synth.fwsc in WSL (src/hardware/build_fm1.py)
-  fm1_perf.py install [--yes]    install it with X0X's tools/fm1_install.py (asks first unless --yes)
+  fm1_perf.py install [--yes]    install it with X0X's tools/fm1_install.py (asks first unless --yes), then write
+                                 the PCM waves and wavetable bank 0 where the FM1 lacks them (pcm_store_upload.py sync)
   fm1_perf.py run [--wt-ram]     start the test on the FM1 (~95 s), print the table, add it to the checklist;
                                  --wt-ram: the scenarios' wavetable banks read from a RAM copy instead of XIP flash
   fm1_perf.py read               print the last results the FM1 holds (and add them, with --write)
@@ -202,6 +203,15 @@ def cmd_run(wt_ram=False):
     return 0
 
 
+def sync_waves():
+    """after an install: the PCM waves and wavetable bank 0 (pcm_store_upload.py sync), each only when the FM1 does
+    not hold this repo's image already"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import pcm_store_upload
+    print("waves: checking the PCM areas and bank 0")
+    pcm_store_upload.sync(pcm_store_upload.Link(wait=20.0))
+
+
 def main():
     a = sys.argv[1:]
     if a and a[0] == "bench":
@@ -239,6 +249,7 @@ def main():
         if r.returncode:
             sys.exit(f"fm1_perf: install failed ({r.returncode})")
         time.sleep(3.0)                              # the FM1 restarts; the installer has checked its identity
+        sync_waves()
     if a[0] in ("run", "all"):
         return cmd_run("--wt-ram" in a)
     if a[0] == "read":

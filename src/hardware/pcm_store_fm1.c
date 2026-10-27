@@ -8,8 +8,10 @@
  *                                has its old objects there, which read as no image)
  *   1  0xCE000..0xDBFFF  56 KiB  the preset store's tail: its chunks 23 and 24 (free since 2026-10-17, PS_NCHUNK 23
  *                                now) and the 40 KiB after them, up to X0X's panel calibration (OBJ_PANEL, 0xDC000)
+ *   2  0xBC000..0xC1FFF  24 KiB  not PCM: wavetable bank 0's own image (wavetables.h WT_BANK_*, Foundations, since
+ *                                2026-10-26), in the preset store's free chunks 14..16; the same commands upload it
  * Left alone: OBJ_PANEL 0xDC000 (the panel calibration), 0xDE000 (X0X's motion object: free, 8 KiB, kept spare),
- * 0xE0000.. (the update loader's staging) and the preset store's free chunks 1 and 14..16 (its room to grow).
+ * 0xE0000.. (the update loader's staging).
  *
  * The editor's commands (SysEx F0 7D 46 4C cmd args F7, as the old wavetable upload; src/hardware/pcm_store_upload.py):
  *   100 PCM_BEGIN [area]                 the area is detached and its first sector erased: it reads empty from now on
@@ -20,6 +22,9 @@
  *                                        and attached, or its magic is zeroed (the area reads empty) -> rc, waves
  *   103 PCM_INFO  [area, first]          -> areas, area, entries, size KiB x2, used bytes x3, then up to 16 names
  *                                        from entry `first` of the area (samples and waves, pcm_store.h)
+ *   104 PCM_ID    [area]                 -> area, held (0/1), the held image's header CRC (hcrc, its bytes 28..31:
+ *                                        it covers the data CRC and length) x5: an installer writes only the areas
+ *                                        whose image differs (2026-10-26)
  * rc: 0 ok, 1 arguments, 2 flash, 3 order (no BEGIN, or not the next offset), 4 too big for the area, 5 refused on
  * the check (the reply then carries pcm_store_check's reason + 8 as the wave count).
  * The erases stop the audio for tens of ms each (st_erase silences it first): an upload is a studio job. */
@@ -29,15 +34,21 @@
 #define PCM_XIP(off) ((const uint8_t *)FM1_XIP(off))
 #endif
 #define PCM_SECTOR 4096u
-enum { ED_PCM_BEGIN = 100, ED_PCM_WRITE, ED_PCM_END, ED_PCM_INFO };
-static const struct { uint32_t base, size; } PCM_AREA[PCM_AREAS] = {
+enum { ED_PCM_BEGIN = 100, ED_PCM_WRITE, ED_PCM_END, ED_PCM_INFO, ED_PCM_ID };
+#define PCM_BANK_AREA PCM_FLASH_AREAS               /* the area that holds bank 0's image */
+#define PCM_ALL_AREAS (PCM_FLASH_AREAS + 1u)
+static const struct { uint32_t base, size; } PCM_AREA[PCM_ALL_AREAS] = {
     {0x97000u, 0x9000u},
     {0xCE000u, 0xE000u},
+    {0xBC000u, 0x6000u},
 };
 #ifdef PS_NCHUNK                                    /* (the firmware: the preset store comes first; not in the host test) */
 PS_STATIC_ASSERT(0x97000u + 0x9000u <= PS_BASE, "area 0 ends below the preset store");
 PS_STATIC_ASSERT(PS_BASE + PS_NCHUNK * 2u * PS_SECTOR <= 0xCE000u, "area 1 starts after the preset store's chunks");
+PS_STATIC_ASSERT(0xBC000u == PS_BASE + 14u * 2u * PS_SECTOR && 0xBC000u + 0x6000u == PS_BASE + 17u * 2u * PS_SECTOR &&
+                 PS_FIRST_PERF + PS_N_PERF <= 14u && PS_FIRST_PATCH >= 17u, "area 2 is the store's free chunks 14..16");
 #endif
+_Static_assert(WT_BANK_IMAGE_LEN <= 0x6000u, "bank 0's image fits area 2");
 _Static_assert(0xCE000u + 0xE000u <= 0xDC000u, "area 1 ends below X0X's panel calibration (OBJ_PANEL)");
 
 static struct {
@@ -50,9 +61,18 @@ static uint8_t pcm_buf[256] __attribute__((aligned(4)));   /* a write's bytes, i
 static void pcm_boot(void)                          /* after ps_load: attach whatever the areas hold */
 {
     uint32_t a;
-    for (a = 0; a < PCM_AREAS; a++)
+    for (a = 0; a < PCM_FLASH_AREAS; a++)
         if (flash_ok)
             pcm_store_attach(a, PCM_XIP(PCM_AREA[a].base), PCM_AREA[a].size);
+    if (flash_ok)
+        wavetable_bank_attach(PCM_XIP(PCM_AREA[PCM_BANK_AREA].base), PCM_AREA[PCM_BANK_AREA].size);
+}
+
+/* area a's image: its entries (or banks) when it holds, else < 0 (pcm_store_check's reasons) */
+static int pcm_area_check(uint32_t a)
+{
+    const uint8_t *img = PCM_XIP(PCM_AREA[a].base);
+    return a == PCM_BANK_AREA ? wavetable_bank_check(img, PCM_AREA[a].size) : pcm_store_check(a, img, PCM_AREA[a].size);
 }
 
 /* 7-bit packed bytes (groups of up to 7, each after their top bits) -> out; their count, or -1 when over max */
@@ -74,11 +94,14 @@ static uint32_t pcm_u21(const uint8_t *a) { return (uint32_t)a[0] | (uint32_t)a[
 
 static uint32_t pcm_begin(uint32_t area)
 {
-    if (area >= PCM_AREAS)
+    if (area >= PCM_ALL_AREAS)
         return 1;
     pcm_up.on = 0;
     syn_lock();
-    pcm_store_detach(area);                         /* nothing may read the area while it changes */
+    if (area == PCM_BANK_AREA)                      /* nothing may read the area while it changes */
+        wavetable_bank_detach();
+    else
+        pcm_store_detach(area);
     syn_unlock();
     if (!flash_ok || st_erase(PCM_AREA[area].base))
         return 2;
@@ -133,14 +156,17 @@ static uint32_t pcm_end(const uint8_t *a, uint32_t na, uint32_t *waves)
         return 3;                                   /* not every byte the header covers was written */
     if (st_prog(base, pcm_buf, PCM_HDR_SIZE))
         return 2;
-    n = pcm_store_check(area, PCM_XIP(base), PCM_AREA[area].size);
+    n = pcm_area_check(area);
     if (n < 0) {
         st_prog(base, &zero, 4u);                   /* the magic -> 0: the area reads empty */
         *waves = (uint32_t)(8 - n);
         return 5;
     }
     syn_lock();
-    pcm_store_attach(area, PCM_XIP(base), PCM_AREA[area].size);
+    if (area == PCM_BANK_AREA)
+        wavetable_bank_attach(PCM_XIP(base), PCM_AREA[area].size);
+    else
+        pcm_store_attach(area, PCM_XIP(base), PCM_AREA[area].size);
     syn_unlock();
     *waves = (uint32_t)n;
     return 0;
@@ -152,7 +178,7 @@ static int ed_pcm_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
     uint32_t rc, w, i, area, first, n, used;
     switch (cmd) {
     case ED_PCM_BEGIN:
-        area = na ? a[0] : PCM_AREAS;
+        area = na ? a[0] : PCM_FLASH_AREAS;
         rc = pcm_begin(area);
         ed_b(area);
         ed_b(rc);
@@ -170,23 +196,41 @@ static int ed_pcm_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
         ed_b(rc);
         ed_b(w);
         return 1;
+    case ED_PCM_ID:
+        area = na ? a[0] : PCM_ALL_AREAS;
+        ed_b(area);
+        used = area >= PCM_ALL_AREAS ? 0u : area == PCM_BANK_AREA ? wavetable_bank_used() : pcm_area_used(area);
+        w = 0;
+        if (used) {
+            const uint8_t *h = PCM_XIP(PCM_AREA[area].base) + 28;   /* hcrc: last in both headers */
+            w = (uint32_t)h[0] | (uint32_t)h[1] << 8 | (uint32_t)h[2] << 16 | (uint32_t)h[3] << 24;
+        }
+        ed_b(used ? 1u : 0u);
+        for (i = 0; i < 5u; i++)
+            ed_b(w >> (7u * i));
+        return 1;
     case ED_PCM_INFO:
         area = na ? a[0] : 0u;
         first = na > 1u ? a[1] : 0u;
-        ed_b(PCM_AREAS);
+        ed_b(PCM_ALL_AREAS);
         ed_b(area);
-        if (area >= PCM_AREAS) {
+        if (area >= PCM_ALL_AREAS) {
             ed_b(0);
             return 1;
         }
-        n = pcm_area_count(area);
-        used = pcm_area_used(area);
+        used = area == PCM_BANK_AREA ? wavetable_bank_used() : pcm_area_used(area);
+        n = area == PCM_BANK_AREA ? (used ? 1u : 0u) : pcm_area_count(area);
         ed_b(n);
         ed_b(PCM_AREA[area].size / 1024u);
         ed_b((PCM_AREA[area].size / 1024u) >> 7);
         ed_b(used);
         ed_b(used >> 7);
         ed_b(used >> 14);
+        if (area == PCM_BANK_AREA) {
+            if (n && !first)
+                ed_str(wavetable_bank_names[0], PCM_NAME_LEN);
+            return 1;
+        }
         for (w = 0, i = 0; i < area; i++)
             w += pcm_area_count(i);                 /* the area's first entry in the whole list */
         for (i = first; i < n && i < first + 16u; i++) {

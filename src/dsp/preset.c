@@ -78,7 +78,7 @@ void engine_defaults(EngineState *e)
 
     for (unsigned i = 0; i < NFILTER; i++) {
         e->filter[i].cutoff = 110;       /* open */
-        e->filter[i].mod_amt = BIPOLAR_CENTER;
+        e->filter[i].mod_amt = 0;        /* 0..127, positive only */
         e->filter[i].flavour = FLT_MULTI;
         e->filter[i].morph = 36;         /* LP12: as the SVF's lowpass played (FREC_VER_ENGINE 9) */
         e->filter[i].mod_src = MSRC_ENV2;
@@ -116,7 +116,9 @@ void engine_defaults(EngineState *e)
         l->fade = BIPOLAR_CENTER;        /* no fade */
         l->speed_mod_src = MSRC_VELOCITY;
         l->speed_mod_amt = BIPOLAR_CENTER;
+        e->lfo_depth_src[i] = MSRC_MODWHEEL;     /* DEPTH MOD AMT 0: full depth until it is turned up */
     }
+    e->env_vel_level[0] = ENV1_VEL_LEVEL_V9;     /* ENV1 as velocity always moved the amp; ENV2 / ENV3 none */
 
     for (unsigned i = 0; i < NMODSLOT; i++) {
         e->mod[i].func = MFN_ADD;

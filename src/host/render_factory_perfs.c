@@ -2,7 +2,8 @@
  * its patches, effects, tempo, sequence and arp pattern), PLAY pressed, 8 bars on the internal clock, then stopped and
  * 3 s of tail, to a 16-bit stereo WAV per performance. Prints each one's peak and RMS level. Test scaffolding only.
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
- *       src/host/pcm_images_host.c src/host/render_factory_perfs.c -lm -o render_factory_perfs
+ *       src/host/pcm_images_host.c src/host/foundations_image_host.c src/host/render_factory_perfs.c -lm \
+ *       -o render_factory_perfs
  *   render_factory_perfs OUTDIR       writes OUTDIR/NN_NAME.wav */
 #include <math.h>
 #include <stdio.h>
@@ -15,6 +16,7 @@
 #include "dsp/midi_clock.h"
 #include "dsp/maq_seq.h"
 #include "dsp/pcm_store.h"
+#include "dsp/wavetables.h"
 
 #define RATE 44100u
 #define BLOCK 32u
@@ -51,8 +53,13 @@ int main(int argc, char **argv)
         pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0);
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
     }
+    {   /* wavetable bank 0, Foundations, as uploaded to a unit (without it bank 0 plays the fallback sine) */
+        extern const uint8_t foundations_image_host[];
+        extern const uint32_t foundations_image_host_len;
+        wavetable_bank_attach(foundations_image_host, foundations_image_host_len);
+    }
     factory_install();
-    for (s = 0; s < FP_N; s++) {
+    for (s = 0; s < FP_NPERF; s++) {
         uint32_t bpm, play, total, frame = 0, k;
         double sum = 0.0, peak = 0.0;
         FILE *f;
@@ -67,8 +74,8 @@ int main(int argc, char **argv)
         play = 8u * 4u * RATE * 60u / bpm;
         if (play > 40u * RATE) play = 40u * RATE;
         total = play + 3u * RATE;
-        for (i = 0; i < NAME_LEN && FV_TAB[s].name[i]; i++)
-            name[i] = FV_TAB[s].name[i] == ' ' ? '_' : FV_TAB[s].name[i];
+        for (i = 0; i < NAME_LEN && FP_TAB[s].name[i]; i++)
+            name[i] = FP_TAB[s].name[i] == ' ' ? '_' : FP_TAB[s].name[i];
         name[i] = 0;
         snprintf(path, sizeof path, "%s/%02u_%s.wav", argv[1], (unsigned)s, name);
         f = fopen(path, "wb");
@@ -96,7 +103,7 @@ int main(int argc, char **argv)
         fclose(f);
         {
             double rms = sqrt(sum / (2.0 * total));
-            printf("%2u %-16s %3u BPM  %s  peak %6.1f dBFS  rms %6.1f dBFS%s\n", (unsigned)s, FV_TAB[s].name, (unsigned)bpm,
+            printf("%2u %-16s %3u BPM  %s  peak %6.1f dBFS  rms %6.1f dBFS%s\n", (unsigned)s, FP_TAB[s].name, (unsigned)bpm,
                    FA_TAB[s].maq ? "ARP" : "SEQ", 20.0 * log10(peak + 1e-9), 20.0 * log10(rms + 1e-9),
                    rms < 0.003 ? "  (near silent!)" : "");
             silent += rms < 0.003;

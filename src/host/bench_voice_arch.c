@@ -32,7 +32,7 @@ static double now_ns(void)
 #include "dsp/synth_runtime.h"
 
 static int32_t buf[64 * 2];
-static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STACK", "BINAURAL", "STRIKE"};
+static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL_SPREAD"};
 
 static double time_voices(uint8_t arch, int n, int flavour)
 {
@@ -46,7 +46,7 @@ static double time_voices(uint8_t arch, int n, int flavour)
         e->oscmix.spread = 60;
         e->oscmix.xmod_amt = 20;
         e->filter[0].mod_src = MSRC_LFO1;
-        e->filter[0].mod_amt = 100;
+        e->filter[0].mod_amt = 72;
         e->filter[0].flavour = (uint8_t)flavour;
         e->filter[1].flavour = (uint8_t)flavour;
         e->filter[0].resonance = 90;

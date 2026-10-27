@@ -284,7 +284,7 @@ int main(int argc, char **argv)
 
     /* MOD1: lfo1 * env1, a few frames of history */
     e->mod[0].src_a = MSRC_LFO1; e->mod[0].func = MFN_MUL; e->mod[0].src_b = MSRC_ENV1; e->mod[0].amount = 100;
-    e->filter[0].mod_src = MSRC_MODSLOT1; e->filter[0].mod_amt = 64 + 45;
+    e->filter[0].mod_src = MSRC_MODSLOT1; e->filter[0].mod_amt = 90;
     e->osc[0].pitch_mod_src = MSRC_MODSLOT1; e->osc[0].pitch_mod_amt = 20;
     e->lfo[1].speed_mod_src = MSRC_MODSLOT1; e->lfo[1].speed_mod_amt = 64;
     e->amp.pan_mod_src = MSRC_MODSLOT1; e->amp.pan_mod_depth = 90;

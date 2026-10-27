@@ -7,8 +7,9 @@
 A copy of install/index.html gets a fake Web MIDI (X0X's FakeFM1 from x0x-firmware/web/test_web.mjs, plus Carnac's
 editor INFO answer) and a driver that presses the buttons; each case is one page load, served from a local HTTP
 server so the page fetches the real package. Cases: an update from an older Carnac, a test build and a newer
-Carnac (both need the tick), stock firmware, an FM1 left in update mode, and no FM1; the PCM waves after each good
-install, alone when the right version lacks them, and not again when the FM1 holds them."""
+Carnac (both need the tick), stock firmware, an FM1 left in update mode, and no FM1; the waves (PCM areas 0 and 1,
+wavetable bank 0 in area 2) after each good install, alone when the right version lacks them, not again when the FM1
+holds them, and again when area 2 holds another image of the same length (found by PCM_ID's header CRC)."""
 import functools
 import http.server
 import json
@@ -60,12 +61,12 @@ function next() {
 }
 let image = null;
 /* the PCM areas (pcm_store_fm1.c), kept across restarts like the flash */
-const PCMSIZE = { 0: 0x9000, 1: 0xE000 }, area = T.areas = { 0: null, 1: null };
+const PCMSIZE = { 0: 0x9000, 1: 0xE000, 2: 0x6000 }, area = T.areas = { 0: null, 1: null, 2: null };
 let up = null;
 const unp = (s) => { const o = []; for (let i = 0; i < s.length; i += 8) for (let j = 0; j < 7 && i + 1 + j < s.length; j++) o.push(s[i + 1 + j] | (((s[i] >> j) & 1) << 7)); return o; };
 function pcm(cmd, a) {
   const R = (...b) => tx([0xF0, 0x7D, 0x46, 0x4C, cmd, ...b, 0xF7]);
-  if (cmd !== 103) T.pcmFrames++;
+  if (cmd !== 103 && cmd !== 104) T.pcmFrames++;
   if (cmd === 100) { up = { area: a[0], buf: new Uint8Array(PCMSIZE[a[0]]), next: 32 }; area[a[0]] = null; R(a[0], 0); }
   else if (cmd === 101) {
     const off = a[0] | a[1] << 7 | a[2] << 14, b = unp(a.slice(3));
@@ -80,7 +81,10 @@ function pcm(cmd, a) {
     R(rc, 0);
   } else if (cmd === 103) {
     const img = area[a[0]], n = img ? img[6] | img[7] << 8 : 0, used = img ? img.length : 0, kib = PCMSIZE[a[0]] / 1024;
-    R(2, a[0], n, kib & 0x7F, kib >> 7, used & 0x7F, (used >> 7) & 0x7F, (used >> 14) & 0x7F);
+    R(3, a[0], n, kib & 0x7F, kib >> 7, used & 0x7F, (used >> 7) & 0x7F, (used >> 14) & 0x7F);
+  } else if (cmd === 104) {
+    const img = area[a[0]], h = img ? new DataView(img.buffer, img.byteOffset).getUint32(28, true) : 0;
+    R(a[0], img ? 1 : 0, h & 0x7F, (h >>> 7) & 0x7F, (h >>> 14) & 0x7F, (h >>> 21) & 0x7F, h >>> 28);
   }
 }
 window.__setPcm = (k, img) => { area[k] = img.slice(); };
@@ -95,7 +99,7 @@ function rx(d) {
       ? [...Array.from({ length: 6 }, (_, k) => [k * 512, 512]), [image.length - 100, 100], [0xF0000000, 8]]
       : [[0, 64], [0x40, 160], [0x1000, 512], [0xE0000000, 8]];
     next();
-  } else if (d[1] === 0x7D && d[2] === 0x46 && d[3] === 0x4C && d[4] >= 100 && d[4] <= 103) {
+  } else if (d[1] === 0x7D && d[2] === 0x46 && d[3] === 0x4C && d[4] >= 100 && d[4] <= 104) {
     if (carnac !== null) pcm(d[4], d.slice(5, -1));
   } else if (waiting) {
     const u = unpack7(d.slice(1, -1)), [addr, len] = waiting;
@@ -129,7 +133,9 @@ const out = (o) => { const p = document.createElement("pre"); p.id = "RESULT"; p
   window.__setImage(img);
   const pcm = {};
   for (const a of m.pcm) pcm[a.area] = new Uint8Array(await (await fetch(a.file)).arrayBuffer());
-  if (new URLSearchParams(location.search).get("pcm") === "ok") for (const k in pcm) window.__setPcm(+k, pcm[k]);
+  const pcmQ = new URLSearchParams(location.search).get("pcm");
+  if (pcmQ === "ok" || pcmQ === "old2") for (const k in pcm) window.__setPcm(+k, pcm[k]);
+  if (pcmQ === "old2") { const o = pcm[2].slice(); o[28] ^= 1; window.__setPcm(2, o); }   /* same length, another image */
   if (!(await until(() => !$("find").disabled))) return out({ err: "find never enabled", status: $("status").textContent });
   $("find").click();
   await until(() => $("device").textContent || $("status").className === "bad");
@@ -155,7 +161,7 @@ CASES = {   # case -> (query, check)
     "older Carnac -> this one": ("case=older&after={v}", lambda r, v: r["device"].endswith("Carnac OS 0.9.0.") and not r["confirm"]
                        and r["tipShown"] == r["tipWanted"]
                        and r["written"] and r["wrongBytes"] == 0 and r["pcmOk"]
-                       and r["status"] == f"Done. The FM1 runs Carnac OS {v}, with its PCM waves." and r["bar"] == 100),
+                       and r["status"] == f"Done. The FM1 runs Carnac OS {v}, with its waves." and r["bar"] == 100),
     "test build needs the tick": ("case=dev&after={v}", lambda r, v: r["confirm"] and r["goDisabled"] and r["goAfterTick"]
                                   and r["written"] and not r["bad"]),
     "newer on the FM1 needs the tick": ("case=newer&after={v}", lambda r, v: r["confirm"] and r["goDisabled"] and r["goAfterTick"]
@@ -164,11 +170,14 @@ CASES = {   # case -> (query, check)
                                  and r["written"] and r["status"].startswith("Done.")),
     "left in update mode -> finish": ("case=loader&after={v}", lambda r, v: "update mode" in r["device"] and r["goText"].startswith("Finish")
                                       and r["written"] and r["wrongBytes"] == 0 and r["pcmOk"] and r["status"].startswith("Done.")),
-    "same version, PCM waves missing": ("case=same&after={v}", lambda r, v: "PCM waves are missing" in r["device"]
-                                        and r["goText"] == "Write the PCM waves" and not r["written"] and r["pcmOk"]
+    "same version, PCM waves missing": ("case=same&after={v}", lambda r, v: "waves are missing" in r["device"]
+                                        and r["goText"] == "Write the waves" and not r["written"] and r["pcmOk"]
                                         and r["status"].startswith("Done.") and not r["bad"]),
     "same version, PCM waves there": ("case=same&after={v}&pcm=ok", lambda r, v: "already runs" in r["device"] and r["written"]
                                       and r["pcmOk"] and r["pcmFrames"] == 0 and r["status"].startswith("Done.")),
+    "same version, Foundations out of date": ("case=same&after={v}&pcm=old2", lambda r, v: "waves are missing" in r["device"]
+                                              and r["goText"] == "Write the waves" and not r["written"] and r["pcmOk"]
+                                              and r["pcmFrames"] == 66 and r["status"].startswith("Done.")),
     "wrong version after install": ("case=older&after=0.9.0", lambda r, v: r["written"] and r["bad"] and not r["tipShown"]
                                     and "reports Carnac OS 0.9.0" in r["status"] and r["pcmFrames"] == 0),
     "no FM1": ("case=none", lambda r, v: r["bad"] and r["status"].startswith("FM1 not found") and not r["written"]),

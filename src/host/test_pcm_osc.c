@@ -140,7 +140,9 @@ static void spread_detunes(uint8_t code, const char *name)
     osc_init(&a);
     osc_select_wave(&a, code);
     b = a;
-    for (int tick = 0; tick < 600; tick++) {
+    /* 0.75 s: a near-pure tone's detuned playheads beat slowly, and a shorter window can sit in a trough (PAN FLUTE
+     * measured 0.09 of the level over 600 ticks, 0.24 over 6000, as the other waves) */
+    for (int tick = 0; tick < 2200; tick++) {
         osc_prepare(&a, mtof_q16(57), 0);
         osc_prepare(&b, mtof_q16(57), 90);
         osc_render_block(&a, oa, 16);
@@ -208,13 +210,13 @@ int main(int argc, char **argv)
     /* 4 an area gone: its waves play bank 0 */
     {
         int32_t peak = 0;
-        uint8_t code = code_of("STRINGS");
+        uint8_t code = code_of("CHOIR");
         pcm_store_detach(0);
         pcm_store_detach(1);
         patch(VARCH_SINGLE, code, 0);
         synth_midi_3(0x90, 60, 100);
         double e = render(RATE / 4, &peak, NULL);
-        CHECK(wave_kind(code) == -1 && e > 1e9, "no store: STRINGS (code %u) plays bank 0 (energy %.3g)", code, e);
+        CHECK(wave_kind(code) == -1 && e > 1e9, "no store: CHOIR (code %u) plays bank 0 (energy %.3g)", code, e);
         attach();
     }
 
@@ -242,12 +244,15 @@ int main(int argc, char **argv)
     if (dir) {
         static const struct { const char *name; uint8_t arch; uint8_t scan; const uint8_t notes[4]; uint8_t a, r; } R[] = {
             {"WOOD CHIMES", VARCH_SINGLE, 30, {55, 60, 67, 0}, 0, 70},
-            {"CLAY CHIMES", VARCH_SINGLE, 30, {55, 60, 67, 0}, 0, 70},
-            {"SHELL CHIMES", VARCH_SINGLE, 30, {60, 67, 72, 0}, 0, 70},
-            {"STRINGS", VARCH_SINGLE, 64, {48, 55, 60, 64}, 40, 70},
+            {"RAINSTICK", VARCH_SINGLE, 64, {60, 0, 0, 0}, 0, 70},
+            {"LORE", VARCH_SINGLE, 64, {52, 59, 64, 67}, 40, 80},
+            {"MOONSONG", VARCH_SINGLE, 64, {45, 52, 57, 61}, 60, 85},
             {"CHOIR", VARCH_SINGLE, 64, {45, 52, 57, 60}, 50, 75},
             {"HORNS", VARCH_SINGLE, 64, {41, 48, 53, 57}, 10, 60},
             {"CHOIR+WOOD", VARCH_SINGLE, 64, {48, 55, 60, 63}, 50, 80},
+            {"SINGING STN", VARCH_SINGLE, 64, {45, 52, 57, 0}, 10, 80},
+            {"PAN FLUTE", VARCH_SINGLE, 64, {72, 79, 0, 0}, 5, 40},
+            {"CAIRN SPIRIT", VARCH_SINGLE, 64, {45, 52, 57, 64}, 50, 85},
         };
         for (uint32_t i = 0; i < sizeof R / sizeof R[0]; i++) {
             FILE *f = wav_open(dir, R[i].name);

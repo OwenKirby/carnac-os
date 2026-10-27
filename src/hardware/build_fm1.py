@@ -89,6 +89,11 @@ def main():
                     help="the profile build: the render times its stages (-DSYNTH_PROF, src/dsp/synth_prof.h)")
     ap.add_argument("--dsp-ram", action="store_true",
                     help="run the DSP's code from RAM instead of the flash (XIP) through the I-cache (dsp_ram_ld)")
+    ap.add_argument("--dsp-align", type=int, metavar="N", default=4,
+                    help="align each DSP function to N bytes, a power of 2 (synth_dsp.c only; 0: the compiler's 2). "
+                         "4 (2026-10-26): the DSP runs from the XIP flash through the I-cache, and with 2-byte "
+                         "functions a UI change of 2 mod 4 bytes flipped every instruction's fetch phase (PERF TEST "
+                         "rows moved by up to 5 points with the DSP unchanged); 4 costs ~110 B")
     a = ap.parse_args()
     os.environ.setdefault("JIELI_TOOLCHAIN", "/opt/jieli/toolchain")
     os.environ.setdefault("AC79_SDK", "/opt/fw-AC79_AIoT_SDK")
@@ -120,6 +125,8 @@ def main():
         if a.prof:
             flags += ["-DSYNTH_PROF", '-DSYNTH_VERSION="PROF"']
         o2 = [f if f != "-Os" else "-O2" for f in flags]
+        if a.dsp_align:                                 # (JieLi's clang 4 ignores -falign-functions: LLVM's own switch)
+            o2 += ["-mllvm", f"-align-all-functions={a.dsp_align.bit_length() - 1}"]
         objs = [b.OUT / "crt0.o", b.OUT / "fm1_vec.o", b.OUT / "fm1_isr.o", b.OUT / "fm1_cpu1.o",
                 gen / "synth_fm1.o", gen / "synth_dsp.o"]
         b.tc_all(("cc", "-c", b.FW / "crt0.S", "-o", objs[0]),

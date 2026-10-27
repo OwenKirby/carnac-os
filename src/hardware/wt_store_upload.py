@@ -49,7 +49,7 @@ def load_image(path):
      hcrc) = struct.unpack_from("<IHBBHBBIIIII", img)
     if magic != 0x42545746 or zlib.crc32(img[:28]) != hcrc:
         sys.exit(f"{path}: not a wavetable store image (run src/dsp/gen_wavetables.py)")
-    if data_off != DATA_OFF or len(img) != data_off + data_len or zlib.crc32(img[data_off:]) != crc:
+    if data_off not in (DATA_OFF, 32) or len(img) != data_off + data_len or zlib.crc32(img[data_off:]) != crc:
         sys.exit(f"{path}: damaged image (sizes or data CRC)")
     return img, {"banks": banks, "set_id": set_id, "bytes": len(img)}
 
@@ -57,7 +57,7 @@ def load_image(path):
 def frames(img):
     """the upload as (cmd, args) requests: BEGIN, the data in 256-byte writes, then the header (END)"""
     yield WT_BEGIN, []
-    for off in range(DATA_OFF, len(img), CHUNK):
+    for off in range(struct.unpack_from("<I", img, 12)[0], len(img), CHUNK):   # the header's data_off
         yield WT_WRITE, u21(off) + pack7(img[off:off + CHUNK])
     yield WT_END, pack7(img[:32])
 

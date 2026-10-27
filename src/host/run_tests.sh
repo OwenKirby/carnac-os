@@ -33,13 +33,14 @@ build() {   # name, sources...: a failed build is a failed test (and its old bin
     return 1
 }
 
-build render_hash $DSP src/host/test_render_hash.c && run render_hash "$OUT/render_hash.exe"
+build render_hash $DSP src/host/foundations_image_host.c src/host/test_render_hash.c && run render_hash "$OUT/render_hash.exe"
 run render_hash_core2 "$OUT/render_hash.exe" --core2
 run render_hash_core2_fail "$OUT/render_hash.exe" --core2-fail
 build voice_arch $DSP src/host/test_voice_arch.c && run voice_arch "$OUT/voice_arch.exe"
 build pcm_osc $DSP src/host/pcm_images_host.c src/host/test_pcm_osc.c && run pcm_osc "$OUT/pcm_osc.exe"
 build filter src/host/test_filter.c src/dsp/filter.c && run filter "$OUT/filter.exe"
 build ui_arch $DSP src/UIStateMachine.c src/host/test_ui_arch.c && run ui_arch "$OUT/ui_arch.exe"
+build ui_rows_fit $DSP src/host/test_ui_rows_fit.c && run ui_rows_fit "$OUT/ui_rows_fit.exe"
 build midi_clock $DSP src/host/test_midi_clock.c && run midi_clock "$OUT/midi_clock.exe"
 build maq_seq $DSP src/UIStateMachine.c src/host/test_maq_seq.c && run maq_seq "$OUT/maq_seq.exe"
 build arp_seq $DSP src/UIStateMachine.c src/host/test_arp_seq.c && run arp_seq "$OUT/arp_seq.exe"
@@ -52,15 +53,17 @@ build flash_record src/dsp/preset.c src/host/test_flash_record.c && run flash_re
 if python src/hardware/wt_store_upload.py syx src/dsp/wavetables_image.bin "$OUT/upload.syx" >/dev/null 2>&1; then
     build wt_store src/host/test_wt_store.c src/dsp/wavetable_attach.c src/dsp/wavetables.c src/dsp/wavetables_image.c \
         && run wt_store "$OUT/wt_store.exe" "$OUT/upload.syx"
+else
+    total=$((total + 1)); printf '  FAIL  %-22s (wt_store_upload.py syx)\n' wt_store
 fi
 if python src/dsp/gen_pcm_waves.py --images-only >/dev/null 2>&1     && python src/hardware/pcm_store_upload.py syx src/dsp/pcm_area1.bin "$OUT/pcm_area1.syx" --area 1 >/dev/null 2>&1; then
-    build pcm_store src/host/test_pcm_store.c src/dsp/pcm_store.c src/dsp/wavetable_attach.c src/dsp/wavetables.c         src/dsp/wavetables_image.c && run pcm_store "$OUT/pcm_store.exe" "$OUT/pcm_area1.syx" src/dsp/pcm_area1.bin
+    build pcm_store src/host/test_pcm_store.c src/dsp/pcm_store.c src/dsp/pcm_area_fw.c src/dsp/wavetable_attach.c src/dsp/wavetables.c         src/dsp/wavetables_image.c src/host/foundations_image_host.c && run pcm_store "$OUT/pcm_store.exe" "$OUT/pcm_area1.syx" src/dsp/pcm_area1.bin
 else
     total=$((total + 1)); printf '  FAIL  %-22s (gen_pcm_waves.py / pcm_store_upload.py syx)
 ' pcm_store
 fi
 build preset_store src/host/test_preset_store.c src/dsp/preset.c src/dsp/seq_scale.c src/dsp/arp_chords.c src/dsp/wavetables_image.c && run preset_store "$OUT/preset_store.exe"
-build factory_perfs $DSP src/host/pcm_images_host.c src/host/render_factory_perfs.c && mkdir -p "$OUT/factory_wav"     && run factory_perfs sh -c "'$OUT/factory_perfs.exe' '$OUT/factory_wav' && echo 'all 32 factory performances sound'"
+build factory_perfs $DSP src/host/pcm_images_host.c src/host/foundations_image_host.c src/host/render_factory_perfs.c && mkdir -p "$OUT/factory_wav"     && run factory_perfs sh -c "'$OUT/factory_perfs.exe' '$OUT/factory_wav' && echo 'all 8 factory performances sound'"
 build perf_test $DSP src/hardware/perf_test.c src/host/perf_test_host.c && run perf_test "$OUT/perf_test.exe"
 run perf_test_guard "$OUT/perf_test.exe" --guard
 build perf_test_prof -DSYNTH_PROF $DSP src/hardware/perf_test.c src/host/perf_test_host.c \

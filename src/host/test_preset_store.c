@@ -228,14 +228,9 @@ static void test_factory(void)
               arp_genre_names[G[i].g], G[i].name);
     memset(syn_used, 0, sizeof syn_used);
     factory_install();
-    CHECK(used_count() == 4 * (int)FP_N, "factory_install marked %d slots, not %u", used_count(), 4u * FP_N);
+    CHECK(used_count() == (int)(FP_N + 3u * FP_NPERF), "factory_install marked %d slots, not %u", used_count(),
+          FP_N + 3u * FP_NPERF);
     for (s = 0; s < FP_N; s++) {
-        WholePerformance w, back;
-        static uint8_t rec[WHOLE_PERF_STORED_SIZE];
-        const FactoryArp *fa = &FA_TAB[s];
-        CHECK(factory_perf(s, &w) == 0, "factory_perf %u", s);
-        CHECK(memcmp(syn_seq_name[s], syn_perf_name[s], NAME_LEN) == 0 && memcmp(syn_arp_name[s], syn_perf_name[s], NAME_LEN) == 0,
-              "factory sequence / arp %u: not named after its performance", s);
         {   /* the patch's settings: each a byte of the patch, once, and the values in range */
             const uint8_t *q = FV_TAB[s].set;
             uint8_t seen[sizeof(EngineState)] = {0};
@@ -250,18 +245,25 @@ static void test_factory(void)
                   e->oscmix.atk_track < ATKTRK_COUNT && e->oscmix.xmod_type < XMOD_COUNT, "patch %u out of range", s);
             for (k = 0; k < NOSC; k++)
                 CHECK(e->osc[k].wavebank < 16u || (e->osc[k].wavebank >= 32u && e->osc[k].wavebank < 32u + ATK_COUNT) ||
-                      (e->osc[k].wavebank >= 64u && e->osc[k].wavebank < 71u), "patch %u osc %u: wave %u", s, k,
+                      (e->osc[k].wavebank >= 64u && e->osc[k].wavebank < 74u), "patch %u osc %u: wave %u", s, k,
                       e->osc[k].wavebank);
             for (k = 0; k < NMODSLOT; k++)
                 CHECK(e->mod[k].src_a < MSRC_COUNT && e->mod[k].src_b < MSRC_COUNT && e->mod[k].func < MFN_COUNT,
                       "patch %u slot %u", s, k);
-            CHECK(memcmp(&w.engine[1], &patch_bank[w.perf.layer_patch[1]], sizeof(EngineState)) == 0 &&
-                  w.perf.perf_mode < PERF_COUNT, "performance %u: its layer 2", s);
         }
-        CHECK(memcmp(&w.engine[0], &patch_bank[s], sizeof(EngineState)) == 0 &&
+    }
+    for (s = 0; s < FP_NPERF; s++) {
+        WholePerformance w, back;
+        static uint8_t rec[WHOLE_PERF_STORED_SIZE];
+        const FactoryArp *fa = &FA_TAB[s];
+        CHECK(factory_perf(s, &w) == 0, "factory_perf %u", s);
+        CHECK(memcmp(syn_seq_name[s], syn_perf_name[s], NAME_LEN) == 0 && memcmp(syn_arp_name[s], syn_perf_name[s], NAME_LEN) == 0,
+              "factory sequence / arp %u: not named after its performance", s);
+        CHECK(memcmp(&w.engine[1], &patch_bank[w.perf.layer_patch[1]], sizeof(EngineState)) == 0 &&
+              w.perf.perf_mode < PERF_COUNT, "performance %u: its layer 2", s);
+        CHECK(memcmp(&w.engine[0], &patch_bank[FP_TAB[s].patch], sizeof(EngineState)) == 0 &&
               memcmp(w.seq, syn_seq_bank[s], sizeof w.seq) == 0, "performance %u: not its patch and sequence", s);
-        CHECK(memcmp(w.perf.name, syn_perf_name[s], NAME_LEN) == 0 && memcmp(w.perf.name, patch_bank[s].name, NAME_LEN) == 0,
-              "performance %u: its name", s);
+        CHECK(memcmp(w.perf.name, syn_perf_name[s], NAME_LEN) == 0, "performance %u: its name", s);
         CHECK(fa->maq ? memcmp(&w.arp, &syn_arp_bank[s], sizeof w.arp) == 0 && w.perf.arp_link == s
                       : w.arp.steps[0].chord_root == ARP_CHORD_EMPTY && w.perf.arp_link == 127u,
               "performance %u: its arp pattern (ARP-led %u)", s, fa->maq);
@@ -293,7 +295,7 @@ static void test_factory(void)
         /* the arp pattern */
         const ArpState *a = &syn_arp_bank[s];
         CHECK(a->current_genre_bank < ARP_GENRE_COUNT && a->gate_length <= VAL_MAX && a->sequence_length == ARP_NSTEP &&
-              ARP_LAYER(a) == ARPLAYER_L1 && ARP_TIMING(a) == fa->div && a->transpose_maq_option == fa->maq,
+              ARP_LAYER(a) == ARPLAYER_L2 && ARP_TIMING(a) == fa->div && a->transpose_maq_option == fa->maq,
               "arp %u out of range", s);
         CHECK(ARP_ROOT_IS_CHORD(a->steps[0].chord_root), "arp %u starts on a chord", s);
         for (i = 0; i < ARP_NSTEP; i++) {
@@ -303,8 +305,9 @@ static void test_factory(void)
                   "arp %u step %u out of range", s, i);
         }
     }
-    printf("factory: %u performances, %u ARP-led, %u SEQ-led\n", FP_N, arp_led, FP_N - arp_led);
-    CHECK(factory_perf(FP_N, &(WholePerformance){0}) == -1, "factory_perf past the bank");
+    printf("factory: %u patches, %u performances, %u ARP-led, %u SEQ-led\n", FP_N, FP_NPERF, arp_led,
+           FP_NPERF - arp_led);
+    CHECK(factory_perf(FP_NPERF, &(WholePerformance){0}) == -1, "factory_perf past the bank");
 }
 
 int main(void)
@@ -441,10 +444,10 @@ int main(void)
     CHECK(holds(UISAVE_PATCH_PRESET, 5, 0x30 + 38), "a damaged newest copy: not the save before it");
 
     /* patch chunks in the v5 layout (170-byte patches, before STRIKE) and the v6 one (173, STRIKE's first three attack
-     * bytes, stored as in RAM), v7 (packed, no BEND MOD) and v8 (packed, no DRIVE), as the firmware before each wrote
-     * them: their slots load through engine_from_v5 / _v6 / _v7 / _v8, and the next save writes the chunk as the
-     * current version */
-    for (uint32_t ver = 5u; ver <= 8u; ver++) {
+     * bytes, stored as in RAM), v7 (packed, no BEND MOD), v8 (packed, no DRIVE) and v9 (no VEL > LEVEL or DEPTH MOD, the
+     * envelope flags as bytes), as the firmware before each wrote them: their slots load through engine_from_v5 / _v6 /
+     * _v7 / _v8 / _v9_stored, and the next save writes the chunk as the current version */
+    for (uint32_t ver = 5u; ver <= 9u; ver++) {
         uint32_t c = ver - 4u, chunk = PS_KIND[UISAVE_PATCH_PRESET].first + c, first, n = ps_slots(&PS_KIND[UISAVE_PATCH_PRESET], c, &first);
         uint32_t size = ver == 5u ? ENGINE_V5_SIZE : (ver == 6u ? ENGINE_V6_SIZE : ENGINE_STORED_SIZE), len = PS_USED_BYTES + n * size, i, j;
         static uint8_t pay[4096];
@@ -472,8 +475,10 @@ int main(void)
             if (ver >= 7u) {
                 if (ver == 7u)
                     engine_from_v7(pay + PS_USED_BYTES + k * size, &want);
-                else
+                else if (ver == 8u)
                     engine_from_v8(pay + PS_USED_BYTES + k * size, &want);
+                else
+                    engine_from_v9_stored(pay + PS_USED_BYTES + k * size, &want);
                 ok &= memcmp(e, &want, sizeof want) == 0;
                 continue;
             }
@@ -551,7 +556,7 @@ int main(void)
         CHECK(syn_slot_used(UISAVE_ARP_SEQ, 3) && !syn_slot_used(UISAVE_ARP_SEQ, 0) &&
               memcmp(slot_ptr(UISAVE_ARP_SEQ, 3), &want, sizeof want) == 0, "a v3 arp chunk: loaded, migrated");
 
-        for (uint32_t ver = 6u; ver <= 8u; ver++) {
+        for (uint32_t ver = 6u; ver <= 9u; ver++) {
             static uint8_t mig[WHOLE_PERF_STORED_SIZE];
             n = ps_slots(&PS_KIND[PERF], 0u, &first);
             len = PS_USED_BYTES + n * WHOLE_PERF_STORED_SIZE;
@@ -560,21 +565,34 @@ int main(void)
             for (i = 0; i < 3; i += 2) {
                 memset(&w, (int)(0x40 + i), sizeof w);
                 w.arp = ver == 6u ? v3 : v4f;
-                if (ver == 8u) {                         /* v9 patches: today's filters as they are */
+                for (uint32_t l = 0; l < NLAYER; l++) {  /* (a v9 patch's KEY TRACK in 4-bit sources' nibbles) */
+                    w.engine[l].filter[0].mod_src = w.engine[l].filter[1].mod_src = MSRC_LFO1;
+                    w.engine[l].filter[0].morph_mod_src = w.engine[l].filter[1].morph_mod_src = MSRC_ENV2;
+                    for (uint32_t k = 0; k < NLFO; k++)  /* (v9: SPD MOD SRC 4 bits, the envelope flags 0 / 1) */
+                        w.engine[l].lfo[k].speed_mod_src = MSRC_VELOCITY;
+                    for (uint32_t k = 0; k < NENV; k++) {
+                        w.engine[l].env[k].retrig_sync = 1u;
+                        w.engine[l].env[k].legato = (uint8_t)(k & 1u);
+                        w.engine[l].env[k].invert = k ? 1u : 0u;
+                    }
+                }
+                if (ver >= 8u) {                         /* v9 patches: today's filters as they are */
                     w.engine[0].filter[0].flavour = FLT_MS20;   /* (its drive 0x40 + i) */
                     w.engine[1].filter[1].flavour = FLT_MULTI;
                     w.engine[1].filter[0].drive = 0u;
-                    whole_perf_pack(&w, pay + PS_USED_BYTES + i * WHOLE_PERF_STORED_SIZE);
-                    continue;
+                } else {
+                    w.engine[0].filter[0].flavour = 2u;  /* v8's MS-20 LOW, its morph 0x40 + i the drive */
+                    w.engine[1].filter[1].flavour = 0u;  /* v8's SVF */
                 }
-                w.engine[0].filter[0].flavour = 2u;      /* v8's MS-20 LOW, its morph 0x40 + i the drive */
-                w.engine[1].filter[1].flavour = 0u;      /* v8's SVF */
                 whole_perf_pack(&w, pay + PS_USED_BYTES + i * WHOLE_PERF_STORED_SIZE);
-                /* (packed from today's struct: the DRIVE bytes stored where v8 had the next ones; drop them as v8's
-                 * store did, the 2 spare 0s at the end) */
+                /* the patches as v9 stored them; for v6 / v7 (v8 patches) the DRIVE bytes dropped as v8's store did,
+                 * the 2 spare 0s at the end */
                 for (uint32_t l = 0; l < NLAYER; l++) {
                     uint8_t *pt = pay + PS_USED_BYTES + i * WHOLE_PERF_STORED_SIZE + sizeof(MasterPerformancePreset) +
                                   l * ENGINE_STORED_SIZE;
+                    engine_store_pack_v9(&w.engine[l], pt);
+                    if (ver >= 8u)
+                        continue;
                     memmove(pt + ENG_ST_DRIVE0, pt + ENG_ST_DRIVE0 + 1u, ENG_ST_DRIVE1 - ENG_ST_DRIVE0 - 1u);
                     memmove(pt + ENG_ST_DRIVE1 - 1u, pt + ENG_ST_DRIVE1 + 1u, ENGINE_STORED_SIZE - ENG_ST_DRIVE1 - 1u);
                     pt[ENGINE_STORED_SIZE - 2u] = pt[ENGINE_STORED_SIZE - 1u] = 0u;
@@ -586,9 +604,13 @@ int main(void)
             memcpy(mig, pay + PS_USED_BYTES + 2u * WHOLE_PERF_STORED_SIZE, sizeof mig);
             whole_perf_from_old(mig, (uint8_t)ver);
             whole_perf_unpack(mig, &exp);
-            CHECK(memcmp(&exp.arp, &want, sizeof want) == 0 && exp.engine[0].filter[0].flavour == FLT_MS20 &&
+            CHECK(memcmp(&exp.arp, ver == 9u ? &v4f : &want, sizeof want) == 0 && exp.engine[0].filter[0].flavour == FLT_MS20 &&
                   exp.engine[0].filter[0].drive == 0x42 && exp.engine[1].filter[1].flavour == FLT_MULTI &&
                   exp.engine[1].filter[0].drive == 0u, "whole_perf_from_old (v%u): the arp, the patches' filters", (unsigned)ver);
+            CHECK(exp.engine[0].env_vel_level[0] == ENV1_VEL_LEVEL_V9 && exp.engine[1].env_vel_level[2] == 0u &&
+                  exp.engine[1].lfo_depth_amt[1] == 0u && exp.engine[0].filter[0].mod_amt == (0x42 - 64) * 2 &&
+                  exp.engine[0].env[1].legato == 1u && exp.engine[1].env[2].invert == 1u && exp.engine[1].name[3] == (0x42 & 63),
+                  "whole_perf_from_old (v%u): the patches to v10", (unsigned)ver);
             CHECK(syn_slot_used(PERF, 0) && syn_slot_used(PERF, 2) && !syn_slot_used(PERF, 1) && syn_perf_name[2][0] == 0x42 &&
                   ps_perf_read(2, &got) == 0 && memcmp(&got, &exp, sizeof got) == 0,
                   "a v%u performance chunk: loaded, migrated", (unsigned)ver);

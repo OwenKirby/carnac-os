@@ -296,6 +296,8 @@ static int32_t sq_text_fit(int32_t x, int32_t y, const aafont_t *f, const char *
 #define SQ_BOX_Y 3                   /* .. inside the grid row: rows 3 .. 23 */
 #define SQ_FRAME_Y 1                 /* the knob frame: 2 px, rows 1 .. 25, tight round the stones */
 #define SQ_FRAME_H (SQ_BOX_H + 4)
+#define SQ_BRACKET_L 5               /* .. its corner brackets round the knob window: arms 5 px long, 2 px thick */
+#define SQ_BRACKET_T 2
 #define SQ_TURF_H 3                  /* the loop range's grass (sq_grass): its turf at most 3 rows, on the grid's foot */
 #define SQ_CHIP_Y 1                  /* footer: the cursor chip, rows 1 .. 13 */
 #define SQ_CHIP_H 13
@@ -912,8 +914,10 @@ static void sq_lintel(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c, ui
 
 /* one step as a stone (7.4): its outline, then a stone inside it growing with the value (0 none, 127 filling it). In the
  * loop window the outline is MID, outside it DIM (7.4: steps outside the line drop their border brightness); the
- * playhead's step is ACCENT. lit: one of the knob window's four (SQLIT_GROUP), brighter, outline and stone a step up;
- * SQLIT_LANE with the cursor on a footer field, its outline paler still. A skipped step is gone (the playhead steps over it), a muted one crumbles, a tie is an
+ * playhead's step is ACCENT. lit (2026-10-26, user: which lane and which steps are selected must read at a glance):
+ * every step of the active lane in ACCENT's cream, outline and stone (MID outside the loop), its playhead's stone
+ * white; the knob window's four are marked by corner brackets round them (sq_draw_grid), not by their own colour.
+ * A skipped step is gone (the playhead steps over it), a muted one crumbles, a tie is an
  * empty stone with a capstone laid on it from the stone before (a dolmen: ties in a row share one long capstone). The
  * stone's grain is its lane's and step's own. */
 enum { SQLIT_OFF, SQLIT_GROUP, SQLIT_LANE };
@@ -926,9 +930,11 @@ static void sq_draw_step(const UIStateMachine *sm, const SequencerLane *ln, uint
     uint8_t chord = (uint8_t)(ln->event_type == SEQEV_NOTE && s->note_buffer[1] <= VAL_MAX);
     uint16_t edge = head ? SQC(ACCENT) : !in_loop ? SQC(DIM) : chord ? SQC(THEME) : SQC(MID);
     uint16_t fill = head ? SQC(ACCENT) : in_loop ? SQC(THEME) : SQC(DIM);
-    if (lit && !head) {
-        edge = !in_loop ? SQC(MID) : lit == SQLIT_LANE ? SQ_PAL_LANE[sq_pal][SQC_TEXT] : SQC(TEXT);
-        fill = in_loop ? SQC(TEXT) : SQC(MID);
+    if (lit && head) {
+        edge = fill = SQC(HI);
+    } else if (lit) {
+        edge = in_loop ? SQC(ACCENT) : SQC(MID);
+        fill = in_loop ? SQC(ACCENT) : SQC(MID);
     }
     if (s->flags & SEQ_FLAG_SKIP)                    /* the playhead steps over it: nothing there */
         return;
@@ -996,9 +1002,8 @@ static void sq_draw_grid(const UIStateMachine *sm, const MaqSeq *q, uint8_t l)
     if (active && !rec)                              /* the knob window (7.4): its stones and its grass lit */
         lit = sq_cursor_field(sm, l) == SQF_STEPS ? (uint8_t)SQLIT_GROUP : (uint8_t)SQLIT_LANE;
     cv_begin(240, SQ_GRID_H, SQC(BG));
-    for (i = 0; i < SEQ_NSTEP; i++)
-        sq_draw_step(sm, ln, l, i, (uint8_t)(i >= lo && i <= hi), (uint8_t)(i == pos),
-                     i >= g && i < g + 4u ? lit : (uint8_t)SQLIT_OFF);
+    for (i = 0; i < SEQ_NSTEP; i++)                  /* the active lane all in cream */
+        sq_draw_step(sm, ln, l, i, (uint8_t)(i >= lo && i <= hi), (uint8_t)(i == pos), active);
     /* the loop range (7.4): grass from the first step's stone to the last step's, along the grid's foot, its blades
      * up round the stones' feet; under the knob window ACCENT (as under the knob cards it ties to), paler with the
      * cursor on a footer field */
@@ -1009,6 +1014,19 @@ static void sq_draw_grid(const UIStateMachine *sm, const MaqSeq *q, uint8_t l)
                        lit == SQLIT_LANE ? SQ_PAL_LANE[sq_pal][SQC_ACCENT] : SQC(ACCENT), 7 + l * 3);
     else
         sq_grass(x0, x1, SQ_GRID_H, 5, gc, 7 + l * 3, 0, 0, 0, 0, 0);
+    if (lit) {                                       /* the knob window's four in corner brackets: white, the
+                                                      * highlight's pale cream with the cursor on a footer field */
+        uint16_t bc = lit == SQLIT_LANE ? SQ_PAL_LANE[sq_pal][SQC_TEXT] : SQC(HI);
+        int32_t by = SQ_FRAME_Y, bx1 = fx + fw - SQ_BRACKET_T, by1 = SQ_FRAME_Y + SQ_FRAME_H - SQ_BRACKET_T;
+        cv_rect(fx, by, SQ_BRACKET_L, SQ_BRACKET_T, bc);
+        cv_rect(fx, by, SQ_BRACKET_T, SQ_BRACKET_L, bc);
+        cv_rect(fx + fw - SQ_BRACKET_L, by, SQ_BRACKET_L, SQ_BRACKET_T, bc);
+        cv_rect(bx1, by, SQ_BRACKET_T, SQ_BRACKET_L, bc);
+        cv_rect(fx, by1, SQ_BRACKET_L, SQ_BRACKET_T, bc);
+        cv_rect(fx, by1 + SQ_BRACKET_T - SQ_BRACKET_L, SQ_BRACKET_T, SQ_BRACKET_L, bc);
+        cv_rect(fx + fw - SQ_BRACKET_L, by1, SQ_BRACKET_L, SQ_BRACKET_T, bc);
+        cv_rect(bx1, by1 + SQ_BRACKET_T - SQ_BRACKET_L, SQ_BRACKET_T, SQ_BRACKET_L, bc);
+    }
     if (rec) {                                       /* step record: the record step framed in every lane (2 px top
                                                       * and bottom, 1 px sides: its neighbours are 2 px away) */
         fx = sq_col_x(maq_rec_step(q));
@@ -1022,20 +1040,16 @@ static void sq_draw_grid(const UIStateMachine *sm, const MaqSeq *q, uint8_t l)
 
 /* ------------------------------------------------------------ footer --- */
 /* TARGET's 4-slot layout (7.4), one small stone per lane from x: picked a solid stone, pickable its outline, not
- * pickable (TRANSPOSE: not a NOTE lane; LAYER: a lane with no layer) a ruin. On the cursor chip the stones take the
- * brighter tones, in the plain palette. */
+ * pickable (TRANSPOSE: not a NOTE lane; LAYER: a lane with no layer) a ruin. On the cursor chip they are white like
+ * every selected value (2026-10-26, user: the orange read dark there), the ruins the highlight's pale TEXT. */
 static void sq_draw_slots(int32_t x, uint8_t on, uint8_t ok, uint8_t sel)
 {
     uint32_t i, seed;
     int32_t sx, yb = SQ_SLOT_Y + SQ_SLOT_H;
-    uint8_t inv = sq_inv;
     uint16_t c_on, c_ok, c_no;
-    if (sel)
-        sq_inv = SQINV_OFF;
-    c_on = sel ? SQC(ACCENT) : SQC(TEXT);
-    c_ok = sel ? SQC(THEME) : SQC(MID);
-    c_no = sel ? SQC(MID) : SQC(DIM);
-    sq_inv = inv;
+    c_on = sel ? SQC(HI) : SQC(TEXT);
+    c_ok = sel ? SQC(HI) : SQC(MID);
+    c_no = sel ? SQ_PAL_LANE[sq_pal][SQC_TEXT] : SQC(DIM);
     for (i = 0; i < SEQ_NLANE; i++) {
         sx = x + (int32_t)i * SQ_SLOT_PITCH;
         seed = 101u + i;
