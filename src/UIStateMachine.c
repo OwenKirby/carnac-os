@@ -36,7 +36,7 @@ enum {                               /* how a row reads and writes its value */
     RK_SEQ_TARGET,                   /* TARGET:, max from seq_target_max, values from seq_target_ok */
     RK_ARP_LAYER,                    /* 8.2 Layer: L2 needs a second layer, BOTH needs DUAL_SYNTH (layer_timing's low nibble) */
     RK_ARP_TIMING,                   /* TIMING: every step's length, ARPDIV_* (layer_timing's high nibble) */
-    RK_PERF_SLOT,                    /* SAVE submenu 1 performance pointer */
+    RK_PERF_SLOT,                    /* PERF PRESET, the performance pointer: a turn loads the next used one */
     RK_RENAME,                       /* RENAME: no value, the knobs edit the name (6.2.1) */
     RK_SAVE_ACTION,                  /* ACTION: UIACT_* (6.2.2) */
     RK_THEME,                        /* GLOBAL > THEME: UIStateMachine.theme */
@@ -46,7 +46,10 @@ enum {                               /* how a row reads and writes its value */
     RK_DELAY_HP,                     /* DELAY HP: bits 1..7 of the byte at offset (delay_pingpong, DELAY_HP) */
     RK_WAVE,                         /* RK_BYTE holding a wave code (pcm_osc.h): steps through the wave list (banks,
                                       * PCM waves, attacks), shows the wave's name */
-    RK_DEPTH_SRC                     /* RK_BYTE holding an LFO's DEPTH MOD SRC: steps over the LFOs and MOD slots */
+    RK_DEPTH_SRC,                    /* RK_BYTE holding an LFO's DEPTH MOD SRC: steps over the LFOs and MOD slots */
+    RK_ARCH,                         /* RK_ENG holding the architecture: steps in ARCH_ORDER, not enum order */
+    RK_LINK                          /* RK_BYTE holding a PERF page link (layer_patch, seq_link, arp_link): a turn loads
+                                      * the next used slot (ui_sm_perf_link_turn), the link follows once it has loaded */
 };
 #define RF_LAYER2 (1u << 0)          /* a Layer 2 parameter: greyed under SINGL_SYNTH */
 #define RF_BIPOLAR (1u << 2)         /* stored 0..127 with 64 = 0: shown as -64..+63 */
@@ -90,7 +93,22 @@ static const char *const DRIVE_NAMES[] = {"SOFT", "HARD", "FOLD", "TAPE", "TUBE"
 PS_STATIC_ASSERT(sizeof(DRIVE_NAMES) / sizeof(DRIVE_NAMES[0]) == DRIVE_COUNT, "one name per DRIVE_*");
 static const char *const REVTYPE_NAMES[] = {"SPRING", "TOMB", "MOD", "CELESTIAL", "DOLMEN", "TUMULUS"};
 static const char *const PERF_NAMES[] = {"SINGL", "DUAL", "SPLIT"};
-static const char *const VARCH_NAMES[] = {"SINGLE", "DUAL OSC", "SPREAD", "DUAL FILT", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL SPRD"};
+/* SPREAD shows as SINGLE (2026-10-27, user): at SPREAD 0 it is the old SINGLE path, which it replaced */
+static const char *const VARCH_NAMES[] = {"SINGLE", "DUAL OSC", "SINGLE", "DUAL FILT", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL SPRD"};
+/* the ARCH row's order (2026-10-27, user); the stored codes stay as they are. SINGLE (hidden) sits where SPREAD does */
+static const uint8_t ARCH_ORDER[] = {VARCH_SPREAD, VARCH_DUAL_OSC, VARCH_DUAL_FILTER, VARCH_DUAL_SPREAD, VARCH_FULL,
+                                     VARCH_STACK, VARCH_BINAURAL, VARCH_STRIKE};
+#define ARCH_ORDER_N ((uint8_t)(sizeof ARCH_ORDER / sizeof ARCH_ORDER[0]))
+PS_STATIC_ASSERT(sizeof ARCH_ORDER == VARCH_COUNT - 1u, "every offered VARCH_* once in ARCH_ORDER");
+
+static uint8_t arch_pos(uint8_t a)
+{
+    uint8_t i;
+    for (i = 0u; i < ARCH_ORDER_N; i++)
+        if (ARCH_ORDER[i] == a)
+            return i;
+    return 0u;                       /* SINGLE, or out of range: SPREAD's place */
+}
 static const char *const VMODE_NAMES[] = {"MONO RETRIG", "MONO LEGATO", "POLY REUSE", "POLY RESET", "UNISON"};
 static const char *const PORTA_NAMES[] = {"CONST RATE", "CONST TIME", "LEGATO TIED"};
 static const char *const CLKSRC_NAMES[] = {"INTERNAL", "MIDI"};
@@ -319,17 +337,17 @@ static const UiRow EFFECTS_ROWS[] = {
     {"REV PREDELAY", PERF(reverb_predelay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
 };
 #define INST(member) OFS(InstrumentSettings, member)
-static const UiRow GLOBAL_ROWS[] = {
-    {"MASTER TUNE", INST(master_tune), MASTER_TUNE_MIN, MASTER_TUNE_MAX, RK_INST, RF_BIPOLAR, NULL, A_ALL},
-    {"VEL CURVE", INST(vel_curve), 0, VELCURVE_COUNT - 1, RK_INST, 0, VELCURVE_NAMES, A_ALL},
-    {"CLOCK OUT", INST(clock_out), 0, CLKOUT_COUNT - 1, RK_INST, 0, CLKOUT_NAMES, A_ALL},
+static const UiRow GLOBAL_ROWS[] = {   /* the MIDI setup first (2026-10-27, user) */
     {"MIDI CH LAYER1", PERF(midi_ch), 0, 15, RK_BYTE, RF_CHANNEL, NULL, A_ALL},
     {"MIDI CH LAYER2", (uint8_t)(PERF(midi_ch) + 1u), 0, 15, RK_BYTE, RF_LAYER2 | RF_CHANNEL, NULL, A_ALL},
+    {"CLOCK SRC", PERF(clock_source), 0, CLKSRC_COUNT - 1, RK_BYTE, 0, CLKSRC_NAMES, A_ALL},
+    {"MASTER TUNE", INST(master_tune), MASTER_TUNE_MIN, MASTER_TUNE_MAX, RK_INST, RF_BIPOLAR, NULL, A_ALL},
+    {"BEND RANGE", PERF(bend_range), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CUSTOM CC1", PERF(cc1_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CUSTOM CC2", PERF(cc2_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"VEL CURVE", INST(vel_curve), 0, VELCURVE_COUNT - 1, RK_INST, 0, VELCURVE_NAMES, A_ALL},
     {"BASE VELOCITY", PERF(base_velocity), 12, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"BEND RANGE", PERF(bend_range), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"CLOCK SRC", PERF(clock_source), 0, CLKSRC_COUNT - 1, RK_BYTE, 0, CLKSRC_NAMES, A_ALL},
+    {"CLOCK OUT", INST(clock_out), 0, CLKOUT_COUNT - 1, RK_INST, 0, CLKOUT_NAMES, A_ALL},
     {"INT TEMPO", PERF(int_tempo), 0, VAL_MAX, RK_BYTE, RF_BPM, NULL, A_ALL},
     {"THEME", 0, 0, UITHEME_COUNT - 1, RK_THEME, 0, THEME_NAMES, A_ALL},
 };
@@ -338,7 +356,7 @@ static const UiRow GLOBAL_ROWS[] = {
  * rows in the same order (the cursor stays on its row across a layer switch). PERF MODE is on the performance browser
  * (UIPAGE_PERF) since 2026-10-17 */
 static const UiRow HOME1_ROWS[] = {
-    {"ARCH", ENGB(arch), VARCH_DUAL_OSC, VARCH_COUNT - 1, RK_ENG, 0, VARCH_NAMES, A_ALL},   /* SINGLE: SPREAD at 0 */
+    {"ARCH", ENGB(arch), VARCH_DUAL_OSC, VARCH_COUNT - 1, RK_ARCH, 0, VARCH_NAMES, A_ALL},   /* SINGLE: SPREAD at 0 */
     {"ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, 0, NULL, A_ALL},
     {"VOICING", PERF(voice_mode), 0, VMODE_COUNT - 1, RK_BYTE, 0, VMODE_NAMES, A_ALL},
     {"UNISON DETUNE", PERF(unison_detune), 0, VAL_MAX, RK_BYTE, RF_UNISON, NULL, A_ALL},
@@ -347,7 +365,7 @@ static const UiRow HOME1_ROWS[] = {
     {"MAX VOICES", 0, 0, VOICE_POOL, RK_VOICES, 0, NULL, A_ALL},
 };
 static const UiRow HOME2_ROWS[] = {
-    {"ARCH", ENGB(arch), VARCH_DUAL_OSC, VARCH_COUNT - 1, RK_ENG, RF_LAYER2, VARCH_NAMES, A_ALL},
+    {"ARCH", ENGB(arch), VARCH_DUAL_OSC, VARCH_COUNT - 1, RK_ARCH, RF_LAYER2, VARCH_NAMES, A_ALL},
     {"ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, RF_LAYER2, NULL, A_ALL},
     {"VOICING", (uint8_t)(PERF(voice_mode) + 1u), 0, VMODE_COUNT - 1, RK_BYTE, RF_LAYER2, VMODE_NAMES, A_ALL},
     {"UNISON DETUNE", (uint8_t)(PERF(unison_detune) + 1u), 0, VAL_MAX, RK_BYTE,
@@ -365,10 +383,10 @@ static const UiRow HOME3_ROWS[] = {
 static const UiRow PERF_ROWS[] = {          /* HOME's first page: the performance browser (6.1) */
     {"PERF PRESET", 0, 0, BANK_SLOTS - 1u, RK_PERF_SLOT, RF_SLOT, NULL, A_ALL},
     {"PERF MODE", PERF(perf_mode), 0, PERF_COUNT - 1, RK_BYTE, 0, PERF_NAMES, A_ALL},
-    {"LAYER1 PATCH", PERF(layer_patch), 0, VAL_MAX, RK_BYTE, RF_SLOT, NULL, A_ALL},
-    {"LAYER2 PATCH", (uint8_t)(PERF(layer_patch) + 1u), 0, VAL_MAX, RK_BYTE, RF_LAYER2 | RF_SLOT, NULL, A_ALL},
-    {"SEQ LINK", PERF(seq_link), 0, VAL_MAX, RK_BYTE, RF_SLOT, NULL, A_ALL},
-    {"ARP LINK", PERF(arp_link), 0, VAL_MAX, RK_BYTE, RF_SLOT, NULL, A_ALL},
+    {"LAYER1 PATCH", PERF(layer_patch), 0, VAL_MAX, RK_LINK, RF_SLOT, NULL, A_ALL},
+    {"LAYER2 PATCH", (uint8_t)(PERF(layer_patch) + 1u), 0, VAL_MAX, RK_LINK, RF_LAYER2 | RF_SLOT, NULL, A_ALL},
+    {"SEQ LINK", PERF(seq_link), 0, VAL_MAX, RK_LINK, RF_SLOT, NULL, A_ALL},
+    {"ARP LINK", PERF(arp_link), 0, VAL_MAX, RK_LINK, RF_SLOT, NULL, A_ALL},
 };
 static const UiRow SAVE_COMMIT_ROWS[] = {
     {"RENAME PERF", 0, 0, 0, RK_RENAME, 0, NULL, A_ALL},
@@ -783,7 +801,7 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     case RK_THEME: return sm->theme;
     case RK_INST: return ((const uint8_t *)ui_inst(sm))[r->offset];
     case RK_RENAME: case RK_CHAIN: return 0u;
-    case RK_ENG: return ((const uint8_t *)sm->engine[row_layer(r)])[r->offset];
+    case RK_ENG: case RK_ARCH: return ((const uint8_t *)sm->engine[row_layer(r)])[r->offset];
     case RK_VOICES: return ui_sm_layer_voices(sm, row_layer(r));
     case RK_ARP_LAYER: return ARP_LAYER(sm->arp);
     case RK_ARP_TIMING: return ARP_TIMING(sm->arp);
@@ -801,7 +819,7 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
     case RK_THEME: sm->theme = v; break;
     case RK_INST: ((uint8_t *)ui_inst(sm))[r->offset] = v; break;
     case RK_RENAME: case RK_VOICES: case RK_CHAIN: case RK_SEQ_STEPS: break;
-    case RK_ENG: ((uint8_t *)sm->engine[row_layer(r)])[r->offset] = v; break;
+    case RK_ENG: case RK_ARCH: ((uint8_t *)sm->engine[row_layer(r)])[r->offset] = v; break;
     case RK_SEQ_EVENT: seq_lane_set_event(cur_lane(sm), v); break;   /* also restarts TARGET: */
     case RK_ARP_LAYER: arp_set_layer(sm->arp, v); break;
     case RK_ARP_TIMING: arp_set_timing(sm->arp, v); break;
@@ -813,6 +831,8 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
     default: page_block(sm, ui_cur_page(sm))[r->offset] = v; break;
     }
 }
+
+static void preset_walk(UIStateMachine *sm, uint8_t target, uint8_t layer, int16_t from, int16_t detents);
 
 /* Algorithm Encoder: one detent = one allowed value; clamps at min / max, never wraps */
 static void row_step(UIStateMachine *sm, const UiRow *r, int16_t delta)
@@ -827,6 +847,24 @@ static void row_step(UIStateMachine *sm, const UiRow *r, int16_t delta)
         p = p < 0 ? 0 : p > last ? last : p;
         if (wave_list_code((uint32_t)p) != (uint8_t)cur)
             row_set(sm, r, wave_list_code((uint32_t)p));
+        return;
+    }
+    if (r->kind == RK_PERF_SLOT) {            /* PERF PRESET loads the performance, as the Preset Encoder does */
+        if (sm->dialog == UIDLG_NONE)
+            preset_walk(sm, UISAVE_WHOLE_PERF, 0u, sm->perf_slot, delta);
+        return;
+    }
+    if (r->kind == RK_LINK) {                 /* a load, not a write: the link moves when the slot has loaded */
+        uint8_t o = r->offset, lp = OFS(MasterPerformancePreset, layer_patch);
+        ui_sm_perf_link_turn(sm, o == lp ? 0u : o == (uint8_t)(lp + 1u) ? 1u
+                                 : o == OFS(MasterPerformancePreset, seq_link) ? 2u : 3u, delta);
+        return;
+    }
+    if (r->kind == RK_ARCH) {                 /* by place in ARCH_ORDER */
+        int16_t p = (int16_t)(arch_pos((uint8_t)cur) + delta);
+        p = p < 0 ? 0 : p >= (int16_t)ARCH_ORDER_N ? (int16_t)(ARCH_ORDER_N - 1u) : p;
+        if (ARCH_ORDER[p] != (uint8_t)cur)
+            row_set(sm, r, ARCH_ORDER[p]);
         return;
     }
     v = cur < lo ? lo : cur > hi ? hi : cur;  /* a stored value out of range (flash) is pulled in first */
@@ -1874,13 +1912,14 @@ uint8_t ui_sm_preset_slot(const UIStateMachine *sm)
     }
 }
 
-/* one detent = the next used slot that way; the walk stops at the bank's ends, on the last used slot it passed */
-static void ui_preset_step(UIStateMachine *sm, int8_t detents)
+/* one detent = the next used slot that way; the walk stops at the bank's ends, on the last used slot it passed. The
+ * load goes to the caller (load_pending), target into layer */
+static void preset_walk(UIStateMachine *sm, uint8_t target, uint8_t layer, int16_t from, int16_t detents)
 {
-    uint8_t target = ui_sm_preset_target(sm), name[NAME_LEN];
-    int16_t from = ui_sm_preset_slot(sm), s = from, to = from, dir = detents > 0 ? 1 : -1;
+    uint8_t name[NAME_LEN];
+    int16_t s = from, to = from, dir = detents > 0 ? 1 : -1;
     int16_t n = detents > 0 ? detents : (int16_t)-detents;
-    if (sm->load_pending)
+    if (sm->load_pending || detents == 0)
         return;
     while (n > 0) {
         s = (int16_t)(s + dir);
@@ -1895,8 +1934,25 @@ static void ui_preset_step(UIStateMachine *sm, int8_t detents)
         return;
     sm->load_target = target;
     sm->load_slot = (uint8_t)to;
-    sm->load_layer = sm->s.active_synth_layer;
+    sm->load_layer = layer;
     sm->load_pending = 1u;
+}
+
+static void ui_preset_step(UIStateMachine *sm, int8_t detents)
+{
+    preset_walk(sm, ui_sm_preset_target(sm), sm->s.active_synth_layer, ui_sm_preset_slot(sm), detents);
+}
+
+/* the PERF page's links, knob or row (2026-10-27): L1 PATCH, L2 PATCH, SEQ LINK, ARP LINK */
+static const uint8_t LINK_TARGET[4] = {UISAVE_PATCH_PRESET, UISAVE_PATCH_PRESET, UISAVE_SEQ_SETTINGS, UISAVE_ARP_SEQ};
+
+void ui_sm_perf_link_turn(UIStateMachine *sm, uint8_t link, int16_t detents)
+{
+    int16_t from;
+    if (link >= 4u || sm->dialog != UIDLG_NONE || (link == 1u && perf_mode(sm) == PERF_SINGL_SYNTH))
+        return;
+    from = link < 2u ? sm->perf->layer_patch[link] : link == 2u ? sm->perf->seq_link : sm->perf->arp_link;
+    preset_walk(sm, LINK_TARGET[link], link == 1u ? 1u : 0u, from, detents);
 }
 
 void ui_sm_load_done(UIStateMachine *sm, uint8_t ok)
@@ -2360,6 +2416,8 @@ uint8_t ui_sm_row_place(const UIStateMachine *sm, uint8_t row)
         int32_t last = (int32_t)wave_list_count() - 1;
         return last > 0 ? (uint8_t)(((int32_t)wave_list_pos(row_get(sm, r)) * 127 + last / 2) / last) : 0u;
     }
+    if (r->kind == RK_ARCH)
+        return (uint8_t)(((int32_t)arch_pos(row_get(sm, r)) * 127 + (ARCH_ORDER_N - 1) / 2) / (ARCH_ORDER_N - 1));
     v = (int32_t)row_get(sm, r) - r->min;
     if (v < 0) v = 0;
     if (v > r->max - r->min) v = r->max - r->min;
@@ -2441,6 +2499,22 @@ const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row)
     if (r->flags & RF_SLOT) return num_text(v, 3u, "");
     if (r->names != NULL && v <= r->max) return r->names[v];
     return NULL;                      /* a plain 0..127 number: the caller draws it */
+}
+
+const char *ui_sm_row_slot_name(const UIStateMachine *sm, uint8_t row)
+{
+    static char slot_name[NAME_LEN + 1u];
+    const UiRow *r = vis_row(sm, row);
+    uint8_t target, lp = OFS(MasterPerformancePreset, layer_patch), st;
+    if (r == NULL || (r->kind != RK_LINK && r->kind != RK_PERF_SLOT))
+        return NULL;
+    target = r->kind == RK_PERF_SLOT ? (uint8_t)UISAVE_WHOLE_PERF
+           : r->offset == lp || r->offset == (uint8_t)(lp + 1u) ? (uint8_t)UISAVE_PATCH_PRESET
+           : r->offset == OFS(MasterPerformancePreset, seq_link) ? (uint8_t)UISAVE_SEQ_SETTINGS : (uint8_t)UISAVE_ARP_SEQ;
+    st = ui_sm_slot_query(sm, target, row_get(sm, r), slot_name);
+    if (st == UISLOT_EMPTY)
+        return "EMPTY";
+    return st == UISLOT_USED && slot_name[0] ? slot_name : NULL;
 }
 
 void ui_sm_goto(UIStateMachine *sm, uint8_t page)

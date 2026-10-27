@@ -85,9 +85,23 @@ int main(void)
     CHECK(ui_sm_row_state(&sm, (uint8_t)vox_row) == UIROW_INFO, "MAX VOICES should be info");
     CHECK(ui_sm_row_value(&sm, (uint8_t)vox_row) == varch_voice_cap(&engine_state[0]), "MAX VOICES value");
 
-    /* edit ARCH with the encoders: cursor down to it, step it to STACK */
+    /* edit ARCH with the encoders: cursor down to it; the list runs SINGLE, DUAL OSC, DUAL FILT, DUAL SPRD, FULL,
+     * STACK, BINAURAL, STRIKE (SINGLE = SPREAD); one step at a time to STACK */
     sm.s.current_param_focus = (uint8_t)arch_row;
-    ui_sm_handle(&sm, UIEV_ALGO_ENC, (int8_t)(VARCH_STACK - engine_state[0].arch));
+    {
+        static const uint8_t order[] = {VARCH_SPREAD, VARCH_DUAL_OSC, VARCH_DUAL_FILTER, VARCH_DUAL_SPREAD, VARCH_FULL,
+                                        VARCH_STACK, VARCH_BINAURAL, VARCH_STRIKE};
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, -20);
+        CHECK(engine_state[0].arch == VARCH_SPREAD && strcmp(ui_sm_row_text(&sm, (uint8_t)arch_row), "SINGLE") == 0,
+              "ARCH list starts on SINGLE (SPREAD): %u", engine_state[0].arch);
+        for (unsigned i = 1; i < sizeof order; i++) {
+            ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+            CHECK(engine_state[0].arch == order[i], "ARCH step %u: %u", i, engine_state[0].arch);
+        }
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+        CHECK(engine_state[0].arch == VARCH_STRIKE, "ARCH stops at STRIKE: %u", engine_state[0].arch);
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, -2);
+    }
     CHECK(engine_state[0].arch == VARCH_STACK, "ARCH not STACK: %u", engine_state[0].arch);
     CHECK(ui_sm_row_value(&sm, (uint8_t)vox_row) == 6, "STACK max voices %u", ui_sm_row_value(&sm, (uint8_t)vox_row));
     dump("HOME1 STACK");
@@ -330,6 +344,39 @@ int main(void)
     CHECK(sm.load_pending && sm.load_slot == 7u, "one load at a time");
     ui_sm_load_done(&sm, 0u);
     CHECK(!sm.load_pending && perf_state.layer_patch[1] == 3u, "a failed load leaves the link");
+
+    /* the PERF page's links and PERF PRESET load what they point at (2026-10-27), rows and knobs alike */
+    ui_sm_goto(&sm, UIPAGE_PERF);
+    perf_state.layer_patch[0] = 0; perf_state.layer_patch[1] = 3; perf_state.seq_link = 3; perf_state.arp_link = 30;
+    sm.perf_slot = 7;
+    sm.s.current_param_focus = (uint8_t)find_row("LAYER1 PATCH");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+    CHECK(sm.load_pending && sm.load_target == UISAVE_PATCH_PRESET && sm.load_layer == 0u && sm.load_slot == 3u &&
+          perf_state.layer_patch[0] == 0u, "LAYER1 PATCH row: loads patch 3 into layer 1 (slot %u)", sm.load_slot);
+    ui_sm_load_done(&sm, 1u);
+    CHECK(perf_state.layer_patch[0] == 3u, "LAYER1 PATCH follows the load (%u)", perf_state.layer_patch[0]);
+    ui_sm_perf_link_turn(&sm, 1u, 1);
+    CHECK(sm.load_pending && sm.load_layer == 1u && sm.load_slot == 7u, "L2 PATCH knob: patch 7 into layer 2");
+    ui_sm_load_done(&sm, 1u);
+    sm.s.current_param_focus = (uint8_t)find_row("SEQ LINK");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+    CHECK(sm.load_pending && sm.load_target == UISAVE_SEQ_SETTINGS && sm.load_slot == 7u, "SEQ LINK row loads seq 7");
+    ui_sm_load_done(&sm, 1u);
+    ui_sm_perf_link_turn(&sm, 3u, -1);
+    CHECK(sm.load_pending && sm.load_target == UISAVE_ARP_SEQ && sm.load_slot == 7u, "ARP LINK knob loads arp 7");
+    ui_sm_load_done(&sm, 1u);
+    CHECK(perf_state.layer_patch[1] == 7u && perf_state.seq_link == 7u && perf_state.arp_link == 7u, "links followed");
+    sm.s.current_param_focus = (uint8_t)find_row("PERF PRESET");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+    CHECK(sm.load_pending && sm.load_target == UISAVE_WHOLE_PERF && sm.load_slot == 30u, "PERF PRESET row loads perf 30");
+    ui_sm_load_done(&sm, 1u);
+    perf_state.layer_patch[0] = 5;                   /* an empty slot: the popup says so */
+    {
+        const char *t = ui_sm_row_slot_name(&sm, (uint8_t)find_row("LAYER1 PATCH"));
+        CHECK(t != NULL && strcmp(t, "EMPTY") == 0, "slot name of an empty slot: %s", t ? t : "(null)");
+        CHECK(ui_sm_row_slot_name(&sm, (uint8_t)find_row("PERF MODE")) == NULL, "PERF MODE has no slot name");
+    }
+    perf_state.layer_patch[0] = 0;
 
     printf("\nGLOBAL knob 4: INT TEMPO on the internal clock\n");
     {

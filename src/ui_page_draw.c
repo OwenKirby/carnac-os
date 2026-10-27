@@ -1895,8 +1895,9 @@ static void pu_preset_fill(const UIStateMachine *sm, int32_t f[4])
 /* HOME's performance browser (6.1): the performance is a dolmen, its name above. The capstone is the performance,
  * resting on four pillars, the parts it links: L1 and L2's patches, the sequence and the arp. Each pillar is as thick
  * as its part holds (pu_preset_fill) and the capstone as thick as all four together. The stones are the voice stones
- * of HOME and AMP (sq_stone): lit in the theme where the live part holds something (saved or not), an outline where
- * it is still the factory slot, rubble for layer 2 under SINGL */
+ * of HOME and AMP (sq_stone) in the knob tablets' rock (PU_ROCK, a tone up from their face): solid where the live part
+ * holds something (saved or not), an outline in the rock's brightest tone where it is still the factory slot, rubble for
+ * layer 2 under SINGL */
 static void pu_viz_preset(const UIStateMachine *sm)
 {
     static const char *const LBL[4] = {"L1 ", "L2 ", "SEQ ", "ARP "};
@@ -1920,15 +1921,15 @@ static void pu_viz_preset(const UIStateMachine *sm)
                     if (pu_speck(x - 5 + w, y + PU_VIZ_Y, 7u))
                         cv_pset(x - 5 + w, y, PUC_STONE);
         } else if (f[k] == 0) {
-            sq_stone(x - w / 2, yb, w, ph, ph, SQC(MID), 31u + k * 7u, 1u, 0u);
+            sq_stone(x - w / 2, yb, w, ph, ph, PU_ROCK[sq_pal][4], 31u + k * 7u, 1u, 0u);
         } else {
-            sq_stone(x - w / 2, yb, w, ph, ph, SQC(THEME), 31u + k * 7u, 0u, 0u);
+            sq_stone(x - w / 2, yb, w, ph, ph, PU_ROCK[sq_pal][3], 31u + k * 7u, 0u, 0u);
         }
         pu_num(pu_cat(b, LBL[k]), v[k], 0u, 3u);
         sq_text_in(x - 28, yb + 2 + CAP_IN(S, 14), 56, &AF_S, b, off ? SQC(DIM) : SQC(TEXT), SQC(BG));
     }
     cap = 5 + total * 6 / (4 * PU_FILL_MAX);         /* 5 .. 11 px: the performance's whole */
-    sq_stone(22, yb - ph, 196, cap, cap, total ? SQC(THEME) : SQC(MID), 97u, (uint32_t)(total == 0), 0u);
+    sq_stone(22, yb - ph, 196, cap, cap, PU_ROCK[sq_pal][total ? 3 : 4], 97u, (uint32_t)(total == 0), 0u);
 }
 
 /* 6.2.2: the name, its character cursor, and while RENAME is focused the floating keyboard (the character under
@@ -2289,7 +2290,7 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
     int32_t ci = 0, i, y, oy, mx, my, gap, w, place = 0, sc;
     uint32_t h = sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)sm->page | (uint32_t)f << 8 |
                                                      (uint32_t)sm->s.active_synth_layer << 16);
-    const char *val = "";
+    const char *val = "", *slot = NULL;
     for (r = 0; r < n && nv < sizeof vis; r++) {
         if (ui_sm_row_state(sm, r) == UIROW_HIDDEN)
             continue;
@@ -2301,8 +2302,11 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
         h = pu_mix_str(sq_mix(h, ui_sm_row_state(sm, vis[i])), ui_sm_row_label(sm, vis[i]));
     if (f < n) {
         val = pu_row_text(sm, f, b);
+        slot = ui_sm_row_slot_name(sm, f);           /* PERF: the preset's name under its number */
         place = ui_sm_row_place(sm, f);
         h = sq_mix(pu_mix_str(h, val), (uint32_t)place);
+        if (slot)
+            h = pu_mix_str(h, slot);
     }
     if (!pu_dirty(PUR_ROWPOP, h, force))
         return;
@@ -2328,7 +2332,13 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
             if (ci + 1 < nv)
                 pu_pop_line(y, ui_sm_row_label(sm, vis[ci + 1]), SQC(DIM), 1, oy);
             y += SQ_RUNE_H;                          /* the value, in the room left above the arch */
-            pu_pop_line(y + HALF_UP(150 - y - SQ_RUNE_H * 4), val, SQC(THEME), 4, oy);
+            if (slot) {                              /* a slot: its number at 3x, its name at 2x under it */
+                y += HALF_UP(158 - y - SQ_RUNE_H * 5 - 6);   /* (down to the arch's top) */
+                pu_pop_line(y, val, SQC(THEME), 3, oy);
+                pu_pop_line(y + SQ_RUNE_H * 3 + 6, slot, SQC(TEXT), 2, oy);
+            } else {
+                pu_pop_line(y + HALF_UP(150 - y - SQ_RUNE_H * 4), val, SQC(THEME), 4, oy);
+            }
             for (i = 2; i < 127; i += 3) {           /* the arch, faint dots */
                 int32_t ax, ay;
                 pu_arc_at(i, &ax, &ay);

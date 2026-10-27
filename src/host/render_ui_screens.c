@@ -560,6 +560,20 @@ int main(int argc, char **argv)
     shot(dir, "rowpop_seq");
     ui_sm_tick(&sm, UI_ROWPOP_MS);
 
+    /* PERF: turning LAYER1 PATCH loads the next stored patch; the popup names it under its number */
+    fresh();
+    ui_sm_attach_store(&sm, list_query, NULL);
+    perf_state.perf_mode = PERF_DUAL_SYNTH;
+    perf_state.layer_patch[0] = 3;
+    ui_sm_enforce(&sm);
+    go(UIPAGE_PERF);
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);           /* PERF PRESET, PERF MODE, LAYER1 PATCH */
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+    if (!sm.load_pending || sm.load_slot != 7u) { printf("FAIL: LAYER1 PATCH did not ask for patch 7\n"); fails = 1; }
+    if (sm.load_pending) ui_sm_load_done(&sm, 1u);
+    shot(dir, "rowpop_perf_patch");
+    ui_sm_tick(&sm, UI_ROWPOP_MS);
+
     /* every page in RED, for the text checks: nothing cut, nothing past its canvas */
     seq_palette_set(SQPAL_RED);
     fresh();

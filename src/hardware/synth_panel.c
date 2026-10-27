@@ -395,6 +395,10 @@ static void knob_turn(uint32_t k, int32_t d)
     }
     if (!p)
         return;
+    if (sm.page == UIPAGE_PERF) {                   /* the links: load the next used slot, not just renumber */
+        ui_sm_perf_link_turn(&sm, (uint8_t)k, (int16_t)(d > 127 ? 127 : d < -127 ? -127 : d));
+        return;
+    }
     hi = info.n_enum ? (int32_t)info.n_enum - 1 : (int32_t)VAL_MAX;
     if (info.n_enum)                                /* a list moves one entry a detent */
         d = d > 0 ? 1 : -1;
@@ -513,14 +517,13 @@ static uint32_t panel_input(void)
         ui_sm_handle(&sm, UIEV_SELECT_ENC, detents8(e[EN_SELECT]));
     if (e[EN_ALGO])
         ui_sm_handle(&sm, UIEV_ALGO_ENC, detents8(e[EN_ALGO]));
-    if (e[EN_PRESET] && !home_held) {               /* (HOME held: a slip of the hand, not a load) */
+    if (e[EN_PRESET] && !home_held)                 /* (HOME held: a slip of the hand, not a load) */
         ui_sm_handle(&sm, UIEV_PRESET_ENC, detents8(e[EN_PRESET]));
-        if (sm.load_pending)
-            syn_load();
-    }
     for (i = 0; i < 4u; i++)
         if (e[EN_K1 + i])
             knob_turn(i, e[EN_K1 + i]);
+    if (sm.load_pending && !syn_perf_req)           /* the Preset Encoder's, or a PERF page link's (knob or row) */
+        syn_load();
     for (i = 0; i < NKEYS; i++)
         if ((kch >> i) & 1u)
             key_edge(i, (keys >> i) & 1u);

@@ -250,6 +250,10 @@ uint8_t ui_sm_set_layer_focus(UIStateMachine *sm, uint8_t layer);
 uint8_t ui_sm_preset_target(const UIStateMachine *sm);             /* UISAVE_*: what the Preset Encoder loads here */
 uint8_t ui_sm_preset_slot(const UIStateMachine *sm);               /* the slot of that kind playing now */
 void ui_sm_load_done(UIStateMachine *sm, uint8_t ok);
+/* The PERF page's links (2026-10-27): knob or row k = 0 L1 PATCH, 1 L2 PATCH, 2 SEQ LINK, 3 ARP LINK. A turn walks to
+ * the next used slot of that kind, as the Preset Encoder does, and sets load_pending (the patch into layer k for
+ * 0 / 1); the link points at the slot once ui_sm_load_done says it loaded. L2 PATCH does nothing under SINGL */
+void ui_sm_perf_link_turn(UIStateMachine *sm, uint8_t link, int16_t detents);
 /* The preset list (the screen's popup): each Preset Encoder detent opens it, or keeps it up, on the slot it lands on
  * (ui_sm_browse_slot: the one loading, else the one playing). Any other button or encoder puts it away and still does
  * its own job; PLAY and the note keys leave it up. ui_sm_tick, once per UI frame with the ms since the last, closes it
@@ -426,6 +430,9 @@ uint8_t ui_sm_row_value(const UIStateMachine *sm, uint8_t row);   /* stored 0..1
 uint8_t ui_sm_row_place(const UIStateMachine *sm, uint8_t row);   /* the value's place in the row's range, 0..127 */
 /* the value as text (an enum name, a source name, ON / OFF, or a bipolar -64..+63), NULL for a plain number */
 const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row);
+/* a PERF page slot row (PERF PRESET, the links): the name of the slot it points at, "EMPTY", or NULL (another row, an
+ * unnamed or unknown slot) */
+const char *ui_sm_row_slot_name(const UIStateMachine *sm, uint8_t row);
 /* jump to a page directly, as a section button would (the cursor starts on its first highlightable row) */
 void ui_sm_goto(UIStateMachine *sm, uint8_t page);
 uint8_t ui_sm_home_view_count(uint8_t perf_mode);                  /* 5.3: 1 or 3 */

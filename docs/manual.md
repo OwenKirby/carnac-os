@@ -25,7 +25,7 @@ To play two sounds at once, change PERF MODE on HOME from SINGL to DUAL or SPLIT
 
 ## Panel and controls
 
-Ten section buttons open the pages. Pressing a button again moves to its next page; hidden pages (for example OSC2 in SPREAD) are skipped.
+Ten section buttons open the pages. Pressing a button again moves to its next page; hidden pages (for example OSC2 in SINGLE) are skipped.
 
 | Button | Pages | What it holds |
 | --- | --- | --- |
@@ -66,24 +66,24 @@ Carnac has eight physical voices shared by up to two layers. Each layer plays it
 - **DUAL**: each layer has its own MIDI channel. The FM1's keys play the layer you have selected, so you hear the layer you are editing (both layers when the two share a channel). External MIDI reaches each layer on its channel.
 - **SPLIT**: layer 1 and layer 2 share the keyboard. The ZONES page (HOME) sets, on its four knobs, SPLIT NOTE and SPLIT FADE (by note) and VEL SPLIT and VEL FADE (by velocity).
 
-In DUAL and SPLIT the voices are shared out: layer 1 gets half rounded up, layer 2 half rounded down, based on the smaller of the two layers' caps. MAX VOICES on the LAYER page shows the result. A layer set to MONO RETRIG or MONO LEGATO needs only one voice, so the other layer gets the rest of the budget: with two SPREAD patches that is 1 + 7 instead of 4 + 4.
+In DUAL and SPLIT the voices are shared out: layer 1 gets half rounded up, layer 2 half rounded down, based on the smaller of the two layers' caps. MAX VOICES on the LAYER page shows the result. A layer set to MONO RETRIG or MONO LEGATO needs only one voice, so the other layer gets the rest of the budget: with two SINGLE patches that is 1 + 7 instead of 4 + 4.
 
 **Architecture** (ARCH on the LAYER page, for the focused layer) decides the signal path of every voice, and the most voices it may use.
 
 | Architecture | Signal path | Max voices |
 | --- | --- | --- |
+| SINGLE | OSC1 as up to four detuned playheads (SPREAD) into FILTER1; at SPREAD 0, one plain oscillator | 8 |
 | DUAL OSC | OSC1 and OSC2 with cross-modulation into FILTER1 | 6 |
-| SPREAD | OSC1 as four detuned playheads into FILTER1; at SPREAD 0, one plain oscillator | 8 |
 | DUAL FILT | OSC1 into FILTER1 then FILTER2, serial to parallel | 7 |
+| DUAL SPRD | OSC1 and OSC2, each as four detuned playheads, mixed by OSC MIX (no cross-modulation) into FILTER1 | 4 |
+| FULL | DUAL OSC's oscillators into DUAL FILT's filters: OSC1 and OSC2 with cross-modulation into FILTER1 then FILTER2 | 4 |
 | STACK | Two complete paths (OSC1 into FILTER1, OSC2 into FILTER2) blended | 6 |
 | BINAURAL | OSC1 into FILTER1 once per ear, the right ear beat-offset | 6 |
 | STRIKE | OSC1 into FILTER1, plus a short attack sound at the start of each note | 8 |
-| FULL | DUAL OSC's oscillators into DUAL FILT's filters: OSC1 and OSC2 with cross-modulation into FILTER1 then FILTER2 | 4 |
-| DUAL SPRD | OSC1 and OSC2, each as four detuned playheads, mixed by OSC MIX (no cross-modulation) into FILTER1 | 4 |
 
 The caps keep the FM-1 within its processing budget. Carnac uses both of the FM-1's cores, and lightens the load by itself rather than drop out if the processor gets close to its limit.
 
-SINGLE is no longer in the ARCH list: SPREAD at SPREAD 0 plays exactly its path. A patch saved as SINGLE loads as SPREAD with SPREAD and SPREAD MOD at 0, so it sounds as it did. FULL and DUAL SPRD are the heaviest paths, so they keep 4 voices; the cap only applies to the patches that use them.
+The ARCH row steps through the architectures in the table's order. SINGLE is the one briefly called SPREAD: its SPREAD knob splits the oscillator into four detuned playheads, and at SPREAD 0 it is one plain oscillator. Patches saved with the older SINGLE load with SPREAD at 0 and sound as they did. FULL and DUAL SPRD are the heaviest paths, so they keep 4 voices; the cap only applies to the patches that use them.
 
 **ANALOG** (ANALOG on the LAYER page, right after ARCH) makes the layer behave more like an analog synth. It is stored with the patch. Each voice gets its own small fixed tolerances: pitch, cutoff, resonance, envelope speed and level. Each note scatters them a little. From 40 up, slow drift eases in as well. At 0 the layer is exact.
 
@@ -104,9 +104,9 @@ OSC1 and OSC2 play a wave from the WAVE list: first the 15 wavetable banks (FOUN
 **FOUNDATIONS** is bank 0, the classic analog shapes, drawn from a model of an SH-2-style oscillator core with its slewed edges and bent ramp. WAVE SCAN steps through TRIANGLE, SAW, SQUARE, PULSE 35 %, PULSE 20 %, PULSE 10 %, PULSE MIN (4.5 %) and SAW+SQUARE. MENHIR and HOLLOW REEDS have left the list, so a wavetable patch saved before 2026-10-26 may land on a different bank: set its WAVE again.
 
 - **Knobs:** WAVE SCAN (position within the wavetable), OCTAVE (-3 to +3), FINE TUNE (up to 7 semitones up or down, finest near the centre, shown in cents), PITCH MOD (amount).
-- **Rows:** WAVE, SCAN MOD SRC and AMT, PITCH MOD SRC, KEY TRACK, and on OSC2 OSC SYNC. In SPREAD and STRIKE, knob 3 is SCAN AMT (the scan's mod amount) and FINE TUNE is a row.
+- **Rows:** WAVE, SCAN MOD SRC and AMT, PITCH MOD SRC, KEY TRACK, and on OSC2 OSC SYNC. In SINGLE and STRIKE, knob 3 is SCAN AMT (the scan's mod amount) and FINE TUNE is a row.
 
-**PCM waves.** A PCM wave is a recorded sound: an optional attack, then loop A and an optional loop B. WAVE SCAN crossfades from loop A to loop B, and the attack plays again on every new note. SPREAD works on PCM waves too, with four detuned playheads per loop. FM cross-modulation works on them; PM and OSC SYNC do nothing.
+**PCM waves.** A PCM wave is a recorded sound: an optional attack, then loop A and an optional loop B. WAVE SCAN crossfades from loop A to loop B, and the attack plays again on every new note. The SPREAD knob (SINGLE, DUAL SPRD) works on PCM waves too, with four detuned playheads per loop. FM cross-modulation works on them; PM and OSC SYNC do nothing.
 
 | PCM wave | Attack | SCAN goes from … to … |
 | --- | --- | --- |
@@ -127,14 +127,14 @@ The PCM waves and the FOUNDATIONS bank live in flash beside the firmware; a few 
 
 | Architecture | Knob 1 | Knob 2 | Knob 3 | Knob 4 |
 | --- | --- | --- | --- | --- |
+| SINGLE | SPREAD | NOISE | SUB LEVEL | SPREAD MOD |
 | DUAL OSC | OSC MIX | CROSS-MOD | SUB LEVEL | NOISE |
-| SPREAD | SPREAD | NOISE | SUB LEVEL | SPREAD MOD |
 | DUAL FILT | not used | not used | SUB LEVEL | NOISE |
+| DUAL SPRD | OSC MIX | SPREAD | SUB LEVEL | NOISE |
+| FULL | OSC MIX | CROSS-MOD | SUB LEVEL | NOISE |
 | STACK | XMOD TYPE | CROSS-MOD | SUB LEVEL | NOISE |
 | BINAURAL | OSC PHASE | BEAT HZ | SUB LEVEL | NOISE |
 | STRIKE | ATK LEVEL | NOISE COLOUR | SUB LEVEL | NOISE |
-| FULL | OSC MIX | CROSS-MOD | SUB LEVEL | NOISE |
-| DUAL SPRD | OSC MIX | SPREAD | SUB LEVEL | NOISE |
 
 Cross-modulation types are FM, AM, RING and PM. The sub oscillator sits one or two octaves down (SUB OCTAVE) and is a SINE, a SQUARE, or CURRENT, a copy of OSC1's live wavetable frame. Noise colour morphs from white (0) through pink (64) to brown (127). Like the classic polysynths, Carnac has one noise source that every voice shares (BINAURAL's right ear has its own), so noise in a chord sounds like one breath. Each voice still sets its own noise level and colour, and pink or brown noise now costs far less CPU. In BINAURAL, BEAT HZ offsets the right ear's pitch by up to 15.9 Hz, in 1/8 Hz steps.
 
@@ -299,7 +299,7 @@ Carnac stores four kinds of thing, each in 128 slots:
 
 **Loading.** Turn the Preset Encoder. It loads the kind that fits the page you are on: a patch on the sound pages, a performance on HOME, an arp pattern on ARP, a sequencer slot on SEQ. The preset list covers the whole screen and closes two seconds after the last click.
 
-**Links.** HOME's PERF page, the performance browser, shows which patch, sequencer and arp slots the current performance uses: L1 PATCH, L2 PATCH, SEQ LINK and ARP LINK (its knobs), with PERF PRESET and PERF MODE as rows. Its dolmen draws the performance as a capstone on four pillars, one per part; a pillar is thicker the more its part holds, an outline while it is still factory-fresh, and the capstone thickens with the whole.
+**Links.** HOME's PERF page, the performance browser, shows which patch, sequencer and arp slots the current performance uses: L1 PATCH, L2 PATCH, SEQ LINK and ARP LINK (its knobs), with PERF PRESET and PERF MODE as rows. Its dolmen draws the performance as a capstone on four pillars, one per part, cut from the same stone as the knob tablets above it; a pillar is thicker the more its part holds, an outline while it is still factory-fresh, and the capstone thickens with the whole. Turning a link, by its knob or its row, loads the next stored patch, sequence or arp pattern straight away, skipping empty slots; PERF PRESET loads the next performance the same way. While a slot row turns, the popup shows the slot's number with its name under it.
 
 **Saving.**
 
@@ -333,7 +333,7 @@ Carnac stores four kinds of thing, each in 128 slots:
 | 4 | CROM PULSE | PULSE 20 % with LFO1 moving the width, SH-2 | pulse narrows to a reedy nasal |
 | 5 | UNDERHILL | DUAL OSC reggae bass: TRIANGLE with a SQUARE two octaves down, soft MS-20 | square comes up |
 | 6 | PEAT THUMP | TRIANGLE falling into the note, driven SH-2: half bass, half drum | filter opens |
-| 7 | TUMULUS DRONE | SPREAD SAW+SQUARE drifting apart, wandering MS-20, TAPE | MS-20 low-pass to band-pass |
+| 7 | TUMULUS DRONE | SINGLE: SAW+SQUARE as four playheads drifting apart, wandering MS-20, TAPE | MS-20 low-pass to band-pass |
 | 8 | WILL O WISP | PULSE 20 % through a whistling SH-2, blooming vibrato, slow glide; mono | pulse thins |
 | 9 | BANSHEE | SAW+SQUARE into a resonant MS-20 band-pass, slow swell, TUBE; mono | band-pass to high-pass |
 | 10 | HAG SYNC | DUAL OSC sync tear, OSC2 thrown up and falling, MS-20, OVERDRIVE | OSC2 rises further |
@@ -346,9 +346,9 @@ Carnac stores four kinds of thing, each in 128 slots:
 | 17 | THIN VEIL | DUAL SPRD SAW and PULSE 35 %, soft MS-20 swelling | MS-20 toward band-pass, the pad turns to voices |
 | 18 | CRYPT ORGAN | DUAL OSC SQUAREs at 8' and 4', MS-20, TUBE, slow rotor pan | the 4' comes forward |
 | 19 | CORPSE CANDLE | DUAL OSC: a TRIANGLE ring-modulated by a bell, an iron toll settling | more ring |
-| 20 | ALL SOULS | SPREAD PCM CHOIR, playheads wide, warm SH-2 | choir opens, "ooh" to "aah" |
+| 20 | ALL SOULS | SINGLE: PCM CHOIR, its SPREAD playheads wide, warm SH-2 | choir opens, "ooh" to "aah" |
 | 21 | OTHERWORLD | STACK: PCM MOONSONG hum under a PULSE 10 % through a moving MS-20 band-pass | overtone halo rises |
-| 22 | CAIRN SPIRIT | SPREAD PCM CAIRN SPIRIT drifting between dark and bright over 10 s | choir opens to the shimmer |
+| 22 | CAIRN SPIRIT | SINGLE: PCM CAIRN SPIRIT, SPREAD wide, drifting between dark and bright over 10 s | choir opens to the shimmer |
 | 23 | RUNE PLUCK | PULSE 10 % plucked through a snapping SH-2; higher notes shorter | pluck opens |
 | 24 | CAIRN KICK | TRIANGLE falling two octaves in a blink, driven SH-2, TUBE | harder beater |
 | 25 | BONE SNARE | STRIKE: BONE CLACK over a dropping TRIANGLE and noise, MS-20 band-pass | noise darkens |
@@ -385,9 +385,9 @@ The screen is mostly black, so the panel gives off little light when played outd
 
 ## System
 
-**GLOBAL page** (the last page of HOME). Knobs: TUNE (MASTER TUNE, -50 to +50 cents), CURVE (VEL CURVE), CLOCK (CLOCK OUT) and TEMPO (INT TEMPO, greyed when following MIDI clock). Rows: MASTER TUNE, VEL CURVE (SOFT, LINEAR or HARD, applied to incoming MIDI notes), CLOCK OUT (OFF or USB: while the clock is internal, MIDI clock, start and stop go out on USB; the TRS jack only receives), MIDI CH LAYER1 and LAYER2, CUSTOM CC1 and CC2, BASE VELOCITY, BEND RANGE, CLOCK SOURCE (INTERNAL or MIDI), INT TEMPO and THEME. INT TEMPO and BASE VELOCITY belong to the performance; every other GLOBAL setting belongs to the instrument: it survives power-off and stays as you set it when you load a performance. A DUAL performance that plays both layers on one channel stays that way, on your MIDI CH LAYER1 channel, and changing LAYER1 there moves layer 2 with it. The sequencer and arp follow the clock, internal or MIDI, and changing page never disturbs it.
+**GLOBAL page** (the last page of HOME). Knobs: TUNE (MASTER TUNE, -50 to +50 cents), CURVE (VEL CURVE), CLOCK (CLOCK OUT) and TEMPO (INT TEMPO, greyed when following MIDI clock). Rows, the MIDI setup first: MIDI CH LAYER1 and LAYER2, CLOCK SRC (INTERNAL or MIDI), MASTER TUNE, BEND RANGE, CUSTOM CC1 and CC2, then VEL CURVE (SOFT, LINEAR or HARD, applied to incoming MIDI notes), BASE VELOCITY, CLOCK OUT (OFF or USB: while the clock is internal, MIDI clock, start and stop go out on USB; the TRS jack only receives), INT TEMPO and THEME. INT TEMPO and BASE VELOCITY belong to the performance; every other GLOBAL setting belongs to the instrument: it survives power-off and stays as you set it when you load a performance. A DUAL performance that plays both layers on one channel stays that way, on your MIDI CH LAYER1 channel, and changing LAYER1 there moves layer 2 with it. The sequencer and arp follow the clock, internal or MIDI, and changing page never disturbs it.
 
-**Processing load.** Carnac runs on both of the FM-1's cores. The sound is the same on one core or two. If the FM-1 gets close to its limit, Carnac lightens the load by itself rather than drop out, and the voice caps in Voices and layers keep the heaviest architectures inside the budget. On the device, eight plain SPREAD voices use about 43 percent of the processor. The heaviest combinations (SH-2 filters in DUAL FILT, STACK or BINAURAL, or heavy patches with the sequencer and arpeggiator running) reach 75 to 85 percent, where Carnac may lighten the load.
+**Processing load.** Carnac runs on both of the FM-1's cores. The sound is the same on one core or two. If the FM-1 gets close to its limit, Carnac lightens the load by itself rather than drop out, and the voice caps in Voices and layers keep the heaviest architectures inside the budget. On the device, eight plain SINGLE voices use about 43 percent of the processor. The heaviest combinations (SH-2 filters in DUAL FILT, STACK or BINAURAL, or heavy patches with the sequencer and arpeggiator running) reach 75 to 85 percent, where Carnac may lighten the load.
 
 **USB audio.** Connected to a computer, the FM-1 is also a USB audio input: 16-bit stereo at 44.1 kHz, class compliant, so no driver is needed. It shows up as "Line (X0X FM-1)" and carries the same output as the jacks, after the MASTER knob. Record it in any audio app.
 
@@ -408,6 +408,8 @@ Newest first. Features marked *in source* are written but not yet installed on t
 
 | Date | Change |
 | --- | --- |
+| 2026-10-27 | The PERF page's dolmen is now drawn in the knob tablets' stone colour instead of the theme colour (an empty part's pillar is an outline in the stone's lightest tone) *(in source)*. |
+| 2026-10-27 | SPREAD is called SINGLE again, and the ARCH list runs SINGLE, DUAL OSC, DUAL FILT, DUAL SPRD, FULL, STACK, BINAURAL, STRIKE. On the PERF page, turning L1 PATCH, L2 PATCH, SEQ LINK, ARP LINK or PERF PRESET now loads that preset (before, it only changed the number); the popup shows the preset's name under its number. GLOBAL lists MIDI CH LAYER1 and LAYER2, CLOCK SRC, MASTER TUNE, BEND RANGE and CUSTOM CC1 and CC2 first. Patches and performances are unchanged (installed). |
 | 2026-10-27 | New factory bank SAMHAIN replaces RITES OF STONE: 32 patches (8 basses, 8 leads, 8 mystical sounds, 8 percussion), mostly FOUNDATIONS through the SH-2 and MS-20, and 8 performances. Power-on now plays performance 0, SAMHAIN: DUB BARROW under CAIRN SPIRIT with a dub bass line. NEWGRANGE DAWN stays as patch 16. Your saved patches, performances, sequences and arps are kept; factory slots you never saved over now hold the new sounds (installed). |
 | 2026-10-27 | PCM waves reworked: new RAINSTICK, LORE, MOONSONG, SINGING STN, PAN FLUTE and CAIRN SPIRIT; CLAY CHIMES, SHELL CHIMES and STRINGS are gone, and patches that used them now play RAINSTICK, LORE and MOONSONG. CHOIR and HORNS have a much wider SCAN (ooh to a ringing aah, soft to overblown). The HOLLOW REEDS wavetable bank is gone. Attack sounds and PCM loops are stored more compactly to make room, sounding the same (installed). |
 | 2026-10-26 | New wavetable bank FOUNDATIONS, first in the WAVE list: the classic analog shapes (TRIANGLE, SAW, SQUARE, three PULSE widths, PULSE MIN, SAW+SQUARE) drawn from a model of an SH-2-style oscillator. The MENHIR bank is gone and the other banks moved, so older wavetable patches may play a different bank. The installers now write the PCM waves and FOUNDATIONS by themselves after the firmware (installed). |

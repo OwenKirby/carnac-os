@@ -129,17 +129,18 @@ static const uint8_t FV_WIGHT[] = {
     V_AMP(20, TUBE, 10, 8), V_(analog, 30),
     V_END};
 
-/* ---- 4 CROM PULSE: the stooped one of the harvest. Foundations PULSE 20 % an octave down, LFO1 working the width
- * (SCAN across the pulse frames), an SH-2 with a short ENV2. WHEEL: the pulse narrows to a reedy nasal. */
+/* ---- 4 CROM PULSE: the stooped one of the harvest; the Berlin-school sequencer voice. Foundations PULSE 20 %,
+ * LFO1 working the width (SCAN across the pulse frames), a sine sub, a resonant SH-2 plucked by a short
+ * ENV2, short notes. WHEEL: the cutoff opens (ENV2 + wheel; the SAMHAIN sequence sweeps it with a lane). */
 static const uint8_t FV_CROM[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_P20, -1), V_(osc[0].scan_mod_src, MSRC_MODSLOT1), V_(osc[0].scan_mod_amt, 30),
+    V_OSC(0, W_FOUND, F_P20, 0), V_(osc[0].scan_mod_src, MSRC_LFO1), V_(osc[0].scan_mod_amt, 30),
     V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SINE),
-    V_FLT(0, SH2, 40, 0, 54, 50, 28), V_KT(0, 50),
-    V_ENV(0, 0, 70, 90, 36), V_ENV(1, 0, 60, 30, 40),
-    V_LFO(0, L_TRI, 50),
-    V_SLOT(0, LFO1, ADD, MODWHEEL, 40),
-    V_AMP(10, TUBE, 14, 10), V_(analog, 30),
+    V_FLT(0, SH2, 50, 0, 50, 76, 30), V_(filter[0].mod_src, MSRC_MODSLOT1), V_KT(0, 50),
+    V_ENV(0, 0, 64, 30, 40), V_ENV(1, 0, 54, 0, 40),
+    V_LFO(0, L_TRI, 30),
+    V_SLOT(0, ENV2, ADD, MODWHEEL, 44),
+    V_AMP(10, TUBE, 44, 34), V_(analog, 30),
     V_END};
 
 /* ---- 5 UNDERHILL: deep in the hollow hill. DUAL OSC: Foundations TRIANGLE an octave down and SQUARE two octaves
@@ -458,12 +459,12 @@ static const uint8_t FV_RATTLE[] = {
     V_AMP(0, SOFT, 30, 30),
     V_END};
 
-/* ---- 28 HENGE STAB: the skank. DUAL OSC: Foundations SAW and SQUARE a fifth apart (one key, a power chord), a
- * short, driven MS-20 band-pass, TUBE, with most of it sent to the delay. WHEEL: band-pass -> high-pass (the stab
- * thins for the echoes). */
+/* ---- 28 HENGE STAB: the skank. DUAL OSC: a Foundations SAW and a SQUARE an octave up, a short, driven MS-20
+ * band-pass, TUBE, with most of it sent to the delay; the DUB OFFERING arp plays it in chords. WHEEL: band-pass ->
+ * high-pass (the stab thins for the echoes). */
 static const uint8_t FV_STAB[] = {
     V_(arch, VARCH_DUAL_OSC),
-    V_OSC(0, W_FOUND, F_SAW, 0), V_OSC(1, W_FOUND, F_SQUARE, 0), V_(osc[1].fine, 127 /* +700 c */),
+    V_OSC(0, W_FOUND, F_SAW, 0), V_OSC(1, W_FOUND, F_SQUARE, 1),
     V_(oscmix.balance, 64),
     V_FLT(0, MS20, 40, 50, 84, 50, 24), V_KT(0, 64),
     V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(40)),
@@ -519,11 +520,11 @@ typedef struct {
     {name, set, VMODE_##vm, gl, un, REVTYPE_##rt, rd, rm, rp, dt, df, DELAYTYPE_##dy, pp, dg, ds}
 static const FactoryVoice FV_TAB[FP_N] = {
  /*      name             set            voice mode   glide                      uni reverb    dec dmp pre  dt  fb  type pp           deg sync */
- FV_ROW("DUB BARROW",     FV_DUBBARROW,  MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 20), 0, TUMULUS,  110, 70, 20, 75, 62, TAPE, FV_PP(1, 24), 50, 0),
+ FV_ROW("DUB BARROW",     FV_DUBBARROW,  MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 20), 0, SPRING,    84, 50,  4, 79, 80, TAPE, FV_PP(1, 34), 60, 0),
  FV_ROW("SIDHE SUB",      FV_SIDHESUB,   MONO_LEGATO, FV_GLIDE(CONST_TIME, 16), 0,  TOMB,      50, 70,  0, 75, 30, TAPE, FV_PP(0, 20), 36, 0),
  FV_ROW("BOG SQUELCH",    FV_BOG,        MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 14), 0, SPRING,    60, 60,  4, 46, 50, TAPE, FV_PP(1, 30), 40, 0),
  FV_ROW("WIGHT GROWL",    FV_WIGHT,      MONO_RETRIG, 0,                        0,  DOLMEN,    60, 80,  0, 62, 30, BBD,  FV_PP(0, 20), 36, 0),
- FV_ROW("CROM PULSE",     FV_CROM,       MONO_LEGATO, FV_GLIDE(CONST_TIME, 12), 0,  TOMB,      50, 70,  0, 62, 30, TAPE, FV_PP(0, 20), 36, 0),
+ FV_ROW("CROM PULSE",     FV_CROM,       MONO_RETRIG, 0,                        0,  CELESTIAL,116, 50, 20, 49, 56, TAPE, FV_PP(1, 20), 30, 0),
  FV_ROW("UNDERHILL",      FV_UNDERHILL,  MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 16), 0, TOMB,      50, 70,  0, 79, 40, TAPE, FV_PP(0, 24), 50, 0),
  FV_ROW("PEAT THUMP",     FV_PEAT,       POLY_RESET,  0,                        0,  TOMB,      50, 70,  0, 62, 30, TAPE, FV_PP(0, 20), 36, 0),
  FV_ROW("TUMULUS DRONE",  FV_TUMULUS,    POLY_REUSE,  0,                        0,  TUMULUS,  120, 70, 30, 87, 50, TAPE, FV_PP(1, 16), 60, 0),
@@ -562,12 +563,14 @@ typedef struct {
 } FactoryPerf;
 #define FP_ROW(name, patch, pm, l2) {name, patch, PERF_##pm, l2}
 static const FactoryPerf FP_TAB[FP_NPERF] = {
- FP_ROW("SAMHAIN",       0, SPLIT_SYNTH, 22),   /* DUB BARROW under C4, CAIRN SPIRIT from C4; its dub bass line plays */
+ FP_ROW("SAMHAIN",       4, SPLIT_SYNTH, 22),   /* CROM PULSE under C4, CAIRN SPIRIT from C4; PLAY: a Berlin-school
+                                                 * sequence on CROM PULSE, its cutoff swept by a lane */
  FP_ROW("SIDHE DOOR",   23, SINGL_SYNTH, 24),   /* RUNE PLUCK arpeggiating a minor-ninth progression into the echoes */
  FP_ROW("WILD HUNT",    13, SINGL_SYNTH, 14),   /* the galloping Phrygian line */
  FP_ROW("BOG SQUELCH",   2, SINGL_SYNTH,  3),   /* the acid line, Phrygian, sliding */
  FP_ROW("CAIRN RITE",   26, SINGL_SYNTH, 27),   /* the BODHRAN pattern, pitch as the drum */
- FP_ROW("DUB OFFERING", 28, SINGL_SYNTH, 29),   /* HENGE STAB on the off-beats, the echoes dubbed out */
+ FP_ROW("DUB OFFERING",  0, DUAL_SYNTH,  28),   /* the arp skanks HENGE STAB chords on the off-beats (layer 2), a dub
+                                                 * bass on DUB BARROW follows the chords, the echoes near feedback */
  FP_ROW("ALL SOULS",    20, SINGL_SYNTH, 21),   /* the choir in slow block chords */
  FP_ROW("WILL O WISP",   8, SINGL_SYNTH,  9),   /* a harmonic-minor melody that leads you off the path */
 };
@@ -635,21 +638,22 @@ typedef struct {
 #define FA_NOACC "00000000"
 
 static const FactoryArp FA_TAB[FP_NPERF] = {
- FA_ARP(MIN,    1_8, UP,     1,  80, 0, FA_8(FA_D3, FA_BB2, FA_F2, FA_A2), "qqqqqqqq", FA_NOACC, 76),     /* SAMHAIN */
+ FA_ARP(MIN,    1_8, UP,     1,  80, 0, FA_8(FA_E3, FA_F2, FA_D3, FA_E3),  "qqqqqqqq", FA_NOACC, 116),    /* SAMHAIN */
  FA_ARP(MIN9,   1_8, UPDN,   1,  80, 1, FA_8(FA_D3, FA_BB2, FA_F2, FA_A2), "qqqqqqqq", "10001000", 84),   /* SIDHE DOOR */
  FA_ARP(MIN,    1_4, DNUP,   2,  96, 0, FA_8(FA_E3, FA_F2, FA_D3, FA_E3),  "qqqqqqqq", FA_NOACC, 128),    /* WILD HUNT */
  FA_ARP(OCT,    1_4, UP,     0,  64, 0, FA_R(FA_A2, FA_A2, FA_A2, FA_A2, FA_BB2, FA_BB2, FA_G2, FA_G2),
         "qqqqqqqq", "10001000", 124),                                                                    /* BOG SQUELCH */
  FA_ARP(5TH,    1_8, RANDOM, 1,  64, 0, FA_8(FA_C3, FA_F2, FA_G2, FA_C3),  "qqqqqqqq", FA_NOACC, 104),    /* CAIRN RITE */
- FA_ARP(MIN,    1_4, BLOCK,  0,  64, 0, FA_8(FA_D3, FA_D3, FA_G2, FA_A2),  "ssssssss", "10101010", 72),  /* DUB OFFERING */
+ FA_ARP(MIN,    1_2, BLOCK,  0,  40, 1, FA_8(FA_D3, FA_G2, FA_D3, FA_A2),  "jjjjjjjj", FA_NOACC, 72),     /* DUB OFFERING:
+                                                                                 * 05B _ o _ o, the off-beat skank */
  FA_ARP(CINE_6, 1_2, BLOCK,  0, 127, 1, FA_P(FA_D3, FA_BB2, FA_F2, FA_A2), "aaaaaaaa", FA_NOACC, 66),     /* ALL SOULS */
  FA_ARP(MIN,    1_8, UP,     1,  80, 0, FA_8(FA_D3, FA_G2, FA_A2, FA_D3),  "qqqqqqqq", FA_NOACC, 80),     /* WILL O WISP */
 };
 
 #define FS_V9 "9999999999999999"
 static const FactorySeq FS_TAB[FP_NPERF] = {
- FS_SEQ(38, "0-0.c-a.7--.5-3.", 12, FORWARD, MINOR, 2,
-        GATE, "6666666666666666", DYNAMICS, "9686968696869686", MODWHEEL, "0000000000005555"),          /* SAMHAIN */
+ FS_SEQ(40, "0c070c0a0c0703c1", 6, FORWARD, PHRYGIAN, 4,
+        GATE, "4444444444444444", DYNAMICS, "9575957595759575", MODWHEEL, "0123456789876543"),          /* SAMHAIN */
  FS_UNDER(FS_BASS),                                                                                       /* SIDHE DOOR */
  FS_SEQ(40, "00.00.07.00.01.3", 6, FORWARD, PHRYGIAN, 4,
         GATE, "5353535353535353", DYNAMICS, "9575957595759575", MODWHEEL, "0011223344556677"),          /* WILD HUNT */
@@ -657,8 +661,7 @@ static const FactorySeq FS_TAB[FP_NPERF] = {
         GATE, "3363336333633363", DYNAMICS, "9595559595559559", RATCHET, "0000000300000000"),            /* BOG SQUELCH */
  FS_SEQ(36, "0..70.c.0.7.0cc7", 6, FORWARD, OFF, 0,
         GATE, "2222222222222222", DYNAMICS, "9575957595759575", RATCHET, "0000000300000060"),            /* CAIRN RITE */
- FS_SEQ(50, ".0.0.3.0.0.0.5.3", 12, FORWARD, MINOR, 2,
-        GATE, "4444444444444444", DYNAMICS, "8888888888888888", MODWHEEL, "0000000000009999"),          /* DUB OFFERING */
+ FS_UNDER("0-.70-.70-.70-a7"),                                                                            /* DUB OFFERING */
  FS_UNDER(FS_BASS),                                                                                       /* ALL SOULS */
  FS_SEQ(62, "0-3-7-8---7-b-c-", 12, FORWARD, HARM_MINOR, 2,
         GATE, FS_V9, DYNAMICS, "8686868686868686", MODWHEEL, "0000123456789999"),                        /* WILL O WISP */
@@ -774,8 +777,9 @@ static int factory_perf(uint32_t s, WholePerformance *w)
     p->porta_time[0] = p->porta_time[1] = (uint8_t)(f->porta & 127u);
     if (f->vmode == VMODE_UNISON_STACK)
         p->unison_detune[0] = p->unison_detune[1] = f->unison;
-    if (fp->pmode == PERF_DUAL_SYNTH)
+    if (fp->pmode == PERF_DUAL_SYNTH && !FA_TAB[s].maq)
         p->midi_ch[1] = p->midi_ch[0];                    /* the keys play both layers at once, whichever is selected */
+    /* (an ARP-led DUAL keeps its two channels: the arp plays layer 2, the bass sequence layer 1, at any pitch) */
     p->split_note = 60u;                                  /* SPLIT: layer 1 below C4, layer 2 from C4 */
     p->reverb_type = f->rtype; p->reverb_decay = f->rdec; p->reverb_damp = f->rdmp; p->reverb_predelay = f->rpre;
     p->delay_time = f->dtime; p->delay_feedback = f->dfb; p->delay_type = f->dtype; p->delay_pingpong = f->ping;
