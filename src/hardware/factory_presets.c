@@ -1,7 +1,8 @@
 /* The factory bank "SAMHAIN" (2026-10-27): 32 patches (slots 0..31) showing off the Foundations bank (the SH-2's own
  * VCO shapes) through the SH-2 and MS-20 filters: dub basses, leads, mystical and pagan pads and bells, percussion;
- * with 8 whole performances, each with its sequence and arp pattern (slots 0..7 of those banks; the rest stay empty).
- * Performance 0, SAMHAIN, is the one the FM1 plays at power-on (syn_boot_perf). It replaced "RITES OF STONE"
+ * with 9 whole performances, each with its sequence and arp pattern (slots 0..8 of those banks; the rest stay empty).
+ * Performance 0, CAIRN SPIRIT (the pad on the arp over a pulsing bass), is the one the FM1 plays at power-on
+ * (syn_boot_perf). The bank replaced "RITES OF STONE"
  * (2026-10-21, in git history; NEWGRANGE DAWN kept as patch 16). A unity-build
  * fragment like preset_store_fm1.c. synth_main_fm1.c includes it after syn_used / syn_perf_name and the store, and calls
  * factory_install() BEFORE ps_load(): the factory slots are marked used, then anything the user saved over them in
@@ -19,7 +20,7 @@
 #define FP_OCT(k) ((uint8_t)((k) == 0 ? 64 : 18 * ((k) + 3) + 9))
 #define FP_BIP(v) ((uint8_t)((v) + 64))
 #define FP_N 32u                         /* SAMHAIN's patches, slots 0..31 */
-#define FP_NPERF 8u                      /* its performances (and their sequences and arps), slots 0..7 */
+#define FP_NPERF 9u                      /* its performances (and their sequences and arps), slots 0..8 */
 
 static void factory_name(uint8_t *dst, const char *s)
 {
@@ -555,14 +556,19 @@ static const FactoryVoice FV_TAB[FP_N] = {
 };
 #undef FV_ROW
 
-/* the performances: the patch on layer 1 (its effects with it), the mode, and layer 2's patch (DUAL / SPLIT; SINGL:
- * the next slot, unheard) */
+/* the performances: the patch on layer 1 (its effects with it, unless FP_ROWFX names the patch they come from), the
+ * mode, and layer 2's patch (DUAL / SPLIT; SINGL: the next slot, unheard) */
 typedef struct {
     const char *name;
-    uint8_t patch, pmode, l2;
+    uint8_t patch, pmode, l2, fx;
 } FactoryPerf;
-#define FP_ROW(name, patch, pm, l2) {name, patch, PERF_##pm, l2}
+#define FP_ROW(name, patch, pm, l2) {name, patch, PERF_##pm, l2, patch}
+#define FP_ROWFX(name, patch, pm, l2, fx) {name, patch, PERF_##pm, l2, fx}
 static const FactoryPerf FP_TAB[FP_NPERF] = {
+ FP_ROWFX("CAIRN SPIRIT", 4, DUAL_SYNTH, 22, 22),   /* PLAY: the arp holds wide CAIRN SPIRIT chords, Am add9 - Fmaj9 -
+                                                 * C add9 - G sus4, a bar each (layer 2, with its reverb and tape
+                                                 * echo); CROM PULSE pulses eighths under them on the sequence,
+                                                 * following each chord's root, its cutoff swept by a lane */
  FP_ROW("SAMHAIN",       4, SPLIT_SYNTH, 22),   /* CROM PULSE under C4, CAIRN SPIRIT from C4; PLAY: a Berlin-school
                                                  * sequence on CROM PULSE, its cutoff swept by a lane */
  FP_ROW("SIDHE DOOR",   23, SINGL_SYNTH, 24),   /* RUNE PLUCK arpeggiating a minor-ninth progression into the echoes */
@@ -575,6 +581,7 @@ static const FactoryPerf FP_TAB[FP_NPERF] = {
  FP_ROW("WILL O WISP",   8, SINGL_SYNTH,  9),   /* a harmonic-minor melody that leads you off the path */
 };
 #undef FP_ROW
+#undef FP_ROWFX
 
 /* patch slot s of the bank, over the defaults in base */
 static void factory_voice(EngineState *e, const EngineState *base, uint32_t s)
@@ -638,6 +645,7 @@ typedef struct {
 #define FA_NOACC "00000000"
 
 static const FactoryArp FA_TAB[FP_NPERF] = {
+ FA_ARP(CINE_5, 1_2, BLOCK,  0, 127, 1, FA_P(FA_A2, FA_F2, FA_C3, FA_G2), "aaaaaaaa", FA_NOACC, 100),    /* CAIRN SPIRIT */
  FA_ARP(MIN,    1_8, UP,     1,  80, 0, FA_8(FA_E3, FA_F2, FA_D3, FA_E3),  "qqqqqqqq", FA_NOACC, 116),    /* SAMHAIN */
  FA_ARP(MIN9,   1_8, UPDN,   1,  80, 1, FA_8(FA_D3, FA_BB2, FA_F2, FA_A2), "qqqqqqqq", "10001000", 84),   /* SIDHE DOOR */
  FA_ARP(MIN,    1_4, DNUP,   2,  96, 0, FA_8(FA_E3, FA_F2, FA_D3, FA_E3),  "qqqqqqqq", FA_NOACC, 128),    /* WILD HUNT */
@@ -652,6 +660,9 @@ static const FactoryArp FA_TAB[FP_NPERF] = {
 
 #define FS_V9 "9999999999999999"
 static const FactorySeq FS_TAB[FP_NPERF] = {
+ FS_SEQ(0, "0c070c070c07c70c", 0, FORWARD, OFF, 0,
+        GATE, "4444444444444444", MODWHEEL, "0123456789876543", RATCHET, "3333333333333333"),          /* CAIRN SPIRIT:
+                                                                          * root, octave, fifth, two pulses a step */
  FS_SEQ(40, "0c070c0a0c0703c1", 6, FORWARD, PHRYGIAN, 4,
         GATE, "4444444444444444", DYNAMICS, "9575957595759575", MODWHEEL, "0123456789876543"),          /* SAMHAIN */
  FS_UNDER(FS_BASS),                                                                                       /* SIDHE DOOR */
@@ -749,18 +760,19 @@ static void factory_arp(uint32_t s, ArpState *st)
 }
 
 /* performance slot s, whole: its patch on layer 1 (and its layer 2 patch, for DUAL / SPLIT), the effects of its layer
- * 1 patch and its tempo, its sequence, and its arp pattern if it leads (factory_seq above): 0, or -1 for a slot past the
- * factory bank */
+ * 1 patch (or FP_ROWFX's fx patch) and its tempo, its sequence, and its arp pattern if it leads (factory_seq above):
+ * 0, or -1 for a slot past the factory bank */
 static int factory_perf(uint32_t s, WholePerformance *w)
 {
     const FactoryPerf *fp;
-    const FactoryVoice *f;
+    const FactoryVoice *f, *fx;
     EngineState base;
     MasterPerformancePreset *p = &w->perf;
     if (s >= FP_NPERF)
         return -1;
     fp = &FP_TAB[s];
     f = &FV_TAB[fp->patch];
+    fx = &FV_TAB[fp->fx];
     engine_defaults(&base);
     factory_voice(&w->engine[0], &base, fp->patch);
     factory_voice(&w->engine[1], &base, fp->l2);
@@ -781,10 +793,10 @@ static int factory_perf(uint32_t s, WholePerformance *w)
         p->midi_ch[1] = p->midi_ch[0];                    /* the keys play both layers at once, whichever is selected */
     /* (an ARP-led DUAL keeps its two channels: the arp plays layer 2, the bass sequence layer 1, at any pitch) */
     p->split_note = 60u;                                  /* SPLIT: layer 1 below C4, layer 2 from C4 */
-    p->reverb_type = f->rtype; p->reverb_decay = f->rdec; p->reverb_damp = f->rdmp; p->reverb_predelay = f->rpre;
-    p->delay_time = f->dtime; p->delay_feedback = f->dfb; p->delay_type = f->dtype; p->delay_pingpong = f->ping;
-    p->delay_degrade = f->degrade;
-    p->delay_sync = f->dsync;
+    p->reverb_type = fx->rtype; p->reverb_decay = fx->rdec; p->reverb_damp = fx->rdmp; p->reverb_predelay = fx->rpre;
+    p->delay_time = fx->dtime; p->delay_feedback = fx->dfb; p->delay_type = fx->dtype; p->delay_pingpong = fx->ping;
+    p->delay_degrade = fx->degrade;
+    p->delay_sync = fx->dsync;
     p->int_tempo = (uint8_t)(FA_TAB[s].bpm - MIDI_CLOCK_BPM_BASE);
     factory_seq(s, w->seq);
     if (FA_TAB[s].maq)

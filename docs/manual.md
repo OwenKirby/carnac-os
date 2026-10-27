@@ -311,18 +311,19 @@ Carnac stores four kinds of thing, each in 128 slots:
 
 **Copy and paste.** Hold SAVE and press OCT- to copy what SAVE would save on the current page (the focused layer's patch, the performance, the sequence or the arp pattern). Hold SAVE and press OCT+ to paste it over the same kind, for example layer 1's patch onto layer 2: the save page opens and asks PASTE? first. While SAVE is held, a strip names both, with PASTE dimmed when the clipboard holds another kind.
 
-**Factory bank: SAMHAIN.** Performance slots 0 to 7 hold 8 factory performances, each with its own patch, effects, tempo, sequence and arp pattern. Patch slots 0 to 31 hold 32 factory patches in four groups of eight: basses, leads, mystical sounds and percussion, most of them built on FOUNDATIONS through the SH-2 and MS-20, with a dub and pagan bent. Power-on always plays performance 0, SAMHAIN. A slot you have saved over shows your version in the browser. Every patch gives the MOD WHEEL (HOME knob 3) a job. PLAY on an ARP-led performance plays its chord progression with a bass under it; on a SEQ-led one, its sequence (installed).
+**Factory bank: SAMHAIN.** Performance slots 0 to 8 hold 9 factory performances, each with its own patch, effects, tempo, sequence and arp pattern. Patch slots 0 to 31 hold 32 factory patches in four groups of eight: basses, leads, mystical sounds and percussion, most of them built on FOUNDATIONS through the SH-2 and MS-20, with a dub and pagan bent. Power-on always plays performance 0, CAIRN SPIRIT: press PLAY and the arp holds its pad chords while CROM PULSE pulses a bass line under them. A slot you have saved over shows your version in the browser. Every patch gives the MOD WHEEL (HOME knob 3) a job. PLAY on an ARP-led performance plays its chord progression with a bass under it; on a SEQ-led one, its sequence (installed).
 
 | Perf | Name | Led by | What plays |
 | --- | --- | --- | --- |
-| 0 | SAMHAIN | SEQ | SPLIT: DUB BARROW below C4, CAIRN SPIRIT from C4, with a dub bass line |
-| 1 | SIDHE DOOR | ARP | RUNE PLUCK arpeggiating a minor-ninth progression into the echoes |
-| 2 | WILD HUNT | SEQ | a galloping Phrygian line |
-| 3 | BOG SQUELCH | SEQ | a sliding acid line, Phrygian |
-| 4 | CAIRN RITE | SEQ | the BODHRAN pattern, pitch as the drum |
-| 5 | DUB OFFERING | SEQ | HENGE STAB on the off-beats, the echoes dubbed out |
-| 6 | ALL SOULS | ARP | the choir in slow block chords |
-| 7 | WILL O WISP | SEQ | a harmonic-minor melody |
+| 0 | CAIRN SPIRIT | ARP | DUAL: the CAIRN SPIRIT pad on layer 2 holds wide chords, A minor add9, F major 9, C add9, G sus4, a bar each, with its long TUMULUS reverb and tape echo; CROM PULSE on layer 1 pulses eighth notes under them, root, octave and fifth, following each chord, its cutoff swept by a sequencer lane |
+| 1 | SAMHAIN | SEQ | SPLIT: CROM PULSE below C4 with a Berlin-school sequence, CAIRN SPIRIT from C4 |
+| 2 | SIDHE DOOR | ARP | RUNE PLUCK arpeggiating a minor-ninth progression into the echoes |
+| 3 | WILD HUNT | SEQ | a galloping Phrygian line |
+| 4 | BOG SQUELCH | SEQ | a sliding acid line, Phrygian |
+| 5 | CAIRN RITE | SEQ | the BODHRAN pattern, pitch as the drum |
+| 6 | DUB OFFERING | ARP | HENGE STAB skanking on the off-beats over a DUB BARROW bass line, the echoes dubbed out |
+| 7 | ALL SOULS | ARP | the choir in slow block chords |
+| 8 | WILL O WISP | SEQ | a harmonic-minor melody |
 
 | Patch | Name | Sound | MOD WHEEL |
 | --- | --- | --- | --- |
@@ -408,6 +409,7 @@ Newest first. Features marked *in source* are written but not yet installed on t
 
 | Date | Change |
 | --- | --- |
+| 2026-10-27 | New power-on performance CAIRN SPIRIT in slot 0: press PLAY and the arp plays CAIRN SPIRIT pad chords (A minor add9, F major 9, C add9, G sus4) while the sequencer pulses a CROM PULSE bass line under them that follows each chord. Its arp pattern is no longer empty. SAMHAIN and the other factory performances move down one slot (SAMHAIN is now 1, WILL O WISP 8), and so do their sequences and arp patterns. A performance, sequence or arp you saved yourself stays in its slot (installed). |
 | 2026-10-27 | The PERF page's dolmen is now drawn in the knob tablets' stone colour instead of the theme colour (an empty part's pillar is an outline in the stone's lightest tone) (installed). |
 | 2026-10-27 | SPREAD is called SINGLE again, and the ARCH list runs SINGLE, DUAL OSC, DUAL FILT, DUAL SPRD, FULL, STACK, BINAURAL, STRIKE. On the PERF page, turning L1 PATCH, L2 PATCH, SEQ LINK, ARP LINK or PERF PRESET now loads that preset (before, it only changed the number); the popup shows the preset's name under its number. GLOBAL lists MIDI CH LAYER1 and LAYER2, CLOCK SRC, MASTER TUNE, BEND RANGE and CUSTOM CC1 and CC2 first. Patches and performances are unchanged (installed). |
 | 2026-10-27 | New factory bank SAMHAIN replaces RITES OF STONE: 32 patches (8 basses, 8 leads, 8 mystical sounds, 8 percussion), mostly FOUNDATIONS through the SH-2 and MS-20, and 8 performances. Power-on now plays performance 0, SAMHAIN: DUB BARROW under CAIRN SPIRIT with a dub bass line. NEWGRANGE DAWN stays as patch 16. Your saved patches, performances, sequences and arps are kept; factory slots you never saved over now hold the new sounds (installed). |
