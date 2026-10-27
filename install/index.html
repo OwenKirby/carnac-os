@@ -5,9 +5,9 @@
      fm1pkg.js, unchanged. web/site/make_site.py inlines them and the package's metadata at the marks below.
      Added for Carnac: the FM1 is asked which Carnac it runs (editor INFO, F0 7D 46 4C 01 F7) before anything is
      written, an older package than the one on the FM1 needs a tick first, and the install is checked by that same
-     INFO answering "CARNAC OS <version>". Then the PCM waves (src/dsp/pcm_area*.bin) are written to their flash areas
-     with the editor's PCM commands (src/hardware/pcm_store_upload.py's protocol), each only when the FM1 does not
-     hold that image already. -->
+     INFO answering "CARNAC OS <version>". Then the waves (the PCM waves src/dsp/pcm_area*.bin and wavetable bank 0,
+     src/dsp/foundations_bank.bin) are written to their flash areas with the editor's PCM commands
+     (src/hardware/pcm_store_upload.py's protocol), each only when the FM1 does not hold that image already. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -60,8 +60,8 @@
     <div class="step"><b>1</b><span>Connect the FM1 straight to the computer with a USB data cable, switch it on,
       and close other apps that use MIDI.</span></div>
     <div class="step"><b>2</b><span>Press <em>Find my FM1</em>. The browser asks to allow MIDI: allow it.</span></div>
-    <div class="step"><b>3</b><span>Press <em>Install</em>. It takes about three minutes: the firmware, then the PCM waves
-      (the FM1 goes quiet for moments while they are written). Do not unplug the cable or close this page while it writes.</span></div>
+    <div class="step"><b>3</b><span>Press <em>Install</em>. It takes about three minutes: the firmware, then the waves
+      (the PCM sounds and the Foundations wavetable; the FM1 goes quiet for moments while they are written). Do not unplug the cable or close this page while it writes.</span></div>
   </div>
 
   <div class="panel">
@@ -349,7 +349,7 @@ class Updater {
 }
 
 const $ = (id) => document.getElementById(id);
-const meta = {"version": "0.9.4", "product": "FM-1_900", "name": "carnac-0.9.4.fwsc", "sha256": "7ef06985cb9565d4ed5bc93445c07401ca6278e21b9032ab0491fa1bd6c1c02f", "tip": "https://ko-fi.com/orbvorgis", "pkg": "../firmware/carnac-0.9.4.fwsc", "pcm": [{"area": 0, "file": "../firmware/pcm_area0.bin", "sha256": "b5b5c8fc3b830aa1f2a31f2863012fa90ec14e03134d251ccc6213c92a90a96f", "count": 12, "len": 36677}, {"area": 1, "file": "../firmware/pcm_area1.bin", "sha256": "0d9ffca98acc0ea08c9676355b320b2df23c648a75c9d54c7a4f9ddbc7a7f6ad", "count": 9, "len": 53263}]};
+const meta = {"version": "0.9.5", "product": "FM-1_900", "name": "carnac-0.9.5.fwsc", "sha256": "763ad2a8ed9ae5b538402d9e057a39bc068e918c79f81f07a77f6b51e9f2f18d", "tip": "https://ko-fi.com/orbvorgis", "pkg": "../firmware/carnac-0.9.5.fwsc", "pcm": [{"area": 0, "file": "../firmware/pcm_area0.bin", "sha256": "6e6e12be9544f28c546d220c950a717d5c68e8a1b428225cb7cdd5c987e809d9", "count": 13, "len": 36333, "hcrc": 332381813}, {"area": 1, "file": "../firmware/pcm_area1.bin", "sha256": "65586ce3c91689e40cfdc0abd2e84a47eb162525a8aaa793835562f87a9e1a62", "count": 8, "len": 56291, "hcrc": 1119212780}, {"area": 2, "file": "../firmware/foundations_bank.bin", "sha256": "d320e9bdb5c4cdd44115096dcd01463b1dff29d0285478a26de52e19531edb0c", "count": 1, "len": 16416, "hcrc": 1822942105}]};
 const IS_LOADER = (id) => /^ota-/i.test(id.model);
 const INFO_REQ = [0xF0, 0x7D, 0x46, 0x4C, 0x01, 0xF7];   /* (sleep() comes with fm1ota.js) */
 
@@ -400,9 +400,10 @@ async function carnacVersion(link) {
   return null;
 }
 
-/* the PCM waves (src/hardware/pcm_store_fm1.c): 100 BEGIN [area], 101 WRITE [off x3, data], 102 END [header],
-   103 INFO [area, first] -> areas, area, entries, KiB x2, used x3, names; data in groups of 7 behind their top bits */
-const PCM_BEGIN = 100, PCM_WRITE = 101, PCM_END = 102, PCM_INFO = 103, PCM_HDR = 32, PCM_CHUNK = 256;
+/* the waves (src/hardware/pcm_store_fm1.c): 100 BEGIN [area], 101 WRITE [off x3, data], 102 END [header],
+   103 INFO [area, first] -> areas, area, entries, KiB x2, used x3, names; 104 ID [area] -> area, held, hcrc x5 (the
+   image's header CRC); data in groups of 7 behind their top bits. Area 2 holds wavetable bank 0, not PCM. */
+const PCM_BEGIN = 100, PCM_WRITE = 101, PCM_END = 102, PCM_INFO = 103, PCM_ID = 104, PCM_HDR = 32, PCM_CHUNK = 256;
 const pcmPack = (b) => {
   const o = [];
   for (let i = 0; i < b.length; i += 7) {
@@ -423,10 +424,17 @@ async function edReq(link, cmd, args, ms = 5000) {
   }
   return null;
 }
-/* the areas whose image differs from the package's (entries or length); null when the FM1 has no PCM commands */
+/* the areas whose image differs from the package's: by its header CRC (PCM_ID), or on a firmware without PCM_ID by
+   entries and length; null when the FM1 has no PCM commands */
 async function pcmMissing(link) {
   const out = [];
   for (const a of meta.pcm) {
+    const id = await edReq(link, PCM_ID, [a.area], 1500);
+    if (id && id.length >= 7 && id[0] === a.area) {
+      const h = (id[2] | id[3] << 7 | id[4] << 14 | id[5] << 21 | id[6] << 28) >>> 0;
+      if (!id[1] || h !== a.hcrc) out.push(a);
+      continue;
+    }
     const r = await edReq(link, PCM_INFO, [a.area, 0], 1500);
     if (!r || r.length < 8 || r[1] !== a.area) return null;
     if (r[2] !== a.count || (r[5] | r[6] << 7 | r[7] << 14) !== a.len) out.push(a);
@@ -452,7 +460,7 @@ async function pcmSync(link, onPart) {
     }
   }
   const left = await pcmMissing(link);
-  return left && left.length === 0 ? "" : "the FM1 does not show the PCM waves after writing them";
+  return left && left.length === 0 ? "" : "the FM1 does not show the waves after writing them";
 }
 
 async function getMidi() {
@@ -504,8 +512,8 @@ function showState() {
       $("confirmtext").textContent = `${meta.version} is older than the ${state.version} on the FM1. Patches saved with ${state.version} may not load in ${meta.version}. Install the older version anyway.`;
       box.classList.add("show");
     } else if (cmpVer(pkg, on) === 0 && state.pcmOnly) {
-      setDevice(`The FM1 runs Carnac OS ${state.version}, but its PCM waves are missing or out of date.`);
-      $("go").textContent = "Write the PCM waves";
+      setDevice(`The FM1 runs Carnac OS ${state.version}, but its waves are missing or out of date.`);
+      $("go").textContent = "Write the waves";
     } else if (cmpVer(pkg, on) === 0) {
       setDevice(`The FM1 already runs Carnac OS ${state.version}. You can install it again.`);
     }
@@ -575,7 +583,7 @@ async function run(img, product, isStock) {
   showState();
 }
 
-/* after a good install (or alone, when only the PCM waves are missing): the PCM waves, then the last word */
+/* after a good install (or alone, when only the waves are missing): the waves, then the last word */
 async function finishPcm(up, v) {
   let why = pcmImages ? "" : "their download failed";
   if (!why) {
@@ -584,15 +592,15 @@ async function finishPcm(up, v) {
     else {
       $("bar").value = 0;
       why = await pcmSync(dev.link, (k, n, f) => {
-        say(`Writing the PCM waves${n > 1 ? ` (${k + 1} of ${n})` : ""}… do not unplug the cable.`);
+        say(`Writing the waves${n > 1 ? ` (${k + 1} of ${n})` : ""}… do not unplug the cable.`);
         $("bar").value = ((k + f) / n) * 100;
       });
       dev.link.close();
       $("bar").value = 100;
     }
   }
-  if (why) { log("PCM: " + why); say(`Carnac OS ${v} is installed, but the PCM waves were not written (${why}). Press Find my FM1 to try again.`, true); return; }
-  say(`Done. The FM1 runs Carnac OS ${v}, with its PCM waves.`);
+  if (why) { log("waves: " + why); say(`Carnac OS ${v} is installed, but the waves were not written (${why}). Press Find my FM1 to try again.`, true); return; }
+  say(`Done. The FM1 runs Carnac OS ${v}, with its waves.`);
   if (meta.tip) $("tip").hidden = false;
 }
 
@@ -645,7 +653,7 @@ $("stockfile").addEventListener("change", async (e) => {
       imgs[a.area] = b;
     }
     pcmImages = imgs;
-  } catch (e) { log("PCM waves: " + e.message); }
+  } catch (e) { log("waves: " + e.message); }
   refreshButtons();
 })();
 </script>
