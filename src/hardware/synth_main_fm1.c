@@ -47,6 +47,7 @@
 #include "dsp/preset.h"
 #include "dsp/wavetables.h"
 #include "dsp/flash_record.h"       /* FREC_VER_*: the preset store keeps each bank's layout version */
+#include "dsp/tuning.h"             /* MTS SysEx into GLOBAL's USER tunings (ed_service) */
 #include "UIStateMachine.h"
 #include "hardware/mem_section.h"     /* SYNTH_POOL */
 #include "carnac_splash.c"               /* the start-up screen: after ui_seq_draw.c's runes, which the unity puts first */
@@ -512,7 +513,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         v[4] = audio_peak_pct; v[5] = shed_count; v[6] = voice_shed;
         v[7] = (uint32_t)lv[0]; v[8] = (uint32_t)lv[1]; v[9] = (uint32_t)lv[2]; v[10] = nv;
         v[11] = perf_state.reverb_type; v[12] = perf_state.reverb_decay; v[13] = perf_state.reverb_damp;
-        v[14] = perf_state.reverb_predelay; v[15] = perf_state.delay_type; v[16] = perf_state.delay_time;
+        v[14] = perf_state.reverb_predelay; v[15] = DELAY_TYPE(&perf_state); v[16] = perf_state.delay_time;
         v[17] = perf_state.delay_feedback; v[18] = perf_state.delay_degrade; v[19] = perf_state.delay_pingpong;
         v[20] = engine_state[0].amp.reverb_send; v[21] = engine_state[0].amp.delay_send;
         v[22] = engine_state[1].amp.reverb_send; v[23] = engine_state[1].amp.delay_send; v[24] = perf_state.perf_mode;
@@ -610,7 +611,14 @@ static void ed_service(void)
 {
     const uint8_t *p;
     uint32_t n;
-    if (!ota_frame_get(&p, &n) || n < 4u || p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2)
+    if (!ota_frame_get(&p, &n) || n < 4u)
+        return;
+    if ((p[0] == 0x7Eu || p[0] == 0x7Fu) && p[2] == 0x08u) {   /* MIDI Tuning Standard: GLOBAL's USER tunings */
+        tuning_mts(p, n, PERF_TUNING(&perf_state));
+        ota_frame_done();
+        return;
+    }
+    if (p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2)
         return;                                     /* not an editor frame: ota_service() reads it */
     if ((p[3] >= ED_SMP_BEGIN && p[3] <= ED_SMP_READ) || (p[3] >= ED_WT_BEGIN && p[3] <= ED_PCM_INFO)) {
         ed_handle(p, n);                            /* long frames (data): handled in place */

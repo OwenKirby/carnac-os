@@ -408,6 +408,31 @@ int main(void)
         perf_state.clock_source = CLKSRC_INTERNAL;
     }
 
+    printf("\nGLOBAL TUNING and ROOT (2026-10-29): beside DELAY SYNC / DELAY TYPE's bit 0, ROOT only for a built-in\n");
+    {
+        uint8_t was = sm.page, r;
+        int k;
+        sm.page = UIPAGE_GLOBAL;
+        perf_state.delay_sync = 1u;                     /* DELAY SYNC on, TUNING EQUAL */
+        perf_state.delay_type = DELAYTYPE_BBD;          /* ROOT C */
+        k = find_row("ROOT");
+        CHECK(k < 0 || ui_sm_row_state(&sm, (uint8_t)k) == UIROW_HIDDEN, "EQUAL: no ROOT");
+        perf_state.delay_sync = (uint8_t)(TUNING_JUST << 1 | 1u);
+        perf_state.delay_type = (uint8_t)(2u << 1 | DELAYTYPE_BBD);
+        k = find_row("TUNING");
+        CHECK(k >= 0 && strcmp(ui_sm_row_text(&sm, (uint8_t)k), "JUST") == 0, "TUNING reads JUST");
+        k = find_row("ROOT");
+        r = k >= 0 ? ui_sm_row_state(&sm, (uint8_t)k) : UIROW_HIDDEN;
+        CHECK(r == UIROW_ACTIVE && strcmp(ui_sm_row_text(&sm, (uint8_t)k), "D") == 0, "JUST: ROOT D");
+        CHECK(DELAY_SYNC(&perf_state) == 1u && DELAY_TYPE(&perf_state) == DELAYTYPE_BBD, "the delay's bits kept");
+        perf_state.delay_sync = (uint8_t)((TUNING_USER1 + 1) << 1);
+        k = find_row("ROOT");
+        CHECK(k < 0 || ui_sm_row_state(&sm, (uint8_t)k) == UIROW_HIDDEN, "USER 2: no ROOT");
+        perf_state.delay_sync = 0u;
+        perf_state.delay_type = DELAYTYPE_TAPE;
+        sm.page = was;
+    }
+
     /* STRIKE (2026-10-16): FX cycles OSC1 -> ATTACK -> OSCMIX; ATTACK's knobs are DECAY, TO FILTER, BEND, BEND MOD
      * (2026-10-17), its rows sound, start, tune, velocity, key track, bend mod source; OSCMIX has the attack level;
      * no other architecture shows ATTACK */

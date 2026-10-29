@@ -33,7 +33,9 @@
  * Names of the sequences and arp patterns (2026-10-25): chunk 1, one table for both banks (syn_seq_name, syn_arp_name),
  * so the sequence and arp chunks keep their layout (a 9-slot sequence chunk has no room for 9 names). Its used bits
  * (PS_NAMES_USED: bit s a sequence slot, BANK_SLOTS + s an arp slot) mark the names a SAVE wrote; the others keep the
- * factory's. A SAVE writes the table only when the slot's name changed (one erase, not two, for a plain re-save). */
+ * factory's. A SAVE writes the table only when the slot's name changed (one erase, not two, for a plain re-save).
+ * Since 2026-10-29 (PS_NAMES_VER 2) the chunk also keeps GLOBAL's USER tunings after the names (dsp/tuning.h), written
+ * when an MTS message changed one (tuning_unsaved); a version 1 chunk still loads its names. */
 #define PS_BASE WT_STORE_BASE
 #define PS_SECTOR 4096u
 #define PS_PAYLOAD_OFF 256u
@@ -67,8 +69,9 @@ typedef struct {
 #define PS_NCHUNK 23u                               /* the chunks the store spans (14..16: bank 0, pcm_store_fm1.c) */
 #define PS_NAMES_CHUNK 1u                           /* the sequence and arp names */
 #define PS_NAMES_KIND UISAVE_COUNT                  /* its header's kind (no UISAVE_* bank) */
-#define PS_NAMES_VER 1u
-#define PS_NAMES_LEN (PS_USED_BYTES + 2u * BANK_SLOTS * NAME_LEN)
+#define PS_NAMES_VER 2u                             /* 2: + the USER tunings */
+#define PS_NAMES_V1_LEN (PS_USED_BYTES + 2u * BANK_SLOTS * NAME_LEN)
+#define PS_NAMES_LEN (PS_NAMES_V1_LEN + sizeof tuning_user)
 PS_STATIC_ASSERT(UISAVE_ARP_SEQ == 0 && UISAVE_SEQ_SETTINGS == 1 && UISAVE_PATCH_PRESET == 2 && UISAVE_WHOLE_PERF == 3,
                  "PS_KIND is in UISAVE_* order");
 PS_STATIC_ASSERT(PS_N_ARP == 1u && PS_N_SEQ == 4u && PS_N_PERF == 8u && PS_N_PATCH == 6u, "the chunk counts above");
@@ -211,8 +214,11 @@ static void ps_load(void)
                 }
         }
     }
-    if (ps_current(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, &h) < 0 || h.ver != PS_NAMES_VER || h.len != PS_NAMES_LEN)
-        return;                                     /* (none yet: every name the factory's) */
+    if (ps_current(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, &h) < 0 ||
+        !((h.ver == PS_NAMES_VER && h.len == PS_NAMES_LEN) || (h.ver == 1u && h.len == PS_NAMES_V1_LEN)))
+        return;                                     /* (none yet: every name the factory's, every tuning in tune) */
+    if (h.ver == PS_NAMES_VER)
+        memcpy(tuning_user, st_buf + PS_NAMES_V1_LEN, sizeof tuning_user);
     memcpy(ps_names_used, st_buf, PS_USED_BYTES);
     for (i = 0; i < 2u * BANK_SLOTS; i++)
         if ((ps_names_used[i >> 3] >> (i & 7u)) & 1u)
@@ -244,6 +250,7 @@ static int ps_save_names(void)
     memcpy(st_buf, ps_names_used, PS_USED_BYTES);
     memcpy(st_buf + PS_USED_BYTES, syn_seq_name, BANK_SLOTS * NAME_LEN);
     memcpy(st_buf + PS_USED_BYTES + BANK_SLOTS * NAME_LEN, syn_arp_name, BANK_SLOTS * NAME_LEN);
+    memcpy(st_buf + PS_NAMES_V1_LEN, tuning_user, sizeof tuning_user);
     return ps_write(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, PS_NAMES_VER, PS_NAMES_LEN, cur, seq);
 }
 
@@ -316,6 +323,10 @@ static int ps_write(uint32_t chunk, uint8_t kind, uint8_t c, uint8_t ver, uint32
 static void ps_tick(void)
 {
     uint32_t k, c, rc = 0;
+    if (tuning_unsaved) {                           /* an MTS dump changed a USER tuning */
+        tuning_unsaved = 0u;
+        ps_dirty |= 1u << PS_NAMES_CHUNK;
+    }
     if (!ps_dirty)
         return;
     for (k = 0; k < UISAVE_COUNT; k++)

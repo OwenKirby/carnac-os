@@ -153,7 +153,7 @@ void fx_init(void)
 #define DELAY_TIME_STEP 347u
 static uint32_t delay_len(const MasterPerformancePreset *p)
 {
-    if (p->delay_sync)
+    if (DELAY_SYNC(p))
         return 88200u / DELAY_SYNC_DEN[((uint32_t)p->delay_time * 8u) >> 7];
     return 64u + (uint32_t)p->delay_time * DELAY_TIME_STEP;
 }
@@ -1109,7 +1109,7 @@ void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     if (n == 0u) return;
     send_limit(&dl_lim_env, in, din, n);
-    if (p->delay_type == DELAYTYPE_BBD)
+    if (DELAY_TYPE(p) == DELAYTYPE_BBD)
         bbd_delay_block(p, din, out_l, out_r, n);
     else
         tape_delay_block(p, din, out_l, out_r, n);

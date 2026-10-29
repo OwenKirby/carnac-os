@@ -20,6 +20,7 @@
 #include "dsp/seq_scale.h"
 #include "dsp/attacks.h"         /* ATK_COUNT: the factory bank's attack sounds */
 #include "dsp/arp_chords.h"
+#include "dsp/tuning.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
@@ -211,6 +212,34 @@ static void test_names(void)
         ps_load();
         CHECK(syn_seq_name[4][0] == 0x11, "a names chunk of another version was read");
     }
+}
+
+/* GLOBAL's USER tunings (2026-10-29): an MTS bulk dump into USER 2 is saved with the names (chunk 1, version 2) and
+ * comes back after a power cycle; a version 1 names chunk (names, no tunings) still loads its names */
+static void test_tunings(void)
+{
+    static uint8_t mts[406], v1[PS_NAMES_V1_LEN];
+    uint32_t k;
+    memset(tuning_user, 0, sizeof tuning_user);
+    mts[0] = 0x7E; mts[1] = 0x7F; mts[2] = 0x08; mts[3] = 0x01; mts[4] = 5;      /* program 5: USER 2 */
+    for (k = 0; k < 128u; k++) {                    /* every key 50 cents sharp: semitone k, half of the next */
+        mts[21u + 3u * k] = (uint8_t)k; mts[22u + 3u * k] = 0x40; mts[23u + 3u * k] = 0x00;
+    }
+    CHECK(tuning_mts(mts, sizeof mts, TUNING_EQUAL) == 1 && tuning_unsaved, "the bulk dump went to USER 2");
+    CHECK(tuning_user[1][60] == 50 && tuning_user[0][60] == 0, "USER 2 key 60: +50 cents (%d)", tuning_user[1][60]);
+    ps_tick();
+    CHECK(!tuning_unsaved && !ps_dirty, "the tunings were written");
+    memset(tuning_user, 0, sizeof tuning_user);
+    ps_load();
+    CHECK(tuning_user[1][127] == 50 && tuning_user[1][0] == 50, "USER 2 came back after a power cycle");
+    memset(v1, 0, sizeof v1);
+    v1[0] = 1u;                                     /* sequence 0's name saved: all zeros */
+    put_chunk(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, 1u, v1, sizeof v1);
+    memset(syn_seq_name, 0x11, sizeof syn_seq_name);
+    memset(tuning_user, 0, sizeof tuning_user);
+    ps_load();
+    CHECK(syn_seq_name[0][0] == 0 && syn_seq_name[1][0] == 0x11 && tuning_user[1][60] == 0,
+          "a version 1 names chunk: its names, no tunings");
 }
 
 /* the factory bank: every slot in range, in key, and whole */
@@ -678,6 +707,7 @@ int main(void)
     flash_ok = 1;
 
     test_names();
+    test_tunings();
     test_factory();
 
     printf(failures ? "%d preset store checks failed\n" : "preset store tests: all passed\n", failures);

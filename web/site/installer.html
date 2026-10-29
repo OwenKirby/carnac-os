@@ -76,6 +76,22 @@
   <p class="tablet tip" id="tip" hidden>Enjoying Carnac? It's free; <a id="tiplink" href="#" target="_blank" rel="noopener">tip me</a> if you like it.</p>
   <details><summary>Details</summary><pre id="log"></pre></details>
 
+  <h2>Load a tuning</h2>
+  <p class="soft">Carnac 0.9.7 and later play custom tunings: GLOBAL &gt; TUNING has eight built in and four USER
+    tunings. Load a Scala file (<code>.scl</code>, thousands at
+    <a href="https://www.huygens-fokker.org/microtonality/scales.html" target="_blank" rel="noopener">huygens-fokker.org</a>)
+    into a USER tuning here. The base key plays the scale's first note at its usual pitch, and each key above it the
+    next note. Any program that sends MIDI Tuning Standard SysEx can load them too.</p>
+  <ol class="soft">
+    <li>Choose a <code>.scl</code> file:<br><input type="file" id="sclfile" accept=".scl"></li>
+    <li>Into <select id="sclslot"><option value="0">USER 1</option><option value="1">USER 2</option>
+      <option value="2">USER 3</option><option value="3">USER 4</option></select>, base key
+      <select id="sclbase"></select></li>
+    <li>Press <em>Find my FM1</em> above, then the button below. On the FM1, pick that USER tuning on GLOBAL &gt; TUNING
+      and save the performance.</li>
+  </ol>
+  <p><button class="quiet" id="sclgo" disabled>Send the tuning</button></p>
+
   <h2>If something goes wrong</h2>
   <p class="soft">If the install stops part-way, replug the cable and press <em>Find my FM1</em> again: the FM1 stays in
     update mode until it is finished, and this page carries on from there.</p>
@@ -130,7 +146,7 @@ const ERR = {
   badreq: "The FM1 asked for something outside the package. Reload the page and try again.",
 };
 
-let image = null, midi = null, state = null, writing = false, stock = null, pcmImages = null;
+let image = null, midi = null, state = null, writing = false, stock = null, pcmImages = null, scl = null;
 window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault(); e.returnValue = ""; } });
 
 /* "0.9.1" -> [0, 9, 1]; anything else (DEV, a suffix) -> null */
@@ -245,6 +261,7 @@ function refreshButtons() {
   $("find").disabled = writing || !image;
   $("go").disabled = writing || !image || !state || (needConfirm && !$("confirm").checked);
   $("stockgo").disabled = writing || !stock || !state;
+  $("sclgo").disabled = writing || !scl || !state || state.kind !== "carnac";
 }
 $("confirm").addEventListener("change", refreshButtons);
 
@@ -388,6 +405,75 @@ $("stockfile").addEventListener("change", async (e) => {
     if ((await sha256(raw)) !== STOCK_SHA256) say("That is not M-VAVE's FM-1 V15 file. Choose the file from the link above.", true);
     else { stock = { image: logicalImage(raw), product: productOf(raw) }; say("That is M-VAVE's FM-1 V15."); }
   }
+  refreshButtons();
+});
+
+/* a Scala .scl file -> { name, cents: the degrees after 1/1, the last one the period } or a string: what is wrong.
+   "!" lines are comments; then the description, the count, one pitch a line (with a "." cents, else a ratio a/b or a) */
+function parseScl(text) {
+  const lines = text.split(/\r?\n/).filter((l) => !l.startsWith("!"));
+  if (lines.length < 2) return "not a Scala file";
+  const name = lines[0].trim(), n = parseInt(lines[1], 10), cents = [];
+  if (!(n >= 1 && n <= 1000)) return "its note count is missing";
+  for (const l of lines.slice(2)) {
+    if (cents.length === n) break;
+    const t = l.trim().split(/\s+/)[0];
+    if (!t) continue;
+    let c;
+    if (t.includes(".")) c = parseFloat(t);
+    else { const [a, b = "1"] = t.split("/"); c = 1200 * Math.log2(parseInt(a, 10) / parseInt(b, 10)); }
+    if (!isFinite(c)) return `"${t}" is not a pitch`;
+    cents.push(c);
+  }
+  if (cents.length !== n) return `it lists ${cents.length} of its ${n} notes`;
+  return { name, cents };
+}
+/* the MTS bulk dump (F0 7E 7F 08 01 program name[16] (xx yy zz) x 128 checksum F7) of a scale from base key: key k
+   plays degree k - base (wrapping by the period), base at its equal-tempered pitch */
+function sclToMts(s, slot, base) {
+  const n = s.cents.length, period = s.cents[n - 1], body = [0x7E, 0x7F, 0x08, 0x01, slot & 0x7F];
+  for (let i = 0; i < 16; i++) body.push((s.name.charCodeAt(i) || 32) & 0x7F);
+  for (let k = 0; k < 128; k++) {
+    const st = k - base, deg = ((st % n) + n) % n, oct = Math.floor(st / n);
+    let semi = base + (oct * period + (deg ? s.cents[deg - 1] : 0)) / 100;
+    semi = Math.min(127 + 16382 / 16384, Math.max(0, semi));   /* (7F 7F 7F would read as "no change") */
+    let xx = Math.floor(semi), f = Math.round((semi - xx) * 16384);
+    if (f === 16384) { xx++; f = 0; }
+    body.push(xx, f >> 7, f & 0x7F);
+  }
+  body.push(body.slice(1).reduce((a, b) => a ^ b, 0x7E) & 0x7F);   /* XOR of 7E .. the data */
+  return [0xF0, ...body, 0xF7];
+}
+window.carnacScl = { parseScl, sclToMts };                  /* (for tests) */
+{
+  const NN = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  for (let k = 24; k <= 96; k++) $("sclbase").add(new Option(`${NN[k % 12]}${Math.floor(k / 12) - 1}`, k, k === 60, k === 60));
+}
+$("sclfile").addEventListener("change", async (e) => {
+  scl = null;
+  const f = e.target.files && e.target.files[0];
+  if (f) {
+    const r = parseScl(await f.text());
+    if (typeof r === "string") say(`That file cannot be read as a tuning: ${r}.`, true);
+    else { scl = r; say(`${f.name}: ${r.cents.length} notes a period of ${r.cents[r.cents.length - 1].toFixed(1)} cents${r.name ? ` (${r.name})` : ""}.`); }
+  }
+  refreshButtons();
+});
+$("sclgo").addEventListener("click", async () => {
+  const slot = +$("sclslot").value;
+  writing = true;
+  refreshButtons();
+  try {
+    const dev = await new Updater(midi, log).find((id) => !IS_LOADER(id));
+    if (!dev) say(ERR.notfound, true);
+    else {
+      const ok = dev.link.send(sclToMts(scl, slot, +$("sclbase").value));
+      dev.link.close();
+      if (ok) say(`Sent into USER ${slot + 1}. On the FM1, choose GLOBAL > TUNING > USER ${slot + 1}.`);
+      else say(ERR.lost, true);
+    }
+  } catch (e) { say("Error: " + (e && e.message), true); log(String(e && e.stack || e)); }
+  writing = false;
   refreshButtons();
 });
 

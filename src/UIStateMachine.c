@@ -42,8 +42,8 @@ enum {                               /* how a row reads and writes its value */
     RK_THEME,                        /* GLOBAL > THEME: UIStateMachine.theme */
     RK_INST,                         /* the byte at offset in the instrument settings (GLOBAL, sm->inst) */
     RK_FINE,                         /* RK_BYTE shown in cents (OSC FINE TUNE, osc_fine_cents) */
-    RK_PINGPONG,                     /* PING PONG: bit 0 of the byte at offset (delay_pingpong, DELAY_PINGPONG) */
-    RK_DELAY_HP,                     /* DELAY HP: bits 1..7 of the byte at offset (delay_pingpong, DELAY_HP) */
+    RK_BIT0,                         /* bit 0 of the byte at offset: PING PONG (DELAY_PINGPONG), DELAY SYNC, DELAY TYPE */
+    RK_HIGH7,                        /* bits 1..7 of the byte at offset: DELAY HP, TUNING and ROOT (PresetStructures.h) */
     RK_WAVE,                         /* RK_BYTE holding a wave code (pcm_osc.h): steps through the wave list (banks,
                                       * PCM waves, attacks), shows the wave's name */
     RK_DEPTH_SRC,                    /* RK_BYTE holding an LFO's DEPTH MOD SRC: steps over the LFOs and MOD slots */
@@ -119,6 +119,9 @@ PS_STATIC_ASSERT(sizeof(CLKOUT_NAMES) / sizeof(CLKOUT_NAMES[0]) == CLKOUT_COUNT,
 static const char *const THEME_NAMES[UITHEME_COUNT] = {"SAMHAIN", "BLOOD MOON", "FIRE", "SOLSTICE", "LICHEN", "HEATHER",
                                                        "RITUAL", "GRANITE", "OAK"};
 static const char *const DELAYTYPE_NAMES[] = {"TAPE", "BBD"};
+static const char *const TUNING_NAMES[] = {"EQUAL", "OVERTONE", "JUST", "PYTHAGORAS", "SEPTIMAL", "MAQAM RAST", "MEANTONE",
+                                           "WERCK III", "USER 1", "USER 2", "USER 3", "USER 4"};
+PS_STATIC_ASSERT(sizeof(TUNING_NAMES) / sizeof(TUNING_NAMES[0]) == TUNING_COUNT, "one name per TUNING_*");
 static const char *const ARPLAYER_NAMES[] = {"L1", "L2", "BOTH"};
 static const char *const ARPDIV_NAMES[] = {"2", "1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32",
                                            "1/32T"};
@@ -328,11 +331,11 @@ PS_STATIC_ASSERT(sizeof(EngineState) < 255u, "MOD_ROWS: via = 1 + an EngineState
 #define ENGB(member) OFS(EngineState, member)
 static const UiRow EFFECTS_ROWS[] = {
     /* the delay's rows first, then the reverb's (2026-10-26) */
-    {"DELAY TYPE", PERF(delay_type), 0, DELAYTYPE_COUNT - 1, RK_BYTE, 0, DELAYTYPE_NAMES, A_ALL},
-    {"DELAY SYNC", PERF(delay_sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
+    {"DELAY TYPE", PERF(delay_type), 0, DELAYTYPE_COUNT - 1, RK_BIT0, 0, DELAYTYPE_NAMES, A_ALL},
+    {"DELAY SYNC", PERF(delay_sync), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},
     {"DEGRADE", PERF(delay_degrade), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"PING PONG", PERF(delay_pingpong), 0, 1, RK_PINGPONG, 0, BOOL_NAMES, A_ALL},
-    {"DELAY HP", PERF(delay_pingpong), 0, VAL_MAX, RK_DELAY_HP, 0, NULL, A_ALL},
+    {"PING PONG", PERF(delay_pingpong), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},
+    {"DELAY HP", PERF(delay_pingpong), 0, VAL_MAX, RK_HIGH7, 0, NULL, A_ALL},
     {"REV TYPE", PERF(reverb_type), 0, REVTYPE_COUNT - 1, RK_BYTE, 0, REVTYPE_NAMES, A_ALL},
     {"REV PREDELAY", PERF(reverb_predelay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
 };
@@ -342,6 +345,8 @@ static const UiRow GLOBAL_ROWS[] = {   /* the MIDI setup first (2026-10-27, user
     {"MIDI CH LAYER2", (uint8_t)(PERF(midi_ch) + 1u), 0, 15, RK_BYTE, RF_LAYER2 | RF_CHANNEL, NULL, A_ALL},
     {"CLOCK SRC", PERF(clock_source), 0, CLKSRC_COUNT - 1, RK_BYTE, 0, CLKSRC_NAMES, A_ALL},
     {"MASTER TUNE", INST(master_tune), MASTER_TUNE_MIN, MASTER_TUNE_MAX, RK_INST, RF_BIPOLAR, NULL, A_ALL},
+    {"TUNING", PERF(delay_sync), 0, TUNING_COUNT - 1, RK_HIGH7, 0, TUNING_NAMES, A_ALL},       /* (PERF_TUNING) */
+    {"ROOT", PERF(delay_type), 0, 11, RK_HIGH7, 0, ROOT_NAMES, A_ALL},                       /* (PERF_TUNING_ROOT) */
     {"BEND RANGE", PERF(bend_range), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CUSTOM CC1", PERF(cc1_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CUSTOM CC2", PERF(cc2_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
@@ -805,8 +810,8 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     case RK_VOICES: return ui_sm_layer_voices(sm, row_layer(r));
     case RK_ARP_LAYER: return ARP_LAYER(sm->arp);
     case RK_ARP_TIMING: return ARP_TIMING(sm->arp);
-    case RK_PINGPONG: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] & 1u);
-    case RK_DELAY_HP: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] >> 1);
+    case RK_BIT0: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] & 1u);
+    case RK_HIGH7: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] >> 1);
     default: return page_block(sm, ui_cur_page(sm))[r->offset];
     }
 }
@@ -823,9 +828,9 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
     case RK_SEQ_EVENT: seq_lane_set_event(cur_lane(sm), v); break;   /* also restarts TARGET: */
     case RK_ARP_LAYER: arp_set_layer(sm->arp, v); break;
     case RK_ARP_TIMING: arp_set_timing(sm->arp, v); break;
-    case RK_PINGPONG: case RK_DELAY_HP: {
+    case RK_BIT0: case RK_HIGH7: {
         uint8_t *b = &page_block(sm, ui_cur_page(sm))[r->offset];
-        *b = r->kind == RK_PINGPONG ? (uint8_t)((*b & 0xFEu) | (v & 1u)) : (uint8_t)((*b & 1u) | (uint8_t)(v << 1));
+        *b = r->kind == RK_BIT0 ? (uint8_t)((*b & 0xFEu) | (v & 1u)) : (uint8_t)((*b & 1u) | (uint8_t)(v << 1));
         break;
     }
     default: page_block(sm, ui_cur_page(sm))[r->offset] = v; break;
@@ -916,6 +921,9 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
         if (r->offset == OFS(SequencerLane, scale_root) && (ln->scale == SEQSCALE_OFF || ln->scale == SEQSCALE_GENRE))
             return UIROW_HIDDEN;
     }
+    if (pg->store == ST_PERF && r->kind == RK_HIGH7 && r->offset == OFS(MasterPerformancePreset, delay_type) &&
+        (PERF_TUNING(sm->perf) == TUNING_EQUAL || PERF_TUNING(sm->perf) >= TUNING_USER1))
+        return UIROW_HIDDEN;         /* ROOT: a built-in tuning's (EQUAL has none, a USER table maps every key) */
     return UIROW_ACTIVE;
 }
 

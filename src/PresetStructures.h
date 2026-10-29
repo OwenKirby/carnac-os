@@ -651,6 +651,26 @@ typedef struct {
 PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 51u, "MasterPerformancePreset flash layout");
 #define DELAY_PINGPONG(p) ((uint8_t)((p)->delay_pingpong & 1u))
 #define DELAY_HP(p) ((uint8_t)((p)->delay_pingpong >> 1))
+/* GLOBAL > TUNING and ROOT (2026-10-29, dsp/tuning.h) ride in the high bits of delay_sync and delay_type (bits 1..7;
+ * older records: 0 = EQUAL on C, no version bump). Read all four through these */
+#define DELAY_SYNC(p) ((uint8_t)((p)->delay_sync & 1u))
+#define DELAY_TYPE(p) ((uint8_t)((p)->delay_type & 1u))
+#define PERF_TUNING(p) ((uint8_t)((p)->delay_sync >> 1))
+#define PERF_TUNING_ROOT(p) ((uint8_t)((p)->delay_type >> 1))
+/* the built-in tunings first, the ones nearest Carnac's drones and stone-age sound at the top (user, 2026-10-29) */
+enum {
+    TUNING_EQUAL,                    /* equal temperament: none */
+    TUNING_OVERTONE,                 /* harmonics 16..30 of the root: horns, throat song, drones */
+    TUNING_JUST,                     /* 5-limit just intonation */
+    TUNING_PYTHAGOREAN,              /* pure fifths, Eb..G# */
+    TUNING_SEPTIMAL,                 /* 7-limit just: 7/4, 7/5, 8/7 */
+    TUNING_RAST,                     /* maqam Rast: the 3rd and 7th a quarter tone flat */
+    TUNING_MEANTONE,                 /* quarter-comma meantone, Eb..G# */
+    TUNING_WERCKMEISTER,             /* Werckmeister III */
+    TUNING_USER1,                    /* .. the TUNING_NUSER tables MTS SysEx loads */
+    TUNING_COUNT = TUNING_USER1 + 4
+};
+#define TUNING_NUSER (TUNING_COUNT - TUNING_USER1)
 
 /* WHOLE_PERF (2026-10-17): a performance and everything it plays, as SAVE took it. The FM1 keeps these in flash only
  * (preset_store_fm1.c, both patches packed there: WHOLE_PERF_STORED_SIZE) and reads one when it is loaded; the

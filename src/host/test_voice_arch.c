@@ -16,6 +16,7 @@
 #include "dsp/voice_allocator.h"
 #include "dsp/attacks.h"
 #include "dsp/synth_voice.h"
+#include "dsp/tuning.h"
 
 static int32_t buf[64 * 2];
 static int fails;
@@ -660,6 +661,43 @@ int main(void)
         }
         instrument.master_tune = 64u;
         CHECK(z[1] > z[0], "MASTER TUNE +50 cents: more zero-crossings (%d vs %d)", (int)z[1], (int)z[0]);
+    }
+
+    /* GLOBAL > TUNING and ROOT (2026-10-29): MAQAM RAST on C lowers E a quarter tone and leaves C alone; turned to D
+     * the flat 3rd is F#; a USER table plays its key's cents; DELAY SYNC and DELAY TYPE keep their bit 0 */
+    {
+        CHECK(tuning_key_cents(TUNING_RAST, 0, 64) == -50 && tuning_key_cents(TUNING_RAST, 0, 60) == 0 &&
+              tuning_key_cents(TUNING_RAST, 2, 66) == -50 && tuning_key_cents(TUNING_RAST, 2, 64) == 0 &&
+              tuning_key_cents(TUNING_JUST, 0, 64) == -14 && tuning_key_cents(TUNING_EQUAL, 5, 64) == 0,
+              "the built-in tunings, turned to ROOT");
+        tuning_user[3][64] = 77;
+        CHECK(tuning_key_cents(TUNING_USER1 + 3, 0, 64) == 77, "USER 4 key 64");
+        tuning_user[3][64] = 0;
+        int32_t z[4], prev;
+        for (int t = 0; t < 4; t++) {
+            synth_init();
+            base_patch(&engine_state[0], VARCH_SINGLE);
+            engine_state[0].filter[0].mod_amt = 0;
+            perf_state.delay_sync = (uint8_t)(t & 1 ? TUNING_RAST << 1 : 0);
+            perf_state.delay_type = 0;
+            synth_midi_3(0x90, t < 2 ? 64 : 60, 100);   /* E4 equal, E4 RAST, C4 equal, C4 RAST */
+            render(4096);
+            z[t] = 0;
+            prev = 0;
+            for (int k = 0; k < 689; k++) {
+                render(64);
+                for (int j = 0; j < 64; j++) {
+                    z[t] += (prev < 0) != (buf[j * 2] < 0);
+                    prev = buf[j * 2];
+                }
+            }
+            all_off();
+        }
+        CHECK(DELAY_SYNC(&perf_state) == 0 && PERF_TUNING(&perf_state) == TUNING_RAST, "TUNING beside DELAY SYNC");
+        perf_state.delay_sync = 0;
+        /* E4 330 Hz: 50 cents down is ~ 9.5 Hz, ~ 19 crossings a second */
+        CHECK(z[1] < z[0] - 10, "RAST: E4 a quarter tone flat (%d vs %d crossings)", (int)z[1], (int)z[0]);
+        CHECK(z[3] == z[2], "RAST: C4 in tune (%d vs %d crossings)", (int)z[3], (int)z[2]);
     }
 
     /* MOD slot A*B with a source missing (2026-10-17): the missing one is the product's 1, so one source passes

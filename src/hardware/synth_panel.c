@@ -9,6 +9,7 @@
  * pt_state / PT_RUN, and every synth source (src/dsp, UIStateMachine.c). */
 #include "perf_test.h"
 #include "hardware/mem_section.h"             /* SYNTH_POOL */
+#include "dsp/tuning.h"                        /* GLOBAL's USER tunings: kept in the store (preset_store_fm1.c) */
 
 /* ---------------------------------------------------------- the store --- */
 /* The instrument's settings across a power cycle: the THEME (GLOBAL > THEME, UIStateMachine.theme; 2026-10-16),

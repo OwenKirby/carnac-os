@@ -16,6 +16,7 @@
 #include "preset.h"
 #include "attacks.h"
 #include "ctrl_tables.h"
+#include "tuning.h"
 
 LfoRuntimeState global_lfo1_state[NLAYER];
 MidiInterfaceState master_midi;
@@ -106,6 +107,7 @@ static int32_t source_level_q15(const EngineState *e, int src, int32_t s) {
 
 /* MODSLOT n (spec 4.5): function of two sources, scaled by the slot amount */
 static int32_t tune_cents_now;                      /* GLOBAL > MASTER TUNE, read once a tick */
+static uint8_t tuning_now, tuning_root_now;         /* GLOBAL > TUNING and ROOT (the performance's), the same */
 
 static int32_t slot_output(const SourceCtx *c, int slot, int depth) {
     /* Feedback guard (spec 4.5): a chain of slots cannot run deeper than the slot count. */
@@ -372,6 +374,8 @@ int32_t synth_mod_layer_out(int layer, int slot) {
 
 void synth_voice_begin_tick(uint32_t frame) {
     tune_cents_now = instrument_tune_cents();       /* once a tick, not once a voice */
+    tuning_now = PERF_TUNING(&perf_state);
+    tuning_root_now = PERF_TUNING_ROOT(&perf_state);
     analog_begin_tick();                            /* ANALOG's warm-up drift, shared by every voice */
     layer_mod_pass++;                                               /* the LFO1 pass is a pass of its own */
     update_global_lfo1(frame);
@@ -405,11 +409,12 @@ static int32_t key_track_q15(uint8_t kt) {
     return clamp32(((int32_t)kt - (int32_t)BIPOLAR_CENTER) * 32767 / 63, -32768, 32767);
 }
 
-/* An oscillator's base note: the keyboard note through key track, plus transpose and the octave knob.
- * Key track can land between semitones, so the remainder comes back as cents. */
-static void base_pitch(const OscParams *o, const VoiceInput *in, int *note, int *cents) {
+/* An oscillator's base note: the keyboard note (key_cents: its TUNING offset) through key track, plus transpose and
+ * the octave knob. Key track can land between semitones, so the remainder comes back as cents. KEY TRACK scales the
+ * tuning with the keyboard: an oscillator that does not track (a drone) stays put. */
+static void base_pitch(const OscParams *o, const VoiceInput *in, int32_t key_cents, int *note, int *cents) {
     int octave = ((int)o->octave * 7 >> 7) - 3;                      /* knob 0..127 -> -3..+3 */
-    int32_t track_cents = (((int32_t)in->note - 60) * 100 * key_track_q15(o->key_track)) >> 15;
+    int32_t track_cents = ((((int32_t)in->note - 60) * 100 + key_cents) * key_track_q15(o->key_track)) >> 15;
     *note = clampi(60 + in->transpose + octave * 12 + track_cents / 100, 0, 127);
     *cents = track_cents % 100;
 }
@@ -572,9 +577,10 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     int bend_range = clampi(perf_state.bend_range, 0, 24);          /* semitones at full wheel */
     int32_t base_cents = (in->pitch_bend * bend_range * 100) / 64 + in->glide_cents + in->detune_cents +
                          tune_cents_now;              /* GLOBAL > MASTER TUNE (synth_voice_begin_tick) */
+    int32_t key_cents = tuning_key_cents(tuning_now, tuning_root_now, (uint8_t)in->note);   /* GLOBAL > TUNING */
 
     int note1, track1;
-    base_pitch(o1, in, &note1, &track1);
+    base_pitch(o1, in, key_cents, &note1, &track1);
     int32_t pitch1_cents = osc_fine_cents(o1->fine) + track1 + base_cents;
     uint32_t freq1_q16 = apply_cents_q16(mtof_q16(note1),
                                          pitch1_cents + pitch_mod_cents(resolve_source(&c, o1->pitch_mod_src, 0), o1->pitch_mod_amt));
@@ -586,7 +592,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     uint32_t freq2_q16 = 0;
     if (varch_uses_osc2(arch)) {
         int note2, track2;
-        base_pitch(o2, in, &note2, &track2);
+        base_pitch(o2, in, key_cents, &note2, &track2);
         freq2_q16 = apply_cents_q16(mtof_q16(note2), osc_fine_cents(o2->fine) + track2 + base_cents
                                     + pitch_mod_cents(resolve_source(&c, o2->pitch_mod_src, 0), o2->pitch_mod_amt));
         if (analog) freq2_q16 = analog_freq(freq2_q16, an->pitch2);
