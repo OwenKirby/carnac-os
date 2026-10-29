@@ -58,14 +58,44 @@ static struct {
 } pcm_up;
 static uint8_t pcm_buf[256] __attribute__((aligned(4)));   /* a write's bytes, in RAM for the flash driver */
 
+/* The header CRCs (hcrc) of the images this build ships beside it (src/dsp/pcm_area0.bin, pcm_area1.bin,
+ * foundations_bank.bin), from build_fm1.py; 0: not known (host builds), that area is only checked for an image */
+#ifndef PCM_WANT_HCRC0
+#define PCM_WANT_HCRC0 0u
+#define PCM_WANT_HCRC1 0u
+#define PCM_WANT_HCRC2 0u
+#endif
+static const uint32_t pcm_want_hcrc[PCM_ALL_AREAS] = {PCM_WANT_HCRC0, PCM_WANT_HCRC1, PCM_WANT_HCRC2};
+
+enum { PCM_WAVES_OK, PCM_WAVES_MISSING, PCM_WAVES_STALE };
+static uint8_t pcm_waves_state;                     /* at power-on: a firmware installed without its waves (the
+                                                     * .fwsc alone, by another installer) says so on the splash */
+
+static int pcm_held(uint32_t area, uint32_t *hcrc)  /* area's image is attached: 1 and its hcrc, else 0 */
+{
+    const uint8_t *h = PCM_XIP(PCM_AREA[area].base) + 28;   /* hcrc: last in both headers */
+    if (!(area == PCM_BANK_AREA ? wavetable_bank_used() : pcm_area_used(area))) {
+        *hcrc = 0;
+        return 0;
+    }
+    *hcrc = (uint32_t)h[0] | (uint32_t)h[1] << 8 | (uint32_t)h[2] << 16 | (uint32_t)h[3] << 24;
+    return 1;
+}
+
 static void pcm_boot(void)                          /* after ps_load: attach whatever the areas hold */
 {
-    uint32_t a;
+    uint32_t a, w;
+    if (!flash_ok)
+        return;
     for (a = 0; a < PCM_FLASH_AREAS; a++)
-        if (flash_ok)
-            pcm_store_attach(a, PCM_XIP(PCM_AREA[a].base), PCM_AREA[a].size);
-    if (flash_ok)
-        wavetable_bank_attach(PCM_XIP(PCM_AREA[PCM_BANK_AREA].base), PCM_AREA[PCM_BANK_AREA].size);
+        pcm_store_attach(a, PCM_XIP(PCM_AREA[a].base), PCM_AREA[a].size);
+    wavetable_bank_attach(PCM_XIP(PCM_AREA[PCM_BANK_AREA].base), PCM_AREA[PCM_BANK_AREA].size);
+    for (a = 0; a < PCM_ALL_AREAS; a++) {
+        if (!pcm_held(a, &w))
+            pcm_waves_state = PCM_WAVES_MISSING;
+        else if (pcm_want_hcrc[a] && w != pcm_want_hcrc[a] && pcm_waves_state == PCM_WAVES_OK)
+            pcm_waves_state = PCM_WAVES_STALE;
+    }
 }
 
 /* area a's image: its entries (or banks) when it holds, else < 0 (pcm_store_check's reasons) */
@@ -199,12 +229,8 @@ static int ed_pcm_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
     case ED_PCM_ID:
         area = na ? a[0] : PCM_ALL_AREAS;
         ed_b(area);
-        used = area >= PCM_ALL_AREAS ? 0u : area == PCM_BANK_AREA ? wavetable_bank_used() : pcm_area_used(area);
         w = 0;
-        if (used) {
-            const uint8_t *h = PCM_XIP(PCM_AREA[area].base) + 28;   /* hcrc: last in both headers */
-            w = (uint32_t)h[0] | (uint32_t)h[1] << 8 | (uint32_t)h[2] << 16 | (uint32_t)h[3] << 24;
-        }
+        used = area < PCM_ALL_AREAS ? (uint32_t)pcm_held(area, &w) : 0u;
         ed_b(used ? 1u : 0u);
         for (i = 0; i < 5u; i++)
             ed_b(w >> (7u * i));

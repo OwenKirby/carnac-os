@@ -22,7 +22,16 @@ From the command line: download the `.fwsc` package from [Releases](../../releas
 
 ```
 python x0x-firmware/tools/fm1_install.py carnac-0.9.0.fwsc
+python src/hardware/pcm_store_upload.py sync
 ```
+
+The `.fwsc` holds the firmware only. The PCM waves (CHOIR, MOONSONG, PAN FLUTE...) and the Foundations
+wavetable bank live in their own flash areas and are uploaded by the second command, from a checkout of
+this repo at the same release tag (`git checkout v0.9.0`; it needs `pip install mido python-rtmidi`). The
+web installer does both steps for you. If you install the `.fwsc` with any other tool, the FM-1 starts
+with an empty field and no standing stones on its start-up screen, and the words WAVES MISSING (or WAVES
+OUT OF DATE): run the web installer or the `sync` command once to fix it. Until then Foundations plays a
+sine and the PCM waves are silent.
 
 Saved presets live in their own flash area, so they survive firmware updates.
 

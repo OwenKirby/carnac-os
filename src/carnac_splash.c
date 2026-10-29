@@ -16,7 +16,9 @@
  * state kept between calls, every pixel through cv_pset (which clips); a few milliseconds.
  *
  *   carnac_splash(version, theme)   the whole screen in UITHEME_* theme's colours (out of range: SAMHAIN); version
- *                                   (e.g. SYNTH_VERSION) small at the foot */
+ *                                   (e.g. SYNTH_VERSION) small at the foot
+ *   sp_notice                       set (two lines) before the call: the field stands empty, no stones, with the two
+ *                                   lines carved in it instead (the firmware without its waves, 2026-10-29) */
 
 #define SP_A 120                     /* the art grid: SP_A x SP_A pixels of 2 x 2 */
 #define SP_HZ 48                     /* the horizon's art row: high, the stones stand up against the sky */
@@ -25,6 +27,7 @@
 
 static int32_t sp_y0;                /* the band being drawn: its first screen row */
 static const uint16_t *sp_col;       /* the palette being drawn in, RGB565 (sp_theme's) */
+static const char *sp_notice[2];     /* set: the empty field and these two lines (at most 20 runes each) */
 
 /* ----------------------------------------------------------- palette --- */
 enum {
@@ -329,10 +332,16 @@ static void carnac_splash(const char *version, uint32_t theme)
             }
         /* the name across the sky, behind the stones: the great one stands in front of its foot */
         sp_runes((SP_A - sp_runes_w("CARNAC", 3, 0)) / 2, 5, "CARNAC", 3, 0, P_TXTTOP, P_TXTMID, P_TXTLOW);
-        for (k = SP_NSTEP - 1; k >= 0; k--)                                       /* far to near */
-            for (r = 0; r < SP_NROW; r++)
-                if (k >= SP_ROWS[r][3])
-                    sp_stone(r, k);
+        if (sp_notice[0]) {                                                       /* the stones are gone */
+            for (k = 0; k < 2; k++)
+                sp_runes((SP_A - sp_runes_w(sp_notice[k], 1, 0)) / 2, 68 + 14 * k, sp_notice[k], 1, 0, P_TXTTOP,
+                         P_TXTMID, k ? P_TXTMID : P_TXTLOW);
+        } else {
+            for (k = SP_NSTEP - 1; k >= 0; k--)                                   /* far to near */
+                for (r = 0; r < SP_NROW; r++)
+                    if (k >= SP_ROWS[r][3])
+                        sp_stone(r, k);
+        }
         sp_runes((SP_A - sp_runes_w("OS", 2, 1)) / 2, 35, "OS", 2, 1, P_TXTTOP, P_TXTMID, P_TXTLOW);
         if (version)                                                               /* the foot: version, author */
             sp_runes(3, SP_A - 11, version, 1, 1, P_TXTTOP, P_TXTMID, P_TXTMID);

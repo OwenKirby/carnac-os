@@ -120,6 +120,9 @@ def main():
         inc = [f"-I{(REPO / d).as_posix()}" for d in ("src", "src/dsp", "src/hardware")]
         flags = [*b.CFLAGS, *b.FPU, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen", *inc,
                  f'-DFELUCCA_ID="{b.PRODUCT}"']
+        for i, img in enumerate(("pcm_area0.bin", "pcm_area1.bin", "foundations_bank.bin")):
+            hcrc = int.from_bytes((REPO / "src" / "dsp" / img).read_bytes()[28:32], "little")
+            flags.append(f"-DPCM_WANT_HCRC{i}=0x{hcrc:08x}u")   # the waves this build ships (pcm_store_fm1.c)
         if a.release:
             flags.append(f'-DSYNTH_VERSION="{a.release.upper()}"')
         if a.prof:

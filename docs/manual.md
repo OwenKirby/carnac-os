@@ -121,7 +121,7 @@ OSC1 and OSC2 play a wave from the WAVE list: first the 15 wavetable banks (FOUN
 | PAN FLUTE | BONE CHIFF | breathy to full |
 | CAIRN SPIRIT | a breath | a dark "oh" choir and flutes over a stone drone to a bright "aah" with a halo and shimmer |
 
-The PCM waves and the FOUNDATIONS bank live in flash beside the firmware; a few PCM waves are built into the firmware itself. The installers write them after the firmware and rewrite only what changed. Without them, the PCM waves that need them stay silent and FOUNDATIONS plays a sine.
+The PCM waves and the FOUNDATIONS bank live in flash beside the firmware; a few PCM waves are built into the firmware itself. The installers write them after the firmware and rewrite only what changed. Without them, the PCM waves that need them stay silent and FOUNDATIONS plays a sine. The FM-1 then says so when it starts: its start-up screen shows the field with no standing stones and the words WAVES MISSING, or WAVES OUT OF DATE when the waves in flash belong to another version. Run the installer again to bring them back.
 
 **OSCMIX** mixes the oscillators, the sub oscillator and the noise. Its four knobs change with the architecture:
 
@@ -392,7 +392,7 @@ The screen is mostly black, so the panel gives off little light when played outd
 
 **USB audio.** Connected to a computer, the FM-1 is also a USB audio input: 16-bit stereo at 44.1 kHz, class compliant, so no driver is needed. It shows up as "Line (X0X FM-1)" and carries the same output as the jacks, after the MASTER knob. Record it in any audio app.
 
-**Installing and recovering.** Install Carnac from the web installer at [owenkirby.github.io/carnac-os](https://owenkirby.github.io/carnac-os/), in Chrome or Edge, with the FM-1 on USB. It writes the firmware, checks the version, then writes the PCM waves. If an install stops part-way, replug the cable and start again: the FM-1 stays in update mode and the installer carries on. If the FM-1 does not start after an update, switch it off and on twice; it then starts in safe mode, which keeps USB working. The same page can put M-VAVE's stock firmware back. Deeper recovery steps are in the source repository (docs/fm1-recovery.md).
+**Installing and recovering.** Install Carnac from the web installer at [owenkirby.github.io/carnac-os](https://owenkirby.github.io/carnac-os/), in Chrome or Edge, with the FM-1 on USB. It writes the firmware, checks the version, then writes the PCM waves. The .fwsc package holds the firmware only: another installer, or X0X's fm1_install.py, writes the firmware and leaves the waves out. After one of those, run the web installer once, or pcm_store_upload.py sync from the source at the same release (see the README). If an install stops part-way, replug the cable and start again: the FM-1 stays in update mode and the installer carries on. If the FM-1 does not start after an update, switch it off and on twice; it then starts in safe mode, which keeps USB working. The same page can put M-VAVE's stock firmware back. Deeper recovery steps are in the source repository (docs/fm1-recovery.md).
 
 ## In the works
 
@@ -409,6 +409,7 @@ Newest first. Features marked *in source* are written but not yet installed on t
 
 | Date | Change |
 | --- | --- |
+| 2026-10-29 | The FM-1 checks its waves at power-on. If the PCM waves or FOUNDATIONS are missing (the firmware was installed without them, for example the .fwsc alone with another tool), the start-up screen shows the field with no standing stones and WAVES MISSING for 3 seconds; if they come from another version, WAVES OUT OF DATE. The web installer, or pcm_store_upload.py sync, fixes it. Nothing else changes (installed). |
 | 2026-10-27 | New power-on performance CAIRN SPIRIT in slot 0: press PLAY and the arp plays CAIRN SPIRIT pad chords (A minor add9, F major 9, C add9, G sus4) while the sequencer pulses a CROM PULSE bass line under them that follows each chord. Its arp pattern is no longer empty. SAMHAIN and the other factory performances move down one slot (SAMHAIN is now 1, WILL O WISP 8), and so do their sequences and arp patterns. A performance, sequence or arp you saved yourself stays in its slot (installed). |
 | 2026-10-27 | The PERF page's dolmen is now drawn in the knob tablets' stone colour instead of the theme colour (an empty part's pillar is an outline in the stone's lightest tone) (installed). |
 | 2026-10-27 | SPREAD is called SINGLE again, and the ARCH list runs SINGLE, DUAL OSC, DUAL FILT, DUAL SPRD, FULL, STACK, BINAURAL, STRIKE. On the PERF page, turning L1 PATCH, L2 PATCH, SEQ LINK, ARP LINK or PERF PRESET now loads that preset (before, it only changed the number); the popup shows the preset's name under its number. GLOBAL lists MIDI CH LAYER1 and LAYER2, CLOCK SRC, MASTER TUNE, BEND RANGE and CUSTOM CC1 and CC2 first. Patches and performances are unchanged (installed). |

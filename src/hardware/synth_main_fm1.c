@@ -842,6 +842,16 @@ static void fm1_main(void)
     factory_install();                              /* the factory bank (slots 0..31), under whatever is saved */
     ps_load();                                      /* the saved patches, performances, sequences, arps */
     pcm_boot();                                     /* the PCM waves uploaded to the free store flash */
+    if (pcm_waves_state != PCM_WAVES_OK) {          /* the firmware came without its waves (the .fwsc alone): the
+                                                     * splash again, its field empty of stones, and why, a moment */
+        sp_notice[0] = pcm_waves_state == PCM_WAVES_MISSING ? "WAVES MISSING" : "WAVES OUT OF DATE";
+        sp_notice[1] = "RUN THE INSTALLER";
+        carnac_splash(SYNTH_VERSION, settings_theme());
+        sp_notice[0] = 0;
+        fm1_wdt_feed();
+        fm1_delay_ms(3000);
+        fm1_wdt_feed();
+    }
     syn_boot_perf();                                /* performance 0 (NEWGRANGE DAWN): what the first key plays */
     for (k = 0; k < NKEYS; k++)
         key_note[k] = NOTE_NONE;
