@@ -409,6 +409,7 @@ Newest first. Features marked *in source* are written but not yet installed on t
 
 | Date | Change |
 | --- | --- |
+| 2026-10-29 | Carnac OS 0.9.6 released: 0.9.5 plus the wave check at power-on (the row below). Patches, performances and settings carry over unchanged (installed). |
 | 2026-10-29 | The FM-1 checks its waves at power-on. If the PCM waves or FOUNDATIONS are missing (the firmware was installed without them, for example the .fwsc alone with another tool), the start-up screen shows the field with no standing stones and WAVES MISSING for 3 seconds; if they come from another version, WAVES OUT OF DATE. The web installer, or pcm_store_upload.py sync, fixes it. Nothing else changes (installed). |
 | 2026-10-27 | New power-on performance CAIRN SPIRIT in slot 0: press PLAY and the arp plays CAIRN SPIRIT pad chords (A minor add9, F major 9, C add9, G sus4) while the sequencer pulses a CROM PULSE bass line under them that follows each chord. Its arp pattern is no longer empty. SAMHAIN and the other factory performances move down one slot (SAMHAIN is now 1, WILL O WISP 8), and so do their sequences and arp patterns. A performance, sequence or arp you saved yourself stays in its slot (installed). |
 | 2026-10-27 | The PERF page's dolmen is now drawn in the knob tablets' stone colour instead of the theme colour (an empty part's pillar is an outline in the stone's lightest tone) (installed). |
