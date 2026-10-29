@@ -6,6 +6,7 @@
 #include "oscillators.h"
 #include "wavetables.h"
 #include "synth_voice.h"                    /* SYNTH_CTRL_PERIOD */
+#include "dsp_cold.h"
 
 /* mu-law byte -> Q15 sample, in RAM: int16, so a read interpolates in int like the wavetables (on the FM1 an int16
  * lerp beats float, which pays an int -> float conversion; fm1-cpu-profile) */
@@ -67,7 +68,7 @@ const char *wave_name(uint8_t code, char *buf13)
 
 static int32_t dec_at(const uint8_t *p, uint32_t i) { return pcm_dec[p[i]]; }
 
-int32_t wave_preview(uint8_t code, int morph_q12, uint32_t phase)
+SYNTH_COLD int32_t wave_preview(uint8_t code, int morph_q12, uint32_t phase)
 {
     switch (wave_kind(code)) {
     case 1: {

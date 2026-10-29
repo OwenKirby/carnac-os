@@ -2,6 +2,7 @@
 #include "maq_seq.h"                 /* MAQ_GATE_DEFAULT */
 #include "hardware/mem_section.h"
 #include "hardware/synth_libc.h"
+#include "dsp_cold.h"
 
 EngineState engine_state[NLAYER];
 volatile uint8_t engine_load_count[NLAYER];
@@ -163,7 +164,7 @@ void preset_defaults(void)
         patch_bank[s] = engine_state[0];
 }
 
-void live_defaults(void)
+SYNTH_COLD void live_defaults(void)
 {
     seq_defaults(seq_lanes);
     arp_defaults(&arp_state);

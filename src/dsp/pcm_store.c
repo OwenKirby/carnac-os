@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include "pcm_store.h"
 #include "wavetables.h"                     /* wavetable_crc32 */
+#include "dsp_cold.h"
 
 static const uint8_t *pcm_img[PCM_AREAS];
 static uint32_t pcm_n[PCM_AREAS];
@@ -35,7 +36,7 @@ static int ref_ok(uint32_t a, const uint8_t *img, uint32_t count, uint8_t ref, u
     return ra != a || (ri < count && entry_at(img, ri)->kind == kind);
 }
 
-int pcm_store_check(uint32_t a, const uint8_t *img, uint32_t size)
+SYNTH_COLD int pcm_store_check(uint32_t a, const uint8_t *img, uint32_t size)
 {
     const PcmHdr *h = (const PcmHdr *)(const void *)img;
     uint32_t i, dir_end;

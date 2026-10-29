@@ -4,6 +4,7 @@
  * flash. */
 #include "arp_seq.h"
 #include "midi_clock.h"
+#include "dsp_cold.h"
 
 #define CARP_CH_NONE 0xFFu
 #define CARP_AUD_HOLD 0x8000u        /* req_aud: a hold (carp_hold), in the velocity byte's free top bit */
@@ -102,7 +103,7 @@ static uint8_t carp_velocity(const CarpSeq *a)
 }
 
 /* 8.4 stuck-note shield: Note-Off every pitch the pattern has sounding, and drop what was still scheduled */
-static void carp_release(CarpSeq *a)
+SYNTH_COLD static void carp_release(CarpSeq *a)
 {
     uint8_t i;
     for (i = 0u; i < ARP_CHORD_NOTES; i++)
@@ -116,7 +117,7 @@ static void carp_release(CarpSeq *a)
 }
 
 /* one pattern note on, into the cache (a note already sounding is struck again, not doubled) */
-static void carp_note_on(CarpSeq *a, int16_t note)
+SYNTH_COLD static void carp_note_on(CarpSeq *a, int16_t note)
 {
     uint8_t i, slot = ARP_CHORD_NOTES;
     if (note < 0 || note > (int16_t)VAL_MAX)
@@ -194,7 +195,7 @@ static void carp_cells_start(CarpSeq *a)
 
 /* load the step to play now (the held key's live chord and knobs, or the playhead's step) and fire its first cell on
  * this frame. The caller has released what was sounding. */
-static void carp_load(CarpSeq *a)
+SYNTH_COLD static void carp_load(CarpSeq *a)
 {
     const ArpState *st = a->st;
     uint8_t i, root = ARP_CHORD_EMPTY, var = 0u;
@@ -497,7 +498,7 @@ static void carp_rewind(CarpSeq *a)
 }
 
 /* a chord key's block chord off */
-static void carp_aud_off(CarpSeq *a)
+SYNTH_COLD static void carp_aud_off(CarpSeq *a)
 {
     uint8_t i;
     for (i = 0u; i < ARP_CHORD_NOTES; i++)

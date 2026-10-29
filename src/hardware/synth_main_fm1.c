@@ -54,7 +54,9 @@
 /* X0X's platform pieces that are not its app: the user-slot header layout (plat_slot), the panel map and its
  * calibration (OCT- + OCT+ held at power-on), plat.h over the HAL */
 #include "app/slots.c"
-#include "app/panel.c"
+#define FONT_M FONT_S                      /* (2026-10-29) the calibration's names in FONT_S: FONT_M, used nowhere else, */
+#include "app/panel.c"                     /* stays out of the image (~8.9 KB of flash) */
+#undef FONT_M
 #include "app/plat_fm1.c"
 
 /* The battery for the header's moon (ui_seq_draw.c sq_draw_moon): 0 .. 32 a 32nd of the charge each, -2 on a USB
@@ -682,7 +684,7 @@ static void safe_main(void)
     char b[24];
     uint32_t t0, play, both, t_oct;
     lcd_fill(0, 0, 240, 240, C_BLACK);
-    draw_text_box(0, 18, 240, &FONT_B, "CARNAC SAFE MODE", C_HI, 1);
+    draw_text_box(0, 18, 240, &FONT_S, "CARNAC SAFE MODE", C_HI, 1);   /* (not FONT_B: its only use, ~9.2 KB) */
     draw_text_box(0, 52, 240, &FONT_S, "IT CRASHED TWICE", C_WHITE, 1);
     draw_text_box(0, 72, 240, &FONT_S, "WHILE STARTING.", C_WHITE, 1);
     draw_text_box(0, 102, 240, &FONT_S, "NO SOUND. USB IS ON:", C_WHITE, 1);

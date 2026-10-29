@@ -14,6 +14,7 @@
 #include "fx.h"
 #include "maq_seq.h"
 #include "arp_seq.h"
+#include "dsp_cold.h"
 
 #define Q15_MAX 32767
 #define Q15_MIN (-32768)
@@ -239,7 +240,7 @@ static void glide_to(SynthVoiceNode *v, int from_note, int to_note, uint8_t port
 /* Points one voice at a note. retrig = 0 keeps the envelopes running (a legato note over a held one). A voice that is
  * fading out, or still on another architecture, always restarts clean: envelopes from 0, and its filters
  * cleared when the architecture changes, so no path starts half-initialised. */
-static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t velocity, uint8_t src, int32_t route,
+SYNTH_COLD static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note, uint8_t velocity, uint8_t src, int32_t route,
                        int retrig, int other_held, uint16_t boost)
 {
     const EngineState *e = &engine_state[layer];
@@ -450,7 +451,7 @@ static void enforce_voice_limits(void)
 
 /* ----------------------------------------------------------- lifecycle --- */
 
-void synth_init(void)
+SYNTH_COLD void synth_init(void)
 {
     global_init();
     preset_defaults();
@@ -459,7 +460,7 @@ void synth_init(void)
     synth_restart();
 }
 
-void synth_restart(void)
+SYNTH_COLD void synth_restart(void)
 {
     midi_io_init(&master_midi);
     midi_clock_init();
@@ -532,7 +533,7 @@ void synth_midi_at(uint32_t delay, uint8_t status, uint8_t data1, uint8_t data2)
     ext_n++;
 }
 
-static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2, uint8_t src)
+SYNTH_COLD static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2, uint8_t src)
 {
     uint8_t kind = status & 0xF0u;
     uint8_t channel = status & 0x0Fu;

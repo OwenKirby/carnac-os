@@ -9,6 +9,7 @@
  * store flash it was uploaded to (wavetable_bank_attach), and that plays the sine until one is attached. */
 #include <stddef.h>
 #include "wavetables.h"
+#include "dsp_cold.h"
 
 extern const uint8_t wavetable_image_host[WT_STORE_IMAGE_LEN];   /* wavetables_image.c */
 #define WT_START(b, f) ((const int16_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF) + \
@@ -75,7 +76,7 @@ int wavetable_attach(const uint8_t *image)
     return 0;
 }
 
-int wavetable_bank_check(const uint8_t *img, uint32_t size)
+SYNTH_COLD int wavetable_bank_check(const uint8_t *img, uint32_t size)
 {
     const wt_bank_hdr_t *h = (const wt_bank_hdr_t *)(const void *)img;
     if (!img || ((uintptr_t)img & 3u) || size < WT_BANK_IMAGE_LEN || h->magic != WT_BANK_MAGIC)

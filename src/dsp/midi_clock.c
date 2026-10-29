@@ -1,5 +1,6 @@
 #include "midi_clock.h"
 #include "preset.h"
+#include "dsp_cold.h"
 
 /* Musical divisions, slowest first. Ticks per cycle at 24 per quarter note:
  * 1/1 = 96, 1/2 = 48, 1/4 = 24, 1/8 = 12, 1/8T = 8, 1/16 = 6, 1/16T = 4, 1/32 = 3 */
@@ -209,7 +210,7 @@ uint8_t midi_clock_frame_changes(void)
     return internal_acc_q8 + 256u >= internal_period_now();   /* clock_pulse */
 }
 
-void midi_clock_realtime(uint8_t status)
+SYNTH_COLD void midi_clock_realtime(uint8_t status)
 {
     if (clock_source() != CLKSRC_MIDI)
         return;

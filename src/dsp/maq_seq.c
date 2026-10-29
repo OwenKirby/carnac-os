@@ -5,6 +5,7 @@
 #include "maq_seq.h"
 #include "seq_scale.h"
 #include "midi_clock.h"
+#include "dsp_cold.h"
 
 enum { MAQ_DUE_NONE, MAQ_DUE_STRIKE, MAQ_DUE_RELEASE };
 
@@ -123,7 +124,7 @@ static void maq_send(const MaqSeq *q, const uint8_t ch[2], uint8_t kind, uint8_t
 }
 
 /* 8.4 stuck-note shield: Note-Off every pitch in the lane's playback cache */
-static void maq_release(MaqSeq *q, MaqLaneRun *r)
+SYNTH_COLD static void maq_release(MaqSeq *q, MaqLaneRun *r)
 {
     uint8_t i;
     for (i = 0u; i < SEQ_NNOTE; i++)
@@ -265,7 +266,7 @@ static uint8_t maq_collect(const SequencerStep *s, uint16_t scale, int8_t transp
 }
 
 /* NOTE lane: shield, then schedule the step's bursts (ratchet) and strums; the first strike is now */
-static void maq_fire_notes(MaqSeq *q, uint8_t l, const MaqMods *md, uint32_t len, uint8_t audition)
+SYNTH_COLD static void maq_fire_notes(MaqSeq *q, uint8_t l, const MaqMods *md, uint32_t len, uint8_t audition)
 {
     MaqLaneRun *r = &q->run[l];
     const SequencerLane *lane = &q->lanes[l];
@@ -446,7 +447,7 @@ static void maq_rec_fire(MaqSeq *q, uint8_t l, uint8_t preview)
 }
 
 /* 7.2: lock every lane to the record step and sound it (NOTE lanes, with the modifier lanes' values at that step) */
-static void maq_audition(MaqSeq *q)
+SYNTH_COLD static void maq_audition(MaqSeq *q)
 {
     uint8_t l;
     for (l = 0u; l < SEQ_NLANE; l++) {
@@ -531,7 +532,7 @@ static void maq_transport(MaqSeq *q)
 }
 
 /* --------------------------------------------------------------- API --- */
-void maq_init(MaqSeq *q, SequencerLane *lanes, const MasterPerformancePreset *perf, MaqMidiOut out)
+SYNTH_COLD void maq_init(MaqSeq *q, SequencerLane *lanes, const MasterPerformancePreset *perf, MaqMidiOut out)
 {
     uint8_t l, i;
     q->lanes = lanes;

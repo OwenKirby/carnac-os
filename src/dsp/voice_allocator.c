@@ -2,6 +2,7 @@
 #include <stddef.h>          // NULL (emscripten's clang does not get it through the headers below)
 #include "voice_allocator.h"
 #include "preset.h"          // perf_state and engine_state: the voice limits come from the live patches
+#include "dsp_cold.h"
 
 SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 volatile uint8_t voice_shed;
@@ -16,7 +17,7 @@ void voice_mod_fn_reset(SynthVoiceNode *v, int slot) {
     m->busy = 0;
 }
 
-void voice_allocator_init(void) {
+SYNTH_COLD void voice_allocator_init(void) {
     for (int v = 0; v < POLYPHONY_VOICES; v++) {
         SynthVoiceNode *n = &poly_bank[v];
         osc_init(&n->osc1);
@@ -101,7 +102,7 @@ void pool_range(uint8_t layer, int *first, int *count) {
         *count = *count > (int)voice_shed + 1 ? *count - (int)voice_shed : 1;
 }
 
-int check_if_any_other_voice_held(int current_voice_index, uint8_t layer) {
+SYNTH_COLD int check_if_any_other_voice_held(int current_voice_index, uint8_t layer) {
     for (int v = 0; v < POLYPHONY_VOICES; v++) {
         if (v != current_voice_index && poly_bank[v].layer == layer && poly_bank[v].is_gate_open) {
             return 1;

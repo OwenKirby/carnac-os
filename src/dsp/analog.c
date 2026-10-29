@@ -1,5 +1,6 @@
 #include "analog.h"
 #include "synth_voice.h"     /* SYNTH_CTRL_SHIFT */
+#include "dsp_cold.h"
 
 /* the most each part adds, at ANALOG 127 */
 #define AN_PITCH_TOL   4.0f      /* cents, the slot's fixed OSC offsets */
@@ -41,7 +42,7 @@ static inline uint32_t an_hash(uint32_t x)
 
 static inline int an_round(float x) { return (int)(x + (x >= 0.f ? 0.5f : -0.5f)); }
 
-void analog_voice_init(AnalogVoice *a, unsigned slot)
+SYNTH_COLD void analog_voice_init(AnalogVoice *a, unsigned slot)
 {
     unsigned i;
     for (i = 0; i < ANT_COUNT; i++)
