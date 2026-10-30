@@ -1,5 +1,5 @@
 {
-  "what": "CARNAC OS is a dual-timbral wavetable synth inspired by neolithic monuments and forgotten rituals. Made for deep sound design and immediate control, with a MAQ 16/3-style sequencer and a chord sequencer. Waves need a separate installer, so install here: https://owenkirby.github.io/carnac-os/install/",
+  "what": "CARNAC OS is a dual-timbral wavetable synth inspired by neolithic monuments and forgotten rituals. Made for deep sound design and immediate control, with a MAQ 16/3-style sequencer and a ritualized patching flow. Visit my GitHub Pages to explore the instrument: https://owenkirby.github.io/carnac-os/",
   "author": "OrbVorgis",
   "kinds": ["Synth", "Chords"],
   "play": "https://owenkirby.github.io/carnac-os/play/",
