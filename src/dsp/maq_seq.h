@@ -94,6 +94,10 @@ void maq_init(MaqSeq *q, SequencerLane *lanes, const MasterPerformancePreset *pe
 uint8_t maq_frame(MaqSeq *q, uint32_t frame);
 /* the last of such skipped frames, run late: as maq_frame on it, given the pulse count the frame before it ended on */
 uint8_t maq_frame_late(MaqSeq *q, uint32_t frame, uint32_t pulses_before);
+/* Playing (2026-11-02): between clock pulses a frame acts only on what is due by it (a strike, a strum note, a
+ * release, each at its frame); the others write only their own frame and pulse stamps, so the render may skip them
+ * too, up to the next pulse or the earliest frame this gives (1: something is due; 0: nothing scheduled) */
+uint8_t maq_next_due(const MaqSeq *q, uint32_t *due);
 
 /* main-loop context: requests the engine applies on its next frame. Under CLOCK SOURCE MIDI, MIDI Start also starts
  * the sequencer from the top and MIDI Stop stops it. A start plays every lane's first step on the next pulse or, the ARP

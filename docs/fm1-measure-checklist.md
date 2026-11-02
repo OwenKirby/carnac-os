@@ -116,6 +116,234 @@ What the host can't settle and has to be measured on a real FM1. Every number in
 
 Written by src/hardware/fm1_perf.py. Pass: avg <= 70 %, peak < 90 %, no late halves. One core, factory patch + the scenario's settings (src/hardware/perf_test.c).
 
+### 2026-11-02 12:11, CARNAC OS DEV (2 cores), done
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 15.1 | 15.7 | 0 | 0 | 61.9 | 2 | pass |
+| SINGLE 1V | 22.9 | 23.9 | 0 | 1 | 61.3 | 3 | pass |
+| SINGLE | 42.6 | 43.7 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE HEAVY | 47.3 | 48.5 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC | 56.2 | 57.2 | 0 | 6 | 57.5 | 7 | pass |
+| SPREAD | 52.8 | 54.0 | 0 | 8 | 57.6 | 1 | pass |
+| DUAL FILTER | 55.6 | 56.7 | 0 | 7 | 57.5 | 1 | pass |
+| STACK | 58.1 | 59.2 | 0 | 6 | 57.6 | 8 | pass |
+| BINAURAL | 51.3 | 52.4 | 0 | 6 | 57.6 | 1 | pass |
+| DUAL OSC HEAVY | 59.2 | 60.3 | 0 | 6 | 56.9 | 8 | pass |
+| SPREAD HEAVY | 57.4 | 58.6 | 0 | 8 | 57.6 | 7 | pass |
+| DUAL FLT HEAVY | 58.7 | 59.8 | 0 | 7 | 57.2 | 8 | pass |
+| STACK HEAVY | 59.6 | 60.8 | 0 | 6 | 56.9 | 8 | pass |
+| BINAURAL HEAVY | 56.9 | 58.1 | 0 | 6 | 57.2 | 7 | pass |
+| SINGLE LADDER | 42.7 | 43.8 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE MS20 | 40.6 | 41.6 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE SH-2 | 47.5 | 48.5 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE FORMANT | 40.8 | 41.8 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL FLT LADDER | 55.6 | 56.5 | 0 | 7 | 57.5 | 1 | pass |
+| SEQ+ARP HOME | 54.3 | 57.8 | 0 | 8 | 57.6 | 9 | pass |
+| SEQ+ARP AMP | 54.5 | 57.6 | 0 | 8 | 57.5 | 10 | pass |
+| SEQ+ARP SEQ | 53.6 | 57.2 | 0 | 8 | 16.5 | 105 | pass |
+| SEQ+ARP MOD1 | 54.1 | 58.4 | 0 | 8 | 17.2 | 58 | pass |
+| LADDER FILTER PG | 42.7 | 43.8 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 50.4 | 51.5 | 0 | 8 | 57.2 | 1 | pass |
+| HEAVY CELEST+PP | 51.7 | 52.8 | 0 | 8 | 57.2 | 1 | pass |
+| SEQ+ARP CELEST+PP | 59.1 | 62.3 | 0 | 8 | 56.2 | 9 | pass |
+| SINGLE MULTI H | 49.4 | 50.5 | 0 | 8 | 57.3 | 1 | pass |
+| DUALOSC MULTI H | 60.3 | 61.4 | 0 | 6 | 56.2 | 8 | pass |
+| SPREAD MULTI H | 59.7 | 60.8 | 0 | 8 | 55.6 | 8 | pass |
+| DUALFLT MULTI H | 62.4 | 63.6 | 0 | 7 | 52.5 | 8 | pass |
+| STACK MULTI H | 62.5 | 63.7 | 0 | 6 | 51.9 | 8 | pass |
+| BINAUR MULTI H | 59.6 | 60.7 | 0 | 6 | 56.6 | 8 | pass |
+| SPREAD H CEL+PP | 63.8 | 65.2 | 0 | 8 | 52.2 | 1 | pass |
+| DUALOSC H CEL+PP | 64.8 | 66.3 | 0 | 6 | 52.2 | 8 | pass |
+| SPREAD H TUM+PP | 61.9 | 63.1 | 0 | 8 | 53.9 | 8 | pass |
+| SEQ+ARP SPRD CEL | 70.6 | 74.2 | 0 | 8 | 43.9 | 11 | FAIL |
+| HEAVY SPRING+PP | 51.3 | 52.6 | 0 | 8 | 57.6 | 1 | pass |
+| HEAVY CEL+BBD PP | 51.9 | 53.1 | 0 | 8 | 57.5 | 1 | pass |
+| SEQ+ARP SPR+BBD | 58.2 | 61.4 | 0 | 8 | 56.5 | 9 | pass |
+| STRIKE | 43.2 | 44.4 | 0 | 8 | 57.3 | 1 | pass |
+| STRIKE HEAVY | 48.2 | 49.4 | 0 | 8 | 57.5 | 1 | pass |
+| SEQ+ARP STRIKE | 64.0 | 67.7 | 0 | 8 | 51.9 | 10 | pass |
+| SEQ+ARP STRK FILT | 65.0 | 68.6 | 0 | 8 | 52.2 | 10 | pass |
+| SINGLE SH2 H | 54.1 | 55.1 | 0 | 8 | 57.6 | 1 | pass |
+| DUALOSC SH2 H | 63.9 | 65.0 | 0 | 6 | 51.9 | 8 | pass |
+| SPREAD SH2 H | 64.6 | 65.7 | 0 | 8 | 51.9 | 8 | pass |
+| DUALFLT SH2 H | 71.7 | 72.9 | 0 | 7 | 42.9 | 1 | FAIL |
+| STACK SH2 H | 69.2 | 70.4 | 0 | 6 | 42.9 | 1 | pass |
+| BINAUR SH2 H | 66.7 | 67.8 | 0 | 6 | 50.2 | 9 | pass |
+| STRIKE SH2 H | 54.8 | 55.7 | 0 | 8 | 57.2 | 1 | pass |
+| SPREAD SH2 CEL+PP | 68.7 | 70.0 | 0 | 8 | 44.9 | 9 | pass |
+| DUALFLT SH2 CEL | 76.4 | 77.9 | 0 | 7 | 42.9 | 1 | FAIL |
+| SEQ+ARP SH2 CEL | 65.2 | 69.1 | 0 | 8 | 51.2 | 10 | pass |
+| DUALFLT SH2 HP | 71.7 | 72.9 | 0 | 7 | 42.9 | 1 | FAIL |
+| BINAUR SH2 HP | 66.7 | 68.0 | 0 | 6 | 47.9 | 9 | pass |
+| SINGLE PCM | 47.4 | 48.7 | 0 | 8 | 57.3 | 1 | pass |
+| DUAL OSC PCM | 55.6 | 57.0 | 0 | 6 | 57.5 | 1 | pass |
+| SPREAD PCM | 62.1 | 63.3 | 0 | 8 | 52.9 | 8 | pass |
+| DUAL FILTER PCM | 60.1 | 61.4 | 0 | 7 | 55.6 | 8 | pass |
+| STACK PCM | 65.0 | 66.1 | 0 | 6 | 51.9 | 8 | pass |
+| BINAURAL PCM | 58.5 | 59.7 | 0 | 6 | 57.2 | 8 | pass |
+| DUALOSC MULTI H PCM | 54.9 | 56.1 | 0 | 6 | 57.2 | 1 | pass |
+| DUALFLT MULTI H PCM | 67.4 | 68.8 | 0 | 7 | 45.2 | 9 | pass |
+| BINAUR MULTI H PCM | 67.2 | 68.6 | 0 | 6 | 46.2 | 9 | pass |
+| SINGLE RS | 42.7 | 44.6 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 50.9 | 53.2 | 0 | 8 | 57.2 | 1 | pass |
+| DUALOSC RS | 56.2 | 57.7 | 0 | 6 | 57.5 | 7 | pass |
+| DUALOSC RS PCM | 59.4 | 61.2 | 0 | 6 | 56.2 | 8 | pass |
+| SEQ+ARP HOME PCM | 63.3 | 67.1 | 0 | 8 | 52.2 | 10 | pass |
+| SINGLE DRV SOFT | 46.5 | 47.5 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE DRV HARD | 46.7 | 47.8 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV FOLD | 46.7 | 47.7 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TAPE | 47.5 | 48.5 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TUBE | 47.3 | 48.3 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV OD | 47.3 | 48.5 | 0 | 8 | 57.5 | 1 | pass |
+| STACK HEAVY TUBE | 66.9 | 68.2 | 0 | 6 | 48.2 | 9 | pass |
+| BINAUR HEAVY OD | 63.9 | 65.1 | 0 | 6 | 51.9 | 8 | pass |
+| STRIKE HEAVY TUBE | 53.3 | 54.5 | 0 | 8 | 57.2 | 1 | pass |
+| SEQ+ARP HOME TUBE | 59.9 | 63.7 | 0 | 8 | 56.5 | 9 | pass |
+| FULL | 49.8 | 50.8 | 0 | 4 | 57.3 | 1 | pass |
+| FULL HEAVY | 51.8 | 53.0 | 0 | 4 | 57.2 | 1 | pass |
+| FULL MULTI H | 53.4 | 54.5 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 H | 58.3 | 59.3 | 0 | 4 | 57.2 | 8 | pass |
+| FULL H CEL+PP | 58.3 | 59.6 | 0 | 4 | 57.2 | 8 | pass |
+| FULL MULTI H PCM | 50.2 | 51.5 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 H PCM | 53.9 | 55.1 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 CEL+PP | 63.1 | 64.4 | 0 | 4 | 52.2 | 8 | pass |
+| DSPRD | 42.9 | 43.9 | 0 | 4 | 57.3 | 1 | pass |
+| DSPRD HEAVY | 45.5 | 46.6 | 0 | 4 | 57.2 | 1 | pass |
+| DSPRD MULTI H | 46.7 | 47.7 | 0 | 4 | 57.2 | 1 | pass |
+| DSPRD SH2 H | 48.9 | 49.9 | 0 | 4 | 57.2 | 1 | pass |
+| DSPRD H CEL+PP | 51.3 | 52.5 | 0 | 4 | 57.2 | 1 | pass |
+| DSPRD MULTI H PCM | 55.8 | 56.8 | 0 | 4 | 57.5 | 1 | pass |
+| DSPRD SH2 CEL+PP | 53.5 | 54.6 | 0 | 4 | 57.6 | 1 | pass |
+| SEQ+ARP DSPRD CEL | 58.3 | 61.9 | 0 | 4 | 56.5 | 9 | pass |
+| IDLE PHASER | 17.0 | 17.7 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE PHASER x2 | 18.4 | 19.0 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD PHASER | 55.8 | 57.1 | 0 | 8 | 57.5 | 1 | pass |
+| SPREAD H CEL PHSR | 66.9 | 68.4 | 0 | 8 | 47.9 | 9 | pass |
+| SEQ+ARP HOME PHSR2 | 59.6 | 63.1 | 0 | 8 | 56.2 | 9 | pass |
+| IDLE ENSEMBLE | 17.6 | 18.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENSEMBLE x2 | 19.1 | 19.8 | 0 | 0 | 61.6 | 1 | pass |
+| IDLE ENS+PHSR | 18.1 | 18.9 | 0 | 0 | 61.3 | 1 | pass |
+| IDLE ENS+PHSR x2 | 19.9 | 20.7 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE CHORUS | 17.3 | 18.0 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS x2 | 18.8 | 19.5 | 0 | 0 | 61.2 | 3 | pass |
+| SPREAD H CEL ENPH | 69.9 | 71.5 | 0 | 8 | 43.2 | 9 | pass |
+| SEQ+ARP HOME ENPH2 | 61.6 | 65.4 | 0 | 8 | 54.6 | 10 | pass |
+
+### 2026-11-02 12:03, CARNAC OS DEV (2 cores), done
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 14.9 | 15.4 | 0 | 0 | 62.3 | 2 | pass |
+| SINGLE 1V | 22.5 | 23.4 | 0 | 1 | 61.6 | 3 | pass |
+| SINGLE | 42.3 | 43.4 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE HEAVY | 47.1 | 48.3 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC | 55.8 | 56.8 | 0 | 6 | 57.2 | 1 | pass |
+| SPREAD | 52.7 | 54.0 | 0 | 8 | 57.6 | 1 | pass |
+| DUAL FILTER | 55.6 | 56.7 | 0 | 7 | 57.5 | 1 | pass |
+| STACK | 57.7 | 59.0 | 0 | 6 | 57.5 | 1 | pass |
+| BINAURAL | 51.0 | 52.1 | 0 | 6 | 57.6 | 1 | pass |
+| DUAL OSC HEAVY | 58.8 | 59.8 | 0 | 6 | 56.9 | 8 | pass |
+| SPREAD HEAVY | 57.3 | 58.4 | 0 | 8 | 57.5 | 1 | pass |
+| DUAL FLT HEAVY | 58.8 | 59.9 | 0 | 7 | 57.2 | 8 | pass |
+| STACK HEAVY | 59.4 | 60.5 | 0 | 6 | 56.6 | 8 | pass |
+| BINAURAL HEAVY | 56.6 | 57.7 | 0 | 6 | 57.2 | 7 | pass |
+| SINGLE LADDER | 42.3 | 43.4 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE MS20 | 40.4 | 41.3 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE SH-2 | 47.4 | 48.5 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE FORMANT | 40.6 | 41.6 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL FLT LADDER | 55.7 | 56.6 | 0 | 7 | 57.5 | 1 | pass |
+| SEQ+ARP HOME | 63.3 | 66.6 | 0 | 8 | 52.2 | 10 | pass |
+| SEQ+ARP AMP | 63.4 | 66.4 | 0 | 8 | 52.2 | 11 | pass |
+| SEQ+ARP SEQ | 62.7 | 66.0 | 0 | 8 | 14.3 | 127 | pass |
+| SEQ+ARP MOD1 | 63.3 | 67.4 | 0 | 8 | 17.0 | 70 | pass |
+| LADDER FILTER PG | 42.4 | 43.4 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 50.2 | 51.4 | 0 | 8 | 57.5 | 1 | pass |
+| HEAVY CELEST+PP | 51.8 | 53.1 | 0 | 8 | 57.6 | 1 | pass |
+| SEQ+ARP CELEST+PP | 68.0 | 71.3 | 0 | 8 | 45.2 | 10 | pass |
+| SINGLE MULTI H | 48.8 | 49.9 | 0 | 8 | 57.5 | 1 | pass |
+| DUALOSC MULTI H | 60.1 | 61.2 | 0 | 6 | 55.5 | 8 | pass |
+| SPREAD MULTI H | 59.4 | 60.4 | 0 | 8 | 56.6 | 8 | pass |
+| DUALFLT MULTI H | 62.5 | 63.6 | 0 | 7 | 53.2 | 8 | pass |
+| STACK MULTI H | 61.9 | 63.1 | 0 | 6 | 53.2 | 8 | pass |
+| BINAUR MULTI H | 59.5 | 60.6 | 0 | 6 | 56.9 | 8 | pass |
+| SPREAD H CEL+PP | 63.7 | 65.2 | 0 | 8 | 51.9 | 8 | pass |
+| DUALOSC H CEL+PP | 64.3 | 65.8 | 0 | 6 | 51.9 | 8 | pass |
+| SPREAD H TUM+PP | 61.9 | 63.1 | 0 | 8 | 53.9 | 8 | pass |
+| SEQ+ARP SPRD CEL | 80.3 | 83.6 | 0 | 8 | 42.9 | 2 | FAIL |
+| HEAVY SPRING+PP | 51.0 | 52.0 | 0 | 8 | 57.5 | 1 | pass |
+| HEAVY CEL+BBD PP | 51.8 | 52.8 | 0 | 8 | 57.6 | 1 | pass |
+| SEQ+ARP SPR+BBD | 67.4 | 70.6 | 0 | 8 | 47.5 | 10 | pass |
+| STRIKE | 42.9 | 43.8 | 0 | 8 | 57.3 | 1 | pass |
+| STRIKE HEAVY | 48.3 | 49.4 | 0 | 8 | 57.5 | 1 | pass |
+| SEQ+ARP STRIKE | 73.1 | 76.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| SEQ+ARP STRK FILT | 74.1 | 77.8 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE SH2 H | 54.0 | 55.0 | 0 | 8 | 57.5 | 1 | pass |
+| DUALOSC SH2 H | 63.5 | 64.6 | 0 | 6 | 51.9 | 8 | pass |
+| SPREAD SH2 H | 64.5 | 65.6 | 0 | 8 | 51.6 | 8 | pass |
+| DUALFLT SH2 H | 71.7 | 72.9 | 0 | 7 | 42.9 | 1 | FAIL |
+| STACK SH2 H | 68.7 | 70.0 | 0 | 6 | 43.9 | 9 | pass |
+| BINAUR SH2 H | 66.5 | 67.6 | 0 | 6 | 51.5 | 9 | pass |
+| STRIKE SH2 H | 54.5 | 55.6 | 0 | 8 | 57.2 | 1 | pass |
+| SPREAD SH2 CEL+PP | 68.7 | 70.0 | 0 | 8 | 44.2 | 9 | pass |
+| DUALFLT SH2 CEL | 76.6 | 78.1 | 0 | 7 | 42.9 | 1 | FAIL |
+| SEQ+ARP SH2 CEL | 74.2 | 78.2 | 0 | 8 | 42.9 | 2 | FAIL |
+| DUALFLT SH2 HP | 71.7 | 73.0 | 0 | 7 | 42.9 | 1 | FAIL |
+| BINAUR SH2 HP | 66.6 | 67.6 | 0 | 6 | 51.9 | 9 | pass |
+| SINGLE PCM | 47.1 | 48.4 | 0 | 8 | 57.3 | 1 | pass |
+| DUAL OSC PCM | 55.8 | 57.1 | 0 | 6 | 57.5 | 1 | pass |
+| SPREAD PCM | 61.4 | 62.5 | 0 | 8 | 54.5 | 8 | pass |
+| DUAL FILTER PCM | 60.5 | 61.8 | 0 | 7 | 55.9 | 8 | pass |
+| STACK PCM | 64.2 | 65.5 | 0 | 6 | 52.2 | 8 | pass |
+| BINAURAL PCM | 58.4 | 59.6 | 0 | 6 | 57.2 | 8 | pass |
+| DUALOSC MULTI H PCM | 55.0 | 56.1 | 0 | 6 | 57.2 | 1 | pass |
+| DUALFLT MULTI H PCM | 67.5 | 68.9 | 0 | 7 | 45.9 | 9 | pass |
+| BINAUR MULTI H PCM | 66.8 | 68.3 | 0 | 6 | 47.6 | 9 | pass |
+| SINGLE RS | 42.3 | 44.2 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 50.6 | 52.8 | 0 | 8 | 57.5 | 1 | pass |
+| DUALOSC RS | 55.9 | 57.7 | 0 | 6 | 57.5 | 1 | pass |
+| DUALOSC RS PCM | 59.3 | 61.1 | 0 | 6 | 56.9 | 8 | pass |
+| SEQ+ARP HOME PCM | 72.3 | 76.6 | 0 | 8 | 43.2 | 2 | FAIL |
+| SINGLE DRV SOFT | 46.1 | 47.2 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE DRV HARD | 46.3 | 47.3 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV FOLD | 46.3 | 47.4 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV TAPE | 47.1 | 48.1 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV TUBE | 46.9 | 47.9 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV OD | 46.9 | 48.0 | 0 | 8 | 57.6 | 1 | pass |
+| STACK HEAVY TUBE | 66.8 | 68.3 | 0 | 6 | 49.2 | 9 | pass |
+| BINAUR HEAVY OD | 63.5 | 64.7 | 0 | 6 | 51.9 | 8 | pass |
+| STRIKE HEAVY TUBE | 53.6 | 54.7 | 0 | 8 | 57.6 | 1 | pass |
+| SEQ+ARP HOME TUBE | 68.9 | 72.5 | 0 | 8 | 44.2 | 10 | pass |
+| FULL | 49.3 | 50.3 | 0 | 4 | 57.6 | 1 | pass |
+| FULL HEAVY | 51.4 | 52.6 | 0 | 4 | 57.5 | 1 | pass |
+| FULL MULTI H | 53.0 | 54.0 | 0 | 4 | 57.5 | 1 | pass |
+| FULL SH2 H | 57.8 | 58.9 | 0 | 4 | 57.5 | 7 | pass |
+| FULL H CEL+PP | 57.7 | 58.9 | 0 | 4 | 57.2 | 7 | pass |
+| FULL MULTI H PCM | 49.7 | 50.9 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 H PCM | 53.6 | 54.8 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 CEL+PP | 62.6 | 63.7 | 0 | 4 | 51.9 | 8 | pass |
+| DSPRD | 42.4 | 43.5 | 0 | 4 | 57.3 | 1 | pass |
+| DSPRD HEAVY | 45.3 | 46.5 | 0 | 4 | 57.2 | 1 | pass |
+| DSPRD MULTI H | 46.1 | 47.2 | 0 | 4 | 57.2 | 1 | pass |
+| DSPRD SH2 H | 48.7 | 49.9 | 0 | 4 | 57.2 | 1 | pass |
+| DSPRD H CEL+PP | 51.1 | 52.2 | 0 | 4 | 57.2 | 1 | pass |
+| DSPRD MULTI H PCM | 55.2 | 56.3 | 0 | 4 | 57.5 | 1 | pass |
+| DSPRD SH2 CEL+PP | 53.5 | 54.6 | 0 | 4 | 57.6 | 1 | pass |
+| SEQ+ARP DSPRD CEL | 67.8 | 71.4 | 0 | 4 | 46.2 | 10 | pass |
+| IDLE PHASER | 16.8 | 17.5 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE PHASER x2 | 18.2 | 18.8 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD PHASER | 55.4 | 56.5 | 0 | 8 | 57.2 | 1 | pass |
+| SPREAD H CEL PHSR | 66.6 | 68.0 | 0 | 8 | 49.2 | 9 | pass |
+| SEQ+ARP HOME PHSR2 | 68.2 | 71.8 | 0 | 8 | 46.2 | 10 | pass |
+| IDLE ENSEMBLE | 17.4 | 18.0 | 0 | 0 | 61.6 | 1 | pass |
+| IDLE ENSEMBLE x2 | 18.9 | 19.7 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE ENS+PHSR | 17.9 | 18.5 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR x2 | 19.7 | 20.4 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE CHORUS | 17.1 | 17.7 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS x2 | 18.6 | 19.2 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ENPH | 69.6 | 71.2 | 0 | 8 | 43.2 | 9 | pass |
+| SEQ+ARP HOME ENPH2 | 70.4 | 74.1 | 0 | 8 | 43.2 | 10 | FAIL |
+
 ### 2026-11-02 11:38, CARNAC OS DEV (2 cores), done
 
 | scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
@@ -6063,3 +6291,5 @@ Stage profile (24 MHz ticks a sample; one counter read costs 1, taken off once a
 - [x] **MFX costs on the FM1** (2026-11-02, build/fm1/synth_mfx3.fwsc sha256 bba4ef72..., commit 8aeb1d9; one build, so no layout noise between rows). Idle (IDLE 19.6): STONE PHASER +3.6 one layer / +7.1 both; ENSEMBLE +4.0 / +7.6; CHORUS +3.9 / +7.7; ENS+PHASER +4.9 / +9.4. Under load the same effect costs more (the voices' code and the effect's compete for the XIP I-cache): SPREAD H CEL+PP 67.7 -> +PHASER 72.3 (+4.6), +ENS+PHASER 75.5 (+7.8); SEQ+ARP HOME 64.3 -> both layers PHASER 72.9 (+8.6), ENS+PHASER 77.2 (+12.9, peak 81.5). Half-rate brigades did not make ENSEMBLE / CHORUS cheaper than the phaser (int16 line reads and conversions dominate). Headroom to the 88 % voice-shed guard (peak): plain patches (peaks <= 65) 23+ pts, any MFX on both layers fine; heavy MULTI / PCM / CEL rows (66..75) 13..22, both layers fine; SH-2 HEAVY on two-filter archs and SEQ+ARP with CELESTIAL (76..84) 4..12: one MFX at most, ENS+PHASER on both would shed. No late halves anywhere.
 - [x] **MFX trimmed + layer 2's on core 1** (2026-11-02, in source, uncommitted). (1) mfx.c: the half-rate brigades are floats (a union with BULLROARER's int16 line, same RAM), read heads in 16.16 fixed point, each model's knob maths (exp2, tans, divides) worked out only when a glided knob moves (the glide snaps its last 1/500 of a step), STONE PHASER's loop with the chain's input divider folded in and no gain ramps at rest. Output against the old code: -78 dB or better (the int16 rounding gone; the snap moves an LFO's phase by a hair over time), BULLROARER bit-identical. Device (build/fm1/synth_mfxopt1.fwsc, same build A/B): STONE PHASER 3.6 -> 3.3 a layer; ENSEMBLE / CHORUS / ENS+PHASER only ~0.1-0.3 better (the conversions were not their cost). (2) synth_runtime.c: with an MFX on both layers, layer 2's runs on core 1 while core 0 runs layer 1's (mfx_job; the voices' fallback if core 1 fails; layer sums and MfxState on cache lines of their own). Render hashes: 6 MFX scenarios added (61 old unchanged), --core2 / --core2-fail identical. Device (build/fm1/synth_mfxopt2.fwsc, IDLE 20.4): one layer / both: PHASER +3.3 / +3.3, ENSEMBLE +4.0 / +4.1, ENS+PHASER +5.0 / +5.1, CHORUS +4.0 / +4.1; SEQ+ARP HOME 64.2 -> PHSR2 68.3 (was +8.6, now +4.1), ENPH2 72.2 (was +12.9, now +8.0). Rows without MFX read ~1 point higher than synth_mfxopt1 (IDLE too, which runs none of the change: the I-cache layout). Still open: one MFX alone (SINGLE, or one layer) stays on core 0: splitting its two sides across the cores would take about half of it back.
 - [x] **Sequencers skipped at rest** (2026-11-02, in source, uncommitted; FM1 runs build/fm1/synth_seqquiet1.fwsc). The device stage profile (CARNAC OS PROF run 11:22, one core) showed the MAQ + ARP frame calls costing 29 of a sample's 544 ticks even stopped (their idle fast paths: ~60 loads and ~10 calls a frame), on core 0 while core 1 waits. Now maq_frame / carp_frame report an idle frame; after one, the render skips them (synth_runtime.c seq_quiet) until a MIDI event in the pass, and runs the last frame skipped before the event or at the pass's end (maq_frame_late: the same writes at the same clock). test_seq_idle (state + output every block, against the SYNTH_SEQ_NO_IDLE build) and all 67 render hashes unchanged. Device vs synth_mfxopt2: every row without the sequencers -5.0 points (median of 94; -4.3 .. -6.6), IDLE 20.4 -> 15.5, SINGLE HEAVY 52.4 -> 47.8, DUALFLT SH2 CEL 81.1 -> 76.4; SEQ+ARP rows unchanged (playing, never idle); 99 of 109 pass (was 91), no late halves. Next for the SEQ+ARP rows: the same while playing (skip to the next pulse or due frame), SEQ was 64 ticks there.
+- [x] **One MFX on both cores** (2026-11-02, build/fm1/synth_mfxsplit1.fwsc). mfx.c split into a plan (core 0: knob glides, LFOs, the shared read heads, settings; MfxStep a control step) and one run a side (MfxSide, own cache lines): with one MFX on, its right side runs on core 1 (synth_runtime.c mfx_job arg | 2). STONE PHASER / BULLROARER bit-identical; ENSEMBLE / CHORUS: each side its own hiss noise and (ENSEMBLE) compander follower, the clocks' wander its own draws (with no wander: within -57 dB, the hiss's level). Render-hash MFX scenarios now with both layers sounding (they were silent on layer 2) + ENSEMBLE alone; --core2 / --core2-fail identical. Device (IDLE 14.9): one layer PHASER +1.9 (was +3.3), ENSEMBLE +2.5 (+3.9), ENS+PHASER +3.0 (+5.0), CHORUS +2.2 (+3.9); both layers ~+3.3..4.8 as before; no late halves.
+- [x] **Sequencers skipped while playing** (2026-11-02, build/fm1/synth_seqplay1.fwsc). Between clock pulses a playing MAQ / ARP acts only on what is due (strikes, strum notes, releases, cells: absolute frames); maq_next_due / carp_next_due give the earliest, and the render skips their frames until it, the next pulse (the clock still runs every frame) or an event. test_seq_idle gained a stamped-clock phase (synth_midi_at, as TIGHT MIDI; 100 -> 137 BPM, Start, Stop) with both playing: output and state bit-identical to the every-frame build at blocks 7 / 32 / 128, so every note goes out on the same frame. Device: every SEQ+ARP row -9.0 (median; -8.6 .. -9.7), SEQ+ARP HOME 63.3 -> 54.3, SPRD CEL 80.3 -> 70.6, others unchanged; 105 of 109 pass, no late halves. Not measured on the device: an external clock (no device timing tool; the host proof above stands for it).

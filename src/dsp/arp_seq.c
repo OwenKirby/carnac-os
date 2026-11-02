@@ -709,6 +709,24 @@ uint8_t carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q)
     return 0u;
 }
 
+uint8_t carp_next_due(const CarpSeq *a, uint32_t *due)
+{
+    uint8_t any = 0u;
+    if (a->rel_pending) {
+        *due = a->rel_due;
+        any = 1u;
+    }
+    if (a->strum_i < a->nstrum && (!any || (int32_t)(a->strum_due - *due) < 0)) {
+        *due = a->strum_due;
+        any = 1u;
+    }
+    if (a->cell_k < a->cell_max && (!any || (int32_t)(a->cell_due - *due) < 0)) {
+        *due = a->cell_due;
+        any = 1u;
+    }
+    return any;
+}
+
 static void carp_request(CarpSeq *a, uint8_t root, uint8_t vel, uint32_t hold)
 {
     uint32_t serial = ((a->req_aud >> 16) + 1u) & 0xFFFFu;

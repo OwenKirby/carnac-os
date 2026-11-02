@@ -623,6 +623,19 @@ uint8_t maq_frame_late(MaqSeq *q, uint32_t frame, uint32_t pulses_before)
     return maq_frame(q, frame);
 }
 
+uint8_t maq_next_due(const MaqSeq *q, uint32_t *due)
+{
+    uint8_t l, any = 0u;
+    for (l = 0u; l < SEQ_NLANE; l++) {
+        const MaqLaneRun *r = &q->run[l];
+        if (r->due_kind != MAQ_DUE_NONE && (!any || (int32_t)(r->due - *due) < 0)) {
+            *due = r->due;
+            any = 1u;
+        }
+    }
+    return any;
+}
+
 void maq_set_playing(MaqSeq *q, uint8_t on) { q->req_play = on ? 1u : 0u; }
 void maq_set_record(MaqSeq *q, uint8_t on) { q->req_rec = on ? 1u : 0u; }
 void maq_set_rec_step(MaqSeq *q, uint8_t step) { q->req_rec_step = step < SEQ_NSTEP ? step : (uint8_t)0u; }

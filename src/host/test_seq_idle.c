@@ -16,7 +16,9 @@
 static int32_t buf[128 * 2];
 static uint32_t h;
 static uint32_t block = 32, clk_acc;
-static int ext_clock;
+static int ext_clock;                                /* 1: 0xF8 between blocks; 2: stamped (synth_midi_at, as the FM1's
+                                                      * TIGHT MIDI), on their frames inside the blocks */
+static uint32_t t_done, clk_next;                    /* frames rendered; the next stamped pulse, in half frames */
 
 static void fnv(const void *p, size_t n)
 {
@@ -29,11 +31,15 @@ static void run(uint32_t frames)
 {
     while (frames) {
         uint32_t n = frames < block ? frames : block;
-        if (ext_clock) {
+        if (ext_clock == 1) {
             clk_acc += n * 2u;
             while (clk_acc >= 2205u) { clk_acc -= 2205u; synth_midi_3(0xF8, 0, 0); }
         }
+        if (ext_clock == 2)                          /* 100 BPM, then (half way through the phase) 137 BPM */
+            for (; clk_next < 2u * (t_done + n); clk_next += clk_acc)
+                synth_midi_at(clk_next / 2u - t_done, 0xF8, 0, 0);
         synth_render_q15(buf, n);
+        t_done += n;
         fnv(buf, sizeof(int32_t) * 2u * n);
         MaqSeq q = *synth_seq();                     /* the state, less its pointers (addresses differ per build) */
         CarpSeq a = *synth_arp();
@@ -58,6 +64,7 @@ int main(void)
         h = 2166136261u;
         ext_clock = 0;
         clk_acc = 0;
+        t_done = 0;
         synth_init();
         perf_state.int_tempo = 131;
         seq_lane_set_event(&seq_lanes[0], SEQEV_NOTE);
@@ -118,6 +125,18 @@ int main(void)
         maq_set_playing(q, 0); run(3000);            phase("midi continue, start");
         perf_state.clock_source = CLKSRC_INTERNAL;
         run(6000);                                   phase("back to internal");
+        /* the MIDI clock stamped (2026-11-02): both sequencers playing on it, a tempo change, Stop; their frames are
+         * skipped between pulses and dues (synth_runtime.c seq_next_due), their notes must go out where they did */
+        perf_state.clock_source = CLKSRC_MIDI;
+        ext_clock = 2;
+        clk_acc = 2205u;                             /* half frames a pulse */
+        clk_next = 2u * t_done + 2u * block;
+        run(3000);
+        synth_midi_at(0, 0xFA, 0, 0); run(30000);
+        clk_acc = 1610u; run(30000);                 phase("stamped clock, playing");
+        synth_midi_at(5, 0xFC, 0, 0); run(6000);     phase("stamped clock, stop");
+        ext_clock = 0;
+        perf_state.clock_source = CLKSRC_INTERNAL;
     }
     return 0;
 }

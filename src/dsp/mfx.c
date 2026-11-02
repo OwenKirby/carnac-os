@@ -72,38 +72,57 @@ static inline int mfx_moved(float *key, const float *k, int n)
     return moved;
 }
 
+/* One control step of a pass, as the plan (mfx_layer_plan, core 0) worked it out for both sides: the sides then
+ * run from it apart, each on its own state, so one layer's two sides can run on the two cores (2026-11-02) */
 typedef struct {
-    float z[2][6];                           /* each side's chain: the last input, then each stage's last output */
-    float b1[2], x[2], sh[2];                /* B1's C11 (TPT state); X, the sample before (the loop); the shelf */
-    float lfo;                               /* the triangle's phase, 0..1 (the left side's) */
-    float ctl[2];                            /* each side's 4009 control, 0..1, glided */
-    float sp_g[3];                           /* M's input and loop gains and the output's, as last set (each control
-                                              * step ramps from them: FEEDBACK turns without stepping) */
-    /* BULLROARER (and ENSEMBLE: the brigades, the write place, the clock's drift, the compander, the noise) */
+    uint32_t m;                              /* its frames (MFX_SUB, but for a block's last) */
+    float lfo;                               /* the LFO's phase at its start */
     union {
-        int16_t i[2][512];                   /* BULLROARER's: each side's bucket brigade (scaled, saturated: the BBD's
-                                              * headroom), at the full rate */
-        float f[2][256];                     /* the half-rate types' (2026-11-02: floats, no conversion a read; the
+        struct { float centre, depth, offset, g0[3], g1[3]; } sp;   /* STONE PHASER: the sweep; M's input and loop
+                                                                     * gains and the output's, ramped g0 -> g1 */
+        struct { HrSvf f; float drive, undrive, hiss, gn, gf, out, c, fb; int32_t d0[3], dd[3]; uint8_t phaser; } en;
+                                             /* ENSEMBLE / ENS+PHASER: the boards' settings, their three read heads
+                                              * (16.16, start and step), the phaser's coefficient and COLOUR */
+        struct { HrSvf f; float drive, undrive, hiss, gw, gd, offset, centre, depth, wow; } ch;   /* CHORUS */
+    } u;
+} MfxStep;
+#define MFX_STEPS (MFX_PASS_MAX / MFX_SUB)
+
+/* a side's own state: what only its own run writes (on cache lines of its own: core 1 may run the right side) */
+typedef struct {
+    union {
+        int16_t i[512];                      /* BULLROARER's bucket brigade (scaled, saturated: the BBD's headroom),
+                                              * at the full rate */
+        float f[256];                        /* the half-rate types' (2026-11-02: floats, no conversion a read; the
                                               * same bytes) */
-    } br;
-    uint32_t br_w;                           /* the write place */
-    float br_orbit, br_twist;                /* the whirl's phase, the cord's (0..1) */
-    float br_d[2];                           /* each side's delay at the last control step, samples */
-    float br_pre[2][2], br_post[2][2];       /* the anti-alias and reconstruction filters (two poles each) */
-    float br_env[2];                         /* the compander's level follower */
-    float br_wow, br_wow_to;                 /* the aging clock's drift, samples, and where it heads */
-    uint32_t br_rng, br_wow_n;
-    /* ENSEMBLE (its chorus oscillator's phase is lfo) */
-    float en_fast;                           /* the tremolo oscillator's phase */
-    float en_d[3];                           /* each line's delay at the last control step, samples */
-    float en_s1[2], en_s2[2];                /* each side's output filter (the 2-pole's states) */
-    float hr_prev[2];                        /* each side's last half-rate wet sample (the interpolation) */
-    /* CHORUS (its LFO's phase is lfo) */
-    float ch_d[2];                           /* each side's delay at the last control step, half-rate samples */
-    float ch_s[2][4];                        /* each side's anti-alias and reconstruction filters' states */
-    /* ENS+PHASER's phaser (the ensemble's state above) */
-    float ss_z[2][5];                        /* each side's chain: its input, each stage's output, the sample before */
-    float ss_ctl, ss_lfo;                    /* the OTAs' control current (0..1, glided), the LFO's phase */
+    } line;
+    float z[6], b1, x, sh, ctl;              /* STONE PHASER: the chain (the last input, each stage's last output);
+                                              * B1's C11 (TPT state); X, the sample before (the loop); the shelf; the
+                                              * 4009's control, 0..1, glided */
+    float flt[4];                            /* the half-rate types' filters: ENSEMBLE's output 2-pole (0, 1); CHORUS's
+                                              * anti-alias (0, 1) and reconstruction (2, 3) */
+    float ss_z[5];                           /* ENS+PHASER's phaser: its chain */
+    float env, prev, ch_d;                   /* the compander's level follower; the last half-rate wet sample (the
+                                              * interpolation); CHORUS's delay at the last step (half-rate samples) */
+    uint32_t rng, w;                         /* the hiss's noise; the line's write place */
+    float br_pre[2], br_post[2], br_d;       /* BULLROARER: its filters, its delay at the last step (samples) */
+} __attribute__((aligned(64))) MfxSide;
+
+typedef struct {
+    MfxSide side[2];
+    MfxStep plan[MFX_STEPS];                 /* the pass as planned (nstep steps) */
+    uint32_t nstep;
+    float lfo;                               /* the LFO's phase, 0..1 (the left side's; ENSEMBLE: its chorus
+                                              * oscillator's) */
+    float sp_g[3];                           /* STONE PHASER: M's and the output's gains, as last set (each control
+                                              * step ramps from them: FEEDBACK turns without stepping) */
+    float en_fast;                           /* ENSEMBLE: the tremolo oscillator's phase */
+    float en_d[3];                           /* ... each line's delay at the last control step, samples */
+    float ss_ctl, ss_lfo;                    /* ENS+PHASER: the OTAs' control current (0..1, glided), the LFO's phase */
+    float br_wow, br_wow_to;                 /* the aging clock's drift, and where it heads */
+    uint32_t br_rng, br_wow_n;               /* (its draws; BULLROARER's noise too) */
+    uint32_t br_w;                           /* BULLROARER (run whole, on one core): the write place */
+    float br_orbit, br_twist;                /* ... the whirl's phase, the cord's (0..1) */
     float kn[7];                             /* the knobs and the rows (lr, row[]), glided (0..127): a turn moves no
                                               * setting in steps */
     SpSet sp_set;                            /* each model's settings as last worked out from the knobs (MfxSet) */
@@ -143,12 +162,14 @@ void mfx_init(void)
 #define SP_XA (SP_KIN * (SP_KP - SP_KN))                /* X' = SP_XA o - SP_XB LP(o) */
 #define SP_XB (SP_KIN * SP_KP)
 
-static void stone_phaser(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t n)
+/* STONE PHASER's step, for both sides (the plan): the settings, the gains' ramp, the LFO */
+static void sp_plan(MfxState *s, MfxStep *step, const float *k, float lr)
 {
     /* RATE: the triangle 0.08 .. 25 Hz, even in octaves (the circuit's 1M pot spans 0.25 .. 25 Hz; slower added for
      * pads). FEEDBACK: the pot, reverse-log (most of its travel where the feedback is heard). */
     SpSet *st = &s->sp_set;
     const float kk[2] = {k[MFX_K_RATE], k[MFX_K_FEEDBACK]};
+    int j;
     if (mfx_moved(st->key, kk, 2)) {
         float x = 1.f - kk[1] * (1.f / 127.f);
         const float g9 = 1.f / SP_R9, g_l = 1.f / (SP_R10 + SP_R11), g5h = 0.5f / SP_R5;
@@ -158,69 +179,76 @@ static void stone_phaser(MfxState *s, const float *k, float lr, float *l, float 
         st->cfb = (g_f + g5h) / d;
         st->h = (0.25f / SP_KIN) * SP_OUT * sp_fb_makeup(d / (g9 + g_l + g5h + 1.f / (SP_R27 + SP_POT)));
     }
-    const float rate = st->rate, cin = st->cin, cfb = st->cfb, h = st->h;
-    const float centre = (float)k[MFX_K_MANUAL] * (1.f / 127.f), depth = (float)k[MFX_K_DEPTH] * (1.f / 127.f);
-    const float offset = (float)lr * (0.5f / 127.f);                /* L/R PHASE: the right side up to half a cycle behind */
+    step->lfo = s->lfo;
+    step->u.sp.centre = k[MFX_K_MANUAL] * (1.f / 127.f);
+    step->u.sp.depth = k[MFX_K_DEPTH] * (1.f / 127.f);
+    step->u.sp.offset = lr * (0.5f / 127.f);                       /* L/R PHASE: the right side up to half a cycle behind */
+    for (j = 0; j < 3; j++) step->u.sp.g0[j] = s->sp_g[j];
+    s->sp_g[0] = step->u.sp.g1[0] = st->cin;
+    s->sp_g[1] = step->u.sp.g1[1] = st->cfb;
+    s->sp_g[2] = step->u.sp.g1[2] = st->h;
+    s->lfo += st->rate * (float)step->m * (1.f / MFX_SR);
+    if (s->lfo >= 1.f) s->lfo -= 1.f;
+}
 
-    for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
-        uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
-        float glide = 0.0155f * (float)m / (float)MFX_SUB;
-        for (int ch = 0; ch < 2; ch++) {
-            /* the control: MANUAL + DEPTH x the triangle about it (the right side's phase L/R PHASE behind), held to
-             * the 4009's range, glided (~23 ms) as F1's integrator rounds it */
-            float ph = ch ? s->lfo - offset : s->lfo;
-            if (ph < 0.f) ph += 1.f;
-            float tri = ph < 0.5f ? 2.f * ph : 2.f - 2.f * ph;
-            float want = centre + depth * (tri - 0.5f);
-            want = want < 0.f ? 0.f : want > 1.f ? 1.f : want;
-            s->ctl[ch] += (want - s->ctl[ch]) * glide;
-            /* the 4009's conductance: from a threshold, linear, its knee soft (a quadratic 0.1 wide); the stages'
-             * frequency follows it. A stage: (c - z^-1) / (1 - c z^-1), c = (1 - t) / (1 + t), t = tan(pi f / fs) */
-            float u = s->ctl[ch] - 0.1f;
-            float on = (u <= -0.05f ? 0.f : u >= 0.05f ? u : (u + 0.05f) * (u + 0.05f) * 5.f) * (1.f / 0.9f);
-            float t = mfx_tan_small(MFX_PI * (SP_F_LO + (SP_F_HI - SP_F_LO) * on) / MFX_SR);
-            float c = (1.f - t) / (1.f + t);
-            float *y = ch ? r + f0 : l + f0;
-            float *z = s->z[ch];
-            float z0 = z[0], z1 = z[1], z2 = z[2], z3 = z[3], z4 = z[4], z5 = z[5], sb = s->b1[ch], xp = s->x[ch];
-            float sh = s->sh[ch];
-            float gi = s->sp_g[0], gf = s->sp_g[1], go = s->sp_g[2];
-            /* one sample: node M (as SP_KIN M), the five swept stages, B1, node N (x 2 SP_KIN), the emphasis shelf */
+/* STONE PHASER on one side (ch) over the planned pass, y in place */
+static void sp_side(MfxState *s, int ch, float *y)
+{
+    MfxSide *sd = &s->side[ch];
+    float z0 = sd->z[0], z1 = sd->z[1], z2 = sd->z[2], z3 = sd->z[3], z4 = sd->z[4], z5 = sd->z[5];
+    float sb = sd->b1, xp = sd->x, sh = sd->sh;
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MfxStep *step = &s->plan[k];
+        const uint32_t m = step->m;
+        /* the control: MANUAL + DEPTH x the triangle about it (the right side's phase L/R PHASE behind), held to the
+         * 4009's range, glided (~23 ms) as F1's integrator rounds it */
+        float ph = ch ? step->lfo - step->u.sp.offset : step->lfo;
+        if (ph < 0.f) ph += 1.f;
+        float tri = ph < 0.5f ? 2.f * ph : 2.f - 2.f * ph;
+        float want = step->u.sp.centre + step->u.sp.depth * (tri - 0.5f);
+        want = want < 0.f ? 0.f : want > 1.f ? 1.f : want;
+        sd->ctl += (want - sd->ctl) * (0.0155f * (float)m / (float)MFX_SUB);
+        /* the 4009's conductance: from a threshold, linear, its knee soft (a quadratic 0.1 wide); the stages'
+         * frequency follows it. A stage: (c - z^-1) / (1 - c z^-1), c = (1 - t) / (1 + t), t = tan(pi f / fs) */
+        float u = sd->ctl - 0.1f;
+        float on = (u <= -0.05f ? 0.f : u >= 0.05f ? u : (u + 0.05f) * (u + 0.05f) * 5.f) * (1.f / 0.9f);
+        float t = mfx_tan_small(MFX_PI * (SP_F_LO + (SP_F_HI - SP_F_LO) * on) / MFX_SR);
+        float c = (1.f - t) / (1.f + t);
+        float gi = step->u.sp.g0[0], gf = step->u.sp.g0[1], go = step->u.sp.g0[2];
+        const float cin = step->u.sp.g1[0], cfb = step->u.sp.g1[1], h = step->u.sp.g1[2];
+        /* one sample: node M (as SP_KIN M), the five swept stages, B1, node N (x 2 SP_KIN), the emphasis shelf */
 #define SP_SAMPLE(GI, GF, GO) do { \
-                float w = (GI) * y[i] + (GF) * xp, o; \
-                o = c * (w + z1) - z0; z0 = w; \
-                float nw = c * (o + z2) - z1; z1 = o; \
-                o = c * (nw + z3) - z2; z2 = nw; \
-                nw = c * (o + z4) - z3; z3 = o; \
-                o = c * (nw + z5) - z4; z4 = nw; z5 = o; \
-                float v = SP_G_B1 * (o - sb), lp = v + sb; \
-                sb = lp + v; \
-                xp = SP_XA * o - SP_XB * lp; \
-                float nn = w + xp; \
-                v = SP_G_SH * (nn - sh); lp = v + sh; \
-                sh = lp + v; \
-                y[i] = (3.f * nn - lp) * (GO); \
-            } while (0)
-            if (gi == cin && gf == cfb && go == h) {            /* FEEDBACK at rest: no ramps */
-                for (uint32_t i = 0; i < m; i++)
-                    SP_SAMPLE(cin, cfb, h);
-            } else {
-                const float im = 1.f / (float)m, di = (cin - gi) * im, df = (cfb - gf) * im, dg = (h - go) * im;
-                for (uint32_t i = 0; i < m; i++) {
-                    gi += di; gf += df; go += dg;
-                    SP_SAMPLE(gi, gf, go);
-                }
+            float w = (GI) * y[i] + (GF) * xp, o; \
+            o = c * (w + z1) - z0; z0 = w; \
+            float nw = c * (o + z2) - z1; z1 = o; \
+            o = c * (nw + z3) - z2; z2 = nw; \
+            nw = c * (o + z4) - z3; z3 = o; \
+            o = c * (nw + z5) - z4; z4 = nw; z5 = o; \
+            float v = SP_G_B1 * (o - sb), lp = v + sb; \
+            sb = lp + v; \
+            xp = SP_XA * o - SP_XB * lp; \
+            float nn = w + xp; \
+            v = SP_G_SH * (nn - sh); lp = v + sh; \
+            sh = lp + v; \
+            y[i] = (3.f * nn - lp) * (GO); \
+        } while (0)
+        if (gi == cin && gf == cfb && go == h) {            /* FEEDBACK at rest: no ramps */
+            for (uint32_t i = 0; i < m; i++)
+                SP_SAMPLE(cin, cfb, h);
+        } else {
+            const float im = 1.f / (float)m, di = (cin - gi) * im, df = (cfb - gf) * im, dg = (h - go) * im;
+            for (uint32_t i = 0; i < m; i++) {
+                gi += di; gf += df; go += dg;
+                SP_SAMPLE(gi, gf, go);
             }
-#undef SP_SAMPLE
-            z[0] = z0; z[1] = z1; z[2] = z2; z[3] = z3; z[4] = z4; z[5] = z5;
-            s->b1[ch] = sb;
-            s->sh[ch] = sh;
-            s->x[ch] = xp;
         }
-        s->sp_g[0] = cin; s->sp_g[1] = cfb; s->sp_g[2] = h;
-        s->lfo += rate * (float)m * (1.f / MFX_SR);
-        if (s->lfo >= 1.f) s->lfo -= 1.f;
+#undef SP_SAMPLE
+        y += m;
     }
+    sd->z[0] = z0; sd->z[1] = z1; sd->z[2] = z2; sd->z[3] = z3; sd->z[4] = z4; sd->z[5] = z5;
+    sd->b1 = sb;
+    sd->sh = sh;
+    sd->x = xp;
 }
 
 /* ---- BULLROARER ---- */
@@ -286,14 +314,15 @@ static void bullroarer(MfxState *s, const float *k, float lr, float *l, float *r
         for (int ch = 0; ch < 2; ch++) {
             float pos = br_sin(ch ? s->br_orbit - offset : s->br_orbit);      /* +1: the far side */
             float d1 = BR_BASE + BR_SWING * reach * pos + s->br_wow;
-            float d0 = s->br_d[ch], dd = (d1 - d0) * (1.f / (float)m);
+            float d0 = s->side[ch].br_d, dd = (d1 - d0) * (1.f / (float)m);
             float far = reach * (0.5f + 0.5f * pos);
             float g_post = br_g(bw * (1.f - 0.45f * far));                     /* the far side darker */
             float gain = BR_OUT * (1.f - 0.3f * far) / drive;                  /* ... and quieter */
             float *y = ch ? r + f0 : l + f0;
-            int16_t *line = s->br.i[ch];
-            float a0 = s->br_pre[ch][0], a1 = s->br_pre[ch][1], b0 = s->br_post[ch][0], b1 = s->br_post[ch][1];
-            float env = s->br_env[ch];
+            MfxSide *sd = &s->side[ch];
+            int16_t *line = sd->line.i;
+            float a0 = sd->br_pre[0], a1 = sd->br_pre[1], b0 = sd->br_post[0], b1 = sd->br_post[1];
+            float env = sd->env;
             uint32_t w = s->br_w;
             for (uint32_t i = 0; i < m; i++) {
                 float x = y[i];
@@ -312,9 +341,9 @@ static void bullroarer(MfxState *s, const float *k, float lr, float *l, float *r
                 y[i] = BR_OUT * x + gain * b1;
                 w = (w + 1u) & (BR_LEN - 1u);
             }
-            s->br_pre[ch][0] = a0; s->br_pre[ch][1] = a1; s->br_post[ch][0] = b0; s->br_post[ch][1] = b1;
-            s->br_env[ch] = env;
-            s->br_d[ch] = d1;
+            sd->br_pre[0] = a0; sd->br_pre[1] = a1; sd->br_post[0] = b0; sd->br_post[1] = b1;
+            sd->env = env;
+            sd->br_d = d1;
             if (ch) s->br_w = w;
         }
     }
@@ -453,12 +482,10 @@ static void hr_wow(MfxState *s, float amt)
     s->br_wow += (s->br_wow_to - s->br_wow) * 0.01f;
 }
 
-/* ENSEMBLE's wet for one control step, at half rate, into wl / wr (mp samples, in line units x 3: the boards' 1/3 is
- * left to the caller's output gain): each side its own three lines from its own input (the three boards, on each
- * side), WIDTH weighting the first towards the left and the third towards the right. fast: the tremolo oscillator, Hz
- * (ENSEMBLE: the unit's EN_FAST; ENS+PHASER: following ENS RATE) */
-static void ens_wet(MfxState *s, const float *k, float lr, float fast, const float *l, const float *r, uint32_t m,
-                    float *wl, float *wr)
+/* ENSEMBLE's step, for both sides (the plan): its settings, the control circuit (C1, C2, the inverter's C3), the
+ * clocks' wander, each board's read head. fast: the tremolo oscillator, Hz (ENSEMBLE: the unit's EN_FAST; ENS+PHASER:
+ * following ENS RATE). out: the output gain */
+static void en_plan(MfxState *s, MfxStep *step, const float *k, float lr, float fast, float out)
 {
     EnSet *st = &s->en_set;
     const float kk[4] = {k[MFX_K_AGE], k[MFX_K_RATE], k[MFX_K_SHIMMER], k[MFX_K_DEPTH]};
@@ -477,17 +504,20 @@ static void ens_wet(MfxState *s, const float *k, float lr, float fast, const flo
          * average and the interpolation stand in for it) */
         st->f = hr_svf(5750.f * (1.f - 0.45f * age), 1.f / 1.1f);
     }
-    const float shim = kk[2] * (1.f / 127.f), swing = st->swing, drive = st->drive, undrive = st->undrive;
-    const float hiss = st->hiss;
-    const HrSvf f = st->f;
-    const float width = (float)lr * (1.f / 127.f);
-    const float gn = 1.f + width, gf = 1.f - width;
-    const float dt = (float)m * (1.f / MFX_SR);
-    const uint32_t mp = m >> 1;
+    const float shim = kk[2] * (1.f / 127.f), width = lr * (1.f / 127.f);
+    const float dt = (float)step->m * (1.f / MFX_SR);
+    const uint32_t mp = step->m >> 1;
     float c[3];
-    int32_t d0[3], dd[3];
     int j;
-    /* the control circuit: C1, C2, the inverter's C3 */
+    step->lfo = s->lfo;
+    step->u.en.f = st->f;
+    step->u.en.drive = st->drive;
+    step->u.en.undrive = st->undrive;
+    step->u.en.hiss = st->hiss;
+    step->u.en.gn = 1.f + width;                                   /* WIDTH: board 1 towards the left, 3 the right */
+    step->u.en.gf = 1.f - width;
+    step->u.en.out = out;
+    step->u.en.phaser = 0;
     c[0] = en_slow(s->lfo) + shim * br_sin(s->en_fast);
     c[1] = en_slow(s->lfo - 1.f / 3.f) + shim * br_sin(s->en_fast - 1.f / 3.f);
     c[2] = -(c[0] + c[1]);
@@ -499,50 +529,70 @@ static void ens_wet(MfxState *s, const float *k, float lr, float fast, const flo
     /* each board's delay: its stages over twice its clock (half-rate samples), its read head stepping there */
     const float im = mp ? 1.f / (float)mp : 0.f, wow = 1.f + s->br_wow;
     for (j = 0; j < 3; j++) {
-        float d = st->dc / (en_tol[j] * (1.f + swing * c[j]) * wow);
+        float d = st->dc / (en_tol[j] * (1.f + st->swing * c[j]) * wow);
         d = d > EN_DMAX ? EN_DMAX : d;
         float a = s->en_d[j] == 0.f ? d : s->en_d[j];
-        d0[j] = (int32_t)(a * HR_Q);
-        dd[j] = (int32_t)((d - a) * im * HR_Q);
+        step->u.en.d0[j] = (int32_t)(a * HR_Q);
+        step->u.en.dd[j] = (int32_t)((d - a) * im * HR_Q);
         s->en_d[j] = d;
     }
-    float *bl = s->br.f[0], *br = s->br.f[1];
-    float s1l = s->en_s1[0], s2l = s->en_s2[0], s1r = s->en_s1[1], s2r = s->en_s2[1];
-    float env = s->br_env[0];
-    uint32_t w = s->br_w, rng = s->br_rng, i;
-    int32_t h1 = d0[0], h2 = d0[1], h3 = d0[2];
-    for (i = 0; i < mp; i++) {
-        float xl = l[2u * i] + l[2u * i + 1u], xr = r[2u * i] + r[2u * i + 1u];   /* (each pair x 2) */
-        bl[w] = br_sat(xl * drive) * undrive;                     /* into the brigades */
-        br[w] = br_sat(xr * drive) * undrive;
-        h1 += dd[0]; h2 += dd[1]; h3 += dd[2];
-        HrTap t1 = hr_at(w, h1), t2 = hr_at(w, h2), t3 = hr_at(w, h3);
-        float av = ((xl < 0.f ? -xl : xl) + (xr < 0.f ? -xr : xr)) * (0.25f * 32767.f * BR_SCALE);
-        env += (av > env ? 0.04f : 0.001f) * (av - env);
-        rng = rng * 1664525u + 1013904223u;                      /* one draw, each side its own half of it */
-        float eh = env * hiss;
-        float sl = gn * hr_read(bl, &t1) + hr_read(bl, &t2) + gf * hr_read(bl, &t3) + eh * (float)(int32_t)rng;
-        float sr = gf * hr_read(br, &t1) + hr_read(br, &t2) + gn * hr_read(br, &t3)
-                   + eh * (float)(int32_t)(rng << 16 | rng >> 16);
-        wl[i] = hr_lp(&f, sl, &s1l, &s2l);                      /* the boards' filters */
-        wr[i] = hr_lp(&f, sr, &s1r, &s2r);
-        w = (w + 1u) & (HR_LEN - 1u);
-    }
-    s->en_s1[0] = s1l; s->en_s2[0] = s2l; s->en_s1[1] = s1r; s->en_s2[1] = s2r;
-    s->br_env[0] = env;
-    s->br_w = w;
-    s->br_rng = rng;
 }
 
-static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t m)
+/* ENSEMBLE (and ENS+PHASER) on one side (ch) over the planned pass, y in place: its own three lines from its own
+ * input (the three boards, on each side), at half rate, then (ENS+PHASER) the phaser's chain, back to the full rate.
+ * Each side its own compander follower (2026-11-02: one for both before; a side cannot read the other's input while
+ * the other core writes it back) */
+static void en_side(MfxState *s, int ch, float *y)
 {
-    float wl[MFX_SUB / 2], wr[MFX_SUB / 2];
-    const float out = EN_OUT / (3.f * BR_SCALE * 32767.f);   /* (the line holds the level, not the drive: AGE turns
-                                                             * smoothly; ens_wet leaves the boards' 1/3 here) */
-    ens_wet(s, k, lr, EN_FAST, l, r, m, wl, wr);
-    hr_up(l, wl, m, &s->hr_prev[0], out, 0.f);         /* all wet, as the unit */
-    hr_up(r, wr, m, &s->hr_prev[1], out, 0.f);
+    MfxSide *sd = &s->side[ch];
+    float *line = sd->line.f;
+    float s1 = sd->flt[0], s2 = sd->flt[1], env = sd->env;
+    float z0 = sd->ss_z[0], z1 = sd->ss_z[1], z2 = sd->ss_z[2], z3 = sd->ss_z[3], z4 = sd->ss_z[4];
+    uint32_t w = sd->w, rng = sd->rng;
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MfxStep *step = &s->plan[k];
+        const uint32_t m = step->m, mp = m >> 1;
+        const HrSvf f = step->u.en.f;
+        const float drive = step->u.en.drive, undrive = step->u.en.undrive, hiss = step->u.en.hiss;
+        const float g1 = ch ? step->u.en.gf : step->u.en.gn, g3 = ch ? step->u.en.gn : step->u.en.gf;
+        float wet[MFX_SUB / 2];
+        int32_t h1 = step->u.en.d0[0], h2 = step->u.en.d0[1], h3 = step->u.en.d0[2];
+        const int32_t e1 = step->u.en.dd[0], e2 = step->u.en.dd[1], e3 = step->u.en.dd[2];
+        for (uint32_t i = 0; i < mp; i++) {
+            float x = y[2u * i] + y[2u * i + 1u];                  /* (the pair x 2) */
+            line[w] = br_sat(x * drive) * undrive;                 /* into the brigades */
+            h1 += e1; h2 += e2; h3 += e3;
+            HrTap t1 = hr_at(w, h1), t2 = hr_at(w, h2), t3 = hr_at(w, h3);
+            float av = (x < 0.f ? -x : x) * (0.5f * 32767.f * BR_SCALE);
+            env += (av > env ? 0.04f : 0.001f) * (av - env);
+            rng = rng * 1664525u + 1013904223u;
+            float v = g1 * hr_read(line, &t1) + hr_read(line, &t2) + g3 * hr_read(line, &t3)
+                      + env * hiss * (float)(int32_t)rng;
+            wet[i] = hr_lp(&f, v, &s1, &s2);                       /* the boards' filters */
+            w = (w + 1u) & (HR_LEN - 1u);
+        }
+        if (step->u.en.phaser) {                                   /* ENS+PHASER: the chain, on the wet */
+            const float c = step->u.en.c, fb = step->u.en.fb;
+            for (uint32_t i = 0; i < mp; i++) {
+                float x = wet[i], v = x + fb * z4, o;                   /* COLOR: the chain's end back to its start */
+                o = c * (v + z1) - z0; z0 = v;                          /* IC1 .. IC4 */
+                v = c * (o + z2) - z1; z1 = o;
+                o = c * (v + z3) - z2; z2 = v;
+                v = c * (o + z4) - z3; z3 = o; z4 = v;
+                wet[i] = x + v;                                         /* dry and the chain, alike (x h: out) */
+            }
+        }
+        hr_up(y, wet, m, &sd->prev, step->u.en.out, 0.f);          /* all wet, as the unit */
+        y += m;
+    }
+    sd->flt[0] = s1; sd->flt[1] = s2; sd->env = env;
+    sd->ss_z[0] = z0; sd->ss_z[1] = z1; sd->ss_z[2] = z2; sd->ss_z[3] = z3; sd->ss_z[4] = z4;
+    sd->w = w;
+    sd->rng = rng;
 }
+
+/* the output gain: the line holds the level, not the drive (AGE turns smoothly); the boards' 1/3 */
+#define EN_GAIN (EN_OUT / (3.f * BR_SCALE * 32767.f))
 
 /* ---- ENS+PHASER ---- */
 /* The phaser, from the schematic (docs/effect schematics, small_stone.png):
@@ -562,9 +612,10 @@ static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, 
 #define SS_SHIM 45.f                             /* the ensemble's SHIMMER, held */
 #define SS_OUT 1.41f                             /* output trim: pink noise +2 dB, as STONE PHASER (a pad ~1 dB under dry) */
 
-static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, float *l, float *r, uint32_t m)
+/* ENS+PHASER's step (the plan): the ensemble's, with its knobs folded, then the phaser's control and COLOUR */
+static void ep_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
 {
-    float ke[4], wl[MFX_SUB / 2], wr[MFX_SUB / 2];
+    float ke[4];
     ke[MFX_K_AGE] = row[MFX_R_AGE];
     ke[MFX_K_RATE] = k[MFX_K_ENS_RATE];
     ke[MFX_K_SHIMMER] = SS_SHIM;
@@ -578,34 +629,17 @@ static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, 
         st->fb = SS_FB * kk[2] * (1.f / 127.f);
         st->h = 0.5f * SS_OUT * (1.f - 0.68f * st->fb);           /* (the feedback's peaks give level back) */
     }
-    ens_wet(s, ke, lr, st->fast, l, r, m, wl, wr);
-
-    const float rate = st->rate, fb = st->fb;
-    const float depth = (float)k[MFX_K_PH_DEPTH] * (1.f / 127.f);
-    const uint32_t mp = m >> 1;
+    en_plan(s, step, ke, lr, st->fast, st->h * EN_GAIN);
+    const float depth = k[MFX_K_PH_DEPTH] * (1.f / 127.f);
     float tri = s->ss_lfo < 0.5f ? 2.f * s->ss_lfo : 2.f - 2.f * s->ss_lfo;
     float want = 0.5f + depth * (tri - 0.5f);
-    s->ss_ctl += (want - s->ss_ctl) * (0.0155f * (float)m / (float)MFX_SUB);
+    s->ss_ctl += (want - s->ss_ctl) * (0.0155f * (float)step->m / (float)MFX_SUB);
     float t = hr_tan(SS_F_LO + (SS_F_HI - SS_F_LO) * s->ss_ctl);
-    float c = (1.f - t) / (1.f + t);
-    for (int ch = 0; ch < 2; ch++) {
-        float *y = ch ? wr : wl, *z = s->ss_z[ch];
-        float z0 = z[0], z1 = z[1], z2 = z[2], z3 = z[3], z4 = z[4];
-        for (uint32_t i = 0; i < mp; i++) {
-            float x = y[i], v = x + fb * z4, o;                      /* COLOR: the chain's end back to its start */
-            o = c * (v + z1) - z0; z0 = v;                          /* IC1 .. IC4 */
-            v = c * (o + z2) - z1; z1 = o;
-            o = c * (v + z3) - z2; z2 = v;
-            v = c * (o + z4) - z3; z3 = o; z4 = v;
-            y[i] = x + v;                                           /* dry and the chain, alike (x h: below) */
-        }
-        z[0] = z0; z[1] = z1; z[2] = z2; z[3] = z3; z[4] = z4;
-    }
-    s->ss_lfo += rate * (float)m * (1.f / MFX_SR);
+    step->u.en.c = (1.f - t) / (1.f + t);
+    step->u.en.fb = st->fb;
+    step->u.en.phaser = 1;
+    s->ss_lfo += st->rate * (float)step->m * (1.f / MFX_SR);
     if (s->ss_lfo >= 1.f) s->ss_lfo -= 1.f;
-    const float out = st->h * EN_OUT / (3.f * BR_SCALE * 32767.f);
-    hr_up(l, wl, m, &s->hr_prev[0], out, 0.f);
-    hr_up(r, wr, m, &s->hr_prev[1], out, 0.f);
 }
 
 /* ---- CHORUS ---- */
@@ -626,7 +660,8 @@ static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, 
 #define CH_DMIN 4.f                              /* the shortest delay, half-rate samples (0.18 ms) */
 #define CH_OUT 1.0f                              /* the wet's trim (test_mfx: the level) */
 
-static void chorus(MfxState *s, const float *k, const float *row, float lr, float *l, float *r, uint32_t m)
+/* CHORUS's step, for both sides (the plan) */
+static void ch_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
 {
     ChSet *st = &s->ch_set;
     const float kk[5] = {k[MFX_K_CH_RATE], k[MFX_K_CH_DEPTH], k[MFX_K_CH_DELAY], k[MFX_K_CH_MIX], row[MFX_R_AGE]};
@@ -644,30 +679,45 @@ static void chorus(MfxState *s, const float *k, const float *row, float lr, floa
         st->hiss = (0.002f + 0.008f * age * age) * (1.f / 2147483648.f);   /* (the noise's int32 scale) */
         st->f = hr_svf(9000.f * (1.f - 0.5f * age), 1.f);
     }
-    const float offset = (float)lr * (0.5f / 127.f);
-    const float drive = st->drive, undrive = st->undrive, hiss = st->hiss;
-    const HrSvf f = st->f;
-    const uint32_t mp = m >> 1;
-    const float im = mp ? 1.f / (float)mp : 0.f;
-    float wl[MFX_SUB / 2], wr[MFX_SUB / 2];
     hr_wow(s, 0.02f * kk[4] * (1.f / 127.f));
-    for (int ch = 0; ch < 2; ch++) {
-        float ph = ch ? s->lfo - offset : s->lfo;
+    step->lfo = s->lfo;
+    step->u.ch.f = st->f;
+    step->u.ch.drive = st->drive;
+    step->u.ch.undrive = st->undrive;
+    step->u.ch.hiss = st->hiss;
+    step->u.ch.gw = st->gw;
+    step->u.ch.gd = st->gd;
+    step->u.ch.offset = lr * (0.5f / 127.f);
+    step->u.ch.centre = st->centre;
+    step->u.ch.depth = st->depth;
+    step->u.ch.wow = s->br_wow;
+    s->lfo += st->rate * (float)step->m * (1.f / MFX_SR);
+    if (s->lfo >= 1.f) s->lfo -= 1.f;
+}
+
+/* CHORUS on one side (ch) over the planned pass, y in place: its own brigade from its own input */
+static void ch_side(MfxState *s, int ch, float *y)
+{
+    MfxSide *sd = &s->side[ch];
+    float *line = sd->line.f;
+    float a1 = sd->flt[0], a2 = sd->flt[1], b1 = sd->flt[2], b2 = sd->flt[3], env = sd->env;
+    uint32_t w = sd->w, rng = sd->rng;
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MfxStep *step = &s->plan[k];
+        const uint32_t m = step->m, mp = m >> 1;
+        const HrSvf f = step->u.ch.f;
+        const float drive = step->u.ch.drive, undrive = step->u.ch.undrive, hiss = step->u.ch.hiss;
+        float wet[MFX_SUB / 2];
+        float ph = ch ? step->lfo - step->u.ch.offset : step->lfo;
         if (ph < 0.f) ph += 1.f;
         float tri = ph < 0.5f ? 4.f * ph - 1.f : 3.f - 4.f * ph;
-        float d = (st->centre + st->depth * tri) * (1.f + s->br_wow);
+        float d = (step->u.ch.centre + step->u.ch.depth * tri) * (1.f + step->u.ch.wow);
         d = d < CH_DMIN ? CH_DMIN : d > EN_DMAX ? EN_DMAX : d;
-        float d0 = s->ch_d[ch] == 0.f ? d : s->ch_d[ch];
-        int32_t hd = (int32_t)(d0 * HR_Q), dd = (int32_t)((d - d0) * im * HR_Q);
-        s->ch_d[ch] = d;
-        const float *x = ch ? r : l;
-        float *y = ch ? wr : wl;
-        float *line = s->br.f[ch];
-        float a1 = s->ch_s[ch][0], a2 = s->ch_s[ch][1], b1 = s->ch_s[ch][2], b2 = s->ch_s[ch][3];
-        float env = s->br_env[ch];
-        uint32_t w = s->br_w, rng = s->br_rng;
+        float d0 = sd->ch_d == 0.f ? d : sd->ch_d;
+        int32_t hd = (int32_t)(d0 * HR_Q), dd = (int32_t)((d - d0) * (mp ? 1.f / (float)mp : 0.f) * HR_Q);
+        sd->ch_d = d;
         for (uint32_t i = 0; i < mp; i++) {
-            float a = x[2u * i] + x[2u * i + 1u];                   /* (the pair x 2) */
+            float a = y[2u * i] + y[2u * i + 1u];                   /* (the pair x 2) */
             float v = hr_lp(&f, a, &a1, &a2);                      /* the anti-alias filter */
             line[w] = br_sat(v * drive) * undrive;                 /* into the brigade */
             hd += dd;
@@ -676,18 +726,15 @@ static void chorus(MfxState *s, const float *k, const float *row, float lr, floa
             env += (av > env ? 0.04f : 0.001f) * (av - env);
             rng = rng * 1664525u + 1013904223u;
             v = hr_read(line, &t) + env * hiss * (float)(int32_t)rng;
-            y[i] = hr_lp(&f, v, &b1, &b2);                         /* the reconstruction filter */
+            wet[i] = hr_lp(&f, v, &b1, &b2);                       /* the reconstruction filter */
             w = (w + 1u) & (HR_LEN - 1u);
         }
-        s->ch_s[ch][0] = a1; s->ch_s[ch][1] = a2; s->ch_s[ch][2] = b1; s->ch_s[ch][3] = b2;
-        s->br_env[ch] = env;
-        s->br_rng = rng;
-        if (ch) s->br_w = w;
+        hr_up(y, wet, m, &sd->prev, step->u.ch.gw, step->u.ch.gd);
+        y += m;
     }
-    s->lfo += st->rate * (float)m * (1.f / MFX_SR);
-    if (s->lfo >= 1.f) s->lfo -= 1.f;
-    hr_up(l, wl, m, &s->hr_prev[0], st->gw, st->gd);
-    hr_up(r, wr, m, &s->hr_prev[1], st->gw, st->gd);
+    sd->flt[0] = a1; sd->flt[1] = a2; sd->flt[2] = b1; sd->flt[3] = b2; sd->env = env;
+    sd->w = w;
+    sd->rng = rng;
 }
 
 float mfx_peek(int layer, int i)
@@ -695,10 +742,10 @@ float mfx_peek(int layer, int i)
     const MfxState *s = &mfx_st[layer & 1];
     uint8_t t = mfx_params[layer & 1].type;
     if (t != s->type && i < 3) return -1.f;          /* (not yet run as this type) */
-    if (t == MFX_STONE_PHASER && i >= 0 && i < 2) return s->ctl[i];
+    if (t == MFX_STONE_PHASER && i >= 0 && i < 2) return s->side[i].ctl;
     if (t == MFX_ENS_PHASER && i == 5) return s->ss_ctl;
     if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && i >= 0 && i < 3) return s->en_d[i] * (1.f / EN_DMAX);
-    if (t == MFX_CHORUS && i >= 0 && i < 2) return s->ch_d[i] * (1.f / EN_DMAX);
+    if (t == MFX_CHORUS && i >= 0 && i < 2) return s->side[i].ch_d * (1.f / EN_DMAX);
     if (t == MFX_CHORUS && (i == 3 || i == 4)) {     /* where its delay swings between */
         const uint8_t *k = mfx_params[layer & 1].knob;
         float c = (1.f + (float)k[MFX_K_CH_DELAY] * (7.f / 127.f)) * (HR_SR * 0.001f);
@@ -721,44 +768,88 @@ float mfx_peek(int layer, int i)
 /* the knobs' glide a control step (MFX_SUB frames): ~23 ms, as the patch's own knobs (knob smoothing) */
 #define MFX_KGLIDE 0.0155f
 
-void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
+/* a new type (or back from OFF) starts from silence, at its knobs */
+static void mfx_begin(MfxState *s, const MfxParams *p)
+{
+    int j;
+    float lfo = s->lfo;
+    memset(s, 0, sizeof *s);
+    s->lfo = lfo;
+    s->type = p->type;
+    for (j = 0; j < 4; j++) s->kn[j] = (float)p->knob[j];
+    s->kn[4] = (float)p->lr;
+    s->kn[5] = (float)p->row[0];
+    s->kn[6] = (float)p->row[1];
+    s->ss_ctl = 0.5f;
+    s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = -1.f;   /* (none worked out) */
+    s->side[1].rng = 0x9E3779B9u;               /* (each side's hiss its own) */
+}
+
+/* the knobs a control step on (the last 1/500 of a step taken at once: the knob comes to rest, and the models'
+ * settings are not worked out again) */
+static void mfx_glide(MfxState *s, const MfxParams *p)
+{
+    const float want[7] = {p->knob[0], p->knob[1], p->knob[2], p->knob[3], p->lr, p->row[0], p->row[1]};
+    for (int j = 0; j < 7; j++) {
+        float e = want[j] - s->kn[j];
+        s->kn[j] = e < 0.002f && e > -0.002f ? want[j] : s->kn[j] + e * MFX_KGLIDE;
+    }
+}
+
+int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
 {
     MfxState *s = &mfx_st[layer & 1];
     const MfxParams *p = &mfx_params[layer & 1];
-    int j;
-    if (p->type != s->type) {                    /* a new type (or back from OFF) starts from silence, at its knobs */
-        float lfo = s->lfo;
-        memset(s, 0, sizeof *s);
-        s->lfo = lfo;
-        s->type = p->type;
-        for (j = 0; j < 4; j++) s->kn[j] = (float)p->knob[j];
-        s->kn[4] = (float)p->lr;
-        s->kn[5] = (float)p->row[0];
-        s->kn[6] = (float)p->row[1];
-        s->ss_ctl = 0.5f;
-        s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = -1.f;   /* (none worked out) */
-    }
+    if (p->type != s->type)
+        mfx_begin(s, p);
+    s->nstep = 0;
     if (p->type == MFX_OFF || p->type >= MFX_COUNT)
-        return;
+        return 0;
+    if (n > MFX_PASS_MAX) n = MFX_PASS_MAX;
     /* a control step at a time: each model's settings follow the glided knobs (their set-up is a few dozen
      * operations, against the step's thousands) */
     for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
         uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
-        const float want[7] = {p->knob[0], p->knob[1], p->knob[2], p->knob[3], p->lr, p->row[0], p->row[1]};
-        for (j = 0; j < 7; j++) {               /* (the last 1/500 of a step taken at once: the knob comes to rest,
-                                                 * and the models' settings are not worked out again) */
-            float e = want[j] - s->kn[j];
-            s->kn[j] = e < 0.002f && e > -0.002f ? want[j] : s->kn[j] + e * MFX_KGLIDE;
-        }
-        if (p->type == MFX_STONE_PHASER)
-            stone_phaser(s, s->kn, s->kn[4], l + f0, r + f0, m);
-        else if (p->type == MFX_BULLROARER)
+        mfx_glide(s, p);
+        if (p->type == MFX_BULLROARER) {        /* (the prototype: whole, here) */
             bullroarer(s, s->kn, s->kn[4], l + f0, r + f0, m);
+            continue;
+        }
+        MfxStep *step = &s->plan[s->nstep++];
+        step->m = m;
+        if (p->type == MFX_STONE_PHASER)
+            sp_plan(s, step, s->kn, s->kn[4]);
         else if (p->type == MFX_ENS_PHASER)
-            ens_phaser(s, s->kn, s->kn + 5, s->kn[4], l + f0, r + f0, m);
+            ep_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
         else if (p->type == MFX_CHORUS)
-            chorus(s, s->kn, s->kn + 5, s->kn[4], l + f0, r + f0, m);
+            ch_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
         else
-            ensemble(s, s->kn, s->kn[4], l + f0, r + f0, m);
+            en_plan(s, step, s->kn, s->kn[4], EN_FAST, EN_GAIN);
+    }
+    return s->nstep != 0;
+}
+
+void mfx_layer_side(int layer, int side, float *y)
+{
+    MfxState *s = &mfx_st[layer & 1];
+    if (!s->nstep)
+        return;
+    if (s->type == MFX_STONE_PHASER)
+        sp_side(s, side & 1, y);
+    else if (s->type == MFX_CHORUS)
+        ch_side(s, side & 1, y);
+    else
+        en_side(s, side & 1, y);
+}
+
+void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
+{
+    while (n) {
+        uint32_t k = n < MFX_PASS_MAX ? n : MFX_PASS_MAX;
+        if (mfx_layer_plan(layer, l, r, k)) {
+            mfx_layer_side(layer, 0, l);
+            mfx_layer_side(layer, 1, r);
+        }
+        l += k; r += k; n -= k;
     }
 }

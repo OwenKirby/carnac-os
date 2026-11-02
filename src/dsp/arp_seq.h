@@ -122,6 +122,8 @@ void carp_init(CarpSeq *a, ArpState *st, const MasterPerformancePreset *perf, Ma
 
 /* audio context: once per frame, after maq_frame(). q: the MAQ, whose grid a start while it plays waits for (NULL: none) */
 uint8_t carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q);   /* 1: idle (as maq_frame's) */
+/* the frame its next cell, strum note or gate end is due on (1), as maq_next_due's; 0: none scheduled */
+uint8_t carp_next_due(const CarpSeq *a, uint32_t *due);
 
 /* main-loop context: requests applied on the next frame */
 void carp_audition(CarpSeq *a, uint8_t root, uint8_t vel);   /* sound root's chord; vel 0 releases it (or a hold) */

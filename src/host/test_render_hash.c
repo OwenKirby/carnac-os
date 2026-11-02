@@ -192,17 +192,19 @@ int main(int argc, char **argv)
             report(line);
         }
 
-    /* MFX (2026-11-02): each type on both layers (layer 2's runs on the second core), then on layer 2 alone */
+    /* MFX (2026-11-02): each type on both layers (layer 2's runs on the second core), then ENSEMBLE on layer 1 alone
+     * (its right side on the second core); both layers on one channel, so both sound */
     for (uint8_t t = MFX_STONE_PHASER; t <= MFX_COUNT; t++) {
         static const MfxParams mp = {MFX_OFF, {40, 74, 100, 127}, 100, {30, 76}};
         h = 2166136261u;
         synth_init();
         perf_state.perf_mode = PERF_DUAL_SYNTH;
+        perf_state.midi_ch[1] = perf_state.midi_ch[0];
         patch(&engine_state[0], VARCH_SINGLE, 1, 0);
         patch(&engine_state[1], VARCH_DUAL_OSC, 0, 1);
         mfx_params[0] = mfx_params[1] = mp;
-        mfx_params[0].type = t < MFX_COUNT ? t : (uint8_t)MFX_OFF;
-        mfx_params[1].type = t < MFX_COUNT ? t : (uint8_t)MFX_ENSEMBLE;
+        mfx_params[0].type = t < MFX_COUNT ? t : (uint8_t)MFX_ENSEMBLE;
+        mfx_params[1].type = t < MFX_COUNT ? t : (uint8_t)MFX_OFF;
         play(t % 2 ? 128u : 32u);
         snprintf(line, sizeof line, "mfx L1 %u L2 %u  %08x", mfx_params[0].type, mfx_params[1].type, h);
         report(line);

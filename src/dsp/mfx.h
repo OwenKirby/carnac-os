@@ -72,4 +72,13 @@ float mfx_peek(int layer, int i);
 /* the layer's MFX over n frames of its dry sum, in place (Q15 units, the bus's floats); nothing at OFF */
 void mfx_layer_block(int layer, float *l, float *r, uint32_t n);
 
+/* The same in two parts (2026-11-02), so the two sides can run on the two cores: mfx_layer_plan works out the pass
+ * (n <= MFX_PASS_MAX frames: the knobs, the LFOs, what both sides share; the type's change) and returns 1 when the
+ * sides are left to run, 0 when nothing is (OFF; BULLROARER, the prototype, ran whole there); then
+ * mfx_layer_side(layer, 0, l) and (layer, 1, r), in either order or at once: each writes only its own side's state
+ * and samples. */
+#define MFX_PASS_MAX 128u
+int mfx_layer_plan(int layer, float *l, float *r, uint32_t n);
+void mfx_layer_side(int layer, int side, float *y);
+
 #endif
