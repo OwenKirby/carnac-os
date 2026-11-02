@@ -670,7 +670,7 @@ static uint8_t carp_transport_idle(CarpSeq *a)
     return 1u;
 }
 
-void carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q)
+uint8_t carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q)
 {
     uint32_t pulses = midi_clock_pulse_count(), n = pulses - a->pulse_seen, req = a->req_aud;
     a->frame = frame;
@@ -683,7 +683,7 @@ void carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q)
         a->transpose = a->req_transpose;
         if (a->st->transpose_maq_option == 1u)
             carp_follow(a);
-        return;
+        return 1u;
     }
 #endif
     if ((uint16_t)(req >> 16) != a->aud_serial) {
@@ -706,6 +706,7 @@ void carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q)
     carp_due(a);
     if (a->st->transpose_maq_option == 1u)
         carp_follow(a);
+    return 0u;
 }
 
 static void carp_request(CarpSeq *a, uint8_t root, uint8_t vel, uint32_t hold)

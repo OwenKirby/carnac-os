@@ -121,7 +121,7 @@ typedef struct {
 void carp_init(CarpSeq *a, ArpState *st, const MasterPerformancePreset *perf, MaqMidiOut out);
 
 /* audio context: once per frame, after maq_frame(). q: the MAQ, whose grid a start while it plays waits for (NULL: none) */
-void carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q);
+uint8_t carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q);   /* 1: idle (as maq_frame's) */
 
 /* main-loop context: requests applied on the next frame */
 void carp_audition(CarpSeq *a, uint8_t root, uint8_t vel);   /* sound root's chord; vel 0 releases it (or a hold) */

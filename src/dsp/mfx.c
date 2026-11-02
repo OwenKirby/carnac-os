@@ -50,6 +50,28 @@ MfxParams mfx_params[2];
 #define SP_F_HI 3400.f                                 /* ... with the 4009 fully on */
 #define SP_OUT 1.30f                                   /* output trim: a pad ~1 dB under dry, pink noise +2 dB (test_mfx) */
 
+/* a TPT state-variable low-pass's coefficients (the half-rate types' filters: hr_svf, below) */
+typedef struct { float a1, a2, a3; } HrSvf;
+
+/* The models' settings, worked out from the glided knobs only when one of them has moved (key: the knobs they came
+ * from; a key of -1 matches nothing): at rest a control step skips the exp2s, tans and divides (2026-11-02) */
+typedef struct { float key[2], rate, cin, cfb, h; } SpSet;                          /* STONE PHASER */
+typedef struct { float key[4], rate, swing, dc, drive, undrive, hiss; HrSvf f; } EnSet;   /* ENSEMBLE (ens_wet) */
+typedef struct { float key[3], fast, rate, fb, h; } SsSet;                          /* ENS+PHASER's phaser */
+typedef struct { float key[6], rate, depth, centre, gw, gd, drive, undrive, hiss; HrSvf f; } ChSet;   /* CHORUS */
+
+/* the knobs k[0..n-1] against a set's key: 1 if they differ (and the key takes them) */
+static inline int mfx_moved(float *key, const float *k, int n)
+{
+    int j, moved = 0;
+    for (j = 0; j < n; j++)
+        if (key[j] != k[j]) {
+            key[j] = k[j];
+            moved = 1;
+        }
+    return moved;
+}
+
 typedef struct {
     float z[2][6];                           /* each side's chain: the last input, then each stage's last output */
     float b1[2], x[2], sh[2];                /* B1's C11 (TPT state); X, the sample before (the loop); the shelf */
@@ -58,7 +80,12 @@ typedef struct {
     float sp_g[3];                           /* M's input and loop gains and the output's, as last set (each control
                                               * step ramps from them: FEEDBACK turns without stepping) */
     /* BULLROARER (and ENSEMBLE: the brigades, the write place, the clock's drift, the compander, the noise) */
-    int16_t br_line[2][512];                 /* each side's bucket brigade (scaled, saturated: the BBD's headroom) */
+    union {
+        int16_t i[2][512];                   /* BULLROARER's: each side's bucket brigade (scaled, saturated: the BBD's
+                                              * headroom), at the full rate */
+        float f[2][256];                     /* the half-rate types' (2026-11-02: floats, no conversion a read; the
+                                              * same bytes) */
+    } br;
     uint32_t br_w;                           /* the write place */
     float br_orbit, br_twist;                /* the whirl's phase, the cord's (0..1) */
     float br_d[2];                           /* each side's delay at the last control step, samples */
@@ -79,8 +106,13 @@ typedef struct {
     float ss_ctl, ss_lfo;                    /* the OTAs' control current (0..1, glided), the LFO's phase */
     float kn[7];                             /* the knobs and the rows (lr, row[]), glided (0..127): a turn moves no
                                               * setting in steps */
+    SpSet sp_set;                            /* each model's settings as last worked out from the knobs (MfxSet) */
+    EnSet en_set;
+    SsSet ss_set;
+    ChSet ch_set;
     uint8_t type;                           /* what the state is for: a new type starts clean */
-} MfxState;
+} __attribute__((aligned(64))) MfxState;     /* each layer's on cache lines of its own: layer 2's may run on core 1
+                                               * (synth_runtime.c, as fx.c FX_LINE) */
 
 static MfxState mfx_st[2];
 
@@ -105,16 +137,28 @@ void mfx_init(void)
     memset(mfx_st, 0, sizeof mfx_st);
 }
 
+/* The chain's input is SP_KIN M, so the loop is worked in those units (2026-11-02, a multiply less a sample): w = SP_KIN
+ * M = cin' in + cfb X', X' = SP_KIN X (B1's two terms prescaled), N' = SP_KIN N = w + X'; the shelf is linear, so it
+ * runs on N' and the output takes 1 / SP_KIN back (with the shelf's 1.5 N - 0.5 LP as (3 N - LP) / 2) */
+#define SP_XA (SP_KIN * (SP_KP - SP_KN))                /* X' = SP_XA o - SP_XB LP(o) */
+#define SP_XB (SP_KIN * SP_KP)
+
 static void stone_phaser(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t n)
 {
     /* RATE: the triangle 0.08 .. 25 Hz, even in octaves (the circuit's 1M pot spans 0.25 .. 25 Hz; slower added for
      * pads). FEEDBACK: the pot, reverse-log (most of its travel where the feedback is heard). */
-    float rate = 0.08f * amp_exp2f((float)k[MFX_K_RATE] * (8.29f / 127.f));
-    float x = 1.f - (float)k[MFX_K_FEEDBACK] * (1.f / 127.f);
-    const float g9 = 1.f / SP_R9, g_l = 1.f / (SP_R10 + SP_R11), g5h = 0.5f / SP_R5;
-    const float g_f = 1.f / (SP_R27 + SP_POT * x * x * x), d = g9 + g_f + g_l + g5h;
-    const float cin = SP_B2 * g9 / d, cfb = (g_f + g5h) / d;     /* M = cin in + cfb X */
-    const float h = 0.5f * SP_OUT * sp_fb_makeup(d / (g9 + g_l + g5h + 1.f / (SP_R27 + SP_POT)));
+    SpSet *st = &s->sp_set;
+    const float kk[2] = {k[MFX_K_RATE], k[MFX_K_FEEDBACK]};
+    if (mfx_moved(st->key, kk, 2)) {
+        float x = 1.f - kk[1] * (1.f / 127.f);
+        const float g9 = 1.f / SP_R9, g_l = 1.f / (SP_R10 + SP_R11), g5h = 0.5f / SP_R5;
+        const float g_f = 1.f / (SP_R27 + SP_POT * x * x * x), d = g9 + g_f + g_l + g5h;
+        st->rate = 0.08f * amp_exp2f(kk[0] * (8.29f / 127.f));
+        st->cin = SP_KIN * SP_B2 * g9 / d;                 /* SP_KIN M = cin in + cfb X' */
+        st->cfb = (g_f + g5h) / d;
+        st->h = (0.25f / SP_KIN) * SP_OUT * sp_fb_makeup(d / (g9 + g_l + g5h + 1.f / (SP_R27 + SP_POT)));
+    }
+    const float rate = st->rate, cin = st->cin, cfb = st->cfb, h = st->h;
     const float centre = (float)k[MFX_K_MANUAL] * (1.f / 127.f), depth = (float)k[MFX_K_DEPTH] * (1.f / 127.f);
     const float offset = (float)lr * (0.5f / 127.f);                /* L/R PHASE: the right side up to half a cycle behind */
 
@@ -140,25 +184,34 @@ static void stone_phaser(MfxState *s, const float *k, float lr, float *l, float 
             float *z = s->z[ch];
             float z0 = z[0], z1 = z[1], z2 = z[2], z3 = z[3], z4 = z[4], z5 = z[5], sb = s->b1[ch], xp = s->x[ch];
             float sh = s->sh[ch];
-            float gi = s->sp_g[0], gf = s->sp_g[1], go = s->sp_g[2], im = 1.f / (float)m;
-            const float di = (cin - gi) * im, df = (cfb - gf) * im, dg = (h - go) * im;
-            for (uint32_t i = 0; i < m; i++) {
-                gi += di; gf += df; go += dg;
-                float mm = gi * y[i] + gf * xp;                    /* node M */
-                float w = SP_KIN * mm, o;
-                o = c * (w + z1) - z0; z0 = w;                      /* the five swept stages */
-                w = c * (o + z2) - z1; z1 = o;
-                o = c * (w + z3) - z2; z2 = w;
-                w = c * (o + z4) - z3; z3 = o;
-                o = c * (w + z5) - z4; z4 = w; z5 = o;
-                float v = SP_G_B1 * (o - sb), lp = v + sb;          /* B1 */
-                sb = lp + v;
-                xp = SP_KP * (o - lp) - SP_KN * o;
-                float nn = mm + xp;                                 /* node N (x 2), then the emphasis shelf */
-                v = SP_G_SH * (nn - sh); lp = v + sh;
-                sh = lp + v;
-                y[i] = (1.5f * nn - 0.5f * lp) * go;
+            float gi = s->sp_g[0], gf = s->sp_g[1], go = s->sp_g[2];
+            /* one sample: node M (as SP_KIN M), the five swept stages, B1, node N (x 2 SP_KIN), the emphasis shelf */
+#define SP_SAMPLE(GI, GF, GO) do { \
+                float w = (GI) * y[i] + (GF) * xp, o; \
+                o = c * (w + z1) - z0; z0 = w; \
+                float nw = c * (o + z2) - z1; z1 = o; \
+                o = c * (nw + z3) - z2; z2 = nw; \
+                nw = c * (o + z4) - z3; z3 = o; \
+                o = c * (nw + z5) - z4; z4 = nw; z5 = o; \
+                float v = SP_G_B1 * (o - sb), lp = v + sb; \
+                sb = lp + v; \
+                xp = SP_XA * o - SP_XB * lp; \
+                float nn = w + xp; \
+                v = SP_G_SH * (nn - sh); lp = v + sh; \
+                sh = lp + v; \
+                y[i] = (3.f * nn - lp) * (GO); \
+            } while (0)
+            if (gi == cin && gf == cfb && go == h) {            /* FEEDBACK at rest: no ramps */
+                for (uint32_t i = 0; i < m; i++)
+                    SP_SAMPLE(cin, cfb, h);
+            } else {
+                const float im = 1.f / (float)m, di = (cin - gi) * im, df = (cfb - gf) * im, dg = (h - go) * im;
+                for (uint32_t i = 0; i < m; i++) {
+                    gi += di; gf += df; go += dg;
+                    SP_SAMPLE(gi, gf, go);
+                }
             }
+#undef SP_SAMPLE
             z[0] = z0; z[1] = z1; z[2] = z2; z[3] = z3; z[4] = z4; z[5] = z5;
             s->b1[ch] = sb;
             s->sh[ch] = sh;
@@ -238,7 +291,7 @@ static void bullroarer(MfxState *s, const float *k, float lr, float *l, float *r
             float g_post = br_g(bw * (1.f - 0.45f * far));                     /* the far side darker */
             float gain = BR_OUT * (1.f - 0.3f * far) / drive;                  /* ... and quieter */
             float *y = ch ? r + f0 : l + f0;
-            int16_t *line = s->br_line[ch];
+            int16_t *line = s->br.i[ch];
             float a0 = s->br_pre[ch][0], a1 = s->br_pre[ch][1], b0 = s->br_post[ch][0], b1 = s->br_post[ch][1];
             float env = s->br_env[ch];
             uint32_t w = s->br_w;
@@ -307,14 +360,6 @@ static inline float en_slow(float p)
     return t * (1.5f - 0.5f * t * t);
 }
 
-/* a brigade read d samples behind the write place w, interpolated */
-static inline float en_tap(const int16_t *line, uint32_t w, float d)
-{
-    float fl = (float)(int32_t)d, fr = d - fl;
-    uint32_t p = (w - (uint32_t)fl) & (BR_LEN - 1u), q = (p - 1u) & (BR_LEN - 1u);
-    return (float)line[p] + fr * (float)(line[q] - line[p]);
-}
-
 /* ---- the brigades at half rate (2026-11-02) ----
  * ENSEMBLE, ENS+PHASER and CHORUS run their bucket brigades at 22.05 kHz, as a BBD's own clock does (the Solina's
  * ~33 kHz, the chorus's 24..77 kHz): their filters keep everything under ~10 kHz anyway. A pair of input frames is
@@ -332,7 +377,6 @@ static inline float hr_tan(float fc)
 }
 
 /* a TPT state-variable low-pass's coefficients at half rate: fc, 1 / Q */
-typedef struct { float a1, a2, a3; } HrSvf;
 static inline HrSvf hr_svf(float fc, float k)
 {
     HrSvf f;
@@ -352,35 +396,49 @@ static inline float hr_lp(const HrSvf *f, float x, float *s1, float *s2)
     return u2;
 }
 
-/* the wet's mp half-rate samples back to m frames on one side: y = dry y * gd + the wet, interpolated, * gw */
+/* the wet's mp half-rate samples back to m frames on one side: y = dry y * gd + the wet, interpolated, * gw (gd 0:
+ * all wet, the dry not read) */
 static void hr_up(float *y, const float *w, uint32_t m, float *prev, float gw, float gd)
 {
     uint32_t k, mp = m >> 1;
-    float p = *prev;
-    for (k = 0; k < mp; k++) {
-        y[2u * k] = gd * y[2u * k] + gw * 0.5f * (p + w[k]);
-        y[2u * k + 1u] = gd * y[2u * k + 1u] + gw * w[k];
-        p = w[k];
-    }
+    float p = gw * *prev;
+    if (gd == 0.f)
+        for (k = 0; k < mp; k++) {
+            float v = gw * w[k];
+            y[2u * k] = 0.5f * (p + v);
+            y[2u * k + 1u] = v;
+            p = v;
+        }
+    else
+        for (k = 0; k < mp; k++) {
+            float v = gw * w[k];
+            y[2u * k] = gd * y[2u * k] + 0.5f * (p + v);
+            y[2u * k + 1u] = gd * y[2u * k + 1u] + v;
+            p = v;
+        }
     if (m & 1u)
-        y[m - 1u] = gd * y[m - 1u] + gw * p;
-    *prev = p;
+        y[m - 1u] = gd * y[m - 1u] + p;
+    *prev = mp ? w[mp - 1u] : *prev;
 }
 
-/* a brigade read d half-rate samples behind the write place w, interpolated: where (p, q, fr) for both sides' lines */
+/* The half-rate brigades: HR_LEN floats a side (the reach EN_DMAX + the interpolation's neighbour). A read head is
+ * its delay in 16.16 fixed point, stepped by an integer a sample (2026-11-02: no float -> int -> float a tap); where
+ * (p, q, fr) it reads, alike for both sides' lines. */
+#define HR_LEN 256u
+#define HR_Q 65536.f
 typedef struct { uint32_t p, q; float fr; } HrTap;
-static inline HrTap hr_at(uint32_t w, float d)
+static inline HrTap hr_at(uint32_t w, int32_t d)
 {
     HrTap t;
-    float fl = (float)(int32_t)d;
-    t.fr = d - fl;
-    t.p = (w - (uint32_t)fl) & (BR_LEN - 1u);
-    t.q = (t.p - 1u) & (BR_LEN - 1u);
+    t.fr = (float)(d & 0xFFFF) * (1.f / HR_Q);
+    t.p = (w - (uint32_t)(d >> 16)) & (HR_LEN - 1u);
+    t.q = (t.p - 1u) & (HR_LEN - 1u);
     return t;
 }
-static inline float hr_read(const int16_t *line, const HrTap *t)
+static inline float hr_read(const float *line, const HrTap *t)
 {
-    return (float)line[t->p] + t->fr * (float)(line[t->q] - line[t->p]);
+    float a = line[t->p];
+    return a + t->fr * (line[t->q] - a);
 }
 
 /* the aged clocks' wander (ENSEMBLE, CHORUS): a new heading every ~0.2 s, amt the share of the clock */
@@ -395,67 +453,80 @@ static void hr_wow(MfxState *s, float amt)
     s->br_wow += (s->br_wow_to - s->br_wow) * 0.01f;
 }
 
-/* ENSEMBLE's wet for one control step, at half rate, into wl / wr (mp samples, in line units): each side its own
- * three lines from its own input (the three boards, on each side), WIDTH weighting the first towards the left and the
- * third towards the right. fast: the tremolo oscillator, Hz (ENSEMBLE: the unit's EN_FAST; ENS+PHASER: following ENS
- * RATE) */
+/* ENSEMBLE's wet for one control step, at half rate, into wl / wr (mp samples, in line units x 3: the boards' 1/3 is
+ * left to the caller's output gain): each side its own three lines from its own input (the three boards, on each
+ * side), WIDTH weighting the first towards the left and the third towards the right. fast: the tremolo oscillator, Hz
+ * (ENSEMBLE: the unit's EN_FAST; ENS+PHASER: following ENS RATE) */
 static void ens_wet(MfxState *s, const float *k, float lr, float fast, const float *l, const float *r, uint32_t m,
                     float *wl, float *wr)
 {
-    /* RATE 0.08 .. 4 Hz, even in octaves; SHIMMER adds the tremolo, the control's peak held (so DEPTH stays DEPTH) */
-    const float age = (float)k[MFX_K_AGE] * (1.f / 127.f);
-    const float rate = 0.08f * amp_exp2f((float)k[MFX_K_RATE] * (5.644f / 127.f));
-    const float shim = (float)k[MFX_K_SHIMMER] * (1.f / 127.f);
-    const float swing = EN_SWING * (float)k[MFX_K_DEPTH] * (1.f / 127.f) / (1.f + shim);
+    EnSet *st = &s->en_set;
+    const float kk[4] = {k[MFX_K_AGE], k[MFX_K_RATE], k[MFX_K_SHIMMER], k[MFX_K_DEPTH]};
+    if (mfx_moved(st->key, kk, 4)) {
+        /* RATE 0.08 .. 4 Hz, even in octaves; SHIMMER adds the tremolo, the control's peak held (so DEPTH stays
+         * DEPTH) */
+        const float age = kk[0] * (1.f / 127.f);
+        st->rate = 0.08f * amp_exp2f(kk[1] * (5.644f / 127.f));
+        st->swing = EN_SWING * kk[3] * (1.f / 127.f) / (1.f + kk[2] * (1.f / 127.f));
+        st->dc = EN_D0 * (1.f + age);
+        st->drive = 0.5f * BR_SCALE * (1.f + 2.f * age);            /* (x 0.5: the pair's average) */
+        st->undrive = 32767.f / (1.f + 2.f * age);
+        /* the hiss, of the level: -40 dB at AGE 127, a bed (x 3: the boards' sum; the noise's int32 scale) */
+        st->hiss = 3.f * (0.0015f + 0.008f * age * age) * (1.f / 2147483648.f);
+        /* the boards' output filters, 5.75 kHz Q 1.1 (the 11.4 kHz pole is past the half rate's reach: the pair
+         * average and the interpolation stand in for it) */
+        st->f = hr_svf(5750.f * (1.f - 0.45f * age), 1.f / 1.1f);
+    }
+    const float shim = kk[2] * (1.f / 127.f), swing = st->swing, drive = st->drive, undrive = st->undrive;
+    const float hiss = st->hiss;
+    const HrSvf f = st->f;
     const float width = (float)lr * (1.f / 127.f);
-    const float dc = EN_D0 * (1.f + age);
-    const float drive = BR_SCALE * (1.f + 2.f * age), undrive = 32767.f / (1.f + 2.f * age);
-    const float gn = (1.f + width) * (1.f / 3.f), gf = (1.f - width) * (1.f / 3.f), gc = 1.f / 3.f;
-    const float hiss = 0.0015f + 0.008f * age * age;                /* of the level: -40 dB at AGE 127, a bed */
-    /* the boards' output filters, 5.75 kHz Q 1.1 (the 11.4 kHz pole is past the half rate's reach: the pair average
-     * and the interpolation stand in for it) */
-    const HrSvf f = hr_svf(5750.f * (1.f - 0.45f * age), 1.f / 1.1f);
+    const float gn = 1.f + width, gf = 1.f - width;
     const float dt = (float)m * (1.f / MFX_SR);
     const uint32_t mp = m >> 1;
-    float c[3], d0[3], dd[3];
+    float c[3];
+    int32_t d0[3], dd[3];
     int j;
     /* the control circuit: C1, C2, the inverter's C3 */
     c[0] = en_slow(s->lfo) + shim * br_sin(s->en_fast);
     c[1] = en_slow(s->lfo - 1.f / 3.f) + shim * br_sin(s->en_fast - 1.f / 3.f);
     c[2] = -(c[0] + c[1]);
-    s->lfo += rate * dt;
+    s->lfo += st->rate * dt;
     if (s->lfo >= 1.f) s->lfo -= 1.f;
     s->en_fast += fast * dt;
     if (s->en_fast >= 1.f) s->en_fast -= 1.f;
-    hr_wow(s, 0.025f * age);
-    /* each board's delay: its stages over twice its clock (half-rate samples) */
+    hr_wow(s, 0.025f * kk[0] * (1.f / 127.f));
+    /* each board's delay: its stages over twice its clock (half-rate samples), its read head stepping there */
+    const float im = mp ? 1.f / (float)mp : 0.f, wow = 1.f + s->br_wow;
     for (j = 0; j < 3; j++) {
-        float d = dc / (en_tol[j] * (1.f + swing * c[j]) * (1.f + s->br_wow));
+        float d = st->dc / (en_tol[j] * (1.f + swing * c[j]) * wow);
         d = d > EN_DMAX ? EN_DMAX : d;
-        d0[j] = s->en_d[j] == 0.f ? d : s->en_d[j];
-        dd[j] = mp ? (d - d0[j]) * (1.f / (float)mp) : 0.f;
+        float a = s->en_d[j] == 0.f ? d : s->en_d[j];
+        d0[j] = (int32_t)(a * HR_Q);
+        dd[j] = (int32_t)((d - a) * im * HR_Q);
         s->en_d[j] = d;
     }
-    int16_t *bl = s->br_line[0], *br = s->br_line[1];
+    float *bl = s->br.f[0], *br = s->br.f[1];
     float s1l = s->en_s1[0], s2l = s->en_s2[0], s1r = s->en_s1[1], s2r = s->en_s2[1];
     float env = s->br_env[0];
     uint32_t w = s->br_w, rng = s->br_rng, i;
+    int32_t h1 = d0[0], h2 = d0[1], h3 = d0[2];
     for (i = 0; i < mp; i++) {
-        float xl = 0.5f * (l[2u * i] + l[2u * i + 1u]), xr = 0.5f * (r[2u * i] + r[2u * i + 1u]);
-        bl[w] = (int16_t)(br_sat(xl * drive) * undrive);           /* into the brigades */
-        br[w] = (int16_t)(br_sat(xr * drive) * undrive);
-        float fi = (float)(i + 1u);
-        HrTap t1 = hr_at(w, d0[0] + dd[0] * fi), t2 = hr_at(w, d0[1] + dd[1] * fi), t3 = hr_at(w, d0[2] + dd[2] * fi);
-        float av = ((xl < 0.f ? -xl : xl) + (xr < 0.f ? -xr : xr)) * (0.5f * 32767.f * BR_SCALE);
+        float xl = l[2u * i] + l[2u * i + 1u], xr = r[2u * i] + r[2u * i + 1u];   /* (each pair x 2) */
+        bl[w] = br_sat(xl * drive) * undrive;                     /* into the brigades */
+        br[w] = br_sat(xr * drive) * undrive;
+        h1 += dd[0]; h2 += dd[1]; h3 += dd[2];
+        HrTap t1 = hr_at(w, h1), t2 = hr_at(w, h2), t3 = hr_at(w, h3);
+        float av = ((xl < 0.f ? -xl : xl) + (xr < 0.f ? -xr : xr)) * (0.25f * 32767.f * BR_SCALE);
         env += (av > env ? 0.04f : 0.001f) * (av - env);
         rng = rng * 1664525u + 1013904223u;                      /* one draw, each side its own half of it */
-        float nl = (float)(int32_t)rng * (1.f / 2147483648.f);
-        float nr = (float)(int32_t)(rng << 16 | rng >> 16) * (1.f / 2147483648.f);
-        float sl = gn * hr_read(bl, &t1) + gc * hr_read(bl, &t2) + gf * hr_read(bl, &t3) + env * hiss * nl;
-        float sr = gf * hr_read(br, &t1) + gc * hr_read(br, &t2) + gn * hr_read(br, &t3) + env * hiss * nr;
+        float eh = env * hiss;
+        float sl = gn * hr_read(bl, &t1) + hr_read(bl, &t2) + gf * hr_read(bl, &t3) + eh * (float)(int32_t)rng;
+        float sr = gf * hr_read(br, &t1) + hr_read(br, &t2) + gn * hr_read(br, &t3)
+                   + eh * (float)(int32_t)(rng << 16 | rng >> 16);
         wl[i] = hr_lp(&f, sl, &s1l, &s2l);                      /* the boards' filters */
         wr[i] = hr_lp(&f, sr, &s1r, &s2r);
-        w = (w + 1u) & (BR_LEN - 1u);
+        w = (w + 1u) & (HR_LEN - 1u);
     }
     s->en_s1[0] = s1l; s->en_s2[0] = s2l; s->en_s1[1] = s1r; s->en_s2[1] = s2r;
     s->br_env[0] = env;
@@ -466,7 +537,8 @@ static void ens_wet(MfxState *s, const float *k, float lr, float fast, const flo
 static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t m)
 {
     float wl[MFX_SUB / 2], wr[MFX_SUB / 2];
-    const float out = EN_OUT / (BR_SCALE * 32767.f);   /* (the line holds the level, not the drive: AGE turns smoothly) */
+    const float out = EN_OUT / (3.f * BR_SCALE * 32767.f);   /* (the line holds the level, not the drive: AGE turns
+                                                             * smoothly; ens_wet leaves the boards' 1/3 here) */
     ens_wet(s, k, lr, EN_FAST, l, r, m, wl, wr);
     hr_up(l, wl, m, &s->hr_prev[0], out, 0.f);         /* all wet, as the unit */
     hr_up(r, wr, m, &s->hr_prev[1], out, 0.f);
@@ -497,14 +569,19 @@ static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, 
     ke[MFX_K_RATE] = k[MFX_K_ENS_RATE];
     ke[MFX_K_SHIMMER] = SS_SHIM;
     ke[MFX_K_DEPTH] = k[MFX_K_ENS_DEPTH];
-    /* the tremolo: 6.5 Hz at the unit's 0.78 Hz chorus, a third of ENS RATE's octaves from there */
-    const float fast = EN_FAST * amp_exp2f(((float)k[MFX_K_ENS_RATE] - 74.f) * (5.644f / 127.f / 3.f));
-    ens_wet(s, ke, lr, fast, l, r, m, wl, wr);
+    SsSet *st = &s->ss_set;
+    const float kk[3] = {k[MFX_K_ENS_RATE], k[MFX_K_PH_RATE], row[MFX_R_COLOUR]};
+    if (mfx_moved(st->key, kk, 3)) {
+        /* the tremolo: 6.5 Hz at the unit's 0.78 Hz chorus, a third of ENS RATE's octaves from there */
+        st->fast = EN_FAST * amp_exp2f((kk[0] - 74.f) * (5.644f / 127.f / 3.f));
+        st->rate = 0.04f * amp_exp2f(kk[1] * (7.966f / 127.f));
+        st->fb = SS_FB * kk[2] * (1.f / 127.f);
+        st->h = 0.5f * SS_OUT * (1.f - 0.68f * st->fb);           /* (the feedback's peaks give level back) */
+    }
+    ens_wet(s, ke, lr, st->fast, l, r, m, wl, wr);
 
-    const float rate = 0.04f * amp_exp2f((float)k[MFX_K_PH_RATE] * (7.966f / 127.f));
+    const float rate = st->rate, fb = st->fb;
     const float depth = (float)k[MFX_K_PH_DEPTH] * (1.f / 127.f);
-    const float fb = SS_FB * (float)row[MFX_R_COLOUR] * (1.f / 127.f);
-    const float h = 0.5f * SS_OUT * (1.f - 0.68f * fb);             /* (the feedback's peaks give level back) */
     const uint32_t mp = m >> 1;
     float tri = s->ss_lfo < 0.5f ? 2.f * s->ss_lfo : 2.f - 2.f * s->ss_lfo;
     float want = 0.5f + depth * (tri - 0.5f);
@@ -520,13 +597,13 @@ static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, 
             v = c * (o + z2) - z1; z1 = o;
             o = c * (v + z3) - z2; z2 = v;
             v = c * (o + z4) - z3; z3 = o; z4 = v;
-            y[i] = (x + v) * h;                                     /* dry and the chain, alike */
+            y[i] = x + v;                                           /* dry and the chain, alike (x h: below) */
         }
         z[0] = z0; z[1] = z1; z[2] = z2; z[3] = z3; z[4] = z4;
     }
     s->ss_lfo += rate * (float)m * (1.f / MFX_SR);
     if (s->ss_lfo >= 1.f) s->ss_lfo -= 1.f;
-    const float out = EN_OUT / (BR_SCALE * 32767.f);
+    const float out = st->h * EN_OUT / (3.f * BR_SCALE * 32767.f);
     hr_up(l, wl, m, &s->hr_prev[0], out, 0.f);
     hr_up(r, wr, m, &s->hr_prev[1], out, 0.f);
 }
@@ -551,57 +628,66 @@ static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, 
 
 static void chorus(MfxState *s, const float *k, const float *row, float lr, float *l, float *r, uint32_t m)
 {
-    const float rate = 0.1f * amp_exp2f((float)k[MFX_K_CH_RATE] * (6.644f / 127.f));
-    const float depth = (float)k[MFX_K_CH_DEPTH] * (2.5f * HR_SR * 0.001f / 127.f);
-    const float centre = (1.f + (float)k[MFX_K_CH_DELAY] * (7.f / 127.f)) * (HR_SR * 0.001f);
-    const float mix = (float)k[MFX_K_CH_MIX] * (1.f / 127.f);
-    /* equal power, less where the two meet (their low end adds: MIX turns no louder in the middle) */
-    const float trim = 1.f / (1.f + 0.25f * br_sin(0.5f * mix));
-    const float gw = trim * br_sin(0.25f * mix), gd = trim * br_sin(0.25f * mix + 0.25f);
+    ChSet *st = &s->ch_set;
+    const float kk[5] = {k[MFX_K_CH_RATE], k[MFX_K_CH_DEPTH], k[MFX_K_CH_DELAY], k[MFX_K_CH_MIX], row[MFX_R_AGE]};
+    if (mfx_moved(st->key, kk, 5)) {
+        const float mix = kk[3] * (1.f / 127.f), age = kk[4] * (1.f / 127.f);
+        /* equal power, less where the two meet (their low end adds: MIX turns no louder in the middle) */
+        const float trim = 1.f / (1.f + 0.25f * br_sin(0.5f * mix));
+        st->rate = 0.1f * amp_exp2f(kk[0] * (6.644f / 127.f));
+        st->depth = kk[1] * (2.5f * HR_SR * 0.001f / 127.f);
+        st->centre = (1.f + kk[2] * (7.f / 127.f)) * (HR_SR * 0.001f);
+        st->gw = trim * br_sin(0.25f * mix) * (CH_OUT / (BR_SCALE * 32767.f));
+        st->gd = trim * br_sin(0.25f * mix + 0.25f);
+        st->drive = 0.5f * BR_SCALE * (1.f + 2.f * age);            /* (x 0.5: the pair's average) */
+        st->undrive = 32767.f / (1.f + 2.f * age);
+        st->hiss = (0.002f + 0.008f * age * age) * (1.f / 2147483648.f);   /* (the noise's int32 scale) */
+        st->f = hr_svf(9000.f * (1.f - 0.5f * age), 1.f);
+    }
     const float offset = (float)lr * (0.5f / 127.f);
-    const float age = row[MFX_R_AGE] * (1.f / 127.f);
-    const float drive = BR_SCALE * (1.f + 2.f * age), undrive = 32767.f / (1.f + 2.f * age);
-    const float out = CH_OUT / (BR_SCALE * 32767.f);
-    const float hiss = 0.002f + 0.008f * age * age;
-    const HrSvf f = hr_svf(9000.f * (1.f - 0.5f * age), 1.f);
+    const float drive = st->drive, undrive = st->undrive, hiss = st->hiss;
+    const HrSvf f = st->f;
     const uint32_t mp = m >> 1;
+    const float im = mp ? 1.f / (float)mp : 0.f;
     float wl[MFX_SUB / 2], wr[MFX_SUB / 2];
-    hr_wow(s, 0.02f * age);
+    hr_wow(s, 0.02f * kk[4] * (1.f / 127.f));
     for (int ch = 0; ch < 2; ch++) {
         float ph = ch ? s->lfo - offset : s->lfo;
         if (ph < 0.f) ph += 1.f;
         float tri = ph < 0.5f ? 4.f * ph - 1.f : 3.f - 4.f * ph;
-        float d = (centre + depth * tri) * (1.f + s->br_wow);
+        float d = (st->centre + st->depth * tri) * (1.f + s->br_wow);
         d = d < CH_DMIN ? CH_DMIN : d > EN_DMAX ? EN_DMAX : d;
-        float d0 = s->ch_d[ch] == 0.f ? d : s->ch_d[ch], dd = mp ? (d - d0) * (1.f / (float)mp) : 0.f;
+        float d0 = s->ch_d[ch] == 0.f ? d : s->ch_d[ch];
+        int32_t hd = (int32_t)(d0 * HR_Q), dd = (int32_t)((d - d0) * im * HR_Q);
         s->ch_d[ch] = d;
         const float *x = ch ? r : l;
         float *y = ch ? wr : wl;
-        int16_t *line = s->br_line[ch];
+        float *line = s->br.f[ch];
         float a1 = s->ch_s[ch][0], a2 = s->ch_s[ch][1], b1 = s->ch_s[ch][2], b2 = s->ch_s[ch][3];
         float env = s->br_env[ch];
         uint32_t w = s->br_w, rng = s->br_rng;
         for (uint32_t i = 0; i < mp; i++) {
-            float a = 0.5f * (x[2u * i] + x[2u * i + 1u]);
+            float a = x[2u * i] + x[2u * i + 1u];                   /* (the pair x 2) */
             float v = hr_lp(&f, a, &a1, &a2);                      /* the anti-alias filter */
-            line[w] = (int16_t)(br_sat(v * drive) * undrive);      /* into the brigade */
-            HrTap t = hr_at(w, d0 + dd * (float)(i + 1u));
-            float av = (a < 0.f ? -a : a) * (32767.f * BR_SCALE);  /* the compander: its hiss rides the level */
+            line[w] = br_sat(v * drive) * undrive;                 /* into the brigade */
+            hd += dd;
+            HrTap t = hr_at(w, hd);
+            float av = (a < 0.f ? -a : a) * (0.5f * 32767.f * BR_SCALE);   /* the compander: its hiss rides the level */
             env += (av > env ? 0.04f : 0.001f) * (av - env);
             rng = rng * 1664525u + 1013904223u;
-            v = hr_read(line, &t) + env * hiss * ((float)(int32_t)rng * (1.f / 2147483648.f));
+            v = hr_read(line, &t) + env * hiss * (float)(int32_t)rng;
             y[i] = hr_lp(&f, v, &b1, &b2);                         /* the reconstruction filter */
-            w = (w + 1u) & (BR_LEN - 1u);
+            w = (w + 1u) & (HR_LEN - 1u);
         }
         s->ch_s[ch][0] = a1; s->ch_s[ch][1] = a2; s->ch_s[ch][2] = b1; s->ch_s[ch][3] = b2;
         s->br_env[ch] = env;
         s->br_rng = rng;
         if (ch) s->br_w = w;
     }
-    s->lfo += rate * (float)m * (1.f / MFX_SR);
+    s->lfo += st->rate * (float)m * (1.f / MFX_SR);
     if (s->lfo >= 1.f) s->lfo -= 1.f;
-    hr_up(l, wl, m, &s->hr_prev[0], gw * out, gd);
-    hr_up(r, wr, m, &s->hr_prev[1], gw * out, gd);
+    hr_up(l, wl, m, &s->hr_prev[0], st->gw, st->gd);
+    hr_up(r, wr, m, &s->hr_prev[1], st->gw, st->gd);
 }
 
 float mfx_peek(int layer, int i)
@@ -650,6 +736,7 @@ void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
         s->kn[5] = (float)p->row[0];
         s->kn[6] = (float)p->row[1];
         s->ss_ctl = 0.5f;
+        s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = -1.f;   /* (none worked out) */
     }
     if (p->type == MFX_OFF || p->type >= MFX_COUNT)
         return;
@@ -657,10 +744,12 @@ void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
      * operations, against the step's thousands) */
     for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
         uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
-        for (j = 0; j < 4; j++) s->kn[j] += ((float)p->knob[j] - s->kn[j]) * MFX_KGLIDE;
-        s->kn[4] += ((float)p->lr - s->kn[4]) * MFX_KGLIDE;
-        s->kn[5] += ((float)p->row[0] - s->kn[5]) * MFX_KGLIDE;
-        s->kn[6] += ((float)p->row[1] - s->kn[6]) * MFX_KGLIDE;
+        const float want[7] = {p->knob[0], p->knob[1], p->knob[2], p->knob[3], p->lr, p->row[0], p->row[1]};
+        for (j = 0; j < 7; j++) {               /* (the last 1/500 of a step taken at once: the knob comes to rest,
+                                                 * and the models' settings are not worked out again) */
+            float e = want[j] - s->kn[j];
+            s->kn[j] = e < 0.002f && e > -0.002f ? want[j] : s->kn[j] + e * MFX_KGLIDE;
+        }
         if (p->type == MFX_STONE_PHASER)
             stone_phaser(s, s->kn, s->kn[4], l + f0, r + f0, m);
         else if (p->type == MFX_BULLROARER)

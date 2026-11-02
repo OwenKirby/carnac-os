@@ -18,6 +18,7 @@
 #include "dsp/synth_runtime.h"
 #include "dsp/voice_allocator.h"
 #include "dsp/maq_seq.h"
+#include "dsp/mfx.h"
 #include "dsp/wavetables.h"
 
 /* --core2: a stand-in second core (synth_set_core2) that runs the job when it is waited for, as the FM1's does after
@@ -190,6 +191,23 @@ int main(int argc, char **argv)
             snprintf(line, sizeof line, "seq ext %d block %u  %08x", ext, block, h);
             report(line);
         }
+
+    /* MFX (2026-11-02): each type on both layers (layer 2's runs on the second core), then on layer 2 alone */
+    for (uint8_t t = MFX_STONE_PHASER; t <= MFX_COUNT; t++) {
+        static const MfxParams mp = {MFX_OFF, {40, 74, 100, 127}, 100, {30, 76}};
+        h = 2166136261u;
+        synth_init();
+        perf_state.perf_mode = PERF_DUAL_SYNTH;
+        patch(&engine_state[0], VARCH_SINGLE, 1, 0);
+        patch(&engine_state[1], VARCH_DUAL_OSC, 0, 1);
+        mfx_params[0] = mfx_params[1] = mp;
+        mfx_params[0].type = t < MFX_COUNT ? t : (uint8_t)MFX_OFF;
+        mfx_params[1].type = t < MFX_COUNT ? t : (uint8_t)MFX_ENSEMBLE;
+        play(t % 2 ? 128u : 32u);
+        snprintf(line, sizeof line, "mfx L1 %u L2 %u  %08x", mfx_params[0].type, mfx_params[1].type, h);
+        report(line);
+    }
+    mfx_params[0].type = mfx_params[1].type = MFX_OFF;
 
     fclose(golden);
     if (writing)

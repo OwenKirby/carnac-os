@@ -589,7 +589,7 @@ static uint8_t maq_idle_frame(MaqSeq *q)
     return 1u;
 }
 
-void maq_frame(MaqSeq *q, uint32_t frame)
+uint8_t maq_frame(MaqSeq *q, uint32_t frame)
 {
     uint32_t pulses = midi_clock_pulse_count(), n = pulses - q->pulse_seen;
     uint8_t l;
@@ -598,7 +598,7 @@ void maq_frame(MaqSeq *q, uint32_t frame)
     q->pulse_base = pulses - n;
 #if !defined(SYNTH_SEQ_NO_IDLE)                     /* test_seq_idle.c builds it both ways */
     if (maq_idle_frame(q))
-        return;
+        return 1u;
 #endif
     maq_transport(q);
     if (q->playing) {
@@ -614,6 +614,13 @@ void maq_frame(MaqSeq *q, uint32_t frame)
     for (l = 0u; l < SEQ_NLANE; l++)
         if (q->run[l].due_kind != MAQ_DUE_NONE)
             maq_due(q, &q->run[l]);
+    return 0u;
+}
+
+uint8_t maq_frame_late(MaqSeq *q, uint32_t frame, uint32_t pulses_before)
+{
+    q->pulse_seen = pulses_before;               /* (as the skipped frame before it would have left it) */
+    return maq_frame(q, frame);
 }
 
 void maq_set_playing(MaqSeq *q, uint8_t on) { q->req_play = on ? 1u : 0u; }

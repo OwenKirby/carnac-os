@@ -667,15 +667,39 @@ static void core1_job(uint32_t arg)
 /* the effects' buffers for one pass, and core 1's job on them: the reverb's back (fx_reverb_back: the tank) */
 static int32_t fx_dly[RENDER_PASS_FRAMES], fx_dly_l[RENDER_PASS_FRAMES], fx_dly_r[RENDER_PASS_FRAMES];
 static int32_t fx_rev_in[RENDER_PASS_FRAMES];
-static float layer_l[NLAYER][RENDER_PASS_FRAMES], layer_r[NLAYER][RENDER_PASS_FRAMES];   /* each layer's dry sum */
+/* each layer's dry sum (each row on cache lines of its own: layer 2's MFX may run on core 1, mfx_job) */
+static float layer_l[NLAYER][RENDER_PASS_FRAMES] __attribute__((aligned(64)));
+static float layer_r[NLAYER][RENDER_PASS_FRAMES] __attribute__((aligned(64)));
+PS_STATIC_ASSERT(sizeof layer_l[0] % 64u == 0u, "a layer's sum ends on a cache line");
 static int32_t fx_rev_l[RENDER_PASS_FRAMES] __attribute__((aligned(64)));   /* core 1 writes these two (fx.c FX_LINE) */
 static int32_t fx_rev_r[RENDER_PASS_FRAMES] __attribute__((aligned(64)));
 PS_STATIC_ASSERT(sizeof fx_rev_l % 64u == 0u, "core 1's output buffers end on a cache line");
 static uint32_t fx_frames;
+/* core 1's share of the MFX (2026-11-02): layer 2's, while core 0 runs layer 1's */
+static void mfx_job(uint32_t arg)
+{
+    mfx_layer_block((int)arg, layer_l[arg], layer_r[arg], fx_frames);
+}
 static void fx_reverb_job(uint32_t arg)
 {
     (void)arg;
     fx_reverb_back(&perf_state, fx_rev_l, fx_rev_r, fx_frames);
+}
+
+/* The sequencers' frame: the MAQ, the ARP, and what each tells the other for the next. 1 when both were idle: their
+ * frames then change nothing but their own frame and pulse stamps until a MIDI event (the UI writes only between
+ * passes; MIDI Start / Stop are events), so the render skips them (seq_quiet) and runs the last one skipped before
+ * the next event, or at the pass's end: the same writes, at the same clock (2026-11-02: ~29 of a sample's 544 ticks
+ * went here at rest, every frame, while core 1 waited) */
+static uint8_t seq_frame(uint32_t clock, int late, uint32_t pulses_before)
+{
+    uint8_t idle = late ? maq_frame_late(&maq, clock, pulses_before)
+                        : maq_frame(&maq, clock);   /* sequencer events land on this frame (synth_midi_3 catches up) */
+    idle &= carp_frame(&carp, clock, &maq);    /* the ARP: its own transport, a start synced to the MAQ's bar */
+    maq_set_ext_transpose(&maq, carp_maq_transpose(&carp));   /* 8.4: the MAQ reads it on the next frame */
+    maq_set_sync(&maq, carp_running(&carp), carp_origin(&carp));   /* (.. and the ARP's bar, for a start) */
+    maq_set_genre(&maq, arp_state.current_genre_bank);       /* (SCALE = GENRE lanes follow it) */
+    return idle;
 }
 
 /* Every voice through the frame before `frame`: called before the global work changes what the voices read. */
@@ -742,12 +766,22 @@ static void render_pass(int32_t *out, uint32_t frames)
     pass_base = sample_clock;
     voices_done = 0;
     in_pass = 1;
+    uint8_t seq_quiet = 0;                     /* the sequencers idle (seq_frame): their frames skipped ... */
+    uint32_t seq_skip = 0;                     /* ... this many since the last one run */
+    uint32_t pc_cur = 0, pc_prev = 0;          /* the clock's pulse count at the end of the frame before, and before that */
     for (uint32_t f = 0; f < frames; ++f) {
         pass_frame = f;
         sample_clock = pass_base + f;
         uint8_t ext_now = ext_n && (int32_t)(ext_q[ext_h].at - sample_clock) <= 0;
         if (ext_now || midi_clock_frame_changes()) voices_up_to(f);   /* a pulse or an event: the voices before it as they were */
         SPROF_START();
+        pc_prev = pc_cur;
+        pc_cur = midi_clock_pulse_count();
+        if (ext_now) {                             /* an event may wake them: the skipped frames' last one first, */
+            if (seq_skip) seq_frame(sample_clock - 1u, 1, pc_prev);   /* at its clock (before this frame's) */
+            seq_quiet = 0;
+            seq_skip = 0;
+        }
         midi_clock_frame(sample_clock);            /* the clock is stamped before the LFOs read it this frame */
         while (ext_now) {                          /* timed MIDI in on this frame (a 0xF8 after the clock's own pulse) */
             midi_apply(ext_q[ext_h].st, ext_q[ext_h].d1, ext_q[ext_h].d2, VSRC_KEYS);
@@ -756,11 +790,10 @@ static void render_pass(int32_t *out, uint32_t frames)
             ext_now = ext_n && (int32_t)(ext_q[ext_h].at - sample_clock) <= 0;
         }
         SPROF_LAP(SPROF_CLOCK);
-        maq_frame(&maq, sample_clock);             /* sequencer events land on this frame (synth_midi_3 catches up) */
-        carp_frame(&carp, sample_clock, &maq);     /* the ARP: its own transport, a start synced to the MAQ's bar */
-        maq_set_ext_transpose(&maq, carp_maq_transpose(&carp));   /* 8.4: the MAQ reads it on the next frame */
-        maq_set_sync(&maq, carp_running(&carp), carp_origin(&carp));   /* (.. and the ARP's bar, for a start) */
-        maq_set_genre(&maq, arp_state.current_genre_bank);       /* (SCALE = GENRE lanes follow it) */
+        if (seq_quiet)                             /* (never, built with SYNTH_SEQ_NO_IDLE: test_seq_idle's reference) */
+            seq_skip++;
+        else
+            seq_quiet = seq_frame(sample_clock, 0, 0u);
         SPROF_LAP(SPROF_SEQ);
         if (layer_ctrl_left == 0) {
             voices_up_to(f);
@@ -772,6 +805,8 @@ static void render_pass(int32_t *out, uint32_t frames)
         }
         layer_ctrl_left--;
     }
+    if (seq_skip)                              /* the pass's last frame, skipped: run now (the UI reads them next) */
+        seq_frame(sample_clock, 1, pc_cur);
     voices_up_to(frames);
     in_pass = 0;
     sample_clock = pass_base + frames;
@@ -787,8 +822,18 @@ static void render_pass(int32_t *out, uint32_t frames)
             layer_r[l][frame] = m0[MIX_LAYER(l) + MIX_R] + m1[MIX_LAYER(l) + MIX_R];
         }
     }
-    for (int l = 0; l < (perf_state.perf_mode == PERF_SINGL_SYNTH ? 1 : NLAYER); l++)   /* each layer's MFX, on its */
-        mfx_layer_block(l, layer_l[l], layer_r[l], frames);                           /* own sum (nothing at OFF) */
+    /* each layer's MFX, on its own sum (nothing at OFF); both on: layer 2's on core 1 meanwhile (one at a time costs
+     * the pass ~3.3..5 points a layer on the FM1; core 1 has nothing else to do here) */
+    fx_frames = frames;
+    if (perf_state.perf_mode == PERF_SINGL_SYNTH)
+        mfx_layer_block(0, layer_l[0], layer_r[0], frames);
+    else {
+        int on2 = mfx_params[0].type != MFX_OFF && mfx_params[1].type != MFX_OFF && !fx_one_core && core2_run
+                  && core2_run(mfx_job, 1u);
+        mfx_layer_block(0, layer_l[0], layer_r[0], frames);
+        if (!on2 || core2_wait())
+            mfx_job(1u);                       /* one core (or the second failed): here */
+    }
     float to_dly[NLAYER], to_rev[NLAYER];          /* knob 0..127 -> 0..~1, the old per-voice 258 / 32768, mono 1/2 */
     for (int l = 0; l < NLAYER; l++) {
         to_dly[l] = (float)((int32_t)engine_state[l].amp.delay_send * 258) * (0.5f / (float)MIX_HEADROOM_Q15);

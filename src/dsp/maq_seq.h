@@ -88,8 +88,12 @@ typedef struct {
 /* lanes: SEQ_NLANE lanes; out: where notes and controllers go. Stopped, not recording. */
 void maq_init(MaqSeq *q, SequencerLane *lanes, const MasterPerformancePreset *perf, MaqMidiOut out);
 
-/* audio context: once per frame, after midi_clock_frame(frame) */
-void maq_frame(MaqSeq *q, uint32_t frame);
+/* audio context: once per frame, after midi_clock_frame(frame). Returns 1 when the frame was idle (stopped, nothing
+ * scheduled, no request: maq_idle_frame): until a MIDI event or the UI moves it, every frame after is idle too and
+ * writes only what this one did, for its own frame (the render skips them and catches up: synth_runtime.c seq_frame) */
+uint8_t maq_frame(MaqSeq *q, uint32_t frame);
+/* the last of such skipped frames, run late: as maq_frame on it, given the pulse count the frame before it ended on */
+uint8_t maq_frame_late(MaqSeq *q, uint32_t frame, uint32_t pulses_before);
 
 /* main-loop context: requests the engine applies on its next frame. Under CLOCK SOURCE MIDI, MIDI Start also starts
  * the sequencer from the top and MIDI Stop stops it. A start plays every lane's first step on the next pulse or, the ARP
