@@ -388,6 +388,22 @@ static void ensemble(MfxState *s, const uint8_t *k, uint8_t lr, float *l, float 
     }
 }
 
+float mfx_peek(int layer, int i)
+{
+    const MfxState *s = &mfx_st[layer & 1];
+    uint8_t t = mfx_params[layer & 1].type;
+    if (t != s->type && i < 3) return -1.f;          /* (not yet run as this type) */
+    if (t == MFX_STONE_PHASER && i >= 0 && i < 2) return s->ctl[i];
+    if (t == MFX_ENSEMBLE && i >= 0 && i < 3) return s->en_d[i] * (1.f / EN_DMAX);
+    if (t == MFX_ENSEMBLE && (i == 3 || i == 4)) {   /* where its lines swing between: the clocks' fastest, slowest */
+        const uint8_t *k = mfx_params[layer & 1].knob;
+        float dc = EN_D0 * (1.f + (float)k[MFX_K_AGE] * (1.f / 127.f)), sw = EN_SWING * (float)k[MFX_K_DEPTH] * (1.f / 127.f);
+        float d = dc / (i == 3 ? 1.f + sw : 1.f - sw);
+        return (d > EN_DMAX ? EN_DMAX : d) * (1.f / EN_DMAX);
+    }
+    return -1.f;
+}
+
 void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
 {
     MfxState *s = &mfx_st[layer & 1];

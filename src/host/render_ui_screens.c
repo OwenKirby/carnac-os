@@ -67,6 +67,7 @@ static void fresh(void)
     ui_sm_attach_seq(&sm, synth_seq());
     ui_sm_attach_arp(&sm, synth_arp());
     ui_sm_attach_instrument(&sm, &instrument);
+    ui_sm_attach_mfx(&sm, mfx_params);
 }
 
 static void shot(const char *dir, const char *name)
@@ -364,6 +365,24 @@ int main(int argc, char **argv)
     engine_state[0].amp.drive = 0; engine_state[0].amp.delay_send = 0; engine_state[0].amp.reverb_send = 0;
     go(UIPAGE_HOME1);
     shot(dir, "home1_play");
+
+    /* MFX (2026-11-01): OFF, then STONE PHASER and ENSEMBLE with a chord held and the audio run, so the gusts stand
+     * where the effect is in its sweep */
+    fresh();
+    go(UIPAGE_MFX);
+    shot(dir, "mfx_off");
+    note(0, 48, 100); note(0, 55, 100); note(0, 63, 100);
+    mfx_params[0] = (MfxParams){MFX_STONE_PHASER, {64, 41, 100, 127}, 64};
+    run(44100u * 2u / 3u);
+    shot(dir, "mfx_phaser");
+    mfx_params[0] = (MfxParams){MFX_ENSEMBLE, {90, 74, 60, 80}, 110};
+    run(44100u / 2u);
+    shot(dir, "mfx_ensemble");
+    mfx_params[0] = (MfxParams){MFX_ENSEMBLE, {0, 74, 0, 64}, 0};
+    run(44100u / 3u);
+    shot(dir, "mfx_ensemble_mono_new");
+    mfx_params[0].type = MFX_OFF;
+    note(0, 48, 0); note(0, 55, 0); note(0, 63, 0);
 
     /* EFFECTS, GLOBAL */
     fresh();

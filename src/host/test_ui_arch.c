@@ -293,8 +293,33 @@ int main(void)
     CHECK(sm.page == UIPAGE_HOME1 && sm.s.active_synth_layer == 0, "SINGL on HOME2 -> HOME1 (%u)", sm.page);
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     ui_sm_enforce(&sm);
-    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_AMP, "GLO cycles AMP -> EFFECTS -> AMP (%u)", sm.page);
+    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_AMP, "GLO cycles AMP -> MFX -> EFFECTS -> AMP (%u)", sm.page);
+    /* MFX (2026-11-01): TYPE alone at OFF, no knobs; a new type starts at its defaults, shows its own row and knobs */
+    press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_MFX, "GLO -> MFX (%u)", sm.page);
+    {
+        UiKnobInfo info;
+        MfxParams *m = ui_sm_mfx(&sm, 0);
+        int tr = find_row("TYPE"), pr = find_row("L/R PHASE"), wr = find_row("WIDTH");
+        CHECK(tr >= 0 && pr >= 0 && wr >= 0 && m->type == MFX_OFF, "MFX rows (%d %d %d), OFF", tr, pr, wr);
+        CHECK(ui_sm_row_state(&sm, (uint8_t)pr) == UIROW_HIDDEN && ui_sm_row_state(&sm, (uint8_t)wr) == UIROW_HIDDEN,
+              "MFX OFF: no type row");
+        CHECK(ui_sm_knob(&sm, UIPAGE_MFX, 0, 0, &info) == 0 && info.kind == UIKNOB_NONE, "MFX OFF: no knobs");
+        sm.s.current_param_focus = (uint8_t)tr;
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 2);
+        CHECK(m->type == MFX_ENSEMBLE && m->knob[MFX_K_AGE] == 40u && m->knob[MFX_K_RATE] == 74u && m->lr == 100u,
+              "TYPE -> ENSEMBLE at its defaults (%u: %u %u, %u)", m->type, m->knob[0], m->knob[1], m->lr);
+        CHECK(ui_sm_row_state(&sm, (uint8_t)wr) == UIROW_ACTIVE && ui_sm_row_state(&sm, (uint8_t)pr) == UIROW_HIDDEN,
+              "ENSEMBLE: WIDTH, not L/R PHASE");
+        CHECK(ui_sm_knob(&sm, UIPAGE_MFX, 0, 2, &info) == &m->knob[MFX_K_SHIMMER] && info.label[0] == 'S',
+              "ENSEMBLE knob 3 is SHIMMER (%s)", info.label);
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
+        CHECK(m->type == MFX_STONE_PHASER && m->knob[MFX_K_DEPTH] == 127u &&
+              ui_sm_row_state(&sm, (uint8_t)pr) == UIROW_ACTIVE, "TYPE -> STONE PHASER: L/R PHASE, DEPTH 127");
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
+        CHECK(m->type == MFX_OFF, "TYPE -> OFF");
+    }
     /* DELAY HP and PING PONG share delay_pingpong (bits 1..7, bit 0): each row turns its own bits */
     press(BTN_GLO);
     CHECK(sm.page == UIPAGE_EFFECTS, "GLO -> EFFECTS (%u)", sm.page);

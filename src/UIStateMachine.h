@@ -13,6 +13,7 @@
 #include "PresetStructures.h"
 #include "dsp/maq_seq.h"
 #include "dsp/arp_seq.h"
+#include "dsp/mfx.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,7 +51,7 @@ enum {
     UIPAGE_ENV1, UIPAGE_ENV2, UIPAGE_ENV3,                        /* ENV */
     UIPAGE_LFO1, UIPAGE_LFO2, UIPAGE_LFO3,                        /* LFO */
     UIPAGE_MOD1, UIPAGE_MOD2, UIPAGE_MOD3,                        /* EDIT: NMODSLOT pages (4.5) */
-    UIPAGE_AMP, UIPAGE_EFFECTS,                                   /* GLO */
+    UIPAGE_AMP, UIPAGE_MFX, UIPAGE_EFFECTS,                       /* GLO (MFX 2026-11-01: the layer's modulation FX) */
     UIPAGE_HOME1, UIPAGE_HOME2, UIPAGE_HOME3,                     /* HOME: LAYER (5.3 View 1 / 2 by layer focus), ZONES
                                                                    * (View 3), */
     UIPAGE_PERF, UIPAGE_GLOBAL,                                   /* .. the performance browser (6.1), GLOBAL
@@ -169,6 +170,7 @@ typedef struct {
     uint16_t rowpop_ms;              /* .. time left, ui_sm_tick counts it down */
     uint16_t kb_ms;                  /* SAVE: the letter keyboard's time left (knobs 3 / 4 edit the name), ui_sm_tick */
     InstrumentSettings *inst;        /* GLOBAL's instrument settings (ui_sm_attach_instrument; NULL: a private copy) */
+    MfxParams *mfx;                  /* the layers' MFX, [NLAYER] (ui_sm_attach_mfx; NULL: a private copy) */
     uint8_t hold;                    /* the button held as a modifier, BTN_HOME / BTN_SAVE, for the hold strip (the
                                       * caller sets it UI_HOLD_MS after the press, ui_sm_set_hold); BTN_COUNT: none */
     uint8_t theme;                   /* GLOBAL > THEME, UITHEME_*: a setting of the instrument, not of a performance
@@ -276,6 +278,10 @@ uint8_t ui_sm_mod_route(const UIStateMachine *sm, uint8_t row);
 void ui_sm_set_hold(UIStateMachine *sm, uint8_t btn);
 /* the instrument settings GLOBAL's MASTER TUNE / VEL CURVE / CLOCK OUT rows and knobs edit (dsp/preset.c instrument) */
 void ui_sm_attach_instrument(UIStateMachine *sm, InstrumentSettings *inst);
+/* the layers' MFX settings the MFX page edits (dsp/mfx.c mfx_params, NLAYER of them) */
+void ui_sm_attach_mfx(UIStateMachine *sm, MfxParams *mfx);
+/* a layer's MFX settings (the attached ones, else the private pair) */
+MfxParams *ui_sm_mfx(const UIStateMachine *sm, uint8_t layer);
 void ui_sm_save_oct(UIStateMachine *sm, uint8_t up);
 /* what SAVE saves from this page: the save page's TARGET, else the kind the page loads (ui_sm_preset_target) */
 uint8_t ui_sm_save_kind(const UIStateMachine *sm);

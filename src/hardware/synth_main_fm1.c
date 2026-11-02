@@ -847,6 +847,7 @@ static void fm1_main(void)
     ui_sm_attach_arp(&sm, synth_arp());
     ui_sm_attach_store(&sm, syn_slot_query, 0);
     ui_sm_attach_instrument(&sm, &instrument);
+    ui_sm_attach_mfx(&sm, mfx_params);
     seq_palette_set(SQPAL_ORANGE);
     settings_load();                                /* the THEME of the last session */
     factory_install();                              /* the factory bank (slots 0..31), under whatever is saved */

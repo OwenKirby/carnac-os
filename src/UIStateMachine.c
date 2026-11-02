@@ -60,7 +60,8 @@ enum {                               /* how a row reads and writes its value */
 #define RF_BPM (1u << 6)
 #define RF_SLOT (1u << 7)
 
-enum { ST_NONE, ST_ENGINE, ST_PERF, ST_ARP, ST_LANE };          /* the data block a page's rows index */
+enum { ST_NONE, ST_ENGINE, ST_PERF, ST_ARP, ST_LANE, ST_MFX };  /* the data block a page's rows index (ST_MFX: the
+                                                                 * layer's MfxParams) */
 
 typedef struct {
     const char *label;
@@ -327,6 +328,16 @@ PS_STATIC_ASSERT(sizeof(EngineState) < 255u, "MOD_ROWS: via = 1 + an EngineState
 #undef MDEST
 #undef MCHAIN
 
+/* MFX (2026-11-01): the type, then its row (STONE PHASER's L/R PHASE, ENSEMBLE's WIDTH: one byte, shown by type) */
+static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE"};
+static const UiRow MFX_ROWS[] = {
+    {"TYPE", OFS(MfxParams, type), 0, MFX_OFFERED - 1, RK_BYTE, 0, MFX_TYPE_NAMES, A_ALL},
+    {"L/R PHASE", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+};
+#define MFX_ROW_PHASE (&MFX_ROWS[1])
+#define MFX_ROW_WIDTH (&MFX_ROWS[2])
+
 #define PERF(member) OFS(MasterPerformancePreset, member)
 #define ENGB(member) OFS(EngineState, member)
 static const UiRow EFFECTS_ROWS[] = {
@@ -447,6 +458,7 @@ static const UiPage UI_PAGES[] = {
     SYNTH(LFO3_ROWS, NROWS(LFO3_ROWS), lfo, 2, LfoParams),
     MODPAGE, MODPAGE, MODPAGE,
     SYNTH(AMP_ROWS, NROWS(AMP_ROWS), amp, 0, AmpParams),
+    {MFX_ROWS, NROWS(MFX_ROWS), ST_MFX, 0, UICTX_SYNTH},
     {EFFECTS_ROWS, NROWS(EFFECTS_ROWS), ST_PERF, 0, UICTX_SYNTH},
     {HOME1_ROWS, NROWS(HOME1_ROWS), ST_PERF, 0, UICTX_SYNTH},
     {HOME2_ROWS, NROWS(HOME2_ROWS), ST_PERF, 0, UICTX_SYNTH},
@@ -465,7 +477,8 @@ static const uint8_t SECTION_FIRST[BTN_COUNT] = {
     UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ
 };
 static const uint8_t SECTION_COUNT[BTN_COUNT] = {
-    4, 3, 3, 3, NMODSLOT, 2, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* HOME: LAYER, ZONES, the browser, GLOBAL */
+    4, 3, 3, 3, NMODSLOT, 3, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* GLO: AMP, MFX, FX. HOME: LAYER, ZONES, the browser,
+                                                                 * GLOBAL */
 };
 
 /* -------------------------------------------------------- knob table --- */
@@ -560,6 +573,14 @@ static const UiKnob AMP_KNOBS[4] = {
     UIK("DRIVE", OFS(AmpParams, drive), UIKNOB_RAW), UIK("AMP MOD", OFS(AmpParams, amp_mod_depth), UIKNOB_RAW),
     UIK("DELAY SEND", OFS(AmpParams, delay_send), UIKNOB_RAW), UIK("REVERB SEND", OFS(AmpParams, reverb_send), UIKNOB_RAW),
 };
+/* MFX by type: each the unit's own controls (dsp/mfx.h), the same places where they share one (RATE, DEPTH) */
+#define KMFX(i, label) UIK(label, (uint8_t)(OFS(MfxParams, knob) + (i)), UIKNOB_RAW)
+static const UiKnob MFX_KNOBS[MFX_OFFERED][4] = {
+    {KNONE, KNONE, KNONE, KNONE},
+    {KMFX(MFX_K_MANUAL, "MANUAL"), KMFX(MFX_K_RATE, "RATE"), KMFX(MFX_K_FEEDBACK, "FEEDBACK"), KMFX(MFX_K_DEPTH, "DEPTH")},
+    {KMFX(MFX_K_AGE, "AGE"), KMFX(MFX_K_RATE, "RATE"), KMFX(MFX_K_SHIMMER, "SHIMMER"), KMFX(MFX_K_DEPTH, "DEPTH")},
+};
+#undef KMFX
 static const UiKnob EFFECTS_KNOBS[4] = {
     UIK("DELAY TIME", PERF(delay_time), UIKNOB_RAW), UIK("DELAY FDBK", PERF(delay_feedback), UIKNOB_RAW),
     UIK("REVERB TIME", PERF(reverb_decay), UIKNOB_RAW), UIK("REVERB DAMP", PERF(reverb_damp), UIKNOB_RAW),
@@ -611,6 +632,15 @@ static InstrumentSettings *ui_inst(const UIStateMachine *sm)
 }
 
 void ui_sm_attach_instrument(UIStateMachine *sm, InstrumentSettings *inst) { sm->inst = inst; }
+
+/* the layers' MFX settings: the attached ones, else a private pair (OFF) */
+MfxParams *ui_sm_mfx(const UIStateMachine *sm, uint8_t layer)
+{
+    static MfxParams own[NLAYER];
+    return (sm->mfx != 0 ? sm->mfx : own) + (layer < NLAYER ? layer : 0u);
+}
+
+void ui_sm_attach_mfx(UIStateMachine *sm, MfxParams *mfx) { sm->mfx = mfx; }
 
 /* an out-of-range mode (a corrupt flash read) is treated as the most restrictive one */
 static uint8_t perf_mode(const UIStateMachine *sm)
@@ -692,6 +722,7 @@ static uint8_t *page_block_for(const UIStateMachine *sm, const UiPage *pg, uint8
     case ST_PERF: return (uint8_t *)sm->perf + pg->base;
     case ST_ARP: return (uint8_t *)sm->arp;
     case ST_LANE: return (uint8_t *)cur_lane(sm);
+    case ST_MFX: return (uint8_t *)ui_sm_mfx(sm, layer) + pg->base;
     default: return 0;
     }
 }
@@ -816,8 +847,29 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     }
 }
 
+/* MFX: a new TYPE starts at that unit's own settings (its knobs and row share bytes with the other types') */
+static void mfx_type_set(MfxParams *m, uint8_t t)
+{
+    static const uint8_t DEF[MFX_OFFERED][5] = {
+        {0, 0, 0, 0, 0},
+        {64, 41, 64, 127, 0},        /* STONE PHASER: the full sweep at 0.5 Hz, some FEEDBACK, the sides together */
+        {40, 74, 45, 64, 100},       /* ENSEMBLE: a little aged, the unit's 0.78 Hz, some shimmer, wide */
+    };
+    uint8_t i;
+    if (t == m->type || t >= MFX_OFFERED)
+        return;
+    for (i = 0u; i < 4u; i++)
+        m->knob[i] = DEF[t][i];
+    m->lr = DEF[t][4];
+    m->type = t;
+}
+
 static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
 {
+    if (r == &MFX_ROWS[0]) {
+        mfx_type_set(ui_sm_mfx(sm, sm->s.active_synth_layer), v);
+        return;
+    }
     switch (r->kind) {
     case RK_PERF_SLOT: sm->perf_slot = v; break;
     case RK_SAVE_ACTION: sm->save_action = v; break;
@@ -903,8 +955,13 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
     flags = r->flags;
     /* SINGL_SYNTH: every Layer 2 parameter, and a sound design page pointed at layer 2, is un-highlightable */
     if (mode == PERF_SINGL_SYNTH &&
-        ((flags & RF_LAYER2) != 0u || (pg->store == ST_ENGINE && sm->s.active_synth_layer != 0u)))
+        ((flags & RF_LAYER2) != 0u || ((pg->store == ST_ENGINE || pg->store == ST_MFX) && sm->s.active_synth_layer != 0u)))
         return UIROW_GREYED;
+    if (r == MFX_ROW_PHASE || r == MFX_ROW_WIDTH) {  /* MFX: the type's own row, none at OFF */
+        uint8_t t = ui_sm_mfx(sm, sm->s.active_synth_layer)->type;
+        if (t != (r == MFX_ROW_PHASE ? MFX_STONE_PHASER : MFX_ENSEMBLE))
+            return UIROW_HIDDEN;
+    }
     if ((flags & RF_UNISON) != 0u && layer_vmode(sm, row_layer(r)) != VMODE_UNISON_STACK)
         return UIROW_GREYED;
     if (r->kind == RK_VOICES || r->kind == RK_CHAIN)
@@ -2331,6 +2388,11 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
         case UIPAGE_LFO1: case UIPAGE_LFO2: case UIPAGE_LFO3: k = &LFO_KNOBS[knob]; break;
         case UIPAGE_MOD1: case UIPAGE_MOD2: case UIPAGE_MOD3: k = &MOD_KNOBS[knob]; break;
         case UIPAGE_AMP: k = &AMP_KNOBS[knob]; break;
+        case UIPAGE_MFX: {
+            uint8_t t = ui_sm_mfx(sm, layer)->type;
+            k = &MFX_KNOBS[t < MFX_OFFERED ? t : MFX_OFF][knob];
+            break;
+        }
         case UIPAGE_EFFECTS: k = &EFFECTS_KNOBS[knob]; break;
         case UIPAGE_HOME1: case UIPAGE_HOME2: k = &HOME_KNOBS[knob]; break;
         case UIPAGE_HOME3: k = &ZONES_KNOBS[knob]; break;

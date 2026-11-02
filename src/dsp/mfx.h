@@ -28,7 +28,8 @@
  * 560p, its parts drifted), RATE (the CHORUS FREQ oscillator), SHIMMER (the TREMOLO FREQ oscillator's share of the
  * control: 0 the slow sweep alone, 127 the fast flutter as strong as it), DEPTH (how far the control swings the
  * clocks). Row: WIDTH (0 the unit's mono sum; 127 the first line left, the second centre, the third right). */
-enum { MFX_OFF, MFX_STONE_PHASER, MFX_BULLROARER, MFX_ENSEMBLE, MFX_COUNT };
+enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_BULLROARER, MFX_COUNT };
+#define MFX_OFFERED (MFX_ENSEMBLE + 1)   /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
 enum { MFX_K_MANUAL, MFX_K_RATE, MFX_K_FEEDBACK, MFX_K_DEPTH };    /* STONE PHASER's knobs */
 enum { MFX_K_WHIRL, MFX_K_REACH, MFX_K_TWIST, MFX_K_DUST };         /* BULLROARER's */
 enum { MFX_K_AGE = 0, MFX_K_SHIMMER = 2 };                          /* ENSEMBLE's (RATE, DEPTH as above) */
@@ -45,6 +46,11 @@ extern MfxParams mfx_params[2];
 
 /* clears every layer's effect state (synth_init) */
 void mfx_init(void);
+
+/* the MFX page's peek at the effect as it moves (read by the UI, written by the audio): STONE PHASER's sweep on side i
+ * (0, 1), ENSEMBLE's line i delay (0..2) as a share of the brigade's reach, and (3, 4) the shortest and longest its
+ * lines swing to at these settings; 0..1, or -1 when there is none */
+float mfx_peek(int layer, int i);
 
 /* the layer's MFX over n frames of its dry sum, in place (Q15 units, the bus's floats); nothing at OFF */
 void mfx_layer_block(int layer, float *l, float *r, uint32_t n);
