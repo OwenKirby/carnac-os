@@ -18,6 +18,7 @@
 #include "dsp/pcm_osc.h"
 #include "UIStateMachine.h"
 #include "dsp/wavetables.h"
+#include "dsp/mfx.h"
 #include "hardware/mem_section.h"
 
 /* PT_WT_RAM (2026-10-15): the banks the scenarios play (OSC1: bank 0, the default; OSC2 of the heavy patches: bank 3)
@@ -70,6 +71,8 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
                                       * at every note). gen_pcm_waves.py's wave order: WOOD CHIMES 0, CHOIR 4 */
 #define F_DRIVE 1024u                /* AMP DRIVE 80 through the model in bits 11..13 (F_DRV) */
 #define F_DRV(m) (F_DRIVE | (uint16_t)((m) << 11))
+#define F_MFX 0x4000u                /* STONE PHASER on layer 1 (RATE 0.5 Hz, FEEDBACK 100, STEREO 64, AUTO) */
+#define F_MFX2 0x8000u               /* ... on both layers, DUAL (K_IDLE: nothing playing, the effect alone) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
 
@@ -188,6 +191,12 @@ static const PtScen SCEN[] = {
     {"DSPRD MULTI H PCM", K_HELD, VARCH_DUAL_SPREAD, FLT_MULTI, F_HEAVY | F_PCM, UIPAGE_HOME1},
     {"DSPRD SH2 CEL+PP", K_HELD, VARCH_DUAL_SPREAD, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
     {"SEQ+ARP DSPRD CEL", K_SEQ, VARCH_DUAL_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    /* MFX STONE PHASER (2026-11-01): its cost beside the same row without it, in one build (no layout noise) */
+    {"IDLE PHASER", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX, UIPAGE_HOME1},
+    {"IDLE PHASER x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2, UIPAGE_HOME1},
+    {"SPREAD PHASER", K_HELD, VARCH_SPREAD, FLT_MULTI, F_MFX, UIPAGE_HOME1},
+    {"SPREAD H CEL PHSR", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX, UIPAGE_HOME1},
+    {"SEQ+ARP HOME PHSR2", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_MFX2, UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -200,6 +209,7 @@ static struct {
     MasterPerformancePreset perf;
     SequencerLane lanes[SEQ_NLANE];
     ArpState arp;
+    MfxParams mfx[2];
 } pt;
 
 /* the audio side's tally (the ISR adds, pt_tick reads and clears under the lock) */
@@ -365,6 +375,14 @@ static void setup(const PtScen *s)
         engine_state[0].oscmix.atk_filter = 64;
         engine_state[1].oscmix.atk_filter = 64;
     }
+    mfx_params[0].type = mfx_params[1].type = MFX_OFF;
+    if (s->flags & (F_MFX | F_MFX2)) {
+        mfx_params[0] = (MfxParams){MFX_STONE_PHASER, {64, 41, 100, 127}, 64};
+        if (s->flags & F_MFX2) {
+            mfx_params[1] = mfx_params[0];
+            perf_state.perf_mode = PERF_DUAL_SYNTH;
+        }
+    }
     if (s->flags & F_FX_ANY) {
         perf_state.reverb_type = (s->flags & F_FX_CEL) ? REVTYPE_CELESTIAL : (s->flags & F_FX_TUM) ? REVTYPE_TUMULUS
                                  : (s->flags & F_FX_SPR) ? REVTYPE_SPRING : REVTYPE_MOD;
@@ -399,6 +417,8 @@ static void restore(void)
     for (l = 0; l < SEQ_NLANE; l++)
         seq_lanes[l] = pt.lanes[l];
     arp_state = pt.arp;
+    mfx_params[0] = pt.mfx[0];
+    mfx_params[1] = pt.mfx[1];
     synth_restart();
     wt_to_flash();
     ld.over = 0;
@@ -419,6 +439,8 @@ void pt_start(uint32_t now_ms, uint8_t mode)
     for (l = 0; l < SEQ_NLANE; l++)
         pt.lanes[l] = seq_lanes[l];
     pt.arp = arp_state;
+    pt.mfx[0] = mfx_params[0];
+    pt.mfx[1] = mfx_params[1];
     for (l = 0; l < NSCEN; l++)
         pt.res[l] = (PtResult){0};
     pt.scen = 0;

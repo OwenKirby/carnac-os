@@ -64,13 +64,18 @@ void synth_voice_begin_tick(uint32_t frame);
  * for the next 2^SYNTH_CTRL_SHIFT samples. A choked voice (voice->choke) fades out over its next ticks. */
 void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in);
 
-/* The mix bus a voice renders into: one frame is MIX_N floats in Q15 units (32768 = full scale), the dry left and
- * right and the two effect sends, the voice's layer routing weight and the mix gain already applied. */
-enum { MIX_L, MIX_R, MIX_DELAY, MIX_REVERB, MIX_N };
+/* The mix bus a voice renders into: one frame is MIX_N floats in Q15 units (32768 = full scale), each layer's dry
+ * left and right (2026-11-01: per layer, so the layer's MFX runs on its own sum and the delay and reverb sends are
+ * taken after it, in synth_runtime.c; they were per voice before), the voice's layer routing weight and the mix gain
+ * already applied. A voice writes its own layer's pair, from MIX_LAYER(layer); a path's gains are MIX_L, MIX_R. */
+enum { MIX_L, MIX_R };
+#define MIX_LAYER(layer) (2 * (layer))
+#define MIX_N 4
 
 /* Per-voice mix gain (32768 = unity): 1.5. A single bright voice at full velocity peaks near -5 dBFS; a dense chord
  * goes over and the master limiter (synth_runtime.c) takes it back to its ceiling. The effect sends are taken before
- * this gain, so at a send of 127 the wet path runs about 3.5 dB under the dry voice. */
+ * this gain (synth_runtime.c divides it out of the layer's sum), so at a send of 127 the wet path runs about 3.5 dB
+ * under the dry voice. */
 #define MIX_HEADROOM_Q15 49152
 
 /* Renders one voice for n samples (at most SYNTH_CTRL_PERIOD, all inside one control tick) from its last control

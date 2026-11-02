@@ -1853,15 +1853,29 @@ static void ui_seq_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8
         ui_led_put(lv, wk[pos], LV_LIT);
 }
 
-/* ARP (8.1): the step keys, the function keys among them, and the chord key of the transposition */
+/* ARP (8.1): the notes sounding (dim, folded into the chord zone's first octave), the step keys, the function keys
+ * among them, and the chord key of the transposition (2026-10-30). A step key held: the zone shows that step's chord
+ * instead, lit, as the chord keys it was captured from (a rest or TIE: dark) */
 static void ui_arp_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8_t *lv)
 {
-    uint8_t wk[CARP_STEP_KEYS], i, f, pos = CARP_POS_NONE, len = sm->arp->sequence_length;
+    uint8_t wk[CARP_STEP_KEYS], ch[ARP_CHORD_NOTES], i, f, n, pos = CARP_POS_NONE, len = sm->arp->sequence_length;
     int8_t t;
-    if (sm->carp != 0 && arp_playing(sm)) {
+    if (sm->carp != 0 && arp_playing(sm))
         pos = carp_pos(sm->carp);
+    if (sm->arp_held != 0u) {
+        for (i = 0u; !((sm->arp_held >> i) & 1u); i++) {}   /* the lowest step held */
+        n = sm->arp->steps[i].chord_root;
+        if (ARP_ROOT_IS_CHORD(n))
+            for (f = carp_chord_notes(sm->arp->current_genre_bank, n, ch); f-- > 0u; )
+                ui_led_put(lv, (uint8_t)((ch[f] + 12u - lowest_note % 12u) % 12u), LV_LIT);
+    } else if (sm->carp != 0) {
+        for (i = 0u; i < 2u * ARP_CHORD_NOTES; i++) {   /* the pattern's notes (a held key's live arp too), a chord key's block */
+            n = i < ARP_CHORD_NOTES ? sm->carp->on[i] : sm->carp->aud_on[i - ARP_CHORD_NOTES];
+            if (n <= VAL_MAX)
+                ui_led_put(lv, (uint8_t)((n + 12u - lowest_note % 12u) % 12u), LV_DIM);
+        }
         t = carp_transpose(sm->carp);
-        if (t >= 0 && t < (int8_t)CARP_ZONE_KEYS)
+        if (arp_playing(sm) && t >= 0 && t < (int8_t)CARP_ZONE_KEYS)
             ui_led_put(lv, (uint8_t)t, LV_MID);         /* the chord key the pattern is transposed to */
     }
     ui_led_whites(lowest_note, CARP_ZONE_KEYS, CARP_STEP_KEYS, wk);

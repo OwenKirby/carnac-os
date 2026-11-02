@@ -378,6 +378,9 @@ int main(int argc, char **argv)
     go(UIPAGE_GLOBAL);
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 7);
     shot(dir, "global");
+    go(UIPAGE_GLOBAL);                            /* TUNING EQUAL: ROOT hidden, BEND RANGE right under it (2026-10-30) */
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, 3);
+    shot(dir, "global_tuning");
 
     /* SAVE: the preset links, the name and the keyboard, the dialogs */
     fresh();

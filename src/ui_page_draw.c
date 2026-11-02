@@ -86,6 +86,7 @@
 #define PU_MENU_Y 81
 #define PU_ROW_H 20                  /* a row of runes at 2x (18 px) */
 #define PU_MENU_ROWS 4u
+#define PU_MENU_MAX 64u                 /* rows a menu page may have (MOD's, the longest, ~30) */
 #define PU_MENU_H 80
 #define PU_VIZ_Y 163
 #define PU_VIZ_H 72
@@ -606,9 +607,25 @@ static uint32_t pu_knob_sig(UIStateMachine *sm, uint8_t page, uint8_t k, uint32_
 }
 
 /* -------------------------------------------------------------- menu --- */
+/* the page's rows that are drawn (UIROW_HIDDEN ones take no line, 2026-10-30: GLOBAL ROOT left a gap); pu_top counts
+ * these. *fi: the cursor's place among them (UI_FOCUS_NONE: not on one) */
+static uint8_t pu_menu_vis(const UIStateMachine *sm, uint8_t *vis, uint8_t *fi)
+{
+    uint8_t n = ui_sm_row_count(sm), nv = 0, r;
+    *fi = UI_FOCUS_NONE;
+    for (r = 0; r < n && nv < PU_MENU_MAX; r++) {
+        if (ui_sm_row_state(sm, r) == UIROW_HIDDEN)
+            continue;
+        if (r == sm->s.current_param_focus)
+            *fi = nv;
+        vis[nv++] = r;
+    }
+    return nv;
+}
+
 static void pu_menu_scroll(const UIStateMachine *sm)
 {
-    uint8_t n = ui_sm_row_count(sm), f = sm->s.current_param_focus;
+    uint8_t vis[PU_MENU_MAX], f, n = pu_menu_vis(sm, vis, &f);
     if (n <= PU_MENU_ROWS) {
         pu_top = 0;
         return;
@@ -636,7 +653,7 @@ static void pu_draw_save_menu(const UIStateMachine *sm);
 static void pu_draw_menu(const UIStateMachine *sm)
 {
     char b[8];
-    uint8_t n = ui_sm_row_count(sm), i, r, st, cur;
+    uint8_t vis[PU_MENU_MAX], fi, n = pu_menu_vis(sm, vis, &fi), i, r, st, cur;
     int32_t y;
     uint16_t lc, vc;
     cv_begin(240, PU_MENU_H, SQC(BG));
@@ -649,10 +666,8 @@ static void pu_draw_menu(const UIStateMachine *sm)
         sq_text_in(0, 30 + CAP_IN(S, 13), 240, &AF_S, "ALL ON THE KNOBS", SQC(DIM), SQC(BG));
     }
     for (i = 0; i < PU_MENU_ROWS && pu_top + i < n; i++) {
-        r = (uint8_t)(pu_top + i);
+        r = vis[pu_top + i];
         st = ui_sm_row_state(sm, r);
-        if (st == UIROW_HIDDEN)
-            continue;
         y = (int32_t)i * PU_ROW_H;
         cur = (uint8_t)(r == sm->s.current_param_focus);
         lc = st == UIROW_GREYED ? SQC(DIM) : SQC(MID);
@@ -688,10 +703,10 @@ static const uint8_t *pu_clip_name(const UIStateMachine *sm)
 static uint32_t pu_menu_sig(const UIStateMachine *sm, uint32_t h)
 {
     char b[8];
-    uint8_t n = ui_sm_row_count(sm), i, r;
+    uint8_t vis[PU_MENU_MAX], fi, n = pu_menu_vis(sm, vis, &fi), i, r;
     h = sq_mix(h, (uint32_t)sm->page | (uint32_t)sm->s.current_param_focus << 8 | (uint32_t)pu_top << 16 | (uint32_t)n << 24);
     for (i = 0; i < PU_MENU_ROWS && pu_top + i < n; i++) {
-        r = (uint8_t)(pu_top + i);
+        r = vis[pu_top + i];
         h = sq_mix(h, ui_sm_row_state(sm, r));
         h = pu_mix_str(h, ui_sm_row_label(sm, r));
         h = pu_mix_str(h, pu_row_text(sm, r, b));

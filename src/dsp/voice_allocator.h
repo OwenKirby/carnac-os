@@ -73,11 +73,11 @@ typedef struct __attribute__((aligned(64))) {
     int32_t lfo_gain_q15[3];      // LFO1..3's depth for this voice (DEPTH MOD SRC / AMT), 32768 = unity, each tick
     /* The amp, in float (2026-10-15: the FM1's FPU beats its integer multiplies, synth_voice.c finish_mono). vol is the
      * amp level (envelope, amp mod, velocity, 0..1), ramped by vol_step each sample; vol_b is STACK's second amp (ENV2).
-     * mix_a / mix_b take a path's amped (and driven) sample straight into the mix bus, MIX_* order: everything that
-     * holds still over a tick folded into one gain each (pan law, headroom gain, the layer's routing weight, the mix
-     * gain, the FX sends). Path B is STACK's B / BINAURAL's right ear. */
+     * mix_a / mix_b take a path's amped (and driven) sample straight into its layer's left and right on the mix bus
+     * (MIX_L, MIX_R): everything that holds still over a tick folded into one gain each (pan law, headroom gain, the
+     * layer's routing weight, the mix gain). Path B is STACK's B / BINAURAL's right ear. */
     float vol, vol_step, vol_b, vol_b_step;
-    float mix_a[4], mix_b[4];
+    float mix_a[2], mix_b[2];
     uint8_t noise_at;             // the block's first frame in the render pass: where it reads the shared noise
     /* STRIKE's attack (dsp/attacks.h): restarted by each new note (synth_runtime.c voice_play), played once at atk_step
      * (Q16 bytes of the sound per sample, set each tick from OSC1's pitch), mixed after the amp envelope at atk_vol

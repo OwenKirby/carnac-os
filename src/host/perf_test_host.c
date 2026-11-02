@@ -145,7 +145,10 @@ int main(int argc, char **argv)
                r->avg_pm * ns100 / 1000.0, r->voices, r->over ? "CUT " : "",
                !r->over && r->avg_pm <= 700 && r->peak_pm < 900 && !r->late ? "pass" : "FAIL");
         if (guard && !r->over) { printf("  ^ not cut by the guard\n"); fails++; }
-        if (!guard && i > 0 && !r->voices) { printf("  ^ no voice sounded\n"); fails++; }
+        if (!guard && strncmp(pt_name(i), "IDLE", 4) != 0 && !r->voices) {   /* (IDLE rows: none, by design) */
+            printf("  ^ no voice sounded\n");
+            fails++;
+        }
     }
     printf("\n");
 #if defined(SYNTH_PROF)

@@ -496,14 +496,11 @@ static int scan_morph_q12(const SourceCtx *c, const OscParams *o, int oi, int of
     return scan_q8_to_morph_q12(clampi(scan_q8, 0, 127 << 8));
 }
 
-/* One path's mix-bus gains (MIX_* order) from its Q15 left and right gains: the dry pair times `dry`, the sends from
- * the pair's mono sum (to_delay, to_reverb carry the 1/2 and the routing weight). */
-static void mix_gains(float *g, int32_t l_q15, int32_t r_q15, float dry, float to_delay, float to_reverb) {
-    float l = (float)l_q15, r = (float)r_q15;
-    g[MIX_L] = l * dry;
-    g[MIX_R] = r * dry;
-    g[MIX_DELAY] = (l + r) * to_delay;
-    g[MIX_REVERB] = (l + r) * to_reverb;
+/* One path's mix-bus gains (MIX_L, MIX_R) from its Q15 left and right gains: the pair times `dry`. The FX sends are
+ * taken from the layer's sum (synth_runtime.c, after the layer's MFX). */
+static void mix_gains(float *g, int32_t l_q15, int32_t r_q15, float dry) {
+    g[MIX_L] = (float)l_q15 * dry;
+    g[MIX_R] = (float)r_q15 * dry;
 }
 
 void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
@@ -750,12 +747,10 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         amp_drive_prepare(&voice->drv, a->drive, a->drive_model);
     }
     int pan = clampi(in->pan + (int)((resolve_source(&c, a->pan_mod_src, 0) * a->pan_mod_depth) >> 15), 0, 127);
-    /* 7. AMP sends: the layer's output as mono into the shared delay and reverb (the sends are the knob values), and
-     * the layer's routing weight on everything; the dry side gets the mix gain as well. */
+    /* 7. AMP: the layer's routing weight and the mix gain (the delay and reverb sends: synth_runtime.c, from the
+     * layer's sum) */
     float route = (float)voice->route_q15 * q15_inv;
     float dry = route * ((float)MIX_HEADROOM_Q15 * q15_inv) * q15_inv;
-    float to_delay = route * (float)((int32_t)a->delay_send * 258) * (0.5f * q15_inv * q15_inv);   /* 0.5: the mono */
-    float to_reverb = route * (float)((int32_t)a->reverb_send * 258) * (0.5f * q15_inv * q15_inv);
     if (arch == VARCH_STACK) {
         /* FILTER MIXER: BLEND (knob 1 + its mod) weighs A against B; WIDTH pulls A left and B right of the pan */
         int32_t blend_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt)) >> 15;
@@ -764,21 +759,21 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         int32_t al, ar, bl, br;
         amp_pan_gains(&voice->master_amp, clampi(pan - half, 0, 127), &al, &ar);
         amp_pan_gains(&voice->master_amp, clampi(pan + (fm->stack_width - half), 0, 127), &bl, &br);
-        mix_gains(voice->mix_a, (al * gain_a) >> 15, (ar * gain_a) >> 15, dry, to_delay, to_reverb);
-        mix_gains(voice->mix_b, (bl * gain_b) >> 15, (br * gain_b) >> 15, dry, to_delay, to_reverb);
+        mix_gains(voice->mix_a, (al * gain_a) >> 15, (ar * gain_a) >> 15, dry);
+        mix_gains(voice->mix_b, (bl * gain_b) >> 15, (br * gain_b) >> 15, dry);
     } else if (arch == VARCH_BINAURAL) {
         /* WIDTH: 127 keeps each ear on its own side, 0 sums them; the pan then balances the pair */
         int32_t pl, pr, w = (int32_t)fm->bin_width * 258;
         amp_pan_gains(&voice->master_amp, pan, &pl, &pr);
         mix_gains(voice->mix_a, (pl * ((32768 + w) >> 1)) >> 15, (pr * ((32768 - w) >> 1)) >> 15,   /* left ear */
-                  dry, to_delay, to_reverb);
+                  dry);
         mix_gains(voice->mix_b, (pl * ((32768 - w) >> 1)) >> 15, (pr * ((32768 + w) >> 1)) >> 15,   /* right ear */
-                  dry, to_delay, to_reverb);
+                  dry);
     } else {
         int32_t pl, pr;
         amp_pan_gains(&voice->master_amp, pan, &pl, &pr);
-        mix_gains(voice->mix_a, pl, pr, dry, to_delay, to_reverb);
-        mix_gains(voice->mix_b, 0, 0, 0.f, 0.f, 0.f);              /* no path B (the AMP page's pan reads both) */
+        mix_gains(voice->mix_a, pl, pr, dry);
+        mix_gains(voice->mix_b, 0, 0, 0.f);              /* no path B (the AMP page's pan reads both) */
     }
     SPROF_LAP(SPROF_C_AMP);
     watch_slot(&c);
@@ -811,12 +806,11 @@ static float level_drive(SynthVoiceNode *voice, int path, float *y, int n, float
     return vol;
 }
 
-/* one path: amp level (ramped), drive, then into the mix: four multiply-adds by the tick's gains (pan, routing, mix
- * gain and sends folded together). SINGLE, DUAL OSC, SPREAD and DUAL FILTER end here. */
+/* one path: amp level (ramped), drive, then into its layer's pair on the mix: two multiply-adds by the tick's gains
+ * (pan, routing and mix gain folded together). SINGLE, DUAL OSC, SPREAD and DUAL FILTER end here. */
 static void finish_mono_block(SynthVoiceNode *voice, float *y, float *mix, int n) {
     float vol = voice->vol, step = voice->vol_step, end = 0.f;
-    const float g0 = voice->mix_a[MIX_L], g1 = voice->mix_a[MIX_R], g2 = voice->mix_a[MIX_DELAY],
-                g3 = voice->mix_a[MIX_REVERB];
+    const float g0 = voice->mix_a[MIX_L], g1 = voice->mix_a[MIX_R];
     if (voice->drive) {
         end = level_drive(voice, 0, y, n, vol, step);
         vol = 1.f;
@@ -827,8 +821,6 @@ static void finish_mono_block(SynthVoiceNode *voice, float *y, float *mix, int n
         vol += step;
         mix[MIX_L] += s * g0;
         mix[MIX_R] += s * g1;
-        mix[MIX_DELAY] += s * g2;
-        mix[MIX_REVERB] += s * g3;
     }
     voice->vol = voice->drive ? end : vol;
 }
@@ -859,8 +851,6 @@ static void finish_pair_block(SynthVoiceNode *voice, float *ya, float *yb, int o
         float a = ya[i] * va, b = yb[i] * vb;
         mix[MIX_L] += a * ga[MIX_L] + b * gb[MIX_L];
         mix[MIX_R] += a * ga[MIX_R] + b * gb[MIX_R];
-        mix[MIX_DELAY] += a * ga[MIX_DELAY] + b * gb[MIX_DELAY];
-        mix[MIX_REVERB] += a * ga[MIX_REVERB] + b * gb[MIX_REVERB];
     }
     voice->vol = drive ? end : vol;
     voice->vol_b = drive ? end_b : vol_b;
@@ -1002,8 +992,7 @@ static void finish_strike_block(SynthVoiceNode *voice, float *y, float *mix, int
     if (na > 0) {
         const uint8_t *p = voice->atk_p;
         float vol = voice->vol, vstep = voice->vol_step, av = voice->atk_vol, astep = voice->atk_vol_step, end = 0.f;
-        const float g0 = voice->mix_a[MIX_L], g1 = voice->mix_a[MIX_R], g2 = voice->mix_a[MIX_DELAY],
-                    g3 = voice->mix_a[MIX_REVERB];
+        const float g0 = voice->mix_a[MIX_L], g1 = voice->mix_a[MIX_R];
         if (voice->drive) {
             end = level_drive(voice, 0, y, na, vol, vstep);
             vol = 1.f;
@@ -1019,8 +1008,6 @@ static void finish_strike_block(SynthVoiceNode *voice, float *y, float *mix, int
             av += astep;
             mix[MIX_L] += s * g0;
             mix[MIX_R] += s * g1;
-            mix[MIX_DELAY] += s * g2;
-            mix[MIX_REVERB] += s * g3;
         }
         voice->vol = voice->drive ? end : vol;
         voice->atk_pos = pos;
@@ -1060,7 +1047,7 @@ static void render_strike_split(SynthVoiceNode *v, const int32_t *o, float *mix,
         v->atk_p = NULL;
     filter_core_render_block(&v->synth_filters.core[0], x, x, n);
     float vol = v->vol, vstep = v->vol_step, av = v->atk_vol, astep = v->atk_vol_step, vend = 0.f;
-    const float g0 = v->mix_a[MIX_L], g1 = v->mix_a[MIX_R], g2 = v->mix_a[MIX_DELAY], g3 = v->mix_a[MIX_REVERB];
+    const float g0 = v->mix_a[MIX_L], g1 = v->mix_a[MIX_R];
     if (v->drive) {
         vend = level_drive(v, 0, x, na, vol, vstep);
         vol = 1.f;
@@ -1073,8 +1060,6 @@ static void render_strike_split(SynthVoiceNode *v, const int32_t *o, float *mix,
         av += astep;
         mix[MIX_L] += s * g0;
         mix[MIX_R] += s * g1;
-        mix[MIX_DELAY] += s * g2;
-        mix[MIX_REVERB] += s * g3;
     }
     v->vol = v->drive ? vend : vol;
     v->atk_vol = av;
@@ -1131,6 +1116,7 @@ void voice_render_block(SynthVoiceNode *voice, float *mix, int n) {
         voice->sub_phase = ph >> (voice->osc1.center_step > voice->mix.sub_step * 3u ? 2 : 1);
         return;
     }
+    mix += MIX_LAYER(voice->layer < NLAYER ? voice->layer : 0);   /* its layer's pair */
     render_arch[voice->arch < VARCH_COUNT ? voice->arch : VARCH_SINGLE](voice, mix, n > (int)VB ? (int)VB : n);
 }
 

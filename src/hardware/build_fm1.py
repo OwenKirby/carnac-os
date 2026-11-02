@@ -31,13 +31,38 @@ DSP_SKIP = {"engine.c", "test_wavetables.c"}     # host-only, as in x0x_unity_ch
 UI_SRCS = ["src/UIStateMachine.c", "src/ui_seq_draw.c", "src/ui_arp_draw.c", "src/ui_page_draw.c"]
 
 
+USB_PRODUCT = "Carnac OS FM-1"   # the USB product string: Windows shows "Line (Carnac OS FM-1)" and the MIDI port by it
+                                  # (the tools find the port by "FM-1"; fm1_install.py by its handshake)
+
+
+def usb_c(b, gen):
+    """X0X's usb.c with the product string set to USB_PRODUCT (the update loader keeps its own); returns it"""
+    src = (b.FW / "src" / "usb.c").read_text()
+    subs = [('#include "../hal/fm1_usb.h"', f'#include "{(b.FW / "hal" / "fm1_usb.h").as_posix()}"'),
+            ("static const uint8_t STR2[] = {18, 3, 'X', 0, '0', 0, 'X', 0, ' ', 0, 'F', 0, 'M', 0, '-', 0, '1', 0};",
+             "static const uint8_t STR2[] = {%d, 3, %s};" % (2 + 2 * len(USB_PRODUCT),
+                                                            ", ".join(f"'{c}', 0" for c in USB_PRODUCT)))]
+    for old, new in subs:
+        if src.count(old) != 1:
+            raise SystemExit(f"build_fm1: X0X's usb.c changed, no '{old}'")
+        src = src.replace(old, new)
+    out = gen / "usb.c"
+    out.write_text(src)
+    return out
+
+
 def overlay(b, gen):
     """write the two unity files into X0X's build dir; returns them"""
     cut = []
+    usb = usb_c(b, gen)
     for ln in (b.FW / "src" / "x0x.c").read_text().splitlines(keepends=True):
         if ln.startswith('#include "app/slots.c"'):
             break
+        if ln.strip() == '#include "usb.c"':
+            ln = f'#include "{usb.as_posix()}"   /* Carnac\'s product string (build_fm1.py usb_c) */\n'
         cut.append(ln)
+    if not any(usb.as_posix() in ln for ln in cut):
+        raise SystemExit("build_fm1: x0x.c has no '#include \"usb.c\"' to swap")
     else:
         raise SystemExit("build_fm1: x0x.c has no '#include \"app/slots.c\"' to cut at")
     inc = lambda p: f'#include "{(REPO / p).as_posix()}"\n'

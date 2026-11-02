@@ -1,61 +1,61 @@
 arch 0 noise 0 slots 0  3316edb5
-arch 0 noise 0 slots 1  4449367b
-arch 0 noise 1 slots 0  52a60a66
-arch 0 noise 1 slots 1  e62af58b
-arch 0 noise 2 slots 0  28a99bce
-arch 0 noise 2 slots 1  b50bcda1
-arch 1 noise 0 slots 0  77dd7087
-arch 1 noise 0 slots 1  4ae4124d
+arch 0 noise 0 slots 1  eaa6ed2d
+arch 0 noise 1 slots 0  4568156d
+arch 0 noise 1 slots 1  2a7c139b
+arch 0 noise 2 slots 0  3acbecf8
+arch 0 noise 2 slots 1  7d870fb5
+arch 1 noise 0 slots 0  60fbb837
+arch 1 noise 0 slots 1  37faa1b5
 arch 1 noise 1 slots 0  c1e7f7fe
-arch 1 noise 1 slots 1  1fc420dc
-arch 1 noise 2 slots 0  f86a4f89
+arch 1 noise 1 slots 1  97a61a56
+arch 1 noise 2 slots 0  fef5be09
 arch 1 noise 2 slots 1  1146cac7
 arch 2 noise 0 slots 0  7cf777fa
-arch 2 noise 0 slots 1  7c2e0c31
+arch 2 noise 0 slots 1  fee3c05b
 arch 2 noise 1 slots 0  3f547739
-arch 2 noise 1 slots 1  139685c3
-arch 2 noise 2 slots 0  9e88ff1d
-arch 2 noise 2 slots 1  b0178da7
-arch 3 noise 0 slots 0  30059125
-arch 3 noise 0 slots 1  c790afad
+arch 2 noise 1 slots 1  bd41606b
+arch 2 noise 2 slots 0  d70eb9f3
+arch 2 noise 2 slots 1  617f0099
+arch 3 noise 0 slots 0  dc8ac9c7
+arch 3 noise 0 slots 1  20caf8e7
 arch 3 noise 1 slots 0  606ceb19
 arch 3 noise 1 slots 1  d390d274
-arch 3 noise 2 slots 0  61193dd0
-arch 3 noise 2 slots 1  c3054345
+arch 3 noise 2 slots 0  0d14954e
+arch 3 noise 2 slots 1  89cc3d25
 arch 4 noise 0 slots 0  8e360bc3
 arch 4 noise 0 slots 1  54f410fa
-arch 4 noise 1 slots 0  6be62867
-arch 4 noise 1 slots 1  4cd09486
-arch 4 noise 2 slots 0  8a44d696
-arch 4 noise 2 slots 1  69fd8117
+arch 4 noise 1 slots 0  d69d58ed
+arch 4 noise 1 slots 1  a7710ce4
+arch 4 noise 2 slots 0  13a18478
+arch 4 noise 2 slots 1  f6624c8f
 arch 5 noise 0 slots 0  c760ca7e
-arch 5 noise 0 slots 1  109b7b48
-arch 5 noise 1 slots 0  d80cdfe2
-arch 5 noise 1 slots 1  67650596
-arch 5 noise 2 slots 0  0e93e853
-arch 5 noise 2 slots 1  98f7eb0d
+arch 5 noise 0 slots 1  5ed067b0
+arch 5 noise 1 slots 0  910145a4
+arch 5 noise 1 slots 1  3061309c
+arch 5 noise 2 slots 0  d660f72f
+arch 5 noise 2 slots 1  f8f54f58
 arch 6 noise 0 slots 0  81fc95c9
-arch 6 noise 0 slots 1  2f37d517
-arch 6 noise 1 slots 0  d7c9f1d7
-arch 6 noise 1 slots 1  de9b85e5
-arch 6 noise 2 slots 0  7acfbdbd
-arch 6 noise 2 slots 1  531da320
+arch 6 noise 0 slots 1  9ea0f6e8
+arch 6 noise 1 slots 0  40bd3773
+arch 6 noise 1 slots 1  872ed635
+arch 6 noise 2 slots 0  87fdfee8
+arch 6 noise 2 slots 1  ccb3e826
 arch 7 noise 0 slots 0  202d7b82
-arch 7 noise 0 slots 1  f3ada49e
-arch 7 noise 1 slots 0  34f12c94
-arch 7 noise 1 slots 1  7cf4b41f
+arch 7 noise 0 slots 1  456244fe
+arch 7 noise 1 slots 0  79137aae
+arch 7 noise 1 slots 1  fad584c5
 arch 7 noise 2 slots 0  17e5a6af
-arch 7 noise 2 slots 1  83028b2c
-arch 8 noise 0 slots 0  a3173de8
-arch 8 noise 0 slots 1  e3657e47
+arch 7 noise 2 slots 1  bcb862f2
+arch 8 noise 0 slots 0  477abbec
+arch 8 noise 0 slots 1  bc6803f7
 arch 8 noise 1 slots 0  96f0813f
-arch 8 noise 1 slots 1  4eeef0fd
-arch 8 noise 2 slots 0  430186fc
-arch 8 noise 2 slots 1  0cf9f663
-dual layer  7a9b9304
-seq ext 0 block 32  1b91a144
-seq ext 0 block 7  8003a37b
-seq ext 0 block 128  9392aac5
-seq ext 1 block 32  f4f4461c
-seq ext 1 block 7  332fed04
-seq ext 1 block 128  a23ef7c9
+arch 8 noise 1 slots 1  e6498191
+arch 8 noise 2 slots 0  e9aa1242
+arch 8 noise 2 slots 1  8ba69fab
+dual layer  1dd733fa
+seq ext 0 block 32  a312e552
+seq ext 0 block 7  47c6d499
+seq ext 0 block 128  33d20ae9
+seq ext 1 block 32  63cbb0de
+seq ext 1 block 7  32212daa
+seq ext 1 block 128  830faad9

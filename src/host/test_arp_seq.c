@@ -270,10 +270,23 @@ int main(void)
         ui_sm_arp_key(&sm, 15, FM1_LOW + 15u, 0, 0);
         ui_sm_arp_key(&sm, 25, FM1_LOW + 25u, 1, 100);                  /* ACC held (accents step 2) */
         ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
-        CHECK(kl.lit == (1u << 16 | 1u << 15 | 1u << 25) && kl.dim == (FN & ~(1u << 15 | 1u << 25)) && kl.mid == 0,
-              "held step 2, LATCH on, ACC held: lit; step 7's TIE past SEQ LENGTH dark (%08x %08x)", (unsigned)kl.lit, (unsigned)kl.dim);
+        {   /* step 2's chord (C4's), lit in the chord zone, folded into its octave */
+            uint8_t ch[ARP_CHORD_NOTES], nc = carp_chord_notes(arp_state.current_genre_bank, 60, ch), c;
+            uint32_t zone = 0;
+            for (c = 0; c < nc; c++)
+                zone |= 1u << ((ch[c] + 12u - FM1_LOW % 12u) % 12u);
+            CHECK(nc != 0 && kl.lit == (zone | 1u << 16 | 1u << 15 | 1u << 25) && kl.dim == (FN & ~(1u << 15 | 1u << 25)) && kl.mid == 0,
+                  "held step 2, LATCH on, ACC held: lit, its chord lit in the zone; step 7's TIE past SEQ LENGTH dark (%08x %08x)",
+                  (unsigned)kl.lit, (unsigned)kl.dim);
+        }
         ui_sm_arp_key(&sm, 25, FM1_LOW + 25u, 0, 0);
+        ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);                  /* step 3 held too: the lowest held (2) still shown */
+        ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
+        CHECK((kl.lit & 0x1FFFu) != 0 && sm.arp_held == 0x06, "two steps held: the lowest one's chord shown");
         ui_sm_arp_key(&sm, 16, FM1_LOW + 16u, 0, 0);
+        ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
+        CHECK((kl.lit & 0x1FFFu) == 0 && (kl.dim & 0x1FFFu) == 0, "a rest step held: the chord zone dark (%08x)", (unsigned)kl.lit);
+        ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
         ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
         CHECK(kl.dim == ((FN & ~(1u << 15)) | 1u << 16) && kl.lit == 1u << 15, "released: step 2 (a chord) dim, LATCH still lit");
         ui_sm_arp_key(&sm, 15, FM1_LOW + 15u, 1, 100);                  /* LATCH off */
@@ -378,6 +391,15 @@ int main(void)
       CHECK(kl.mid == 1u << 2 && kl.lit == 1u << 14, "playing: the transposition's chord key mid, step 1's key lit (%08x %08x)",
             (unsigned)kl.mid, (unsigned)kl.lit); }
     run(200u);
+    { UiKeyLeds kl;                                   /* the notes sounding: dim, folded into the zone's first octave */
+      uint32_t want = 0;
+      for (i = 0; i < ARP_CHORD_NOTES; i++)
+          if (a.on[i] != CARP_NOTE_NONE)
+              want |= 1u << ((a.on[i] + 12u - FM1_LOW % 12u) % 12u);
+      ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
+      CHECK(want != 0 && (kl.dim & 0x1FFFu & ~(1u << 2)) == (want & ~(1u << 2)) && kl.mid == 1u << 2,
+            "playing: the notes sounding dim in the chord zone, the transposition still mid (%08x %08x)",
+            (unsigned)kl.dim, (unsigned)want); }
     k = -1;
     for (i = 0; i < la.n; i++)
         if ((la.ev[i].st & 0xF0u) == 0x90u && la.ev[i].frame >= QUARTER - 1u) { k = i; break; }

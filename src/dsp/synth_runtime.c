@@ -12,6 +12,7 @@
 #include "attacks.h"
 #include "amplifier.h"
 #include "fx.h"
+#include "mfx.h"
 #include "maq_seq.h"
 #include "arp_seq.h"
 #include "dsp_cold.h"
@@ -467,6 +468,7 @@ SYNTH_COLD void synth_restart(void)
     voice_allocator_init();
     noise_shared_init();
     fx_init();
+    mfx_init();
     for (unsigned l = 0; l < NLAYER; l++) {
         global_lfo1_state[l].phase_accumulator = 0;
         global_lfo1_state[l].envelope_amp_q15 = 32767;
@@ -665,6 +667,7 @@ static void core1_job(uint32_t arg)
 /* the effects' buffers for one pass, and core 1's job on them: the reverb's back (fx_reverb_back: the tank) */
 static int32_t fx_dly[RENDER_PASS_FRAMES], fx_dly_l[RENDER_PASS_FRAMES], fx_dly_r[RENDER_PASS_FRAMES];
 static int32_t fx_rev_in[RENDER_PASS_FRAMES];
+static float layer_l[NLAYER][RENDER_PASS_FRAMES], layer_r[NLAYER][RENDER_PASS_FRAMES];   /* each layer's dry sum */
 static int32_t fx_rev_l[RENDER_PASS_FRAMES] __attribute__((aligned(64)));   /* core 1 writes these two (fx.c FX_LINE) */
 static int32_t fx_rev_r[RENDER_PASS_FRAMES] __attribute__((aligned(64)));
 PS_STATIC_ASSERT(sizeof fx_rev_l % 64u == 0u, "core 1's output buffers end on a cache line");
@@ -774,12 +777,27 @@ static void render_pass(int32_t *out, uint32_t frames)
     sample_clock = pass_base + frames;
     SPROF_START();
 
-    /* the shared effects (delay and reverb, in parallel) over the pass: the reverb's back on core 1 while core 0 runs
-     * the delay and the reverb's front (their states are separate: the same sums on one core), then their wet sum */
+    /* each layer's dry sum over the pass (the two sets, in this order), then the shared effects' sends from those
+     * sums: the layer's AMP DELAY / REVERB SEND (2026-11-01: per voice before; the same sum, the mix gain divided back
+     * out). The layer's MFX goes between the two. */
     for (uint32_t frame = 0; frame < frames; ++frame) {
-        const float *m0 = mix_bus[0].mix[frame], *m1 = mix_bus[1].mix[frame];   /* the two sets, in this order */
-        fx_dly[frame] = mix_q15(m0[MIX_DELAY] + m1[MIX_DELAY]);         /* unclipped: each effect limits its send */
-        fx_rev_in[frame] = mix_q15(m0[MIX_REVERB] + m1[MIX_REVERB]);
+        const float *m0 = mix_bus[0].mix[frame], *m1 = mix_bus[1].mix[frame];
+        for (int l = 0; l < NLAYER; l++) {
+            layer_l[l][frame] = m0[MIX_LAYER(l) + MIX_L] + m1[MIX_LAYER(l) + MIX_L];
+            layer_r[l][frame] = m0[MIX_LAYER(l) + MIX_R] + m1[MIX_LAYER(l) + MIX_R];
+        }
+    }
+    for (int l = 0; l < (perf_state.perf_mode == PERF_SINGL_SYNTH ? 1 : NLAYER); l++)   /* each layer's MFX, on its */
+        mfx_layer_block(l, layer_l[l], layer_r[l], frames);                           /* own sum (nothing at OFF) */
+    float to_dly[NLAYER], to_rev[NLAYER];          /* knob 0..127 -> 0..~1, the old per-voice 258 / 32768, mono 1/2 */
+    for (int l = 0; l < NLAYER; l++) {
+        to_dly[l] = (float)((int32_t)engine_state[l].amp.delay_send * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
+        to_rev[l] = (float)((int32_t)engine_state[l].amp.reverb_send * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
+    }
+    for (uint32_t frame = 0; frame < frames; ++frame) {
+        float m1 = layer_l[0][frame] + layer_r[0][frame], m2 = layer_l[1][frame] + layer_r[1][frame];
+        fx_dly[frame] = mix_q15(m1 * to_dly[0] + m2 * to_dly[1]);   /* unclipped: each effect limits its send */
+        fx_rev_in[frame] = mix_q15(m1 * to_rev[0] + m2 * to_rev[1]);
         if (lvl_on && (fx_rev_in[frame] < 0 ? -fx_rev_in[frame] : fx_rev_in[frame]) > lvl_peak[3])
             lvl_peak[3] = fx_rev_in[frame] < 0 ? -fx_rev_in[frame] : fx_rev_in[frame];
     }
@@ -797,8 +815,7 @@ static void render_pass(int32_t *out, uint32_t frames)
     }
     fx_mix_block(fx_dly_l, fx_dly_r, fx_rev_l, fx_rev_r, frames);
     for (uint32_t frame = 0; frame < frames; ++frame) {
-        const float *m0 = mix_bus[0].mix[frame], *m1 = mix_bus[1].mix[frame];
-        int64_t left = mix_q15(m0[MIX_L] + m1[MIX_L]), right = mix_q15(m0[MIX_R] + m1[MIX_R]);
+        int64_t left = mix_q15(layer_l[0][frame] + layer_l[1][frame]), right = mix_q15(layer_r[0][frame] + layer_r[1][frame]);
         if (lvl_on && (left < 0 ? -left : left) > lvl_peak[2]) lvl_peak[2] = (int32_t)(left < 0 ? -left : left);
         left += fx_rev_l[frame];                  /* the wet sum, each side its own */
         right += fx_rev_r[frame];
