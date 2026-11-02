@@ -61,10 +61,10 @@ def overlay(b, gen):
         if ln.strip() == '#include "usb.c"':
             ln = f'#include "{usb.as_posix()}"   /* Carnac\'s product string (build_fm1.py usb_c) */\n'
         cut.append(ln)
-    if not any(usb.as_posix() in ln for ln in cut):
-        raise SystemExit("build_fm1: x0x.c has no '#include \"usb.c\"' to swap")
     else:
         raise SystemExit("build_fm1: x0x.c has no '#include \"app/slots.c\"' to cut at")
+    if not any(usb.as_posix() in ln for ln in cut):
+        raise SystemExit("build_fm1: x0x.c has no '#include \"usb.c\"' to swap")
     inc = lambda p: f'#include "{(REPO / p).as_posix()}"\n'
     main = gen / "synth_fm1.c"
     main.write_text("".join(cut) + "/* ---- synth (X0X app cut; build_fm1.py) ---- */\n" +
