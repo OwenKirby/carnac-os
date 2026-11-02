@@ -69,7 +69,11 @@ typedef struct {
     /* ENSEMBLE (its chorus oscillator's phase is lfo) */
     float en_fast;                           /* the tremolo oscillator's phase */
     float en_d[3];                           /* each line's delay at the last control step, samples */
-    float en_s1[2], en_s2[2], en_p[2];       /* each side's output filters: the 2-pole's states, the 1-pole's */
+    float en_s1[2], en_s2[2];                /* each side's output filter (the 2-pole's states) */
+    float hr_prev[2];                        /* each side's last half-rate wet sample (the interpolation) */
+    /* CHORUS (its LFO's phase is lfo) */
+    float ch_d[2];                           /* each side's delay at the last control step, half-rate samples */
+    float ch_s[2][4];                        /* each side's anti-alias and reconstruction filters' states */
     /* ENS+PHASER's phaser (the ensemble's state above) */
     float ss_z[2][5];                        /* each side's chain: its input, each stage's output, the sample before */
     float ss_ctl, ss_lfo;                    /* the OTAs' control current (0..1, glided), the LFO's phase */
@@ -286,8 +290,8 @@ static void bullroarer(MfxState *s, const float *k, float lr, float *l, float *r
  *  - AGE, the unit grown old: its clocks slower (the delay to 6 ms), the filters darker (to 3.2 / 4.6 kHz), the
  *    brigades driven harder into their headroom, their hiss up a little (to -40 dB, a bed; riding the level like a
  *    compander's, which the unit lacks: a quiet layer stays quiet), the clocks wandering (to +-2.5 %). */
-#define EN_D0 132.3f                             /* the delay at AGE 0, 3 ms */
-#define EN_DMAX 500.f                            /* the line's reach (BR_LEN, less the interpolation's sample) */
+#define EN_D0 66.15f                             /* the delay at AGE 0, 3 ms (half-rate samples) */
+#define EN_DMAX 250.f                            /* the lines' reach, 11.3 ms (half-rate samples; the line holds 512) */
 #define EN_SWING 0.4f                            /* the clocks' swing at DEPTH 127 */
 #define EN_FAST 6.5f                             /* the tremolo oscillator, Hz */
 #define EN_OUT 0.81f                             /* output trim (test_mfx: pink noise within 0.4 dB of dry) */
@@ -311,8 +315,92 @@ static inline float en_tap(const int16_t *line, uint32_t w, float d)
     return (float)line[p] + fr * (float)(line[q] - line[p]);
 }
 
-/* fast: the tremolo oscillator, Hz (ENSEMBLE: the unit's EN_FAST; ENS+PHASER: following ENS RATE) */
-static void ensemble(MfxState *s, const float *k, float lr, float fast, float *l, float *r, uint32_t n)
+/* ---- the brigades at half rate (2026-11-02) ----
+ * ENSEMBLE, ENS+PHASER and CHORUS run their bucket brigades at 22.05 kHz, as a BBD's own clock does (the Solina's
+ * ~33 kHz, the chorus's 24..77 kHz): their filters keep everything under ~10 kHz anyway. A pair of input frames is
+ * averaged into one (a zero at 22.05 kHz, then the model's own anti-alias filter), and the wet comes back up by
+ * linear interpolation (half a frame late: nothing beside a delay of milliseconds). Half the work a frame. Each side
+ * keeps its own input: the stereo image is never summed away. A model runs one control step (m <= MFX_SUB frames,
+ * even but for a block's odd last frame, which holds the last wet sample). */
+#define HR_SR (MFX_SR * 0.5f)
+
+/* tan(pi fc / HR_SR) for a half-rate filter (up to its Nyquist, where tan_small is not enough) */
+static inline float hr_tan(float fc)
+{
+    float p = fc * (0.5f / HR_SR);
+    return br_sin(p) / br_sin(p + 0.25f);
+}
+
+/* a TPT state-variable low-pass's coefficients at half rate: fc, 1 / Q */
+typedef struct { float a1, a2, a3; } HrSvf;
+static inline HrSvf hr_svf(float fc, float k)
+{
+    HrSvf f;
+    float g = hr_tan(fc);
+    f.a1 = 1.f / (1.f + g * (g + k));
+    f.a2 = g * f.a1;
+    f.a3 = g * f.a2;
+    return f;
+}
+
+/* one sample through it (state s1, s2): its low-pass output */
+static inline float hr_lp(const HrSvf *f, float x, float *s1, float *s2)
+{
+    float u3 = x - *s2, u1 = f->a1 * *s1 + f->a2 * u3, u2 = *s2 + f->a2 * *s1 + f->a3 * u3;
+    *s1 = 2.f * u1 - *s1;
+    *s2 = 2.f * u2 - *s2;
+    return u2;
+}
+
+/* the wet's mp half-rate samples back to m frames on one side: y = dry y * gd + the wet, interpolated, * gw */
+static void hr_up(float *y, const float *w, uint32_t m, float *prev, float gw, float gd)
+{
+    uint32_t k, mp = m >> 1;
+    float p = *prev;
+    for (k = 0; k < mp; k++) {
+        y[2u * k] = gd * y[2u * k] + gw * 0.5f * (p + w[k]);
+        y[2u * k + 1u] = gd * y[2u * k + 1u] + gw * w[k];
+        p = w[k];
+    }
+    if (m & 1u)
+        y[m - 1u] = gd * y[m - 1u] + gw * p;
+    *prev = p;
+}
+
+/* a brigade read d half-rate samples behind the write place w, interpolated: where (p, q, fr) for both sides' lines */
+typedef struct { uint32_t p, q; float fr; } HrTap;
+static inline HrTap hr_at(uint32_t w, float d)
+{
+    HrTap t;
+    float fl = (float)(int32_t)d;
+    t.fr = d - fl;
+    t.p = (w - (uint32_t)fl) & (BR_LEN - 1u);
+    t.q = (t.p - 1u) & (BR_LEN - 1u);
+    return t;
+}
+static inline float hr_read(const int16_t *line, const HrTap *t)
+{
+    return (float)line[t->p] + t->fr * (float)(line[t->q] - line[t->p]);
+}
+
+/* the aged clocks' wander (ENSEMBLE, CHORUS): a new heading every ~0.2 s, amt the share of the clock */
+static void hr_wow(MfxState *s, float amt)
+{
+    if (s->br_wow_n == 0u) {
+        s->br_rng = s->br_rng * 1664525u + 1013904223u;
+        s->br_wow_to = amt * ((float)(int32_t)s->br_rng * (1.f / 2147483648.f));
+        s->br_wow_n = 560u;
+    }
+    s->br_wow_n--;
+    s->br_wow += (s->br_wow_to - s->br_wow) * 0.01f;
+}
+
+/* ENSEMBLE's wet for one control step, at half rate, into wl / wr (mp samples, in line units): each side its own
+ * three lines from its own input (the three boards, on each side), WIDTH weighting the first towards the left and the
+ * third towards the right. fast: the tremolo oscillator, Hz (ENSEMBLE: the unit's EN_FAST; ENS+PHASER: following ENS
+ * RATE) */
+static void ens_wet(MfxState *s, const float *k, float lr, float fast, const float *l, const float *r, uint32_t m,
+                    float *wl, float *wr)
 {
     /* RATE 0.08 .. 4 Hz, even in octaves; SHIMMER adds the tremolo, the control's peak held (so DEPTH stays DEPTH) */
     const float age = (float)k[MFX_K_AGE] * (1.f / 127.f);
@@ -322,81 +410,66 @@ static void ensemble(MfxState *s, const float *k, float lr, float fast, float *l
     const float width = (float)lr * (1.f / 127.f);
     const float dc = EN_D0 * (1.f + age);
     const float drive = BR_SCALE * (1.f + 2.f * age), undrive = 32767.f / (1.f + 2.f * age);
-    const float out = EN_OUT / (BR_SCALE * 32767.f);   /* (the line holds the level, not the drive: AGE turns smoothly) */
     const float gn = (1.f + width) * (1.f / 3.f), gf = (1.f - width) * (1.f / 3.f), gc = 1.f / 3.f;
     const float hiss = 0.0015f + 0.008f * age * age;                /* of the level: -40 dB at AGE 127, a bed */
-    const float wow_amt = 0.025f * age;
-    /* the output filters: the 2-pole as a TPT state-variable low-pass, the 1-pole plain */
-    const float g = mfx_tan_small(MFX_PI * 5750.f * (1.f - 0.45f * age) / MFX_SR);
-    const float a1 = 1.f / (1.f + g * (g + 1.f / 1.1f)), a2 = g * a1, a3 = g * a2;
-    const float gp = br_g(11400.f * (1.f - 0.6f * age));
-
-    for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
-        uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
-        float dt = (float)m * (1.f / MFX_SR);
-        /* the control circuit: C1, C2, the inverter's C3 */
-        float c[3];
-        c[0] = en_slow(s->lfo) + shim * br_sin(s->en_fast);
-        c[1] = en_slow(s->lfo - 1.f / 3.f) + shim * br_sin(s->en_fast - 1.f / 3.f);
-        c[2] = -(c[0] + c[1]);
-        s->lfo += rate * dt;
-        if (s->lfo >= 1.f) s->lfo -= 1.f;
-        s->en_fast += fast * dt;
-        if (s->en_fast >= 1.f) s->en_fast -= 1.f;
-        if (s->br_wow_n == 0u) {                                     /* the aged clocks: a new heading every ~0.2 s */
-            s->br_rng = s->br_rng * 1664525u + 1013904223u;
-            s->br_wow_to = wow_amt * ((float)(int32_t)s->br_rng * (1.f / 2147483648.f));
-            s->br_wow_n = 560u;
-        }
-        s->br_wow_n--;
-        s->br_wow += (s->br_wow_to - s->br_wow) * 0.01f;
-        /* each board's delay: its stages over twice its clock */
-        float d0[3], dd[3];
-        for (int j = 0; j < 3; j++) {
-            float d = dc / (en_tol[j] * (1.f + swing * c[j]) * (1.f + s->br_wow));
-            d = d > EN_DMAX ? EN_DMAX : d;
-            d0[j] = s->en_d[j] == 0.f ? d : s->en_d[j];
-            dd[j] = (d - d0[j]) * (1.f / (float)m);
-            s->en_d[j] = d;
-        }
-        float *yl = l + f0, *yr = r + f0;
-        int16_t *bl = s->br_line[0], *br = s->br_line[1];
-        float s1l = s->en_s1[0], s2l = s->en_s2[0], pl = s->en_p[0];
-        float s1r = s->en_s1[1], s2r = s->en_s2[1], pr = s->en_p[1];
-        float env = s->br_env[0];
-        uint32_t w = s->br_w, rng = s->br_rng;
-        for (uint32_t i = 0; i < m; i++) {
-            float xl = yl[i], xr = yr[i];
-            bl[w] = (int16_t)(br_sat(xl * drive) * undrive);               /* into the brigades */
-            br[w] = (int16_t)(br_sat(xr * drive) * undrive);
-            float fi = (float)(i + 1u);
-            float v1 = en_tap(bl, w, d0[0] + dd[0] * fi);
-            float d2 = d0[1] + dd[1] * fi;
-            float v2 = 0.5f * (en_tap(bl, w, d2) + en_tap(br, w, d2));
-            float v3 = en_tap(br, w, d0[2] + dd[2] * fi);
-            float av = ((xl < 0.f ? -xl : xl) + (xr < 0.f ? -xr : xr)) * (0.5f * 32767.f * BR_SCALE);
-            env += (av > env ? 0.02f : 0.0005f) * (av - env);
-            rng = rng * 1664525u + 1013904223u;                  /* one draw, each side its own half of it */
-            float nl = (float)(int32_t)rng * (1.f / 2147483648.f);
-            float nr = (float)(int32_t)(rng << 16 | rng >> 16) * (1.f / 2147483648.f);
-            float sl = gn * v1 + gc * v2 + gf * v3 + env * hiss * nl;      /* the output amplifier, panned */
-            float sr = gf * v1 + gc * v2 + gn * v3 + env * hiss * nr;
-            float u3 = sl - s2l, u1 = a1 * s1l + a2 * u3, u2 = s2l + a2 * s1l + a3 * u3;    /* the boards' filters */
-            s1l = 2.f * u1 - s1l; s2l = 2.f * u2 - s2l;
-            pl += gp * (u2 - pl);
-            u3 = sr - s2r; u1 = a1 * s1r + a2 * u3; u2 = s2r + a2 * s1r + a3 * u3;
-            s1r = 2.f * u1 - s1r; s2r = 2.f * u2 - s2r;
-            pr += gp * (u2 - pr);
-            yl[i] = out * pl;
-            yr[i] = out * pr;
-            w = (w + 1u) & (BR_LEN - 1u);
-        }
-        s->en_s1[0] = s1l; s->en_s2[0] = s2l; s->en_p[0] = pl;
-        s->en_s1[1] = s1r; s->en_s2[1] = s2r; s->en_p[1] = pr;
-        s->br_env[0] = env;
-        s->br_w = w;
-        s->br_rng = rng;
+    /* the boards' output filters, 5.75 kHz Q 1.1 (the 11.4 kHz pole is past the half rate's reach: the pair average
+     * and the interpolation stand in for it) */
+    const HrSvf f = hr_svf(5750.f * (1.f - 0.45f * age), 1.f / 1.1f);
+    const float dt = (float)m * (1.f / MFX_SR);
+    const uint32_t mp = m >> 1;
+    float c[3], d0[3], dd[3];
+    int j;
+    /* the control circuit: C1, C2, the inverter's C3 */
+    c[0] = en_slow(s->lfo) + shim * br_sin(s->en_fast);
+    c[1] = en_slow(s->lfo - 1.f / 3.f) + shim * br_sin(s->en_fast - 1.f / 3.f);
+    c[2] = -(c[0] + c[1]);
+    s->lfo += rate * dt;
+    if (s->lfo >= 1.f) s->lfo -= 1.f;
+    s->en_fast += fast * dt;
+    if (s->en_fast >= 1.f) s->en_fast -= 1.f;
+    hr_wow(s, 0.025f * age);
+    /* each board's delay: its stages over twice its clock (half-rate samples) */
+    for (j = 0; j < 3; j++) {
+        float d = dc / (en_tol[j] * (1.f + swing * c[j]) * (1.f + s->br_wow));
+        d = d > EN_DMAX ? EN_DMAX : d;
+        d0[j] = s->en_d[j] == 0.f ? d : s->en_d[j];
+        dd[j] = mp ? (d - d0[j]) * (1.f / (float)mp) : 0.f;
+        s->en_d[j] = d;
     }
+    int16_t *bl = s->br_line[0], *br = s->br_line[1];
+    float s1l = s->en_s1[0], s2l = s->en_s2[0], s1r = s->en_s1[1], s2r = s->en_s2[1];
+    float env = s->br_env[0];
+    uint32_t w = s->br_w, rng = s->br_rng, i;
+    for (i = 0; i < mp; i++) {
+        float xl = 0.5f * (l[2u * i] + l[2u * i + 1u]), xr = 0.5f * (r[2u * i] + r[2u * i + 1u]);
+        bl[w] = (int16_t)(br_sat(xl * drive) * undrive);           /* into the brigades */
+        br[w] = (int16_t)(br_sat(xr * drive) * undrive);
+        float fi = (float)(i + 1u);
+        HrTap t1 = hr_at(w, d0[0] + dd[0] * fi), t2 = hr_at(w, d0[1] + dd[1] * fi), t3 = hr_at(w, d0[2] + dd[2] * fi);
+        float av = ((xl < 0.f ? -xl : xl) + (xr < 0.f ? -xr : xr)) * (0.5f * 32767.f * BR_SCALE);
+        env += (av > env ? 0.04f : 0.001f) * (av - env);
+        rng = rng * 1664525u + 1013904223u;                      /* one draw, each side its own half of it */
+        float nl = (float)(int32_t)rng * (1.f / 2147483648.f);
+        float nr = (float)(int32_t)(rng << 16 | rng >> 16) * (1.f / 2147483648.f);
+        float sl = gn * hr_read(bl, &t1) + gc * hr_read(bl, &t2) + gf * hr_read(bl, &t3) + env * hiss * nl;
+        float sr = gf * hr_read(br, &t1) + gc * hr_read(br, &t2) + gn * hr_read(br, &t3) + env * hiss * nr;
+        wl[i] = hr_lp(&f, sl, &s1l, &s2l);                      /* the boards' filters */
+        wr[i] = hr_lp(&f, sr, &s1r, &s2r);
+        w = (w + 1u) & (BR_LEN - 1u);
+    }
+    s->en_s1[0] = s1l; s->en_s2[0] = s2l; s->en_s1[1] = s1r; s->en_s2[1] = s2r;
+    s->br_env[0] = env;
+    s->br_w = w;
+    s->br_rng = rng;
+}
+
+static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t m)
+{
+    float wl[MFX_SUB / 2], wr[MFX_SUB / 2];
+    const float out = EN_OUT / (BR_SCALE * 32767.f);   /* (the line holds the level, not the drive: AGE turns smoothly) */
+    ens_wet(s, k, lr, EN_FAST, l, r, m, wl, wr);
+    hr_up(l, wl, m, &s->hr_prev[0], out, 0.f);         /* all wet, as the unit */
+    hr_up(r, wr, m, &s->hr_prev[1], out, 0.f);
 }
 
 /* ---- ENS+PHASER ---- */
@@ -408,53 +481,127 @@ static void ensemble(MfxState *s, const float *k, float lr, float fast, float *l
  *  - The output: the input buffer's dry through 27K / 30K and the chain's end, alike: (dry + chain) / 2, two notches.
  *  - COLOR: the chain's end back to its start (27K / 3K3 / 4K7, 0.1 uF, 270K): positive feedback, sharper notches
  *    and peaks between. A switch on the pedal (on: about 0.45 here); a row here, 0 .. 0.7.
- * Each side its own chain, one LFO (the stereo is the ensemble's WIDTH). The ensemble runs first, as ENSEMBLE, with
- * its knobs folded: ENS RATE is its RATE, the tremolo at the unit's ratio to it (6.5 : 0.78) but only a third as far
- * in octaves; ENS DEPTH its DEPTH, SHIMMER held at the unit's own (45). */
+ * It runs on the ensemble's wet at half rate (its sweep tops out at 3 kHz), each side its own chain, one LFO. The
+ * ensemble runs first, as ENSEMBLE, with its knobs folded: ENS RATE is its RATE, the tremolo at the unit's ratio to it
+ * (6.5 : 0.78) but only a third as far in octaves; ENS DEPTH its DEPTH, SHIMMER held at the unit's own (45). */
 #define SS_F_LO 70.f
 #define SS_F_HI 3000.f
 #define SS_FB 0.7f                               /* COLOUR 127 */
 #define SS_SHIM 45.f                             /* the ensemble's SHIMMER, held */
 #define SS_OUT 1.41f                             /* output trim: pink noise +2 dB, as STONE PHASER (a pad ~1 dB under dry) */
 
-static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, float *l, float *r, uint32_t n)
+static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, float *l, float *r, uint32_t m)
 {
-    float ke[4];
+    float ke[4], wl[MFX_SUB / 2], wr[MFX_SUB / 2];
     ke[MFX_K_AGE] = row[MFX_R_AGE];
     ke[MFX_K_RATE] = k[MFX_K_ENS_RATE];
     ke[MFX_K_SHIMMER] = SS_SHIM;
     ke[MFX_K_DEPTH] = k[MFX_K_ENS_DEPTH];
     /* the tremolo: 6.5 Hz at the unit's 0.78 Hz chorus, a third of ENS RATE's octaves from there */
     const float fast = EN_FAST * amp_exp2f(((float)k[MFX_K_ENS_RATE] - 74.f) * (5.644f / 127.f / 3.f));
-    ensemble(s, ke, lr, fast, l, r, n);
+    ens_wet(s, ke, lr, fast, l, r, m, wl, wr);
 
     const float rate = 0.04f * amp_exp2f((float)k[MFX_K_PH_RATE] * (7.966f / 127.f));
     const float depth = (float)k[MFX_K_PH_DEPTH] * (1.f / 127.f);
     const float fb = SS_FB * (float)row[MFX_R_COLOUR] * (1.f / 127.f);
     const float h = 0.5f * SS_OUT * (1.f - 0.68f * fb);             /* (the feedback's peaks give level back) */
-    for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
-        uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
-        float tri = s->ss_lfo < 0.5f ? 2.f * s->ss_lfo : 2.f - 2.f * s->ss_lfo;
-        float want = 0.5f + depth * (tri - 0.5f);
-        s->ss_ctl += (want - s->ss_ctl) * (0.0155f * (float)m / (float)MFX_SUB);
-        float t = mfx_tan_small(MFX_PI * (SS_F_LO + (SS_F_HI - SS_F_LO) * s->ss_ctl) / MFX_SR);
-        float c = (1.f - t) / (1.f + t);
-        for (int ch = 0; ch < 2; ch++) {
-            float *y = ch ? r + f0 : l + f0, *z = s->ss_z[ch];
-            float z0 = z[0], z1 = z[1], z2 = z[2], z3 = z[3], z4 = z[4];
-            for (uint32_t i = 0; i < m; i++) {
-                float x = y[i], w = x + fb * z4, o;                  /* COLOR: the chain's end back to its start */
-                o = c * (w + z1) - z0; z0 = w;                      /* IC1 .. IC4 */
-                w = c * (o + z2) - z1; z1 = o;
-                o = c * (w + z3) - z2; z2 = w;
-                w = c * (o + z4) - z3; z3 = o; z4 = w;
-                y[i] = (x + w) * h;                                 /* dry and the chain, alike */
-            }
-            z[0] = z0; z[1] = z1; z[2] = z2; z[3] = z3; z[4] = z4;
+    const uint32_t mp = m >> 1;
+    float tri = s->ss_lfo < 0.5f ? 2.f * s->ss_lfo : 2.f - 2.f * s->ss_lfo;
+    float want = 0.5f + depth * (tri - 0.5f);
+    s->ss_ctl += (want - s->ss_ctl) * (0.0155f * (float)m / (float)MFX_SUB);
+    float t = hr_tan(SS_F_LO + (SS_F_HI - SS_F_LO) * s->ss_ctl);
+    float c = (1.f - t) / (1.f + t);
+    for (int ch = 0; ch < 2; ch++) {
+        float *y = ch ? wr : wl, *z = s->ss_z[ch];
+        float z0 = z[0], z1 = z[1], z2 = z[2], z3 = z[3], z4 = z[4];
+        for (uint32_t i = 0; i < mp; i++) {
+            float x = y[i], v = x + fb * z4, o;                      /* COLOR: the chain's end back to its start */
+            o = c * (v + z1) - z0; z0 = v;                          /* IC1 .. IC4 */
+            v = c * (o + z2) - z1; z1 = o;
+            o = c * (v + z3) - z2; z2 = v;
+            v = c * (o + z4) - z3; z3 = o; z4 = v;
+            y[i] = (x + v) * h;                                     /* dry and the chain, alike */
         }
-        s->ss_lfo += rate * (float)m * (1.f / MFX_SR);
-        if (s->ss_lfo >= 1.f) s->ss_lfo -= 1.f;
+        z[0] = z0; z[1] = z1; z[2] = z2; z[3] = z3; z[4] = z4;
     }
+    s->ss_lfo += rate * (float)m * (1.f / MFX_SR);
+    if (s->ss_lfo >= 1.f) s->ss_lfo -= 1.f;
+    const float out = EN_OUT / (BR_SCALE * 32767.f);
+    hr_up(l, wl, m, &s->hr_prev[0], out, 0.f);
+    hr_up(r, wr, m, &s->hr_prev[1], out, 0.f);
+}
+
+/* ---- CHORUS ---- */
+/* From the schematic (docs/effect schematics, alpha juno chorus.png), each of its two channels (A, B) alike:
+ *  - IC26a and R141 / C91, R84 / C53, the anti-alias filter: two 1-poles at 8.8 kHz and a Sallen-Key 2-pole (10K /
+ *    10K, 6.8 nF / 390 pF: 9.8 kHz, Q 2.1); here lumped into one 2-pole at 9 kHz, Q 1.0 (the peak riding the 1-poles'
+ *    fall), run at half rate.
+ *  - IC23, an MN3009 (256 stages), clocked by IC24 (an MN3101) whose rate Q5 swings from the LFO: the delay follows
+ *    the LFO, a triangle (the CPU's, through the S/H): 1.7 .. 5.4 ms on the classic setting.
+ *  - IC25a and R111 / R112 / C70, the reconstruction filter: as the anti-alias one (lumped the same).
+ *  - The detector (IC22) and IC31, a compander round the brigade: the BBD's hiss rides the signal's level.
+ *  - Channel B's clock swings against A's (WIDTH 127): each side's wet moves the other way, the stereo chorus. The
+ *    dry and the wet are summed after; here MIX.
+ * Made variable (the user's): RATE 0.1 .. 10 Hz (the classic settings ~0.5, ~0.9, ~9.8 Hz), DEPTH (+-2.5 ms at 127),
+ * DELAY (the sweep's centre, 1 .. 8 ms; the classic 3.5 ms at ~46), MIX (equal power, 64 the classic even sum). Rows:
+ * WIDTH (B's LFO 0 .. half a cycle behind A's), AGE (as ENSEMBLE's: darker, hotter, hiss, the clock wandering). Each
+ * side its own brigade from its own input: the stereo image kept. */
+#define CH_DMIN 4.f                              /* the shortest delay, half-rate samples (0.18 ms) */
+#define CH_OUT 1.0f                              /* the wet's trim (test_mfx: the level) */
+
+static void chorus(MfxState *s, const float *k, const float *row, float lr, float *l, float *r, uint32_t m)
+{
+    const float rate = 0.1f * amp_exp2f((float)k[MFX_K_CH_RATE] * (6.644f / 127.f));
+    const float depth = (float)k[MFX_K_CH_DEPTH] * (2.5f * HR_SR * 0.001f / 127.f);
+    const float centre = (1.f + (float)k[MFX_K_CH_DELAY] * (7.f / 127.f)) * (HR_SR * 0.001f);
+    const float mix = (float)k[MFX_K_CH_MIX] * (1.f / 127.f);
+    /* equal power, less where the two meet (their low end adds: MIX turns no louder in the middle) */
+    const float trim = 1.f / (1.f + 0.25f * br_sin(0.5f * mix));
+    const float gw = trim * br_sin(0.25f * mix), gd = trim * br_sin(0.25f * mix + 0.25f);
+    const float offset = (float)lr * (0.5f / 127.f);
+    const float age = row[MFX_R_AGE] * (1.f / 127.f);
+    const float drive = BR_SCALE * (1.f + 2.f * age), undrive = 32767.f / (1.f + 2.f * age);
+    const float out = CH_OUT / (BR_SCALE * 32767.f);
+    const float hiss = 0.002f + 0.008f * age * age;
+    const HrSvf f = hr_svf(9000.f * (1.f - 0.5f * age), 1.f);
+    const uint32_t mp = m >> 1;
+    float wl[MFX_SUB / 2], wr[MFX_SUB / 2];
+    hr_wow(s, 0.02f * age);
+    for (int ch = 0; ch < 2; ch++) {
+        float ph = ch ? s->lfo - offset : s->lfo;
+        if (ph < 0.f) ph += 1.f;
+        float tri = ph < 0.5f ? 4.f * ph - 1.f : 3.f - 4.f * ph;
+        float d = (centre + depth * tri) * (1.f + s->br_wow);
+        d = d < CH_DMIN ? CH_DMIN : d > EN_DMAX ? EN_DMAX : d;
+        float d0 = s->ch_d[ch] == 0.f ? d : s->ch_d[ch], dd = mp ? (d - d0) * (1.f / (float)mp) : 0.f;
+        s->ch_d[ch] = d;
+        const float *x = ch ? r : l;
+        float *y = ch ? wr : wl;
+        int16_t *line = s->br_line[ch];
+        float a1 = s->ch_s[ch][0], a2 = s->ch_s[ch][1], b1 = s->ch_s[ch][2], b2 = s->ch_s[ch][3];
+        float env = s->br_env[ch];
+        uint32_t w = s->br_w, rng = s->br_rng;
+        for (uint32_t i = 0; i < mp; i++) {
+            float a = 0.5f * (x[2u * i] + x[2u * i + 1u]);
+            float v = hr_lp(&f, a, &a1, &a2);                      /* the anti-alias filter */
+            line[w] = (int16_t)(br_sat(v * drive) * undrive);      /* into the brigade */
+            HrTap t = hr_at(w, d0 + dd * (float)(i + 1u));
+            float av = (a < 0.f ? -a : a) * (32767.f * BR_SCALE);  /* the compander: its hiss rides the level */
+            env += (av > env ? 0.04f : 0.001f) * (av - env);
+            rng = rng * 1664525u + 1013904223u;
+            v = hr_read(line, &t) + env * hiss * ((float)(int32_t)rng * (1.f / 2147483648.f));
+            y[i] = hr_lp(&f, v, &b1, &b2);                         /* the reconstruction filter */
+            w = (w + 1u) & (BR_LEN - 1u);
+        }
+        s->ch_s[ch][0] = a1; s->ch_s[ch][1] = a2; s->ch_s[ch][2] = b1; s->ch_s[ch][3] = b2;
+        s->br_env[ch] = env;
+        s->br_rng = rng;
+        if (ch) s->br_w = w;
+    }
+    s->lfo += rate * (float)m * (1.f / MFX_SR);
+    if (s->lfo >= 1.f) s->lfo -= 1.f;
+    hr_up(l, wl, m, &s->hr_prev[0], gw * out, gd);
+    hr_up(r, wr, m, &s->hr_prev[1], gw * out, gd);
 }
 
 float mfx_peek(int layer, int i)
@@ -465,6 +612,14 @@ float mfx_peek(int layer, int i)
     if (t == MFX_STONE_PHASER && i >= 0 && i < 2) return s->ctl[i];
     if (t == MFX_ENS_PHASER && i == 5) return s->ss_ctl;
     if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && i >= 0 && i < 3) return s->en_d[i] * (1.f / EN_DMAX);
+    if (t == MFX_CHORUS && i >= 0 && i < 2) return s->ch_d[i] * (1.f / EN_DMAX);
+    if (t == MFX_CHORUS && (i == 3 || i == 4)) {     /* where its delay swings between */
+        const uint8_t *k = mfx_params[layer & 1].knob;
+        float c = (1.f + (float)k[MFX_K_CH_DELAY] * (7.f / 127.f)) * (HR_SR * 0.001f);
+        float d = c + (i == 3 ? -1.f : 1.f) * (float)k[MFX_K_CH_DEPTH] * (2.5f * HR_SR * 0.001f / 127.f);
+        d = d < CH_DMIN ? CH_DMIN : d > EN_DMAX ? EN_DMAX : d;
+        return d * (1.f / EN_DMAX);
+    }
     if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && (i == 3 || i == 4)) {   /* where its lines swing between: the
                                                                                  * clocks' fastest, slowest */
         const MfxParams *p = &mfx_params[layer & 1];
@@ -512,7 +667,9 @@ void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
             bullroarer(s, s->kn, s->kn[4], l + f0, r + f0, m);
         else if (p->type == MFX_ENS_PHASER)
             ens_phaser(s, s->kn, s->kn + 5, s->kn[4], l + f0, r + f0, m);
+        else if (p->type == MFX_CHORUS)
+            chorus(s, s->kn, s->kn + 5, s->kn[4], l + f0, r + f0, m);
         else
-            ensemble(s, s->kn, s->kn[4], EN_FAST, l + f0, r + f0, m);
+            ensemble(s, s->kn, s->kn[4], l + f0, r + f0, m);
     }
 }

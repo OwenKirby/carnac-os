@@ -328,15 +328,18 @@ PS_STATIC_ASSERT(sizeof(EngineState) < 255u, "MOD_ROWS: via = 1 + an EngineState
 #undef MDEST
 #undef MCHAIN
 
-/* MFX (2026-11-01): the type, then its row (STONE PHASER's L/R PHASE, ENSEMBLE's WIDTH: one byte, shown by type) */
-static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE"};
+/* MFX (2026-11-01): the type, then its own rows (archs: here the types that show the row, a bit each). L/R PHASE and
+ * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]) */
+static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS"};
+#define MT(x) ((uint16_t)(1u << MFX_##x))
 static const UiRow MFX_ROWS[] = {
     {"TYPE", OFS(MfxParams, type), 0, MFX_OFFERED - 1, RK_BYTE, 0, MFX_TYPE_NAMES, A_ALL},
-    {"L/R PHASE", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"L/R PHASE", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(STONE_PHASER)},
+    {"COLOUR", (uint8_t)(OFS(MfxParams, row) + MFX_R_COLOUR), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENS_PHASER)},
+    {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENS_PHASER) | MT(CHORUS)},
+    {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS)},
 };
-#define MFX_ROW_PHASE (&MFX_ROWS[1])
-#define MFX_ROW_WIDTH (&MFX_ROWS[2])
+#undef MT
 
 #define PERF(member) OFS(MasterPerformancePreset, member)
 #define ENGB(member) OFS(EngineState, member)
@@ -579,6 +582,9 @@ static const UiKnob MFX_KNOBS[MFX_OFFERED][4] = {
     {KNONE, KNONE, KNONE, KNONE},
     {KMFX(MFX_K_MANUAL, "MANUAL"), KMFX(MFX_K_RATE, "RATE"), KMFX(MFX_K_FEEDBACK, "FEEDBACK"), KMFX(MFX_K_DEPTH, "DEPTH")},
     {KMFX(MFX_K_AGE, "AGE"), KMFX(MFX_K_RATE, "RATE"), KMFX(MFX_K_SHIMMER, "SHIMMER"), KMFX(MFX_K_DEPTH, "DEPTH")},
+    {KMFX(MFX_K_ENS_RATE, "ENS RATE"), KMFX(MFX_K_ENS_DEPTH, "ENS DEPTH"), KMFX(MFX_K_PH_RATE, "PHS RATE"),
+     KMFX(MFX_K_PH_DEPTH, "PHS DEPTH")},
+    {KMFX(MFX_K_CH_RATE, "RATE"), KMFX(MFX_K_CH_DEPTH, "DEPTH"), KMFX(MFX_K_CH_DELAY, "DELAY"), KMFX(MFX_K_CH_MIX, "MIX")},
 };
 #undef KMFX
 static const UiKnob EFFECTS_KNOBS[4] = {
@@ -850,10 +856,12 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
 /* MFX: a new TYPE starts at that unit's own settings (its knobs and row share bytes with the other types') */
 static void mfx_type_set(MfxParams *m, uint8_t t)
 {
-    static const uint8_t DEF[MFX_OFFERED][5] = {
-        {0, 0, 0, 0, 0},
-        {64, 41, 64, 127, 0},        /* STONE PHASER: the full sweep at 0.5 Hz, some FEEDBACK, the sides together */
-        {40, 74, 45, 64, 100},       /* ENSEMBLE: a little aged, the unit's 0.78 Hz, some shimmer, wide */
+    static const uint8_t DEF[MFX_OFFERED][7] = {    /* the knobs, lr, row[] */
+        {0, 0, 0, 0, 0, 0, 0},
+        {64, 41, 64, 127, 0, 0, 0},  /* STONE PHASER: the full sweep at 0.5 Hz, some FEEDBACK, the sides together */
+        {40, 74, 45, 64, 100, 0, 0}, /* ENSEMBLE: a little aged, the unit's 0.78 Hz, some shimmer, wide */
+        {74, 64, 15, 110, 100, 30, 40},   /* ENS+PHASER: the strings at the unit's rate, a slow 0.1 Hz sweep */
+        {45, 94, 46, 64, 127, 20, 0},     /* CHORUS: the classic I (0.5 Hz, 1.7 .. 5.4 ms), the sides swinging apart */
     };
     uint8_t i;
     if (t == m->type || t >= MFX_OFFERED)
@@ -861,6 +869,8 @@ static void mfx_type_set(MfxParams *m, uint8_t t)
     for (i = 0u; i < 4u; i++)
         m->knob[i] = DEF[t][i];
     m->lr = DEF[t][4];
+    m->row[0] = DEF[t][5];
+    m->row[1] = DEF[t][6];
     m->type = t;
 }
 
@@ -957,11 +967,9 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
     if (mode == PERF_SINGL_SYNTH &&
         ((flags & RF_LAYER2) != 0u || ((pg->store == ST_ENGINE || pg->store == ST_MFX) && sm->s.active_synth_layer != 0u)))
         return UIROW_GREYED;
-    if (r == MFX_ROW_PHASE || r == MFX_ROW_WIDTH) {  /* MFX: the type's own row, none at OFF */
-        uint8_t t = ui_sm_mfx(sm, sm->s.active_synth_layer)->type;
-        if (t != (r == MFX_ROW_PHASE ? MFX_STONE_PHASER : MFX_ENSEMBLE))
-            return UIROW_HIDDEN;
-    }
+    if (pg->store == ST_MFX && r != &MFX_ROWS[0] &&  /* MFX: the type's own rows, none at OFF */
+        (r->archs & (1u << ui_sm_mfx(sm, sm->s.active_synth_layer)->type)) == 0u)
+        return UIROW_HIDDEN;
     if ((flags & RF_UNISON) != 0u && layer_vmode(sm, row_layer(r)) != VMODE_UNISON_STACK)
         return UIROW_GREYED;
     if (r->kind == RK_VOICES || r->kind == RK_CHAIN)

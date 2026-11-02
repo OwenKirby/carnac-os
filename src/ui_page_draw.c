@@ -89,7 +89,6 @@
 #define PU_MENU_ROWS 4u
 #define PU_MENU_MAX 64u                 /* rows a menu page may have (MOD's, the longest, ~30) */
 #define PU_MENU_H 80
-#define PU_MFX_ROWS 2u                /* the MFX page's rows: the wind takes the rest */
 #define PU_VIZ_Y 163
 #define PU_VIZ_H 72
 #define PU_TRACK_Y 235
@@ -651,6 +650,7 @@ static const char *pu_row_text(const UIStateMachine *sm, uint8_t r, char *b)
 /* label left, value right; greyed rows dim; the cursor row on the noisy ground, in white; a scroll bar on the right
  * when the page has more rows than fit */
 static void pu_draw_save_menu(const UIStateMachine *sm);
+static int32_t pu_mfx_rows(const UIStateMachine *sm);   /* (the MFX page, below) */
 
 static void pu_draw_menu(const UIStateMachine *sm)
 {
@@ -658,7 +658,7 @@ static void pu_draw_menu(const UIStateMachine *sm)
     uint8_t vis[PU_MENU_MAX], fi, n = pu_menu_vis(sm, vis, &fi), i, r, st, cur;
     int32_t y;
     uint16_t lc, vc;
-    cv_begin(240, sm->page == UIPAGE_MFX ? PU_MFX_ROWS * PU_ROW_H : PU_MENU_H, SQC(BG));   /* (MFX: the wind under) */
+    cv_begin(240, sm->page == UIPAGE_MFX ? pu_mfx_rows(sm) * PU_ROW_H : PU_MENU_H, SQC(BG));   /* (MFX: the wind under) */
     if (sm->page == UIPAGE_SAVE_COMMIT) {            /* (its one row, the name, is drawn large) */
         pu_draw_save_menu(sm);
         cv_blit(0, PU_MENU_Y);
@@ -1678,20 +1678,29 @@ static uint32_t pu_voices_sig(uint32_t h)
 }
 
 /* -------------------------------------------------------------- MFX --- */
-/* The wind through the stones (2026-11-01): the MFX page has two rows (TYPE, the type's own), so the plain takes
- * everything under them. Nine standing stones; streamlines of faint dashes drift right through them; a gust (where
- * the effect is in its sweep, mfx_peek) runs the dashes long and bright and churning, and lights the stones it passes.
- * The gusts' path is a worn track on the ground. STONE PHASER: one gust (MANUAL +- DEPTH / 2), a second in ACCENT
- * with the sides apart (L/R PHASE); FEEDBACK narrows it and adds streamlines, and above ~60 eddies curl in it (its
- * whistle); DEPTH 0 stills the wind. ENSEMBLE: three gusts, its three lines (further right as the delay grows: AGE
- * moves them all on), one colour for the unit's mono sum, THEME / MID / ACCENT as WIDTH spreads them; SHIMMER sets the
- * dashes fluttering; AGE raises dust drifting over the plain. OFF: the stones in still air. */
-#define PW_Y (PU_MENU_Y + PU_MFX_ROWS * PU_ROW_H)    /* 121 */
-#define PW_H (PU_TRACK_Y - PW_Y)                     /* 114 */
-#define PW_G 104                                     /* the ground */
+/* The wind through the stones (2026-11-01): the MFX page's menu holds TYPE and the type's own rows (1 .. 4), and the
+ * plain takes everything under them. Nine standing stones; streamlines of faint dashes drift right through them; a
+ * gust (where the effect is in its sweep, mfx_peek) runs the dashes long and bright and churning, and lights the
+ * stones it passes. The gusts' path is a worn track on the ground. STONE PHASER: one gust (MANUAL +- DEPTH / 2), a
+ * second in ACCENT with the sides apart (L/R PHASE); FEEDBACK narrows it and adds streamlines, and above ~60 eddies
+ * curl in it (its whistle); DEPTH 0 stills the wind. ENSEMBLE: three gusts, its three lines (further right as the
+ * delay grows: AGE moves them all on), one colour for the mono sum, THEME / MID / ACCENT as WIDTH spreads them;
+ * SHIMMER sets the dashes fluttering; AGE raises dust drifting over the plain. CHORUS: two gusts, its two sides'
+ * delays (THEME, ACCENT), swinging against each other as WIDTH has them; AGE's dust. ENS+PHASER: the ensemble's three
+ * lines as faint gusts, the phaser's sweep the one lit (THEME), eddies in it with COLOUR. OFF: the stones in still
+ * air. */
+#define PW_MAXH (PU_TRACK_Y - PU_MENU_Y - PU_ROW_H)  /* the plain under one row: 134 */
 static const uint8_t PW_SX[9] = {10, 34, 57, 83, 108, 133, 160, 185, 211};   /* the stones: x (of PV_W), height */
-static const uint8_t PW_SH[9] = {44, 56, 38, 61, 47, 35, 53, 42, 31};
+static const uint8_t PW_SH[9] = {44, 56, 38, 61, 47, 35, 53, 42, 31};         /* (at a plain of 114) */
 static uint32_t pw_t;                                /* the wind's clock: a step a frame while an effect runs */
+static int32_t pw_g;                                 /* the ground's row in the plain drawn now */
+
+/* the MFX page's menu rows: TYPE and the type's own */
+static int32_t pu_mfx_rows(const UIStateMachine *sm)
+{
+    uint8_t vis[PU_MENU_MAX], f, n = pu_menu_vis(sm, vis, &f);
+    return n < 1u ? 1 : n > PU_MENU_ROWS ? (int32_t)PU_MENU_ROWS : (int32_t)n;
+}
 
 /* a bell 0..256 at d px from the gust, s px wide */
 static int32_t pw_bell(int32_t d, int32_t s)
@@ -1703,13 +1712,14 @@ static int32_t pw_bell(int32_t d, int32_t s)
     return (q * q) >> 8;
 }
 
-/* the strongest of the ng gusts at x: its bell, and which (*gi) */
-static int32_t pw_gusts(int32_t x, const int32_t *gx, int32_t ng, int32_t s, int32_t *gi)
+/* the strongest of the ng gusts at x: its bell (a faint gust's at a third), and which (*gi) */
+static int32_t pw_gusts(int32_t x, const int32_t *gx, const uint8_t *faint, int32_t ng, int32_t s, int32_t *gi)
 {
     int32_t g, b, best = 0;
     *gi = 0;
     for (g = 0; g < ng; g++) {
         b = pw_bell(x - gx[g], s);
+        if (faint[g]) b /= 3;
         if (b > best) { best = b; *gi = g; }
     }
     return best;
@@ -1717,19 +1727,19 @@ static int32_t pw_gusts(int32_t x, const int32_t *gx, int32_t ng, int32_t s, int
 
 /* one streamline at row y0: faint dashes drifting right; where a gust passes they run long and bright, faster, and
  * churn; flutter (0..254) shakes them quickly there (ENSEMBLE's SHIMMER) */
-static void pw_stream(int32_t y0, const int32_t *gx, const uint16_t *gc, int32_t ng, int32_t s, int32_t drift, int32_t i,
-                      uint8_t still, int32_t flutter)
+static void pw_stream(int32_t y0, const int32_t *gx, const uint16_t *gc, const uint8_t *faint, int32_t ng, int32_t s,
+                      int32_t drift, int32_t i, uint8_t still, int32_t flutter)
 {
     int32_t x, b, gi, y, per = 13, len, ph;
     for (x = PV_X0; x < PV_X0 + PV_W; x++) {
-        b = pw_gusts(x, gx, ng, s, &gi);
+        b = pw_gusts(x, gx, faint, ng, s, &gi);
         y = y0 + ((PU_SIN[((x * 2) / 5 + i * 11 + (still ? 0 : drift / 2)) & 63] * (1 + (5 * b) / 256)) >> 8);
         if (flutter)
             y += (PU_SIN[(x * 3 + drift * 5 + i * 17) & 63] * ((flutter * b) >> 8) * 3) >> 16;
         len = still ? (b > 50 ? per : 3) : 2 + (b * 9) / 256;
         ph = (x - (still ? 0 : drift * (256 + 2 * b) / 256) + i * 7) % per;
         if (ph < 0) ph += per;
-        if (ph >= len || y < 1 || y >= PW_G)
+        if (ph >= len || y < 1 || y >= pw_g)
             continue;
         cv_pset(x, y, b > 140 ? gc[gi] : b > 40 ? SQC(DIM) : PUC_STONE);
     }
@@ -1743,7 +1753,7 @@ static void pw_eddy(int32_t cx, int32_t cy, int32_t r, int32_t rot, uint16_t c)
         rr = r - (a * r) / 84;
         x = pu_px(cx, rr, a + rot);
         y = pu_py(cy, rr, a + rot);
-        if (y >= 1 && y < PW_G) cv_pset(x, y, a > 44 ? SQC(DIM) : c);
+        if (y >= 1 && y < pw_g) cv_pset(x, y, a > 44 ? SQC(DIM) : c);
     }
 }
 
@@ -1754,23 +1764,26 @@ static int32_t pw_x(float u)
     return PV_X0 + 10 + (int32_t)(u * (float)(PV_W - 20));
 }
 
-/* ENSEMBLE's lines: a delay's share of the brigade (mfx_peek) on the plain, from 0.15 (the shortest it reaches) */
-static int32_t pw_ens_x(float u) { return pw_x((u - 0.15f) * (1.f / 0.85f)); }
+/* a brigade's delay (mfx_peek's share of its reach) on the plain, from 0.15 (about the shortest the lines reach) */
+static int32_t pw_bbd_x(float u) { return pw_x((u - 0.15f) * (1.f / 0.85f)); }
 
 static void pu_viz_mfx(const UIStateMachine *sm)
 {
     uint8_t layer = sm->s.active_synth_layer;
     const MfxParams *m = ui_sm_mfx(sm, layer);
-    int32_t gx[3], ng = 0, s = 30, nw = 9, flutter = 0, drift = (int32_t)(pw_t * 3u), i, x, k, t0 = -1, t1 = -1;
-    uint16_t gc[3];
-    uint8_t still = 1u, t = m->type;
-    cv_begin(240, PW_H, SQC(BG));
+    int32_t oy = PU_MENU_Y + pu_mfx_rows(sm) * PU_ROW_H, ph = PU_TRACK_Y - oy;
+    int32_t gx[4], ng = 0, s = 30, nw, flutter = 0, drift = (int32_t)(pw_t * 3u), i, x, k, t0 = -1, t1 = -1, eddy = 0;
+    uint16_t gc[4];
+    uint8_t faint[4] = {0, 0, 0, 0}, still = 1u, t = m->type, dust = 0;
+    pw_g = ph - 10;
+    nw = 3 + (6 * pw_g) / 104;
+    cv_begin(240, ph, SQC(BG));
     for (x = PV_X0; x < PV_X0 + PV_W; x++)           /* the earth */
-        pu_fog_col(x, PW_G, PW_H, 7u, PUC_STONE, PW_Y);
+        pu_fog_col(x, pw_g, ph, 7u, PUC_STONE, oy);
     if (t == MFX_STONE_PHASER) {
         int32_t fb = m->knob[MFX_K_FEEDBACK], c = m->knob[MFX_K_MANUAL], d = m->knob[MFX_K_DEPTH];
         s = 50 - (30 * fb) / 127;
-        nw = 7 + (5 * fb) / 127;
+        nw += (5 * fb) / 127 - 2;
         still = (uint8_t)(d == 0);
         for (i = 0; i < (m->lr > 0u && !still ? 2 : 1); i++) {
             float u = mfx_peek(layer, i);
@@ -1779,60 +1792,86 @@ static void pu_viz_mfx(const UIStateMachine *sm)
         }
         t0 = pw_x(((float)c - (float)d / 2.f) / 127.f);
         t1 = pw_x(((float)c + (float)d / 2.f) / 127.f);
-    } else if (t == MFX_ENSEMBLE) {
+        eddy = fb;
+    } else if (t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) {
         float lo = mfx_peek(layer, 3), hi = mfx_peek(layer, 4);
-        still = (uint8_t)(m->knob[MFX_K_DEPTH] == 0u);
-        flutter = still ? 0 : (int32_t)m->knob[MFX_K_SHIMMER] * 2;
+        uint8_t ens = (uint8_t)(t == MFX_ENSEMBLE);
+        still = (uint8_t)(m->knob[ens ? MFX_K_DEPTH : MFX_K_ENS_DEPTH] == 0u);
+        flutter = still ? 0 : ens ? (int32_t)m->knob[MFX_K_SHIMMER] * 2 : 90;
+        dust = ens ? m->knob[MFX_K_AGE] : m->row[MFX_R_AGE];
         for (i = 0; i < 3; i++) {
             float u = mfx_peek(layer, i);
-            gx[ng] = pw_ens_x(u < 0.f ? lo : u);
+            gx[ng] = pw_bbd_x(u < 0.f ? lo : u);
+            faint[ng] = (uint8_t)!ens;               /* (ENS+PHASER: the phaser's gust is the lit one) */
             gc[ng++] = m->lr < 20u ? SQC(THEME) : i == 0 ? SQC(THEME) : i == 1 ? SQC(MID) : SQC(ACCENT);
         }
-        t0 = pw_ens_x(lo);
-        t1 = pw_ens_x(hi);
+        t0 = pw_bbd_x(lo);
+        t1 = pw_bbd_x(hi);
+        if (!ens) {                                  /* the phaser: its sweep about the middle, its track */
+            float u = mfx_peek(layer, 5), d = (float)m->knob[MFX_K_PH_DEPTH] / 127.f;
+            gx[ng] = pw_x(u < 0.f ? 0.5f : u);
+            gc[ng++] = SQC(THEME);
+            still = (uint8_t)(still && d == 0.f);
+            t0 = pw_x(0.5f - d / 2.f);
+            t1 = pw_x(0.5f + d / 2.f);
+            eddy = m->row[MFX_R_COLOUR];
+        }
+    } else if (t == MFX_CHORUS) {
+        float lo = mfx_peek(layer, 3), hi = mfx_peek(layer, 4);
+        still = (uint8_t)(m->knob[MFX_K_CH_DEPTH] == 0u);
+        dust = m->row[MFX_R_AGE];
+        for (i = 0; i < 2; i++) {
+            float u = mfx_peek(layer, i);
+            gx[ng] = pw_bbd_x(u < 0.f ? (lo + hi) * 0.5f : u);
+            gc[ng++] = i ? SQC(ACCENT) : SQC(THEME);
+        }
+        t0 = pw_bbd_x(lo);
+        t1 = pw_bbd_x(hi);
     }
     if (t0 >= 0) {                                   /* the gusts' path: a worn track on the ground */
         for (x = t0; x <= t1; x++)
-            if ((x & 1) == 0) cv_pset(x, PW_G + 2, SQC(DIM));
-        cv_rect(t0, PW_G + 1, 1, 3, SQC(MID));
-        cv_rect(t1, PW_G + 1, 1, 3, SQC(MID));
+            if ((x & 1) == 0) cv_pset(x, pw_g + 2, SQC(DIM));
+        cv_rect(t0, pw_g + 1, 1, 3, SQC(MID));
+        cv_rect(t1, pw_g + 1, 1, 3, SQC(MID));
     }
-    if (t == MFX_ENSEMBLE)                           /* the dust of its years, drifting over the plain */
-        for (k = 0; k < (int32_t)m->knob[MFX_K_AGE] / 3; k++) {
-            uint32_t h = (uint32_t)(k + 1) * 2654435761u;
-            int32_t dx = (int32_t)((h >> 8) % (uint32_t)PV_W), sp = 1 + (int32_t)((h >> 20) & 3u);
-            int32_t dy = 4 + (int32_t)((h >> 12) % (uint32_t)(PW_G - 10));
-            x = PV_X0 + (dx + (int32_t)(pw_t * (uint32_t)sp) / 2) % PV_W;
-            dy += (PU_SIN[(x / 4 + k * 9) & 63] * 2) >> 8;
-            cv_pset(x, dy, (h >> 30) == 0u ? SQC(DIM) : PUC_STONE);
-        }
+    for (k = 0; k < (int32_t)dust / 3; k++) {        /* the dust of its years, drifting over the plain */
+        uint32_t h = (uint32_t)(k + 1) * 2654435761u;
+        int32_t dx = (int32_t)((h >> 8) % (uint32_t)PV_W), sp = 1 + (int32_t)((h >> 20) & 3u);
+        int32_t dy = 4 + (int32_t)((h >> 12) % (uint32_t)(pw_g - 10));
+        x = PV_X0 + (dx + (int32_t)(pw_t * (uint32_t)sp) / 2) % PV_W;
+        dy += (PU_SIN[(x / 4 + k * 9) & 63] * 2) >> 8;
+        cv_pset(x, dy, (h >> 30) == 0u ? SQC(DIM) : PUC_STONE);
+    }
     for (i = 0; i < nw; i++)                         /* the wind, behind the stones */
-        pw_stream(8 + (i * (PW_G - 12)) / nw, gx, gc, ng, s, drift, i, still, flutter);
+        pw_stream(8 + (i * (pw_g - 12)) / nw, gx, gc, faint, ng, s, drift, i, still, flutter);
     for (k = 0; k < 9; k++) {                        /* the stones: a gust lights the ones it passes */
-        int32_t cx = PV_X0 + PW_SX[k] + 4, gi, b = pw_gusts(cx, gx, ng, s, &gi);
+        int32_t cx = PV_X0 + PW_SX[k] + 4, gi, b = pw_gusts(cx, gx, faint, ng, s, &gi), sh = PW_SH[k] * pw_g / 104;
         uint16_t c = b > 140 ? gc[gi] : b > 40 ? SQC(DIM) : PUC_STONE;
-        sq_stone(cx - 5, PW_G, 10, PW_SH[k], PW_SH[k], c, (uint32_t)(k * 13 + 5), 0u, 0u);
+        sq_stone(cx - 5, pw_g, 10, sh, sh, c, (uint32_t)(k * 13 + 5), 0u, 0u);
     }
-    if (t == MFX_STONE_PHASER && m->knob[MFX_K_FEEDBACK] > 60u && !still) {   /* the whistle: eddies in the gust */
-        int32_t fb = m->knob[MFX_K_FEEDBACK], r = 3 + (fb - 60) / 10, n = fb > 100 ? 2 : 1;
+    if (eddy > 60 && !still) {                       /* the whistle: eddies in the lit gusts */
+        int32_t r = 3 + (eddy - 60) / 10, n = eddy > 100 && pw_g > 70 ? 2 : 1;
         for (i = 0; i < ng; i++)
-            for (k = 0; k < n; k++)
-                pw_eddy(gx[i] + (k ? -r - 3 : r), 16 + i * 18 + k * 30, r - k * 2, (i ? -1 : 1) * drift + k * 23, gc[i]);
+            if (!faint[i])
+                for (k = 0; k < n; k++)
+                    pw_eddy(gx[i] + (k ? -r - 3 : r), 16 + (i & 1) * 18 + k * 30, r - k * 2,
+                            (i & 1 ? -1 : 1) * drift + k * 23, gc[i]);
     }
-    cv_blit(0, PW_Y);
+    cv_blit(0, oy);
 }
 
-/* the wind's inputs: the settings, and while an effect runs its clock and where its gusts are */
+/* the wind's inputs: the settings, the rows, and while an effect runs its clock and where its gusts are */
 static uint32_t pu_mfx_sig(UIStateMachine *sm, uint32_t h)
 {
     uint8_t layer = sm->s.active_synth_layer, i;
     const MfxParams *m = ui_sm_mfx(sm, layer);
     h = sq_mix_bytes(h, (const uint8_t *)m, sizeof *m);
+    h = sq_mix(h, (uint32_t)pu_mfx_rows(sm));
     if (m->type == MFX_OFF)
         return h;
     pw_t++;
     h = sq_mix(h, pw_t);
-    for (i = 0; i < 3u; i++)
+    for (i = 0; i < 6u; i++)
         h = sq_mix(h, (uint32_t)(int32_t)(mfx_peek(layer, i) * 256.f));
     return h;
 }

@@ -13,6 +13,8 @@
  *  7. ENSEMBLE: the same at five settings; WIDTH 0 leaves the sides alike, 127 sets them apart.
  *  8. No zipper: every knob and row turned fast mid-tone (STONE PHASER, ENSEMBLE, ENS+PHASER).
  *  9. ENS+PHASER: its level on pink noise at five settings within 1 dB of LEVEL_DB (as STONE PHASER), bounded.
+ * 10. CHORUS: its level on pink noise at five settings, bounded.
+ * 11. The stereo image kept: left-only input leaves the right silent on every type.
  *   gcc -O2 -Isrc -Isrc/dsp src/dsp/mfx.c src/host/test_mfx.c -lm -o test_mfx */
 #include <complex.h>
 #include <math.h>
@@ -22,6 +24,7 @@
 
 #define SR 44100.0
 #define LEVEL_DB 2.0
+#define CH_LEVEL_DB 0.8                     /* CHORUS at MIX 64 */
 #define SP_OUT 1.30                         /* mfx.c's */
 static int fails;
 
@@ -280,10 +283,10 @@ int main(void)
      *    as a quick turn's detents); the output's second difference while it turns stays within 1.5x of the larger of
      *    before and after, settled (unglided, each step steps the output: the zipper) */
     {
-        static const uint8_t T[3] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER};
+        static const uint8_t T[4] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS};
         static float l[128], r[128];
-        for (int ti = 0; ti < 3; ti++)
-            for (int kk = 0; kk < (ti == 2 ? 7 : 5); kk++) {   /* the knobs, lr, row[] */
+        for (int ti = 0; ti < 4; ti++)
+            for (int kk = 0; kk < (ti == 2 ? 7 : ti == 3 ? 6 : 5); kk++) {   /* the knobs, lr, row[] */
                 MfxParams p = {T[ti], {64, 64, 64, 64}, 64, {64, 64}};
                 double ph = 0.0, before = 0.0, after = 0.0, during = 0.0, y1 = 0.0, y2 = 0.0;
                 *(kk < 4 ? &p.knob[kk] : kk == 4 ? &p.lr : &p.row[kk - 5]) = 0;
@@ -307,7 +310,7 @@ int main(void)
                 double calm = before > after ? before : after;
                 if (during > 1.5 * calm + 1.0) {
                     printf("%s knob %d turned: zipper (second difference %.0f while turning, %.0f before, %.0f after)\n",
-                           ti == 2 ? "ENS+PHASER" : ti ? "ENSEMBLE" : "STONE PHASER", kk + 1, during, before, after);
+                           ti == 3 ? "CHORUS" : ti == 2 ? "ENS+PHASER" : ti ? "ENSEMBLE" : "STONE PHASER", kk + 1, during, before, after);
                     fails++;
                 }
             }
@@ -351,6 +354,61 @@ int main(void)
         }
         printf("ENS+PHASER everything full, loud noise: peak %.0f\n", peak);
         if (!isfinite(peak) || peak > 400000.0) { printf("ENS+PHASER not bounded\n"); fails++; }
+    }
+
+    /* 10. CHORUS: pink noise level within 1 dB of CH_LEVEL_DB over its corners (MIX 64: the dry and the wet, equal
+     *     power: their low end adds), MIX 0 the dry alone; bounded loud */
+    {
+        static const uint8_t K[5][6] = {{40, 94, 46, 64, 127, 20}, {60, 60, 46, 64, 0, 20}, {127, 127, 127, 64, 127, 127},
+                                        {0, 0, 0, 64, 64, 0}, {40, 94, 46, 0, 127, 20}};
+        static float l[128], r[128];
+        for (int ki = 0; ki < 5; ki++) {
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_CHORUS, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4], {K[ki][5], 0}};
+            srand(6);
+            double ein = 0.0, eout = 0.0, peak = 0.0;
+            int bad = 0;
+            for (int b = 0; b < 3445; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) {
+                    if (!isfinite(l[i]) || !isfinite(r[i])) bad = 1;
+                    eout += (double)l[i] * l[i];
+                    if (fabs(l[i]) > peak) peak = fabs(l[i]);
+                }
+            }
+            double db = 10.0 * log10(eout / ein), want = K[ki][3] ? CH_LEVEL_DB : 0.0;
+            printf("CHORUS %3u %3u %3u %3u WIDTH %3u AGE %3u: pink noise %+.2f dB\n", K[ki][0], K[ki][1], K[ki][2],
+                   K[ki][3], K[ki][4], K[ki][5], db);
+            if (bad || fabs(db - want) > 1.0) { printf("CHORUS level off its %+.1f dB or not finite\n", want); fails++; }
+            if (peak > 400000.0) { printf("CHORUS not bounded\n"); fails++; }
+        }
+    }
+
+    /* 11. the stereo image kept: every type with sound on the left only leaves the right all but silent (its own hiss,
+     *     ducked by the level, at most), at WIDTH 0 and 127 */
+    {
+        static const uint8_t T[4] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS};
+        static float l[128], r[128];
+        for (int ti = 0; ti < 4; ti++)
+            for (int wi = 0; wi < 2; wi++) {
+                mfx_init();
+                mfx_params[0] = (MfxParams){T[ti], {64, 64, 64, 64}, (uint8_t)(wi ? 127 : 0), {30, 40}};
+                srand(7);
+                double el = 0.0, er = 0.0;
+                for (int b = 0; b < 1378; b++) {
+                    for (int i = 0; i < 128; i++) { l[i] = pink(); r[i] = 0.f; }
+                    mfx_layer_block(0, l, r, 128);
+                    for (int i = 0; i < 128; i++) { el += (double)l[i] * l[i]; er += (double)r[i] * r[i]; }
+                }
+                double db = 10.0 * log10(er / el + 1e-30);
+                if (db > -40.0) {
+                    printf("type %u WIDTH %d: the left's sound on the right, %.1f dB under the left\n", T[ti], wi ? 127 : 0,
+                           -db);
+                    fails++;
+                }
+            }
+        printf("stereo image: left-only input stays left on every type\n");
     }
 
     printf(fails ? "%d MFX checks failed\n" : "all MFX checks passed\n", fails);

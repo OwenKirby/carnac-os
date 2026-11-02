@@ -381,6 +381,12 @@ int main(int argc, char **argv)
     mfx_params[0] = (MfxParams){MFX_ENSEMBLE, {0, 74, 0, 64}, 0};
     run(44100u / 3u);
     shot(dir, "mfx_ensemble_mono_new");
+    mfx_params[0] = (MfxParams){MFX_ENS_PHASER, {74, 64, 26, 120}, 100, {60, 90}};
+    run(44100u / 2u);
+    shot(dir, "mfx_ens_phaser");
+    mfx_params[0] = (MfxParams){MFX_CHORUS, {45, 94, 46, 64}, 127, {80, 0}};
+    run(44100u / 2u);
+    shot(dir, "mfx_chorus");
     mfx_params[0].type = MFX_OFF;
     note(0, 48, 0); note(0, 55, 0); note(0, 63, 0);
 

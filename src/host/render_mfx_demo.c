@@ -216,6 +216,18 @@ int main(int argc, char **argv)
         printf("  host cost, one layer stereo: ENS+PHASER %.1f ns/sample\n",
                cost((MfxParams){MFX_ENS_PHASER, {74, 64, 26, 120}, 100, {30, 76}}));
     }
+    {   /* CHORUS: knobs RATE / DEPTH / DELAY / MIX, lr WIDTH, row AGE. RATE knob for Hz: 0.1 * 2^(k * 6.644 / 127):
+         * 0.51 Hz = 45 (the classic I), 0.86 Hz = 59 (II), 9.75 Hz = 126 (I+II, with a small DEPTH) */
+        printf("CHORUS:\n");
+        render(argv[1], "51_pad_chorus_I", SC_PAD, (MfxParams){MFX_CHORUS, {45, 94, 46, 64}, 127, {20, 0}}, 0);
+        render(argv[1], "52_pad_chorus_II", SC_PAD, (MfxParams){MFX_CHORUS, {59, 110, 46, 64}, 127, {20, 0}}, 0);
+        render(argv[1], "53_pad_chorus_I+II", SC_PAD, (MfxParams){MFX_CHORUS, {126, 12, 46, 64}, 127, {20, 0}}, 0);
+        render(argv[1], "54_pad_chorus_dusty_wide", SC_PAD, (MfxParams){MFX_CHORUS, {25, 110, 70, 72}, 127, {100, 0}}, 0);
+        render(argv[1], "55_bass_chorus_I", SC_BASS, (MfxParams){MFX_CHORUS, {45, 94, 46, 64}, 127, {20, 0}}, 0);
+        render(argv[1], "56_noise_chorus_II", SC_NOISE, (MfxParams){MFX_CHORUS, {59, 110, 46, 64}, 127, {20, 0}}, 0);
+        printf("  host cost, one layer stereo: CHORUS %.1f ns/sample\n",
+               cost((MfxParams){MFX_CHORUS, {45, 94, 46, 64}, 127, {20, 0}}));
+    }
     printf("  host cost, one layer stereo: STONE PHASER %.1f ns/sample\n",
            cost((MfxParams){MFX_STONE_PHASER, {64, mid, 100, 127}, 0}));
     {   /* beside the voices: 8 held pad notes, the whole render, without and with it (best of 5) */

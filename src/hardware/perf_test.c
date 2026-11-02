@@ -73,13 +73,15 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_DRV(m) (F_DRIVE | (uint16_t)((m) << 11))
 #define F_MFX 0x4000u                /* STONE PHASER on layer 1 (RATE 0.5 Hz, FEEDBACK 100, STEREO 64, AUTO) */
 #define F_MFX2 0x8000u               /* ... on both layers, DUAL (K_IDLE: nothing playing, the effect alone) */
+#define F_MFXT(t) ((uint32_t)(t) << 16)   /* with F_MFX / F_MFX2: the type instead (MFX_*, 2026-11-02), at its
+                                      * defaults (UIStateMachine.c mfx_type_set) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
 
 typedef struct {
     const char *name;
     uint8_t kind, arch, flavour;
-    uint16_t flags;
+    uint32_t flags;
     uint8_t page;
 } PtScen;
 
@@ -197,6 +199,15 @@ static const PtScen SCEN[] = {
     {"SPREAD PHASER", K_HELD, VARCH_SPREAD, FLT_MULTI, F_MFX, UIPAGE_HOME1},
     {"SPREAD H CEL PHSR", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX, UIPAGE_HOME1},
     {"SEQ+ARP HOME PHSR2", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_MFX2, UIPAGE_HOME1},
+    /* the brigade types at half rate (2026-11-02): beside IDLE PHASER (x2), SPREAD H CEL PHSR, SEQ+ARP HOME PHSR2 */
+    {"IDLE ENSEMBLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_ENSEMBLE), UIPAGE_HOME1},
+    {"IDLE ENSEMBLE x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_ENSEMBLE), UIPAGE_HOME1},
+    {"IDLE ENS+PHSR", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_ENS_PHASER), UIPAGE_HOME1},
+    {"IDLE ENS+PHSR x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_ENS_PHASER), UIPAGE_HOME1},
+    {"IDLE CHORUS", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_CHORUS), UIPAGE_HOME1},
+    {"IDLE CHORUS x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_CHORUS), UIPAGE_HOME1},
+    {"SPREAD H CEL ENPH", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_ENS_PHASER), UIPAGE_HOME1},
+    {"SEQ+ARP HOME ENPH2", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_MFX2 | F_MFXT(MFX_ENS_PHASER), UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -377,7 +388,14 @@ static void setup(const PtScen *s)
     }
     mfx_params[0].type = mfx_params[1].type = MFX_OFF;
     if (s->flags & (F_MFX | F_MFX2)) {
-        mfx_params[0] = (MfxParams){MFX_STONE_PHASER, {64, 41, 100, 127}, 64};
+        static const MfxParams MP[MFX_COUNT] = {
+            [MFX_STONE_PHASER] = {MFX_STONE_PHASER, {64, 41, 100, 127}, 64, {0, 0}},
+            [MFX_ENSEMBLE] = {MFX_ENSEMBLE, {40, 74, 45, 64}, 100, {0, 0}},
+            [MFX_ENS_PHASER] = {MFX_ENS_PHASER, {74, 64, 26, 120}, 100, {30, 76}},
+            [MFX_CHORUS] = {MFX_CHORUS, {45, 94, 46, 64}, 127, {20, 0}},
+        };
+        uint32_t t = s->flags >> 16;
+        mfx_params[0] = MP[t > MFX_STONE_PHASER && t < MFX_COUNT ? t : MFX_STONE_PHASER];
         if (s->flags & F_MFX2) {
             mfx_params[1] = mfx_params[0];
             perf_state.perf_mode = PERF_DUAL_SYNTH;

@@ -34,22 +34,28 @@
  * output, COLOR's feedback from the chain's end to its start). The ensemble's controls folded into two (the user's):
  * ENS RATE (the chorus oscillator; the tremolo follows at the unit's 8:1, softly) and ENS DEPTH (the clocks' swing,
  * the shimmer at the unit's own share), then PHASE RATE and PHASE DEPTH (the sweep's width about its middle). Rows:
- * AGE (as ENSEMBLE's), COLOUR (the pedal's switch made a feedback amount), WIDTH (as ENSEMBLE's). */
-enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_BULLROARER, MFX_COUNT };
-#define MFX_OFFERED (MFX_ENSEMBLE + 1)    /* the MFX page's TYPE list: ENS+PHASER (its page not yet) and BULLROARER (the
-                                          * prototype) are not offered */
+ * AGE (as ENSEMBLE's), COLOUR (the pedal's switch made a feedback amount), WIDTH (as ENSEMBLE's).
+ *
+ * CHORUS (2026-11-02): the classic two-channel synth chorus (docs/effect schematics, alpha juno chorus.png: a BBD a
+ * side, the clocks swung against each other by one triangle, a compander round each), made variable (the user's):
+ * RATE, DEPTH, DELAY (the sweep's centre), MIX. Rows: WIDTH (the second side's LFO behind the first's: 127 the
+ * classic opposite swing), AGE (as ENSEMBLE's). */
+enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_BULLROARER, MFX_COUNT };
+#define MFX_OFFERED (MFX_CHORUS + 1)      /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
 enum { MFX_K_MANUAL, MFX_K_RATE, MFX_K_FEEDBACK, MFX_K_DEPTH };    /* STONE PHASER's knobs */
 enum { MFX_K_WHIRL, MFX_K_REACH, MFX_K_TWIST, MFX_K_DUST };         /* BULLROARER's */
 enum { MFX_K_AGE = 0, MFX_K_SHIMMER = 2 };                          /* ENSEMBLE's (RATE, DEPTH as above) */
 enum { MFX_K_ENS_RATE, MFX_K_ENS_DEPTH, MFX_K_PH_RATE, MFX_K_PH_DEPTH };   /* ENS+PHASER's */
-enum { MFX_R_AGE, MFX_R_COLOUR };                                   /* ENS+PHASER's further rows (row[]) */
+enum { MFX_K_CH_RATE, MFX_K_CH_DEPTH, MFX_K_CH_DELAY, MFX_K_CH_MIX };     /* CHORUS's */
+enum { MFX_R_AGE, MFX_R_COLOUR };                                   /* further rows (row[]): ENS+PHASER's AGE, COLOUR;
+                                                                     * CHORUS's AGE */
 
 typedef struct {
     uint8_t type;                /* MFX_* */
     uint8_t knob[4];             /* 0..127, the type's own controls */
     uint8_t lr;                  /* the type's menu row, 0..127: L/R PHASE (the right side's LFO behind the left's),
                                   * ENSEMBLE's and ENS+PHASER's WIDTH */
-    uint8_t row[2];              /* further rows, 0..127: ENS+PHASER's AGE, COLOUR */
+    uint8_t row[2];              /* further rows, 0..127: ENS+PHASER's AGE, COLOUR; CHORUS's AGE */
 } MfxParams;
 
 /* each layer's MFX (not stored yet: the patch format bump comes with the CC map's) */
