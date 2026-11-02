@@ -55,6 +55,8 @@ typedef struct {
     float b1[2], x[2], sh[2];                /* B1's C11 (TPT state); X, the sample before (the loop); the shelf */
     float lfo;                               /* the triangle's phase, 0..1 (the left side's) */
     float ctl[2];                            /* each side's 4009 control, 0..1, glided */
+    float sp_g[3];                           /* M's input and loop gains and the output's, as last set (each control
+                                              * step ramps from them: FEEDBACK turns without stepping) */
     /* BULLROARER (and ENSEMBLE: the brigades, the write place, the clock's drift, the compander, the noise) */
     int16_t br_line[2][512];                 /* each side's bucket brigade (scaled, saturated: the BBD's headroom) */
     uint32_t br_w;                           /* the write place */
@@ -68,6 +70,7 @@ typedef struct {
     float en_fast;                           /* the tremolo oscillator's phase */
     float en_d[3];                           /* each line's delay at the last control step, samples */
     float en_s1[2], en_s2[2], en_p[2];       /* each side's output filters: the 2-pole's states, the 1-pole's */
+    float kn[5];                             /* the knobs and the row, glided (0..127): a turn moves no setting in steps */
     uint8_t type;                           /* what the state is for: a new type starts clean */
 } MfxState;
 
@@ -94,7 +97,7 @@ void mfx_init(void)
     memset(mfx_st, 0, sizeof mfx_st);
 }
 
-static void stone_phaser(MfxState *s, const uint8_t *k, uint8_t lr, float *l, float *r, uint32_t n)
+static void stone_phaser(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t n)
 {
     /* RATE: the triangle 0.08 .. 25 Hz, even in octaves (the circuit's 1M pot spans 0.25 .. 25 Hz; slower added for
      * pads). FEEDBACK: the pot, reverse-log (most of its travel where the feedback is heard). */
@@ -129,8 +132,11 @@ static void stone_phaser(MfxState *s, const uint8_t *k, uint8_t lr, float *l, fl
             float *z = s->z[ch];
             float z0 = z[0], z1 = z[1], z2 = z[2], z3 = z[3], z4 = z[4], z5 = z[5], sb = s->b1[ch], xp = s->x[ch];
             float sh = s->sh[ch];
+            float gi = s->sp_g[0], gf = s->sp_g[1], go = s->sp_g[2], im = 1.f / (float)m;
+            const float di = (cin - gi) * im, df = (cfb - gf) * im, dg = (h - go) * im;
             for (uint32_t i = 0; i < m; i++) {
-                float mm = cin * y[i] + cfb * xp;                  /* node M */
+                gi += di; gf += df; go += dg;
+                float mm = gi * y[i] + gf * xp;                    /* node M */
                 float w = SP_KIN * mm, o;
                 o = c * (w + z1) - z0; z0 = w;                      /* the five swept stages */
                 w = c * (o + z2) - z1; z1 = o;
@@ -143,13 +149,14 @@ static void stone_phaser(MfxState *s, const uint8_t *k, uint8_t lr, float *l, fl
                 float nn = mm + xp;                                 /* node N (x 2), then the emphasis shelf */
                 v = SP_G_SH * (nn - sh); lp = v + sh;
                 sh = lp + v;
-                y[i] = (1.5f * nn - 0.5f * lp) * h;
+                y[i] = (1.5f * nn - 0.5f * lp) * go;
             }
             z[0] = z0; z[1] = z1; z[2] = z2; z[3] = z3; z[4] = z4; z[5] = z5;
             s->b1[ch] = sb;
             s->sh[ch] = sh;
             s->x[ch] = xp;
         }
+        s->sp_g[0] = cin; s->sp_g[1] = cfb; s->sp_g[2] = h;
         s->lfo += rate * (float)m * (1.f / MFX_SR);
         if (s->lfo >= 1.f) s->lfo -= 1.f;
     }
@@ -184,7 +191,7 @@ static inline float br_sat(float u)
 /* a one-pole's coefficient for fc Hz */
 static inline float br_g(float fc) { return 1.f - amp_exp2f(-fc * (2.f * MFX_PI * 1.442695f / MFX_SR)); }
 
-static void bullroarer(MfxState *s, const uint8_t *k, uint8_t lr, float *l, float *r, uint32_t n)
+static void bullroarer(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t n)
 {
     /* WHIRL 0.1 .. 8 Hz (even in octaves); the cord winds every 6 turns (no slower than once in 30 s) */
     const float whirl = 0.1f * amp_exp2f((float)k[MFX_K_WHIRL] * (6.32f / 127.f));
@@ -300,7 +307,7 @@ static inline float en_tap(const int16_t *line, uint32_t w, float d)
     return (float)line[p] + fr * (float)(line[q] - line[p]);
 }
 
-static void ensemble(MfxState *s, const uint8_t *k, uint8_t lr, float *l, float *r, uint32_t n)
+static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t n)
 {
     /* RATE 0.08 .. 4 Hz, even in octaves; SHIMMER adds the tremolo, the control's peak held (so DEPTH stays DEPTH) */
     const float age = (float)k[MFX_K_AGE] * (1.f / 127.f);
@@ -309,8 +316,8 @@ static void ensemble(MfxState *s, const uint8_t *k, uint8_t lr, float *l, float 
     const float swing = EN_SWING * (float)k[MFX_K_DEPTH] * (1.f / 127.f) / (1.f + shim);
     const float width = (float)lr * (1.f / 127.f);
     const float dc = EN_D0 * (1.f + age);
-    const float drive = BR_SCALE * (1.f + 2.f * age);
-    const float out = EN_OUT / (drive * 32767.f);
+    const float drive = BR_SCALE * (1.f + 2.f * age), undrive = 32767.f / (1.f + 2.f * age);
+    const float out = EN_OUT / (BR_SCALE * 32767.f);   /* (the line holds the level, not the drive: AGE turns smoothly) */
     const float gn = (1.f + width) * (1.f / 3.f), gf = (1.f - width) * (1.f / 3.f), gc = 1.f / 3.f;
     const float hiss = 0.0015f + 0.008f * age * age;                /* of the level: -40 dB at AGE 127, a bed */
     const float wow_amt = 0.025f * age;
@@ -355,14 +362,14 @@ static void ensemble(MfxState *s, const uint8_t *k, uint8_t lr, float *l, float 
         uint32_t w = s->br_w, rng = s->br_rng;
         for (uint32_t i = 0; i < m; i++) {
             float xl = yl[i], xr = yr[i];
-            bl[w] = (int16_t)(br_sat(xl * drive) * 32767.f);               /* into the brigades */
-            br[w] = (int16_t)(br_sat(xr * drive) * 32767.f);
+            bl[w] = (int16_t)(br_sat(xl * drive) * undrive);               /* into the brigades */
+            br[w] = (int16_t)(br_sat(xr * drive) * undrive);
             float fi = (float)(i + 1u);
             float v1 = en_tap(bl, w, d0[0] + dd[0] * fi);
             float d2 = d0[1] + dd[1] * fi;
             float v2 = 0.5f * (en_tap(bl, w, d2) + en_tap(br, w, d2));
             float v3 = en_tap(br, w, d0[2] + dd[2] * fi);
-            float av = ((xl < 0.f ? -xl : xl) + (xr < 0.f ? -xr : xr)) * (0.5f * 32767.f) * drive;
+            float av = ((xl < 0.f ? -xl : xl) + (xr < 0.f ? -xr : xr)) * (0.5f * 32767.f * BR_SCALE);
             env += (av > env ? 0.02f : 0.0005f) * (av - env);
             rng = rng * 1664525u + 1013904223u;
             float nl = (float)(int32_t)rng * (1.f / 2147483648.f);
@@ -404,20 +411,35 @@ float mfx_peek(int layer, int i)
     return -1.f;
 }
 
+/* the knobs' glide a control step (MFX_SUB frames): ~23 ms, as the patch's own knobs (knob smoothing) */
+#define MFX_KGLIDE 0.0155f
+
 void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
 {
     MfxState *s = &mfx_st[layer & 1];
     const MfxParams *p = &mfx_params[layer & 1];
-    if (p->type != s->type) {                    /* a new type (or back from OFF) starts from silence */
+    int j;
+    if (p->type != s->type) {                    /* a new type (or back from OFF) starts from silence, at its knobs */
         float lfo = s->lfo;
         memset(s, 0, sizeof *s);
         s->lfo = lfo;
         s->type = p->type;
+        for (j = 0; j < 4; j++) s->kn[j] = (float)p->knob[j];
+        s->kn[4] = (float)p->lr;
     }
-    if (p->type == MFX_STONE_PHASER)
-        stone_phaser(s, p->knob, p->lr, l, r, n);
-    else if (p->type == MFX_BULLROARER)
-        bullroarer(s, p->knob, p->lr, l, r, n);
-    else if (p->type == MFX_ENSEMBLE)
-        ensemble(s, p->knob, p->lr, l, r, n);
+    if (p->type == MFX_OFF || p->type >= MFX_COUNT)
+        return;
+    /* a control step at a time: each model's settings follow the glided knobs (their set-up is a few dozen
+     * operations, against the step's thousands) */
+    for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
+        uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
+        for (j = 0; j < 4; j++) s->kn[j] += ((float)p->knob[j] - s->kn[j]) * MFX_KGLIDE;
+        s->kn[4] += ((float)p->lr - s->kn[4]) * MFX_KGLIDE;
+        if (p->type == MFX_STONE_PHASER)
+            stone_phaser(s, s->kn, s->kn[4], l + f0, r + f0, m);
+        else if (p->type == MFX_BULLROARER)
+            bullroarer(s, s->kn, s->kn[4], l + f0, r + f0, m);
+        else
+            ensemble(s, s->kn, s->kn[4], l + f0, r + f0, m);
+    }
 }

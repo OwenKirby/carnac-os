@@ -274,6 +274,43 @@ int main(void)
         if (!isfinite(peak) || peak > 400000.0) { printf("ENSEMBLE not bounded\n"); fails++; }
     }
 
+    /* 8. no zipper: each knob and the row turned fast mid-tone (a 220 Hz sine), 0 -> 127 in steps of 2 a block (0.19 s,
+     *    as a quick turn's detents); the output's second difference while it turns stays within 1.5x of the larger of
+     *    before and after, settled (unglided, each step steps the output: the zipper) */
+    {
+        static const uint8_t T[2] = {MFX_STONE_PHASER, MFX_ENSEMBLE};
+        static float l[128], r[128];
+        for (int ti = 0; ti < 2; ti++)
+            for (int kk = 0; kk < 5; kk++) {
+                MfxParams p = {T[ti], {64, 64, 64, 64}, 64};
+                double ph = 0.0, before = 0.0, after = 0.0, during = 0.0, y1 = 0.0, y2 = 0.0;
+                if (kk < 4) p.knob[kk] = 0; else p.lr = 0;
+                mfx_init();
+                mfx_params[0] = p;
+                for (int b = 0; b < 1000; b++) {                 /* 2.9 s; the turn from block 600 */
+                    if (b >= 600 && b < 664) {
+                        uint8_t v = (uint8_t)(b - 599 >= 64 ? 127 : 2 * (b - 599));
+                        if (kk < 4) mfx_params[0].knob[kk] = v; else mfx_params[0].lr = v;
+                    }
+                    for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 220.0 / SR; }
+                    mfx_layer_block(0, l, r, 128);
+                    for (int i = 0; i < 128; i++) {
+                        double d2 = fabs(l[i] - 2.0 * y1 + y2);
+                        y2 = y1; y1 = l[i];
+                        if (b >= 500 && b < 600 && d2 > before) before = d2;
+                        if (b >= 600 && b < 700 && d2 > during) during = d2;
+                        if (b >= 900 && d2 > after) after = d2;
+                    }
+                }
+                double calm = before > after ? before : after;
+                if (during > 1.5 * calm + 1.0) {
+                    printf("%s knob %d turned: zipper (second difference %.0f while turning, %.0f before, %.0f after)\n",
+                           ti ? "ENSEMBLE" : "STONE PHASER", kk + 1, during, before, after);
+                    fails++;
+                }
+            }
+    }
+
     printf(fails ? "%d MFX checks failed\n" : "all MFX checks passed\n", fails);
     return fails != 0;
 }
