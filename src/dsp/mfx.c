@@ -70,7 +70,11 @@ typedef struct {
     float en_fast;                           /* the tremolo oscillator's phase */
     float en_d[3];                           /* each line's delay at the last control step, samples */
     float en_s1[2], en_s2[2], en_p[2];       /* each side's output filters: the 2-pole's states, the 1-pole's */
-    float kn[5];                             /* the knobs and the row, glided (0..127): a turn moves no setting in steps */
+    /* ENS+PHASER's phaser (the ensemble's state above) */
+    float ss_z[2][5];                        /* each side's chain: its input, each stage's output, the sample before */
+    float ss_ctl, ss_lfo;                    /* the OTAs' control current (0..1, glided), the LFO's phase */
+    float kn[7];                             /* the knobs and the rows (lr, row[]), glided (0..127): a turn moves no
+                                              * setting in steps */
     uint8_t type;                           /* what the state is for: a new type starts clean */
 } MfxState;
 
@@ -307,7 +311,8 @@ static inline float en_tap(const int16_t *line, uint32_t w, float d)
     return (float)line[p] + fr * (float)(line[q] - line[p]);
 }
 
-static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t n)
+/* fast: the tremolo oscillator, Hz (ENSEMBLE: the unit's EN_FAST; ENS+PHASER: following ENS RATE) */
+static void ensemble(MfxState *s, const float *k, float lr, float fast, float *l, float *r, uint32_t n)
 {
     /* RATE 0.08 .. 4 Hz, even in octaves; SHIMMER adds the tremolo, the control's peak held (so DEPTH stays DEPTH) */
     const float age = (float)k[MFX_K_AGE] * (1.f / 127.f);
@@ -336,7 +341,7 @@ static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, 
         c[2] = -(c[0] + c[1]);
         s->lfo += rate * dt;
         if (s->lfo >= 1.f) s->lfo -= 1.f;
-        s->en_fast += EN_FAST * dt;
+        s->en_fast += fast * dt;
         if (s->en_fast >= 1.f) s->en_fast -= 1.f;
         if (s->br_wow_n == 0u) {                                     /* the aged clocks: a new heading every ~0.2 s */
             s->br_rng = s->br_rng * 1664525u + 1013904223u;
@@ -371,10 +376,9 @@ static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, 
             float v3 = en_tap(br, w, d0[2] + dd[2] * fi);
             float av = ((xl < 0.f ? -xl : xl) + (xr < 0.f ? -xr : xr)) * (0.5f * 32767.f * BR_SCALE);
             env += (av > env ? 0.02f : 0.0005f) * (av - env);
-            rng = rng * 1664525u + 1013904223u;
+            rng = rng * 1664525u + 1013904223u;                  /* one draw, each side its own half of it */
             float nl = (float)(int32_t)rng * (1.f / 2147483648.f);
-            rng = rng * 1664525u + 1013904223u;
-            float nr = (float)(int32_t)rng * (1.f / 2147483648.f);
+            float nr = (float)(int32_t)(rng << 16 | rng >> 16) * (1.f / 2147483648.f);
             float sl = gn * v1 + gc * v2 + gf * v3 + env * hiss * nl;      /* the output amplifier, panned */
             float sr = gf * v1 + gc * v2 + gn * v3 + env * hiss * nr;
             float u3 = sl - s2l, u1 = a1 * s1l + a2 * u3, u2 = s2l + a2 * s1l + a3 * u3;    /* the boards' filters */
@@ -395,16 +399,78 @@ static void ensemble(MfxState *s, const float *k, float lr, float *l, float *r, 
     }
 }
 
+/* ---- ENS+PHASER ---- */
+/* The phaser, from the schematic (docs/effect schematics, small_stone.png):
+ *  - IC1..IC4, four CA3094 OTA all-pass stages (27K / 6.8 nF round each, a Darlington buffer after): each stage's
+ *    frequency is the OTA's transconductance over its 6.8 nF, so linear in the one control current all four share
+ *    (pin 5). The current's range is not on the sheet: taken as 70 Hz .. 3 kHz, the pedal's sweep by ear.
+ *  - IC5 and its transistors, the LFO: a triangle (the integrator's 33 uF, the 1M RATE pot); here 0.04 .. 10 Hz.
+ *  - The output: the input buffer's dry through 27K / 30K and the chain's end, alike: (dry + chain) / 2, two notches.
+ *  - COLOR: the chain's end back to its start (27K / 3K3 / 4K7, 0.1 uF, 270K): positive feedback, sharper notches
+ *    and peaks between. A switch on the pedal (on: about 0.45 here); a row here, 0 .. 0.7.
+ * Each side its own chain, one LFO (the stereo is the ensemble's WIDTH). The ensemble runs first, as ENSEMBLE, with
+ * its knobs folded: ENS RATE is its RATE, the tremolo at the unit's ratio to it (6.5 : 0.78) but only a third as far
+ * in octaves; ENS DEPTH its DEPTH, SHIMMER held at the unit's own (45). */
+#define SS_F_LO 70.f
+#define SS_F_HI 3000.f
+#define SS_FB 0.7f                               /* COLOUR 127 */
+#define SS_SHIM 45.f                             /* the ensemble's SHIMMER, held */
+#define SS_OUT 1.41f                             /* output trim: pink noise +2 dB, as STONE PHASER (a pad ~1 dB under dry) */
+
+static void ens_phaser(MfxState *s, const float *k, const float *row, float lr, float *l, float *r, uint32_t n)
+{
+    float ke[4];
+    ke[MFX_K_AGE] = row[MFX_R_AGE];
+    ke[MFX_K_RATE] = k[MFX_K_ENS_RATE];
+    ke[MFX_K_SHIMMER] = SS_SHIM;
+    ke[MFX_K_DEPTH] = k[MFX_K_ENS_DEPTH];
+    /* the tremolo: 6.5 Hz at the unit's 0.78 Hz chorus, a third of ENS RATE's octaves from there */
+    const float fast = EN_FAST * amp_exp2f(((float)k[MFX_K_ENS_RATE] - 74.f) * (5.644f / 127.f / 3.f));
+    ensemble(s, ke, lr, fast, l, r, n);
+
+    const float rate = 0.04f * amp_exp2f((float)k[MFX_K_PH_RATE] * (7.966f / 127.f));
+    const float depth = (float)k[MFX_K_PH_DEPTH] * (1.f / 127.f);
+    const float fb = SS_FB * (float)row[MFX_R_COLOUR] * (1.f / 127.f);
+    const float h = 0.5f * SS_OUT * (1.f - 0.68f * fb);             /* (the feedback's peaks give level back) */
+    for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
+        uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
+        float tri = s->ss_lfo < 0.5f ? 2.f * s->ss_lfo : 2.f - 2.f * s->ss_lfo;
+        float want = 0.5f + depth * (tri - 0.5f);
+        s->ss_ctl += (want - s->ss_ctl) * (0.0155f * (float)m / (float)MFX_SUB);
+        float t = mfx_tan_small(MFX_PI * (SS_F_LO + (SS_F_HI - SS_F_LO) * s->ss_ctl) / MFX_SR);
+        float c = (1.f - t) / (1.f + t);
+        for (int ch = 0; ch < 2; ch++) {
+            float *y = ch ? r + f0 : l + f0, *z = s->ss_z[ch];
+            float z0 = z[0], z1 = z[1], z2 = z[2], z3 = z[3], z4 = z[4];
+            for (uint32_t i = 0; i < m; i++) {
+                float x = y[i], w = x + fb * z4, o;                  /* COLOR: the chain's end back to its start */
+                o = c * (w + z1) - z0; z0 = w;                      /* IC1 .. IC4 */
+                w = c * (o + z2) - z1; z1 = o;
+                o = c * (w + z3) - z2; z2 = w;
+                w = c * (o + z4) - z3; z3 = o; z4 = w;
+                y[i] = (x + w) * h;                                 /* dry and the chain, alike */
+            }
+            z[0] = z0; z[1] = z1; z[2] = z2; z[3] = z3; z[4] = z4;
+        }
+        s->ss_lfo += rate * (float)m * (1.f / MFX_SR);
+        if (s->ss_lfo >= 1.f) s->ss_lfo -= 1.f;
+    }
+}
+
 float mfx_peek(int layer, int i)
 {
     const MfxState *s = &mfx_st[layer & 1];
     uint8_t t = mfx_params[layer & 1].type;
     if (t != s->type && i < 3) return -1.f;          /* (not yet run as this type) */
     if (t == MFX_STONE_PHASER && i >= 0 && i < 2) return s->ctl[i];
-    if (t == MFX_ENSEMBLE && i >= 0 && i < 3) return s->en_d[i] * (1.f / EN_DMAX);
-    if (t == MFX_ENSEMBLE && (i == 3 || i == 4)) {   /* where its lines swing between: the clocks' fastest, slowest */
-        const uint8_t *k = mfx_params[layer & 1].knob;
-        float dc = EN_D0 * (1.f + (float)k[MFX_K_AGE] * (1.f / 127.f)), sw = EN_SWING * (float)k[MFX_K_DEPTH] * (1.f / 127.f);
+    if (t == MFX_ENS_PHASER && i == 5) return s->ss_ctl;
+    if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && i >= 0 && i < 3) return s->en_d[i] * (1.f / EN_DMAX);
+    if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && (i == 3 || i == 4)) {   /* where its lines swing between: the
+                                                                                 * clocks' fastest, slowest */
+        const MfxParams *p = &mfx_params[layer & 1];
+        float age = t == MFX_ENSEMBLE ? p->knob[MFX_K_AGE] : p->row[MFX_R_AGE];
+        float dep = t == MFX_ENSEMBLE ? p->knob[MFX_K_DEPTH] : p->knob[MFX_K_ENS_DEPTH];
+        float dc = EN_D0 * (1.f + age * (1.f / 127.f)), sw = EN_SWING * dep * (1.f / 127.f);
         float d = dc / (i == 3 ? 1.f + sw : 1.f - sw);
         return (d > EN_DMAX ? EN_DMAX : d) * (1.f / EN_DMAX);
     }
@@ -426,6 +492,9 @@ void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
         s->type = p->type;
         for (j = 0; j < 4; j++) s->kn[j] = (float)p->knob[j];
         s->kn[4] = (float)p->lr;
+        s->kn[5] = (float)p->row[0];
+        s->kn[6] = (float)p->row[1];
+        s->ss_ctl = 0.5f;
     }
     if (p->type == MFX_OFF || p->type >= MFX_COUNT)
         return;
@@ -435,11 +504,15 @@ void mfx_layer_block(int layer, float *l, float *r, uint32_t n)
         uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
         for (j = 0; j < 4; j++) s->kn[j] += ((float)p->knob[j] - s->kn[j]) * MFX_KGLIDE;
         s->kn[4] += ((float)p->lr - s->kn[4]) * MFX_KGLIDE;
+        s->kn[5] += ((float)p->row[0] - s->kn[5]) * MFX_KGLIDE;
+        s->kn[6] += ((float)p->row[1] - s->kn[6]) * MFX_KGLIDE;
         if (p->type == MFX_STONE_PHASER)
             stone_phaser(s, s->kn, s->kn[4], l + f0, r + f0, m);
         else if (p->type == MFX_BULLROARER)
             bullroarer(s, s->kn, s->kn[4], l + f0, r + f0, m);
+        else if (p->type == MFX_ENS_PHASER)
+            ens_phaser(s, s->kn, s->kn + 5, s->kn[4], l + f0, r + f0, m);
         else
-            ensemble(s, s->kn, s->kn[4], l + f0, r + f0, m);
+            ensemble(s, s->kn, s->kn[4], EN_FAST, l + f0, r + f0, m);
     }
 }

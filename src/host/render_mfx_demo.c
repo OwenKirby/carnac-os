@@ -204,6 +204,18 @@ int main(int argc, char **argv)
         printf("  host cost, one layer stereo: ENSEMBLE %.1f ns/sample\n",
                cost((MfxParams){MFX_ENSEMBLE, {80, 74, 45, 64}, 100}));
     }
+    {   /* ENS+PHASER: knobs ENS RATE / ENS DEPTH / PHASE RATE / PHASE DEPTH, lr WIDTH, rows AGE / COLOUR. PHASE RATE
+         * knob for Hz: 0.04 * 2^(k * 7.966 / 127): 0.1 Hz = 15, 0.2 Hz = 26, 0.5 Hz = 44, 3 Hz = 74 */
+        printf("ENS+PHASER:\n");
+        render(argv[1], "41_pad_ensph_oxygene", SC_PAD, (MfxParams){MFX_ENS_PHASER, {74, 64, 15, 110}, 100, {30, 40}}, 0);
+        render(argv[1], "42_pad_ensph_colour_on", SC_PAD, (MfxParams){MFX_ENS_PHASER, {74, 64, 26, 120}, 100, {30, 76}}, 0);
+        render(argv[1], "43_pad_ensph_dusty_slow", SC_PAD, (MfxParams){MFX_ENS_PHASER, {60, 80, 10, 127}, 110, {100, 50}}, 0);
+        render(argv[1], "44_pad_ensph_fast_swirl", SC_PAD, (MfxParams){MFX_ENS_PHASER, {90, 70, 44, 90}, 127, {40, 100}}, 0);
+        render(argv[1], "45_noise_ensph", SC_NOISE, (MfxParams){MFX_ENS_PHASER, {74, 64, 26, 127}, 100, {30, 76}}, 0);
+        render(argv[1], "46_bass_ensph", SC_BASS, (MfxParams){MFX_ENS_PHASER, {74, 50, 74, 80}, 64, {40, 60}}, 0);
+        printf("  host cost, one layer stereo: ENS+PHASER %.1f ns/sample\n",
+               cost((MfxParams){MFX_ENS_PHASER, {74, 64, 26, 120}, 100, {30, 76}}));
+    }
     printf("  host cost, one layer stereo: STONE PHASER %.1f ns/sample\n",
            cost((MfxParams){MFX_STONE_PHASER, {64, mid, 100, 127}, 0}));
     {   /* beside the voices: 8 held pad notes, the whole render, without and with it (best of 5) */

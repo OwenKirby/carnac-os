@@ -11,6 +11,8 @@
  *  5. L/R PHASE: 0 = both sides the same; 127 = the right side's sweep half a cycle behind (the sides differ).
  *  6. BULLROARER: its level on pink noise at four settings within 1.5 dB of dry, bounded.
  *  7. ENSEMBLE: the same at five settings; WIDTH 0 leaves the sides alike, 127 sets them apart.
+ *  8. No zipper: every knob and row turned fast mid-tone (STONE PHASER, ENSEMBLE, ENS+PHASER).
+ *  9. ENS+PHASER: its level on pink noise at five settings within 1 dB of LEVEL_DB (as STONE PHASER), bounded.
  *   gcc -O2 -Isrc -Isrc/dsp src/dsp/mfx.c src/host/test_mfx.c -lm -o test_mfx */
 #include <complex.h>
 #include <math.h>
@@ -278,19 +280,19 @@ int main(void)
      *    as a quick turn's detents); the output's second difference while it turns stays within 1.5x of the larger of
      *    before and after, settled (unglided, each step steps the output: the zipper) */
     {
-        static const uint8_t T[2] = {MFX_STONE_PHASER, MFX_ENSEMBLE};
+        static const uint8_t T[3] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER};
         static float l[128], r[128];
-        for (int ti = 0; ti < 2; ti++)
-            for (int kk = 0; kk < 5; kk++) {
-                MfxParams p = {T[ti], {64, 64, 64, 64}, 64};
+        for (int ti = 0; ti < 3; ti++)
+            for (int kk = 0; kk < (ti == 2 ? 7 : 5); kk++) {   /* the knobs, lr, row[] */
+                MfxParams p = {T[ti], {64, 64, 64, 64}, 64, {64, 64}};
                 double ph = 0.0, before = 0.0, after = 0.0, during = 0.0, y1 = 0.0, y2 = 0.0;
-                if (kk < 4) p.knob[kk] = 0; else p.lr = 0;
+                *(kk < 4 ? &p.knob[kk] : kk == 4 ? &p.lr : &p.row[kk - 5]) = 0;
                 mfx_init();
                 mfx_params[0] = p;
                 for (int b = 0; b < 1000; b++) {                 /* 2.9 s; the turn from block 600 */
                     if (b >= 600 && b < 664) {
                         uint8_t v = (uint8_t)(b - 599 >= 64 ? 127 : 2 * (b - 599));
-                        if (kk < 4) mfx_params[0].knob[kk] = v; else mfx_params[0].lr = v;
+                        *(kk < 4 ? &mfx_params[0].knob[kk] : kk == 4 ? &mfx_params[0].lr : &mfx_params[0].row[kk - 5]) = v;
                     }
                     for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 220.0 / SR; }
                     mfx_layer_block(0, l, r, 128);
@@ -305,10 +307,50 @@ int main(void)
                 double calm = before > after ? before : after;
                 if (during > 1.5 * calm + 1.0) {
                     printf("%s knob %d turned: zipper (second difference %.0f while turning, %.0f before, %.0f after)\n",
-                           ti ? "ENSEMBLE" : "STONE PHASER", kk + 1, during, before, after);
+                           ti == 2 ? "ENS+PHASER" : ti ? "ENSEMBLE" : "STONE PHASER", kk + 1, during, before, after);
                     fails++;
                 }
             }
+    }
+
+    /* 9. ENS+PHASER: pink noise level within 1.5 dB of dry over its corners (rows AGE, COLOUR, WIDTH), bounded loud */
+    {
+        static const uint8_t K[5][7] = {{74, 64, 25, 110, 64, 30, 40}, {74, 64, 25, 110, 100, 30, 0},
+                                        {74, 64, 80, 127, 100, 127, 127}, {127, 127, 127, 127, 127, 127, 127},
+                                        {0, 0, 0, 0, 0, 0, 0}};
+        static float l[128], r[128];
+        for (int ki = 0; ki < 5; ki++) {
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_ENS_PHASER, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4],
+                                        {K[ki][5], K[ki][6]}};
+            srand(5);
+            double ein = 0.0, eout = 0.0, peak = 0.0;
+            int bad = 0;
+            for (int b = 0; b < 3445; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) {
+                    if (!isfinite(l[i]) || !isfinite(r[i])) bad = 1;
+                    eout += (double)l[i] * l[i];
+                    if (fabs(l[i]) > peak) peak = fabs(l[i]);
+                }
+            }
+            double db = 10.0 * log10(eout / ein);
+            printf("ENS+PHASER %3u %3u %3u %3u WIDTH %3u AGE %3u COLOUR %3u: pink noise %+.2f dB\n", K[ki][0], K[ki][1],
+                   K[ki][2], K[ki][3], K[ki][4], K[ki][5], K[ki][6], db);
+            if (bad || fabs(db - LEVEL_DB) > 1.0) { printf("ENS+PHASER level off its %+.1f dB or not finite\n", LEVEL_DB); fails++; }
+            if (peak > 400000.0) { printf("ENS+PHASER not bounded\n"); fails++; }
+        }
+        mfx_init();
+        mfx_params[0] = (MfxParams){MFX_ENS_PHASER, {127, 127, 127, 127}, 127, {127, 127}};
+        double peak = 0.0;
+        for (int b = 0; b < 3445; b++) {
+            for (int i = 0; i < 128; i++) { l[i] = (float)((rand() / (double)RAND_MAX - 0.5) * 120000.0); r[i] = -l[i]; }
+            mfx_layer_block(0, l, r, 128);
+            for (int i = 0; i < 128; i++) if (!(fabs(l[i]) <= peak)) peak = fabs(l[i]);
+        }
+        printf("ENS+PHASER everything full, loud noise: peak %.0f\n", peak);
+        if (!isfinite(peak) || peak > 400000.0) { printf("ENS+PHASER not bounded\n"); fails++; }
     }
 
     printf(fails ? "%d MFX checks failed\n" : "all MFX checks passed\n", fails);

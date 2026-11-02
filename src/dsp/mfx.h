@@ -27,18 +27,29 @@
  * AGE (the brigades' clock: low and the delay longer, the tone darker, hiss, the clock wandering; the unit's 39K /
  * 560p, its parts drifted), RATE (the CHORUS FREQ oscillator), SHIMMER (the TREMOLO FREQ oscillator's share of the
  * control: 0 the slow sweep alone, 127 the fast flutter as strong as it), DEPTH (how far the control swings the
- * clocks). Row: WIDTH (0 the unit's mono sum; 127 the first line left, the second centre, the third right). */
-enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_BULLROARER, MFX_COUNT };
-#define MFX_OFFERED (MFX_ENSEMBLE + 1)   /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
+ * clocks). Row: WIDTH (0 the unit's mono sum; 127 the first line left, the second centre, the third right).
+ *
+ * ENS+PHASER (2026-11-02): the string ensemble into a 4-stage phaser, the late-70s string chain (docs/effect
+ * schematics, small_stone.png: four OTA all-pass stages swept by one LFO current, the dry and the chain mixed at the
+ * output, COLOR's feedback from the chain's end to its start). The ensemble's controls folded into two (the user's):
+ * ENS RATE (the chorus oscillator; the tremolo follows at the unit's 8:1, softly) and ENS DEPTH (the clocks' swing,
+ * the shimmer at the unit's own share), then PHASE RATE and PHASE DEPTH (the sweep's width about its middle). Rows:
+ * AGE (as ENSEMBLE's), COLOUR (the pedal's switch made a feedback amount), WIDTH (as ENSEMBLE's). */
+enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_BULLROARER, MFX_COUNT };
+#define MFX_OFFERED (MFX_ENSEMBLE + 1)    /* the MFX page's TYPE list: ENS+PHASER (its page not yet) and BULLROARER (the
+                                          * prototype) are not offered */
 enum { MFX_K_MANUAL, MFX_K_RATE, MFX_K_FEEDBACK, MFX_K_DEPTH };    /* STONE PHASER's knobs */
 enum { MFX_K_WHIRL, MFX_K_REACH, MFX_K_TWIST, MFX_K_DUST };         /* BULLROARER's */
 enum { MFX_K_AGE = 0, MFX_K_SHIMMER = 2 };                          /* ENSEMBLE's (RATE, DEPTH as above) */
+enum { MFX_K_ENS_RATE, MFX_K_ENS_DEPTH, MFX_K_PH_RATE, MFX_K_PH_DEPTH };   /* ENS+PHASER's */
+enum { MFX_R_AGE, MFX_R_COLOUR };                                   /* ENS+PHASER's further rows (row[]) */
 
 typedef struct {
     uint8_t type;                /* MFX_* */
     uint8_t knob[4];             /* 0..127, the type's own controls */
     uint8_t lr;                  /* the type's menu row, 0..127: L/R PHASE (the right side's LFO behind the left's),
-                                  * ENSEMBLE's WIDTH */
+                                  * ENSEMBLE's and ENS+PHASER's WIDTH */
+    uint8_t row[2];              /* further rows, 0..127: ENS+PHASER's AGE, COLOUR */
 } MfxParams;
 
 /* each layer's MFX (not stored yet: the patch format bump comes with the CC map's) */
@@ -49,7 +60,7 @@ void mfx_init(void);
 
 /* the MFX page's peek at the effect as it moves (read by the UI, written by the audio): STONE PHASER's sweep on side i
  * (0, 1), ENSEMBLE's line i delay (0..2) as a share of the brigade's reach, and (3, 4) the shortest and longest its
- * lines swing to at these settings; 0..1, or -1 when there is none */
+ * lines swing to at these settings (ENS+PHASER: the same, and 5 its phaser's sweep); 0..1, or -1 when there is none */
 float mfx_peek(int layer, int i);
 
 /* the layer's MFX over n frames of its dry sum, in place (Q15 units, the bus's floats); nothing at OFF */
