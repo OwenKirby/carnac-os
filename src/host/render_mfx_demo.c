@@ -91,7 +91,7 @@ static void render(const char *dir, const char *name, int kind, MfxParams m, int
         engine_state[0].env[0].attack = 0;
         synth_restart();
     }
-    mfx_params[0] = m;
+    MFX_PARAMS(0) = m;
     FILE *f = wav_open(dir, name, len);
     if (!f) return;
     uint32_t seed = 1;
@@ -112,7 +112,7 @@ static void render(const char *dir, const char *name, int kind, MfxParams m, int
         if (kind == SC_NOISE && frame >= 11u * RATE && frame < 11u * RATE + BLOCK) synth_midi_3(0x80, 60, 0);
         if (sweep) {                             /* the pedal: heel to toe and back over 8 s, twice */
             double t = fmod((double)frame / RATE, 8.0) / 8.0;
-            mfx_params[0].knob[MFX_K_MANUAL] = (uint8_t)(127.0 * (t < 0.5 ? 2.0 * t : 2.0 - 2.0 * t) + 0.5);
+            MFX_PARAMS(0).knob[MFX_K_MANUAL] = (uint8_t)(127.0 * (t < 0.5 ? 2.0 * t : 2.0 - 2.0 * t) + 0.5);
         }
         (void)seed;
         synth_render_q15(buf, BLOCK);
@@ -126,7 +126,7 @@ static void render(const char *dir, const char *name, int kind, MfxParams m, int
         frame += BLOCK;
     }
     fclose(f);
-    mfx_params[0].type = MFX_OFF;
+    MFX_PARAMS(0).type = MFX_OFF;
     printf("  %-34s peak %6.1f dBFS  rms %6.1f dBFS\n", name, 20.0 * log10(peak + 1e-9),
            20.0 * log10(sqrt(sum / (2.0 * len)) + 1e-9));
 }
@@ -139,7 +139,7 @@ static double cost(MfxParams m)
     uint32_t seed = 7;
     for (int rep = 0; rep < 5; rep++) {
         mfx_init();
-        mfx_params[0] = m;
+        MFX_PARAMS(0) = m;
         clock_t t0 = clock();
         for (uint32_t fr = 0; fr < RATE * 10u; fr += 128u) {
             for (int i = 0; i < 128; i++) { seed = seed * 1664525u + 1013904223u; l[i] = r[i] = (float)((int32_t)seed >> 17); }
@@ -148,7 +148,7 @@ static double cost(MfxParams m)
         double ns = (double)(clock() - t0) / CLOCKS_PER_SEC * 1e9 / (RATE * 10.0);
         if (ns < best) best = ns;
     }
-    mfx_params[0].type = MFX_OFF;
+    MFX_PARAMS(0).type = MFX_OFF;
     return best;
 }
 
@@ -284,7 +284,7 @@ int main(int argc, char **argv)
             t[with] = 1e30;
             for (int rep = 0; rep < 5; rep++) {
                 pad();
-                mfx_params[0] = (MfxParams){with ? MFX_STONE_PHASER : MFX_OFF, {64, mid, 100, 127}};
+                MFX_PARAMS(0) = (MfxParams){with ? MFX_STONE_PHASER : MFX_OFF, {64, mid, 100, 127}};
                 for (int i = 0; i < 8; i++) synth_midi_3(0x90, chord8[i], 100);
                 for (uint32_t fr = 0; fr < RATE; fr += BLOCK) synth_render_q15(buf, BLOCK);   /* the attack */
                 clock_t t0 = clock();

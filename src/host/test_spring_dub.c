@@ -45,6 +45,7 @@ static void run(int t, double g, int t2, double at, const double *w, int nw, dou
 
 int main(void)
 {
+    perf_defaults(&perf_state);                      /* the MIX page's bytes (fx_live) at their defaults */
     static const double W[3] = {2.0, 4.0, 8.0}, W2[2] = {8.0, 12.0};
     double db[3], prev[3] = {0.0, 0.0, 0.0}, pk, pk100 = 0.0;
     /* 1. */

@@ -197,6 +197,8 @@ void perf_defaults(MasterPerformancePreset *p)
     p->base_velocity = 69;
     p->bend_range = 2;
     p->int_tempo = 80;                   /* 120 BPM */
+    p->mix[0] = 64;                      /* MIX: BALANCE (DRY/WET) and LOOP TONE at their middles, no cross-feeds */
+    p->mix[1] = 64;
 }
 
 void patch_store(uint8_t layer, uint8_t slot)

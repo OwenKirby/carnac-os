@@ -67,7 +67,6 @@ static void fresh(void)
     ui_sm_attach_seq(&sm, synth_seq());
     ui_sm_attach_arp(&sm, synth_arp());
     ui_sm_attach_instrument(&sm, &instrument);
-    ui_sm_attach_mfx(&sm, mfx_params);
 }
 
 static void shot(const char *dir, const char *name)
@@ -372,40 +371,40 @@ int main(int argc, char **argv)
     go(UIPAGE_MFX);
     shot(dir, "mfx_off");
     note(0, 48, 100); note(0, 55, 100); note(0, 63, 100);
-    mfx_params[0] = (MfxParams){MFX_STONE_PHASER, {64, 41, 100, 127}, 64};
+    MFX_PARAMS(0) = (MfxParams){MFX_STONE_PHASER, {64, 41, 100, 127}, 64};
     run(44100u * 2u / 3u);
     shot(dir, "mfx_phaser");
-    mfx_params[0] = (MfxParams){MFX_ENSEMBLE, {90, 74, 60, 80}, 110};
+    MFX_PARAMS(0) = (MfxParams){MFX_ENSEMBLE, {90, 74, 60, 80}, 110};
     run(44100u / 2u);
     shot(dir, "mfx_ensemble");
-    mfx_params[0] = (MfxParams){MFX_ENSEMBLE, {0, 74, 0, 64}, 0};
+    MFX_PARAMS(0) = (MfxParams){MFX_ENSEMBLE, {0, 74, 0, 64}, 0};
     run(44100u / 3u);
     shot(dir, "mfx_ensemble_mono_new");
-    mfx_params[0] = (MfxParams){MFX_ENS_PHASER, {74, 64, 26, 120}, 100, {60, 90}};
+    MFX_PARAMS(0) = (MfxParams){MFX_ENS_PHASER, {74, 64, 26, 120}, 100, {60, 90}};
     run(44100u / 2u);
     shot(dir, "mfx_ens_phaser");
-    mfx_params[0] = (MfxParams){MFX_CHORUS, {45, 94, 46, 64}, 127, {80, 0}};
+    MFX_PARAMS(0) = (MfxParams){MFX_CHORUS, {45, 94, 46, 64}, 127, {80, 0}};
     run(44100u / 2u);
     shot(dir, "mfx_chorus");
-    mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {40, 63, 64, 60}, 64, {0, 1}};
+    MFX_PARAMS(0) = (MfxParams){MFX_TAPE_FLANGER, {40, 63, 64, 60}, 64, {0, 1}};
     run(44100u / 2u);
     shot(dir, "mfx_tape_flanger");
-    mfx_params[0] = (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 100}, 0, {1, 0}};
+    MFX_PARAMS(0) = (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 100}, 0, {1, 0}};
     run(44100u / 2u);
     shot(dir, "mfx_bbd_flanger");
-    mfx_params[0] = (MfxParams){MFX_PITCH_SHIFT, {19, 75, 90, 64}, 127, {80, 0}};
+    MFX_PARAMS(0) = (MfxParams){MFX_PITCH_SHIFT, {19, 75, 90, 64}, 127, {80, 0}};
     run(44100u / 2u);
     shot(dir, "mfx_pitch_shift");
-    mfx_params[0] = (MfxParams){MFX_BBD_ECHO, {99, 70, 110, 60}, 60, {0, 40}};
+    MFX_PARAMS(0) = (MfxParams){MFX_BBD_ECHO, {99, 70, 110, 60}, 60, {0, 40}};
     run(44100u / 2u);
     shot(dir, "mfx_bbd_echo");
-    mfx_params[0].type = MFX_OFF;
+    MFX_PARAMS(0).type = MFX_OFF;
     note(0, 48, 0); note(0, 55, 0); note(0, 63, 0);
 
     /* EFFECTS, GLOBAL */
     fresh();
     perf_state.delay_time = 50; perf_state.delay_feedback = 100; perf_state.reverb_decay = 90;
-    perf_state.reverb_predelay = 30; perf_state.reverb_type = REVTYPE_TOMB;
+    perf_state.reverb_type = REVTYPE_TOMB;
     go(UIPAGE_EFFECTS);
     shot(dir, "effects");
     perf_state.delay_type = DELAYTYPE_BBD; perf_state.delay_sync = 1; perf_state.reverb_type = REVTYPE_SPRING;

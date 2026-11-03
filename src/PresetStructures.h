@@ -445,6 +445,19 @@ typedef struct {                     /* AMP (4.6 registry; 2.2's knob row differ
     uint8_t drive_model;             /* DRIVE_* */
 } AmpParams;
 
+/* the layer's MFX (dsp/mfx.h: the types, their knobs and rows), saved with the patch since v11 (2026-11-03) */
+typedef struct {
+    uint8_t type;                    /* MFX_* (0: OFF) */
+    uint8_t knob[4];                 /* 0..127, the type's own controls */
+    uint8_t lr;                      /* the type's menu row, 0..127: L/R PHASE (the right side's LFO behind the left's),
+                                      * ENSEMBLE's and ENS+PHASER's WIDTH */
+    uint8_t row[2];                  /* further rows, 0..127: ENS+PHASER's AGE, COLOUR; CHORUS's AGE; TAPE FLANGER's
+                                      * POLARITY (0, 1) */
+} MfxParams;
+
+#define ENGINE_RESERVED 4u           /* spare patch bytes (v11): stored, 0 until a later feature takes one (so 0 must
+                                      * mean that feature's off / default) */
+
 /* one layer's patch: what PATCH_PRESET saves and LAYER n PATCH MEM LINK loads */
 typedef struct {
     OscParams osc[NOSC];
@@ -469,28 +482,21 @@ typedef struct {
     uint8_t lfo_depth_src[NLFO];     /* LFO1..3 DEPTH MOD SRC, MSRC_* (no LFO or MOD slot: those read as none) */
     uint8_t lfo_depth_amt[NLFO];     /* LFO1..3 DEPTH MOD AMT 0..127: 0 the LFO at full depth, 127 the source alone
                                       * sets the depth (as AMP MOD) */
+    /* v11 (2026-11-03): */
+    MfxParams mfx;                   /* the layer's MFX (dsp/mfx.c plays engine_state[layer].mfx) */
+    uint8_t reserved[ENGINE_RESERVED];
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 195u, "EngineState layout");
-#define ENGINE_V9_RAM 186u           /* the v9 patch: today's without the v10 bytes at the end */
+PS_STATIC_ASSERT(sizeof(EngineState) == 207u, "EngineState layout");
 #define ENV1_VEL_LEVEL_V9 111u       /* ENV1 VEL > LEVEL that plays as v9's fixed curve did (-18 dB at velocity 1) */
-/* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 173 is the most that keeps 22
- * patches to a store chunk (preset_store_fm1.c: (3840 - 16) / 173), so the chunks stay where they were. Since v7 the
- * stored form packs the name 6 bits a character and leaves out OSC1's SYNC and ENV1's INVERT (nothing reads them); v8
- * also packs the three LFOs' CLOCK SYNC and KEY RESET into one byte: 181 in RAM, 171 + 2 spare in flash; v9 spends the
- * two on the filters' DRIVE: 183 in RAM, 172 stored + 1 spare; ANALOG (2026-10-21, 184 in RAM) takes the spare; the filters' KEY TRACK (186 in RAM) the MSRC_* bytes' high nibbles.
- * v10 (2026-10-26, 195 in RAM) packs the envelopes' eight 0 / 1 bytes into one, which pays for VEL > LEVEL and DEPTH
- * MOD AMT; each LFO's DEPTH MOD SRC rides in its SPD MOD SRC byte's high nibble: 172 stored + 1 spare. v8 (ENGINE_V8_RAM), v7 (179 in
- * RAM, atk_bend in the last stored byte) lacked the two BEND MOD bytes, v6 (173, stored as in RAM) atk_filter on,
- * v5 (170 bytes) all the attack bytes. */
-#define ENGINE_STORED_SIZE 173u
-#define ENGINE_V6_SIZE 173u
-#define ENGINE_V6_INSERT ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_filter))
+/* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 184 is the most that keeps 22
+ * patches to a store chunk (preset_store_fm1.c: (4064 - 16) / 184), so the chunks stay where they were. The stored
+ * form packs the name 6 bits a character, leaves out OSC1's SYNC and ENV1's INVERT (nothing reads them), packs the
+ * LFOs' CLOCK SYNC / KEY RESET into one byte and the envelopes' eight 0 / 1 bytes into another; the filters' KEY TRACK
+ * and the LFOs' DEPTH MOD SRC ride in MSRC_* bytes' high nibbles; ANALOG is the last byte. v11 adds the MFX and the
+ * reserved bytes: 183 stored with ANALOG. Older patches (v10 and before) are not migrated (before V1 they may go). */
+#define ENGINE_STORED_SIZE 184u
 #define ATK_LEVEL_DEFAULT 100u
 #define ATK_V8_DEFAULTS {0u, 127u, 0u, 127u, ATKTRK_AUTO, 64u, MSRC_VELOCITY, 64u}   /* atk_filter .. atk_bend_mod_amt */
-#define ENGINE_V8_RAM 181u
-#define ENGINE_V7_RAM 179u
-#define ENGINE_V5_SIZE 170u
-#define ENGINE_V5_INSERT ((uint32_t)offsetof(EngineState, oscmix) + (uint32_t)offsetof(OscMixerParams, atk_sample))
 
 /* ------------------------------------------------ voice architecture --- */
 /* an out-of-range architecture (a corrupt flash read) plays as SINGLE, the cheapest */
@@ -605,6 +611,8 @@ static inline int varch_unison_pan(int i, int n)
 }
 
 /* ------------------------------------------- master performance --- */
+#define PERF_NMIX 4u                 /* the MIX page's bytes (dsp/fx.h FX_L_COUNT) */
+#define PERF_RESERVED 16u
 /* The performance's own settings. Since 2026-10-17 WHOLE_PERF saves a WholePerformance (below): these plus copies of
  * both layers' patches, the sequence and the arp pattern, so a performance plays the same whatever is saved later. The
  * links now only say which slot each part was last loaded from (the PERF page shows them); loading a performance
@@ -632,9 +640,8 @@ typedef struct {
     uint8_t reverb_decay;
     uint8_t reverb_damp;
     uint8_t delay_sync;              /* 0 / 1 */
-    uint8_t reverb_type;             /* REVTYPE_* */
-    uint8_t reverb_predelay;
-    uint8_t delay_degrade;           /* TAPE DEGRADE: one macro over wow, flutter and the playback filtering (fx.c
+    uint8_t reverb_type;             /* REVTYPE_* (v11: REV PREDELAY removed; DLY > REV stands in) */
+    uint8_t delay_degrade;          /* TAPE DEGRADE: one macro over wow, flutter and the playback filtering (fx.c
                                       * tape_degrade): 0 = a new tape, 127 = worn out, default 36 */
     uint8_t delay_pingpong;          /* bit 0 PING PONG: the echoes alternate left and right; bits 1..7 DELAY HP
                                       * (2026-10-26): the feedback's high-pass, 0 = off (older records: 0, no
@@ -647,8 +654,13 @@ typedef struct {
     uint8_t bend_range;
     uint8_t clock_source;            /* CLKSRC_* */
     uint8_t int_tempo;               /* INT TEMPO when CLOCK SOURCE is INTERNAL: BPM = 40 + value (default 80 = 120 BPM) */
+    /* v11 (2026-11-03): */
+    uint8_t mix[PERF_NMIX];          /* the MIX page (dsp/fx.h fx_live, FX_L_*): BALANCE, LOOP TONE (64, 64: none),
+                                      * DLY > REV, REV > DLY (0: none) */
+    uint8_t reserved[PERF_RESERVED]; /* spare (the CC map, the SEQ's MIDI channel, ...): 0 until a feature takes one, so
+                                      * 0 must mean that feature's off / default */
 } MasterPerformancePreset;
-PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 51u, "MasterPerformancePreset flash layout");
+PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 70u, "MasterPerformancePreset flash layout");
 #define DELAY_PINGPONG(p) ((uint8_t)((p)->delay_pingpong & 1u))
 #define DELAY_HP(p) ((uint8_t)((p)->delay_pingpong >> 1))
 /* GLOBAL > TUNING and ROOT (2026-10-29, dsp/tuning.h) ride in the high bits of delay_sync and delay_type (bits 1..7;
@@ -681,7 +693,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 911u, "WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 954u,"WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */

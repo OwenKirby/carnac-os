@@ -412,7 +412,7 @@ static void setup(const PtScen *s)
         engine_state[0].oscmix.atk_filter = 64;
         engine_state[1].oscmix.atk_filter = 64;
     }
-    mfx_params[0].type = mfx_params[1].type = MFX_OFF;
+    MFX_PARAMS(0).type = MFX_PARAMS(1).type = MFX_OFF;
     if (s->flags & (F_MFX | F_MFX2)) {
         static const MfxParams MP[MFX_COUNT] = {
             [MFX_STONE_PHASER] = {MFX_STONE_PHASER, {64, 41, 100, 127}, 64, {0, 0}},
@@ -425,9 +425,9 @@ static void setup(const PtScen *s)
             [MFX_BBD_ECHO] = {MFX_BBD_ECHO, {99, 50, 115, 60}, 40, {0, 30}},
         };
         uint32_t t = (s->flags >> 16) & 0xFFu;
-        mfx_params[0] = MP[t > MFX_STONE_PHASER && t < MFX_COUNT ? t : MFX_STONE_PHASER];
+        MFX_PARAMS(0) = MP[t > MFX_STONE_PHASER && t < MFX_COUNT ? t : MFX_STONE_PHASER];
         if (s->flags & F_MFX2) {
-            mfx_params[1] = mfx_params[0];
+            MFX_PARAMS(1) = MFX_PARAMS(0);
             perf_state.perf_mode = PERF_DUAL_SYNTH;
         }
     }
@@ -472,8 +472,8 @@ static void restore(void)
     for (l = 0; l < SEQ_NLANE; l++)
         seq_lanes[l] = pt.lanes[l];
     arp_state = pt.arp;
-    mfx_params[0] = pt.mfx[0];
-    mfx_params[1] = pt.mfx[1];
+    MFX_PARAMS(0) = pt.mfx[0];
+    MFX_PARAMS(1) = pt.mfx[1];
     for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = pt.live[i];
     synth_restart();
     wt_to_flash();
@@ -495,8 +495,8 @@ void pt_start(uint32_t now_ms, uint8_t mode)
     for (l = 0; l < SEQ_NLANE; l++)
         pt.lanes[l] = seq_lanes[l];
     pt.arp = arp_state;
-    pt.mfx[0] = mfx_params[0];
-    pt.mfx[1] = mfx_params[1];
+    pt.mfx[0] = MFX_PARAMS(0);
+    pt.mfx[1] = MFX_PARAMS(1);
     for (int i = 0; i < FX_L_COUNT; i++) pt.live[i] = fx_live[i];
     for (l = 0; l < NSCEN; l++)
         pt.res[l] = (PtResult){0};

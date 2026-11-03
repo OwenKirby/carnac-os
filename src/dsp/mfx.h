@@ -2,6 +2,7 @@
 #define MFX_H
 
 #include <stdint.h>
+#include "preset.h"                     /* MfxParams (PresetStructures.h), engine_state */
 
 /* MFX (2026-11-01): one modulation effect per layer, on the layer's dry sum before its delay and reverb sends
  * (synth_runtime.c render_pass). Each type is a model of one analog unit, its four knobs that unit's own controls
@@ -90,17 +91,9 @@ enum { MFX_R_AGE, MFX_R_COLOUR, MFX_R_POLARITY = 1, MFX_R_MODE = 0, MFX_R_AGE2 =
 enum { MFX_BF_FLANGER1, MFX_BF_FLANGER2, MFX_BF_FLANGER3, MFX_BF_CHORUS, MFX_BF_MODES };
 enum { MFX_QE_SWOOP, MFX_QE_DUCK, MFX_QE_MODES };
 
-typedef struct {
-    uint8_t type;                /* MFX_* */
-    uint8_t knob[4];             /* 0..127, the type's own controls */
-    uint8_t lr;                  /* the type's menu row, 0..127: L/R PHASE (the right side's LFO behind the left's),
-                                  * ENSEMBLE's and ENS+PHASER's WIDTH */
-    uint8_t row[2];              /* further rows, 0..127: ENS+PHASER's AGE, COLOUR; CHORUS's AGE; TAPE FLANGER's
-                                  * POLARITY (0, 1) */
-} MfxParams;
 
-/* each layer's MFX (not stored yet: the patch format bump comes with the CC map's) */
-extern MfxParams mfx_params[2];
+/* each layer's MFX: its patch's (saved with it since the patch format's v11, 2026-11-03) */
+#define MFX_PARAMS(layer) (engine_state[(layer) & 1].mfx)
 
 /* clears every layer's effect state (synth_init) */
 void mfx_init(void);

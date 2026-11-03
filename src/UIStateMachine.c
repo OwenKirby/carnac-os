@@ -371,7 +371,6 @@ static const UiRow EFFECTS_ROWS[] = {
     {"DEGRADE", PERF(delay_degrade), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"PING PONG", PERF(delay_pingpong), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},   /* (DELAY HP: MIX's LOOP TONE) */
     {"REV TYPE", PERF(reverb_type), 0, REVTYPE_COUNT - 1, RK_BYTE, 0, REVTYPE_NAMES, A_ALL},
-    {"REV PREDELAY", PERF(reverb_predelay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
 };
 /* MIX (2026-11-02, dsp/fx.h fx_live): the performance's live mix, its rows its knobs (as ZONES). BALANCE in DUAL /
  * SPLIT and DRY/WET in SINGL are one byte, a row each (the other hidden: ui_sm_row_state) */
@@ -684,14 +683,11 @@ static InstrumentSettings *ui_inst(const UIStateMachine *sm)
 
 void ui_sm_attach_instrument(UIStateMachine *sm, InstrumentSettings *inst) { sm->inst = inst; }
 
-/* the layers' MFX settings: the attached ones, else a private pair (OFF) */
+/* a layer's MFX settings: its patch's (v11) */
 MfxParams *ui_sm_mfx(const UIStateMachine *sm, uint8_t layer)
 {
-    static MfxParams own[NLAYER];
-    return (sm->mfx != 0 ? sm->mfx : own) + (layer < NLAYER ? layer : 0u);
+    return &sm->engine[layer < NLAYER ? layer : 0u]->mfx;
 }
-
-void ui_sm_attach_mfx(UIStateMachine *sm, MfxParams *mfx) { sm->mfx = mfx; }
 
 /* an out-of-range mode (a corrupt flash read) is treated as the most restrictive one */
 static uint8_t perf_mode(const UIStateMachine *sm)

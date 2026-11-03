@@ -136,7 +136,7 @@ typedef union {
     ArpState arp;                    /* ARP_SEQ: the live arp pattern */
     WholePerformance whole;          /* WHOLE_PERF: the performance and everything it plays */
 } UiClipboard;
-PS_STATIC_ASSERT(sizeof(UiClipboard) == 911u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD) */
+PS_STATIC_ASSERT(sizeof(UiClipboard) == 954u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD) */
 /* spec 1: the name characters; MasterPerformancePreset.name holds indices into it (0 = space) */
 #define UI_CHAR_MAP " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/"
 /* 5.1: the play controllers. LAYER's knobs (2026-10-17): VELOCITY, MOD WHEEL, CC1, (2026-10-21) PORTA TIME, not CC2;
@@ -171,7 +171,6 @@ typedef struct {
     uint16_t rowpop_ms;              /* .. time left, ui_sm_tick counts it down */
     uint16_t kb_ms;                  /* SAVE: the letter keyboard's time left (knobs 3 / 4 edit the name), ui_sm_tick */
     InstrumentSettings *inst;        /* GLOBAL's instrument settings (ui_sm_attach_instrument; NULL: a private copy) */
-    MfxParams *mfx;                  /* the layers' MFX, [NLAYER] (ui_sm_attach_mfx; NULL: a private copy) */
     uint8_t hold;                    /* the button held as a modifier, BTN_HOME / BTN_SAVE, for the hold strip (the
                                       * caller sets it UI_HOLD_MS after the press, ui_sm_set_hold); BTN_COUNT: none */
     uint8_t theme;                   /* GLOBAL > THEME, UITHEME_*: a setting of the instrument, not of a performance
@@ -279,9 +278,7 @@ uint8_t ui_sm_mod_route(const UIStateMachine *sm, uint8_t row);
 void ui_sm_set_hold(UIStateMachine *sm, uint8_t btn);
 /* the instrument settings GLOBAL's MASTER TUNE / VEL CURVE / CLOCK OUT rows and knobs edit (dsp/preset.c instrument) */
 void ui_sm_attach_instrument(UIStateMachine *sm, InstrumentSettings *inst);
-/* the layers' MFX settings the MFX page edits (dsp/mfx.c mfx_params, NLAYER of them) */
-void ui_sm_attach_mfx(UIStateMachine *sm, MfxParams *mfx);
-/* a layer's MFX settings (the attached ones, else the private pair) */
+/* a layer's MFX settings, the MFX page's: its patch's (EngineState.mfx, v11) */
 MfxParams *ui_sm_mfx(const UIStateMachine *sm, uint8_t layer);
 void ui_sm_save_oct(UIStateMachine *sm, uint8_t up);
 /* what SAVE saves from this page: the save page's TARGET, else the kind the page loads (ui_sm_preset_target) */

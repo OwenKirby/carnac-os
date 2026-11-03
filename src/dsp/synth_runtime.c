@@ -896,7 +896,7 @@ static void render_pass(int32_t *out, uint32_t frames)
     fx_frames = frames;
     {
         int nl = perf_state.perf_mode == PERF_SINGL_SYNTH ? 1 : NLAYER, can2 = !fx_one_core && core2_run != 0;
-        if (nl == NLAYER && mfx_params[0].type != MFX_OFF && mfx_params[1].type != MFX_OFF) {
+        if (nl == NLAYER && MFX_PARAMS(0).type != MFX_OFF && MFX_PARAMS(1).type != MFX_OFF) {
             int on2 = can2 && core2_run(mfx_job, 1u);
             mfx_layer_block(0, layer_l[0], layer_r[0], frames);
             if (!on2 || core2_wait())

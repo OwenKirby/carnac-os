@@ -1,16 +1,20 @@
 /* The preset store on the FM1 (2026-10-16): a unity-build fragment, like wt_store_fm1.c. synth_main_fm1.c includes it
  * after its banks (syn_arp_bank, syn_seq_bank, preset.c's patch_bank), syn_perf_name, syn_used / syn_slot_used, sm,
- * syn_lock / syn_unlock and flash_ok; X0X's storage.c gives st_read / st_erase / st_prog / st_crc32 / st_buf.
+ * syn_lock / syn_unlock and flash_ok; X0X's storage.c gives st_read / st_erase / st_prog / st_crc32.
  * src/host/test_preset_store.c runs it on a simulated NOR (save, load, both copies, a save cut off, other layouts). */
 /* ------------------------------------------------------- preset store --- */
 /* The SAVEs in flash (2026-10-16): the four banks (128 patches; since 2026-10-17 32 sequences, 32 arps and 32 whole
  * performances) and which slots were written, kept across power cycles. In the store flash the wavetable image was
  * uploaded to before it moved into the firmware (WT_STORE_BASE, 0xA0000, 240 KiB): each bank in chunks of the slots
- * that fit a 4 KiB sector, each chunk two sectors written in turn, as X0X's storage.c does (the payload from offset
- * 256, the CRC'd 32-byte header at 0 last, read back after): a save cut off by a power cut leaves the chunk's copy
- * before it in charge. A header names the bank, the chunk and the bank's layout version (FREC_VER_*: a chunk written
- * under another layout is left out, its slots empty, until a migration exists), so the old wavetable image there, and
- * a chunk of the 128-slot layout before 2026-10-17 where another bank's chunk sits now, read as nothing.
+ * that fit a 4 KiB sector, each chunk two sectors written in turn, as X0X's storage.c does (the CRC'd 32-byte header
+ * at 0 written last, read back after): a save cut off by a power cut leaves the chunk's copy before it in charge.
+ * Framing (2026-11-03, the format bump): the payload starts right after the header (PS_PAYLOAD_OFF 32), the first page
+ * (the header and the payload's first 224 bytes) programmed last, in one go; the header's rsv0 says so (PS_FRAME_TIGHT).
+ * A chunk written before (rsv0 0xFF) has its payload at 256, as X0X's: it still loads (the sequences, the arps, the
+ * names), and is written the new way the next time it is saved. The 224 bytes buy 11 a patch (22 to a chunk at 184).
+ * A header names the bank, the chunk and the bank's layout version (FREC_VER_*: a chunk written under another layout
+ * is left out, its slots empty; nothing migrates before V1), so the old wavetable image there, and a chunk of the
+ * 128-slot layout before 2026-10-17 where another bank's chunk sits now, read as nothing.
  * The payload: the chunk's used bits (PS_USED_BYTES), then its slots. Chunks: arp 0, sequences 2..5, performances
  * 6..13, patches 17..22 (where they always were: the patches outlive the change); 14..16 are free (1: the sequence
  * and arp names, below). Since
@@ -19,14 +23,9 @@
  * A SAVE copies into the bank at once (syn_commit, inside syn_lock) and marks its chunk; the main loop writes it
  * (ps_tick, outside the lock: the erase stops the flash, and the audio with it, for tens of ms), then reports the save
  * done, so SAVED means it is in flash. The boot loads every chunk (ps_load). Patches are stored packed (engine_store_pack,
- * ENGINE_STORED_SIZE a slot); a patch chunk still in the v5 .. v9 layout loads through engine_from_v5 .. _v9_stored
- * and is written as the current version the next time one of its slots is saved.
- * An arp chunk of FREC_VER_ARP 3 / 4 and a performance chunk of FREC_VER_PERF 6 .. 9 (2026-10-17: knob 1 became
- * each step's RATE, GATE the pattern's; 2026-10-21: the patches' v9 (8, proto/sh2-filter), then RATE the notes' rate
- * and TIMING the steps' length (arp 5, perf 9)) are the same size as now: they load through arp_from_v3 / _v4 and
- * whole_perf_from_old, and a
- * performance chunk is converted whole in st_buf before a SAVE writes one of its slots, so its other slots stay.
- * A performance (WholePerformance: 901 bytes in RAM, WHOLE_PERF_STORED_SIZE packed) lives in flash only: the boot reads
+ * ENGINE_STORED_SIZE a slot). Older layouts (patches v10, performances v10, arps v4 and before) read as empty: since
+ * the format bump of 2026-11-03 nothing migrates (before V1 the patches may go).
+ * A performance (WholePerformance: 954 bytes in RAM, WHOLE_PERF_STORED_SIZE packed) lives in flash only: the boot reads
  * its name (syn_perf_name) and that it is there, a load reads the one slot (ps_perf_read), and a SAVE stages the one
  * it writes (ps_perf_save), which ps_tick puts into its chunk over the chunk's copy before. A performance chunk's used
  * bits are the slots saved in flash; a factory performance (factory_presets.c) is made when it loads.
@@ -38,8 +37,11 @@
  * when an MTS message changed one (tuning_unsaved); a version 1 chunk still loads its names. */
 #define PS_BASE WT_STORE_BASE
 #define PS_SECTOR 4096u
-#define PS_PAYLOAD_OFF 256u
+#define PS_PAYLOAD_OFF 32u                          /* right after the header (PS_FRAME_TIGHT) */
+#define PS_PAYLOAD_OFF_OLD 256u                     /* before 2026-11-03 (X0X's framing) */
+#define PS_FRAME_TIGHT 0x01u                        /* the header's rsv0: the payload at PS_PAYLOAD_OFF */
 #define PS_PAYLOAD_MAX (PS_SECTOR - PS_PAYLOAD_OFF)
+#define PS_PAGE 256u                                /* the flash's program page */
 #define PS_USED_BYTES 16u
 #define PS_MAGIC 0x504E5243u                        /* "CRNP" */
 #define PS_PER(size) ((PS_PAYLOAD_MAX - PS_USED_BYTES) / (size))
@@ -50,7 +52,9 @@ typedef struct {
     uint32_t seq, len, crc, rsv[2];
     uint32_t hcrc;
 } PsHdr;
-PS_STATIC_ASSERT(sizeof(PsHdr) == 32u, "the store's header");
+PS_STATIC_ASSERT(sizeof(PsHdr) == 32u && PS_PAYLOAD_OFF == sizeof(PsHdr), "the store's header, the payload after it");
+static uint8_t ps_buf[PS_PAYLOAD_MAX] __attribute__((aligned(4)));   /* a chunk's payload (X0X's st_buf is 224 short) */
+static uint8_t ps_page[PS_PAGE] __attribute__((aligned(4)));         /* the first page: the header, the payload's head */
 typedef struct {
     uint8_t *bank;                                  /* NULL: the performances, in flash only */
     uint16_t size;                                  /* one slot in RAM */
@@ -83,11 +87,11 @@ PS_STATIC_ASSERT(PATCH_SLOTS <= PS_USED_BYTES * 8u && BANK_SLOTS <= PATCH_SLOTS,
 PS_STATIC_ASSERT(PS_FIRST_ARP + PS_N_ARP <= PS_NAMES_CHUNK && PS_NAMES_CHUNK < PS_FIRST_SEQ &&
                  2u * BANK_SLOTS <= PS_USED_BYTES * 8u && PS_NAMES_LEN <= PS_PAYLOAD_MAX, "the names chunk");
 PS_STATIC_ASSERT(offsetof(MasterPerformancePreset, name) == 0u, "ps_load reads a stored performance's name first");
-/* v5 .. v9 patches (2026-10-16/17/21, before STRIKE's attack bytes, BEND MOD, DRIVE or VEL > LEVEL) load through
- * engine_from_v5 / _v6 / _v7 / _v8 / _v9_stored: the same slots to a chunk as v9's packed ones, so their chunks sit where v8's do and the chunks after them never
- * moved */
-PS_STATIC_ASSERT(PS_PER(ENGINE_V5_SIZE) == PS_PER(ENGINE_STORED_SIZE) && PS_PER(ENGINE_V6_SIZE) == PS_PER(ENGINE_STORED_SIZE),
-                 "v5, v6 and v7 patch chunks hold the same slots");
+/* the framing's change moves no slot: an old-framed sequence or arp chunk held as many (3840 - 16 bytes then) */
+#define PS_PER_OLD(size) ((PS_SECTOR - PS_PAYLOAD_OFF_OLD - PS_USED_BYTES) / (size))
+PS_STATIC_ASSERT(PS_PER_OLD(sizeof syn_seq_bank[0]) == PS_PER(sizeof syn_seq_bank[0]) &&
+                 PS_PER_OLD(sizeof(ArpState)) >= BANK_SLOTS && PS_PER(sizeof(ArpState)) >= BANK_SLOTS,
+                 "the sequences' and arps' slots stay where they were");
 static const PsKind PS_KIND[UISAVE_COUNT] = {
     {(uint8_t *)syn_arp_bank, sizeof(ArpState), sizeof(ArpState), PS_FIRST_ARP, FREC_VER_ARP, BANK_SLOTS},
     {(uint8_t *)syn_seq_bank, sizeof syn_seq_bank[0], sizeof syn_seq_bank[0], PS_FIRST_SEQ, FREC_VER_SEQ, BANK_SLOTS},
@@ -107,13 +111,14 @@ static int ps_head(uint32_t chunk, uint32_t copy, uint8_t kind, uint8_t c, PsHdr
 {
     if (st_read(ps_sector(chunk, copy), h, sizeof *h))
         return -1;
-    if (h->magic != PS_MAGIC || h->kind != kind || h->chunk != c || h->len > PS_PAYLOAD_MAX ||
+    if (h->magic != PS_MAGIC || h->kind != kind || h->chunk != c ||
+        h->len > (h->rsv0 == PS_FRAME_TIGHT ? PS_PAYLOAD_MAX : PS_SECTOR - PS_PAYLOAD_OFF_OLD) ||
         h->hcrc != st_crc32(h, sizeof *h - 4u))
         return -1;
     return 0;
 }
 
-/* the chunk's current copy, its payload in st_buf: 0 / 1, or -1 (none) */
+/* the chunk's current copy, its payload in ps_buf: 0 / 1, or -1 (none) */
 static int ps_current(uint32_t chunk, uint8_t kind, uint8_t c, PsHdr *out)
 {
     PsHdr h[2];
@@ -124,8 +129,9 @@ static int ps_current(uint32_t chunk, uint8_t kind, uint8_t c, PsHdr *out)
     order[1] = !order[0];
     for (i = 0; i < 2; i++) {
         int k = order[i];
-        if (v[k] && !st_read(ps_sector(chunk, (uint32_t)k) + PS_PAYLOAD_OFF, st_buf, h[k].len) &&
-            st_crc32(st_buf, h[k].len) == h[k].crc) {
+        uint32_t off = h[k].rsv0 == PS_FRAME_TIGHT ? PS_PAYLOAD_OFF : PS_PAYLOAD_OFF_OLD;
+        if (v[k] && !st_read(ps_sector(chunk, (uint32_t)k) + off, ps_buf, h[k].len) &&
+            st_crc32(ps_buf, h[k].len) == h[k].crc) {
             *out = h[k];
             return k;
         }
@@ -140,7 +146,7 @@ static uint32_t ps_slots(const PsKind *pk, uint32_t c, uint32_t *first)
     return f >= pk->slots ? 0u : (pk->slots - f < per ? pk->slots - f : per);
 }
 
-/* a performance from flash (outside syn_lock: it reads its chunk into st_buf): 0, or -1 (never saved there, or
+/* a performance from flash (outside syn_lock: it reads its chunk into ps_buf): 0, or -1 (never saved there, or
  * unreadable) */
 static int ps_perf_read(uint32_t slot, WholePerformance *w)
 {
@@ -150,15 +156,13 @@ static int ps_perf_read(uint32_t slot, WholePerformance *w)
     if (!flash_ok || slot >= pk->slots)
         return -1;
     n = ps_slots(pk, c, &first);
-    if (ps_current(pk->first + c, UISAVE_WHOLE_PERF, (uint8_t)c, &h) < 0 || (h.ver != pk->ver && !WHOLE_PERF_OLD(h.ver)) ||
+    if (ps_current(pk->first + c, UISAVE_WHOLE_PERF, (uint8_t)c, &h) < 0 || h.ver != pk->ver ||
         h.len != PS_USED_BYTES + n * pk->stored)
         return -1;
     i = slot - first;
-    if (!((st_buf[i >> 3] >> (i & 7u)) & 1u))
+    if (!((ps_buf[i >> 3] >> (i & 7u)) & 1u))
         return -1;
-    if (WHOLE_PERF_OLD(h.ver))
-        whole_perf_from_old(st_buf + PS_USED_BYTES + i * pk->stored, h.ver);
-    whole_perf_unpack(st_buf + PS_USED_BYTES + i * pk->stored, w);
+    whole_perf_unpack(ps_buf + PS_USED_BYTES + i * pk->stored, w);
     return 0;
 }
 
@@ -166,8 +170,6 @@ static int ps_perf_read(uint32_t slot, WholePerformance *w)
 static void ps_load(void)
 {
     uint32_t k, c, i, first, n, nch;
-    uint32_t old;
-    uint8_t arp3, perf_old;
     PsHdr h;
     if (!flash_ok)
         return;
@@ -178,38 +180,18 @@ static void ps_load(void)
             n = ps_slots(pk, c, &first);
             if (ps_current(pk->first + c, (uint8_t)k, (uint8_t)c, &h) < 0)
                 continue;                           /* never written, or damaged: empty */
-            old = 0u;                               /* a patch chunk of an older layout that migrates: its slot size */
-            if (k == UISAVE_PATCH_PRESET && h.ver >= 5u && h.ver <= 9u)
-                old = h.ver == 5u ? ENGINE_V5_SIZE : (h.ver == 6u ? ENGINE_V6_SIZE : ENGINE_STORED_SIZE);
-            arp3 = (uint8_t)(k == UISAVE_ARP_SEQ && (h.ver == 3u || h.ver == 4u));   /* same-size layouts that */
-            perf_old = (uint8_t)(k == UISAVE_WHOLE_PERF && WHOLE_PERF_OLD(h.ver));   /* migrate in place */
-            if (old ? h.len != PS_USED_BYTES + n * old :
-                      ((h.ver != pk->ver && !arp3 && !perf_old) || h.len != PS_USED_BYTES + n * pk->stored))
+            if (h.ver != pk->ver || h.len != PS_USED_BYTES + n * pk->stored)
                 continue;                           /* another layout: empty */
             for (i = 0; i < n; i++)
-                if ((st_buf[i >> 3] >> (i & 7u)) & 1u) {
-                    const uint8_t *src = st_buf + PS_USED_BYTES + i * (old ? old : pk->stored);
+                if ((ps_buf[i >> 3] >> (i & 7u)) & 1u) {
+                    const uint8_t *src = ps_buf + PS_USED_BYTES + i * pk->stored;
                     uint8_t *dst = pk->bank ? pk->bank + (first + i) * pk->size : NULL;
                     if (pk->bank == NULL)           /* a performance: its name (MasterPerformancePreset's first bytes) */
                         memcpy(syn_perf_name[first + i], src, NAME_LEN);
-                    else if (old && h.ver == 5u)
-                        engine_from_v5(src, (EngineState *)(void *)dst);
-                    else if (old && h.ver == 6u)
-                        engine_from_v6(src, (EngineState *)(void *)dst);
-                    else if (old && h.ver == 7u)
-                        engine_from_v7(src, (EngineState *)(void *)dst);
-                    else if (old && h.ver == 8u)
-                        engine_from_v8(src, (EngineState *)(void *)dst);
-                    else if (old)
-                        engine_from_v9_stored(src, (EngineState *)(void *)dst);
                     else if (k == UISAVE_PATCH_PRESET)
                         engine_store_unpack(src, (EngineState *)(void *)dst);
                     else
                         memcpy(dst, src, pk->size);
-                    if (arp3 && h.ver == 3u)
-                        arp_from_v3((ArpState *)(void *)dst);
-                    if (arp3)
-                        arp_from_v4((ArpState *)(void *)dst);
                     syn_used[k][(first + i) >> 3] |= (uint8_t)(1u << ((first + i) & 7u));
                 }
         }
@@ -218,12 +200,12 @@ static void ps_load(void)
         !((h.ver == PS_NAMES_VER && h.len == PS_NAMES_LEN) || (h.ver == 1u && h.len == PS_NAMES_V1_LEN)))
         return;                                     /* (none yet: every name the factory's, every tuning in tune) */
     if (h.ver == PS_NAMES_VER)
-        memcpy(tuning_user, st_buf + PS_NAMES_V1_LEN, sizeof tuning_user);
-    memcpy(ps_names_used, st_buf, PS_USED_BYTES);
+        memcpy(tuning_user, ps_buf + PS_NAMES_V1_LEN, sizeof tuning_user);
+    memcpy(ps_names_used, ps_buf, PS_USED_BYTES);
     for (i = 0; i < 2u * BANK_SLOTS; i++)
         if ((ps_names_used[i >> 3] >> (i & 7u)) & 1u)
             memcpy(i < BANK_SLOTS ? syn_seq_name[i] : syn_arp_name[i - BANK_SLOTS],
-                   st_buf + PS_USED_BYTES + i * NAME_LEN, NAME_LEN);
+                   ps_buf + PS_USED_BYTES + i * NAME_LEN, NAME_LEN);
 }
 
 /* a SAVE of sequence / arp slot s (UISAVE_SEQ_SETTINGS / _ARP_SEQ) named name: into the bank's names; the names
@@ -247,10 +229,10 @@ static int ps_save_names(void)
     PsHdr h;
     int cur = ps_current(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, &h);
     uint32_t seq = cur < 0 ? 0u : h.seq;
-    memcpy(st_buf, ps_names_used, PS_USED_BYTES);
-    memcpy(st_buf + PS_USED_BYTES, syn_seq_name, BANK_SLOTS * NAME_LEN);
-    memcpy(st_buf + PS_USED_BYTES + BANK_SLOTS * NAME_LEN, syn_arp_name, BANK_SLOTS * NAME_LEN);
-    memcpy(st_buf + PS_NAMES_V1_LEN, tuning_user, sizeof tuning_user);
+    memcpy(ps_buf, ps_names_used, PS_USED_BYTES);
+    memcpy(ps_buf + PS_USED_BYTES, syn_seq_name, BANK_SLOTS * NAME_LEN);
+    memcpy(ps_buf + PS_USED_BYTES + BANK_SLOTS * NAME_LEN, syn_arp_name, BANK_SLOTS * NAME_LEN);
+    memcpy(ps_buf + PS_NAMES_V1_LEN, tuning_user, sizeof tuning_user);
     return ps_write(PS_NAMES_CHUNK, PS_NAMES_KIND, 0u, PS_NAMES_VER, PS_NAMES_LEN, cur, seq);
 }
 
@@ -264,52 +246,53 @@ static int ps_save_chunk(uint32_t k, uint32_t c)
     cur = ps_current(chunk, (uint8_t)k, (uint8_t)c, &h);
     seq = cur < 0 ? 0u : h.seq;
     if (pk->bank == NULL) {                         /* a performance: the staged one over the chunk's copy before */
-        if (cur < 0 || (h.ver != pk->ver && !WHOLE_PERF_OLD(h.ver)) || h.len != len)
-            memset(st_buf, 0, len);                 /* (none, or another layout: the chunk's others stay unsaved) */
-        else if (WHOLE_PERF_OLD(h.ver))             /* v6 .. v8: every slot to today's first (unused ones are never read) */
-            for (i = 0; i < n; i++)
-                whole_perf_from_old(st_buf + PS_USED_BYTES + i * pk->stored, h.ver);
+        if (cur < 0 || h.ver != pk->ver || h.len != len)
+            memset(ps_buf, 0, len);                 /* (none, or another layout: the chunk's others stay unsaved) */
         if (ps_perf_save_slot >= first && ps_perf_save_slot < first + n) {
             i = ps_perf_save_slot - first;
-            st_buf[i >> 3] |= (uint8_t)(1u << (i & 7u));
-            whole_perf_pack(&ps_perf_save, st_buf + PS_USED_BYTES + i * pk->stored);
+            ps_buf[i >> 3] |= (uint8_t)(1u << (i & 7u));
+            whole_perf_pack(&ps_perf_save, ps_buf + PS_USED_BYTES + i * pk->stored);
         }
     } else {
-        memset(st_buf, 0, PS_USED_BYTES);           /* the payload, built in st_buf (a RAM source for the driver) */
+        memset(ps_buf, 0, PS_USED_BYTES);           /* the payload, built in ps_buf (a RAM source for the driver) */
         for (i = 0; i < n; i++)
             if (syn_slot_used((uint8_t)k, (uint8_t)(first + i)))
-                st_buf[i >> 3] |= (uint8_t)(1u << (i & 7u));
+                ps_buf[i >> 3] |= (uint8_t)(1u << (i & 7u));
         if (k == UISAVE_PATCH_PRESET)
             for (i = 0; i < n; i++)
                 engine_store_pack((const EngineState *)(const void *)(pk->bank + (first + i) * pk->size),
-                                  st_buf + PS_USED_BYTES + i * pk->stored);
+                                  ps_buf + PS_USED_BYTES + i * pk->stored);
         else
-            memcpy(st_buf + PS_USED_BYTES, pk->bank + first * pk->size, n * pk->size);
+            memcpy(ps_buf + PS_USED_BYTES, pk->bank + first * pk->size, n * pk->size);
     }
     return ps_write(chunk, (uint8_t)k, (uint8_t)c, pk->ver, len, cur, seq);
 }
 
-/* the payload in st_buf (len bytes) to chunk's copy that is not current (cur), its header last, read back: 0 ok */
+/* the payload in ps_buf (len bytes) to chunk's copy that is not current (cur), read back: 0 ok. The pages after the
+ * first, then the first (the header, the commit record, with the payload's head) last */
 static int ps_write(uint32_t chunk, uint8_t kind, uint8_t c, uint8_t ver, uint32_t len, int cur, uint32_t seq)
 {
+    const uint32_t head = PS_PAGE - PS_PAYLOAD_OFF;  /* the payload's bytes in the first page */
     uint32_t base = ps_sector(chunk, cur == 0 ? 1u : 0u), off;
     PsHdr h;
-    if (st_erase(base))
+    if (len > PS_PAYLOAD_MAX || st_erase(base))
         return -1;
-    for (off = 0; off < len; off += 256u)
-        if (st_prog(base + PS_PAYLOAD_OFF + off, st_buf + off, len - off > 256u ? 256u : len - off))
+    for (off = head; off < len; off += PS_PAGE)
+        if (st_prog(base + PS_PAYLOAD_OFF + off, ps_buf + off, len - off > PS_PAGE ? PS_PAGE : len - off))
             return -2;
     memset(&h, 0xFF, sizeof h);
     h.magic = PS_MAGIC;
     h.kind = kind;
     h.chunk = c;
     h.ver = ver;
-    h.rsv0 = 0xFFu;
+    h.rsv0 = PS_FRAME_TIGHT;
     h.seq = seq + 1u;
     h.len = len;
-    h.crc = st_crc32(st_buf, len);
+    h.crc = st_crc32(ps_buf, len);
     h.hcrc = st_crc32(&h, sizeof h - 4u);
-    if (st_prog(base, &h, sizeof h))                /* the commit record, last */
+    memcpy(ps_page, &h, sizeof h);
+    memcpy(ps_page + sizeof h, ps_buf, len < head ? len : head);
+    if (st_prog(base, ps_page, (uint32_t)sizeof h + (len < head ? len : head)))   /* the commit record, last */
         return -3;
     {   /* read back: a failing part must not report SAVED */
         PsHdr chk;

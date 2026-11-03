@@ -30,7 +30,6 @@
 #define WOW_STEP_Q8 96                    /* per wow step (tape_degrade): 127 = +-47.6 cells at full speed, 0.34 % pitch */
 #define FLUTTER_STEP_Q8 16                /* per flutter step: 127 = +-7.9 cells, 0.71 % pitch */
 
-#define PRE_LEN 4448u                     /* predelay: 127 * 35 = 4445 samples at most */
 #define REV_COMB_TOTAL (1116u + 1188u + 1277u + 1356u)
 #define REV_AP_TOTAL (556u + 441u)
 
@@ -41,7 +40,6 @@ static const uint16_t SFX_REV_AP[2] = {556, 441};
 static const uint16_t DELAY_SYNC_DEN[8] = {24, 16, 12, 8, 6, 4, 3, 2};
 
 static int16_t tape[TAPE_LEN] SYNTH_POOL;
-static int16_t pre_buf[PRE_LEN] SYNTH_POOL;
 /* Core 1's memory (2026-10-16): what core 1 writes (the reverb's back below, through fx_reverb_job) sits on cache
  * lines of its own, 64 bytes, as X0X keeps its mailbox (fm1_cpu1.h: each core's writes on lines of their own). A
  * precaution, added while hunting the "digital buzz with reverb" (which turned out to be a miscompiled clear of the mix
@@ -72,7 +70,6 @@ typedef struct {
 } TapeState;
 
 static TapeState tp;
-static uint32_t pre_w;
 static struct FX_LINE {                               /* core 1: the ROOM network's state, the back's read head */
     uint32_t comb_i[4], ap_i[2];
     int32_t comb_lp[4];
@@ -129,7 +126,6 @@ void fx_init(void)
 {
     xf_init();
     memset(tape, 0, sizeof tape);
-    memset(pre_buf, 0, sizeof pre_buf);
     memset(sfx_rev_comb, 0, sizeof sfx_rev_comb);
     memset(sfx_rev_ap, 0, sizeof sfx_rev_ap);
     memset(comb_lp, 0, sizeof comb_lp);
@@ -139,7 +135,6 @@ void fx_init(void)
     tp.last_len = 64u;
     tp.bb_rng = 0x2545F491u;
     tp.seed_rng = 0x6C8E9CF5u;
-    pre_w = 0;
     memset(comb_i, 0, sizeof comb_i);
     memset(ap_i, 0, sizeof ap_i);
     memset(rv_ring, 0, sizeof rv_ring);
@@ -1095,15 +1090,15 @@ static void bbd_delay_block(const MasterPerformancePreset *p, const int32_t *in,
 
 /* ROOM's multiplies round toward zero (mr_mulq15, 2026-10-15): with sfx_mulq15's floor the combs held a residue for
  * ever, up to ~90 LSB at the top of REVERB TIME (measured). */
-/* the predelay (in place), then the reverb of p's type: x is the reverb send, replaced by the left output; r gets the
+/* the reverb of p's type: x is the reverb send, replaced by the left output; r gets the
  * right. MOD, DOLMEN and TUMULUS: the tank, stereo. The others: the ROOM network, mono (decay sets the comb feedback,
  * damping the comb low-pass, spec 4.6 EFFECTS) */
-/* The reverb in two halves (2026-10-15): the front (the send clamped, the predelay, a tank's input diffusion), which
+/* The reverb in two halves (2026-10-15): the front (the send clamped, a tank's input diffusion), which
  * feeds nothing back, and the back (the tank, or the ROOM network). The front runs FX_REV_LAG samples ahead through
  * rv_ring: on the FM1 core 0 runs this pass's front beside the delay while core 1 runs the back on the front's output
  * of a pass ago; they touch different places of the ring (n <= the lag), so one core or two give the same sums.
- * The lag comes off the predelay: from PREDELAY 4 up its time is exact, below that the reverb starts up to 2.9 ms
- * later than before. */
+ * The reverb starts the lag (2.9 ms) late. REV PREDELAY was removed with the performance's v11 (2026-11-03: 8.9 KB of
+ * RAM; DLY > REV stands in). */
 
 static int reverb_is_tank(uint8_t t)
 {
@@ -1115,20 +1110,6 @@ void fx_reverb_front(const MasterPerformancePreset *p, const int32_t *send, uint
     int32_t x[FX_BLOCK_MAX];
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     send_limit(&rv_lim_env, send, x, n);
-    uint32_t pre = (uint32_t)p->reverb_predelay * 35u;
-    pre = pre > FX_REV_LAG ? pre - FX_REV_LAG : 0u;
-    if (pre != 0u) {
-        uint32_t w = pre_w;
-        for (uint32_t s = 0; s < n; s++) {
-            uint32_t rd = w + PRE_LEN - pre;                /* the read index wraps by one subtraction, not a modulo */
-            if (rd >= PRE_LEN) rd -= PRE_LEN;
-            int32_t o = pre_buf[rd];
-            pre_buf[w] = (int16_t)clamp16(x[s]);
-            if (++w >= PRE_LEN) w = 0;
-            x[s] = o;
-        }
-        pre_w = w;
-    }
     if (p->reverb_type == REVTYPE_DOLMEN)
         tank_front(x, n, 102u);
     else if (reverb_is_tank(p->reverb_type))
@@ -1247,7 +1228,6 @@ void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in,
 #endif
 #define XF_HP 0.0211f                                     /* ~150 Hz (LOOP TONE thinner: DELAY HP's, when higher) */
 #define XF_LP_HZ 4500.f                                   /* the low-pass at LOOP TONE 64 (darker: down to ~400 Hz) */
-uint8_t fx_live[FX_L_COUNT] = {64u, 64u, 0u, 0u};        /* BALANCE, LOOP TONE at their middles; no cross-feed */
 static struct {
     float hp[2], lp[2], g[2];                             /* each way's filters, its gain at the last block's end */
     float rev[FX_BLOCK_MAX];                              /* the reverb's last pass, mono (REV > DLY's source) */

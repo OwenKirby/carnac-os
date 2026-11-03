@@ -512,7 +512,7 @@ typedef struct {
     const char *name;
     const uint8_t *set;                  /* (offset, value) pairs over engine_defaults, V_END ends */
     uint8_t vmode, porta, unison;        /* voice mode, glide (PORTA_* << 7 | time), UNISON DETUNE */
-    uint8_t rtype, rdec, rdmp, rpre;     /* reverb */
+    uint8_t rtype, rdec, rdmp, rpre;     /* reverb (rpre: REV PREDELAY, ignored since v11) */
     uint8_t dtime, dfb, dtype, ping, degrade, dsync;   /* delay: dtime set to the tempo (dotted eighths mostly) */
 } FactoryVoice;
 #define FV_GLIDE(mode, t) ((uint8_t)(PORTA_##mode << 7 | (t)))
@@ -793,7 +793,7 @@ static int factory_perf(uint32_t s, WholePerformance *w)
         p->midi_ch[1] = p->midi_ch[0];                    /* the keys play both layers at once, whichever is selected */
     /* (an ARP-led DUAL keeps its two channels: the arp plays layer 2, the bass sequence layer 1, at any pitch) */
     p->split_note = 60u;                                  /* SPLIT: layer 1 below C4, layer 2 from C4 */
-    p->reverb_type = fx->rtype; p->reverb_decay = fx->rdec; p->reverb_damp = fx->rdmp; p->reverb_predelay = fx->rpre;
+    p->reverb_type = fx->rtype; p->reverb_decay = fx->rdec; p->reverb_damp = fx->rdmp;
     p->delay_time = fx->dtime; p->delay_feedback = fx->dfb; p->delay_type = fx->dtype; p->delay_pingpong = fx->ping;
     p->delay_degrade = fx->degrade;
     p->delay_sync = fx->dsync;

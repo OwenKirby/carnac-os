@@ -13,6 +13,7 @@
 
 int main(int argc, char **argv)
 {
+    perf_defaults(&perf_state);                      /* the MIX page's bytes (fx_live) at their defaults */
     static const int types[] = {REVTYPE_TOMB, REVTYPE_MOD, REVTYPE_CELESTIAL, REVTYPE_DOLMEN,
                                 REVTYPE_TUMULUS, REVTYPE_SPRING};
     const char *path = "src/host/fx_hash_golden.txt";
@@ -29,7 +30,7 @@ int main(int argc, char **argv)
             static MasterPerformancePreset p;
             memset(&p, 0, sizeof p);
             p.reverb_type = (uint8_t)types[k];
-            p.reverb_decay = 100; p.reverb_damp = 50; p.reverb_predelay = 20;
+            p.reverb_decay = 100; p.reverb_damp = 50;
             p.delay_time = 59;   /* ~0.47 s: past TAPE_GAP_MAX, the slowed tape */ p.delay_feedback = 80; p.delay_degrade = (uint8_t)(pp ? 110 : 36);
             p.delay_pingpong = (uint8_t)((pp & 1) | (pp == 4 ? 127 << 1 : pp == 5 ? 64 << 1 : 0));
             p.delay_type = (uint8_t)(bbd ? DELAYTYPE_BBD : DELAYTYPE_TAPE);

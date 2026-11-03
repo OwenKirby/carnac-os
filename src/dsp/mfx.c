@@ -39,7 +39,6 @@
 #define MFX_SUB 16u                      /* frames a control step: the sweep, the LFO */
 #define MFX_PI 3.14159265f
 
-MfxParams mfx_params[2];
 
 /* ---- STONE PHASER ---- */
 /* resistances in kilohms, conductances in mS */
@@ -1361,7 +1360,7 @@ static void bbd_echo(MfxState *s, const float *k, const float *row, float lr, fl
 SYNTH_COLD float mfx_peek(int layer, int i)
 {
     const MfxState *s = &mfx_st[layer & 1];
-    uint8_t t = mfx_params[layer & 1].type;
+    uint8_t t = MFX_PARAMS(layer).type;
     if (t != s->type && i < 3) return -1.f;          /* (not yet run as this type) */
     if (t == MFX_STONE_PHASER && i >= 0 && i < 2) return s->side[i].ctl;
     if (t == MFX_ENS_PHASER && i == 5) return s->ss_ctl;
@@ -1381,7 +1380,7 @@ SYNTH_COLD float mfx_peek(int layer, int i)
     if (t == MFX_PITCH_SHIFT && i >= 0 && i < 2)   /* the pitch, -12 .. +12 semitones as 0..1 */
         return (s->kn[MFX_K_PS_PITCH] > 24.f ? 24.f : s->kn[MFX_K_PS_PITCH]) * (1.f / 24.f);
     if (t == MFX_TAPE_FLANGER && i >= 0 && i < 5) {  /* the second deck, the reference, the thumb's sweep's ends */
-        const uint8_t *k = mfx_params[layer & 1].knob;
+        const uint8_t *k = MFX_PARAMS(layer).knob;
         float d = i < 2 ? s->tf_dm[i] : i == 2 ? TF_REF
                 : TF_REF + (-2.f + (float)k[MFX_K_TF_MANUAL] * (8.f / 127.f)
                             + (i == 3 ? -4.f : 4.f) * (float)k[MFX_K_TF_DEPTH] * (1.f / 127.f)) * TF_MS;
@@ -1389,7 +1388,7 @@ SYNTH_COLD float mfx_peek(int layer, int i)
         return d * (1.f / TF_DMAX);
     }
     if (t == MFX_CHORUS && (i == 3 || i == 4)) {     /* where its delay swings between */
-        const uint8_t *k = mfx_params[layer & 1].knob;
+        const uint8_t *k = MFX_PARAMS(layer).knob;
         float c = (1.f + (float)k[MFX_K_CH_DELAY] * (7.f / 127.f)) * (HR_SR * 0.001f);
         float d = c + (i == 3 ? -1.f : 1.f) * (float)k[MFX_K_CH_DEPTH] * (2.5f * HR_SR * 0.001f / 127.f);
         d = d < CH_DMIN ? CH_DMIN : d > EN_DMAX ? EN_DMAX : d;
@@ -1397,7 +1396,7 @@ SYNTH_COLD float mfx_peek(int layer, int i)
     }
     if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && (i == 3 || i == 4)) {   /* where its lines swing between: the
                                                                                  * clocks' fastest, slowest */
-        const MfxParams *p = &mfx_params[layer & 1];
+        const MfxParams *p = &MFX_PARAMS(layer);
         float age = t == MFX_ENSEMBLE ? p->knob[MFX_K_AGE] : p->row[MFX_R_AGE];
         float dep = t == MFX_ENSEMBLE ? p->knob[MFX_K_DEPTH] : p->knob[MFX_K_ENS_DEPTH];
         float dc = EN_D0 * (1.f + age * (1.f / 127.f)), sw = EN_SWING * dep * (1.f / 127.f);
@@ -1448,7 +1447,7 @@ static void mfx_glide(MfxState *s, const MfxParams *p)
 int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
 {
     MfxState *s = &mfx_st[layer & 1];
-    const MfxParams *p = &mfx_params[layer & 1];
+    const MfxParams *p = &MFX_PARAMS(layer);
     if (p->type != s->type)
         mfx_begin(s, p);
     s->nstep = 0;

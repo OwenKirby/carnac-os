@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "PresetStructures.h"
+#include "preset.h"                         /* perf_state: the MIX page's bytes (fx_live) */
 
 /* The shared effects block (spec 4.6 EFFECTS): a delay and a reverb in parallel, mono, Q15. Each layer reaches
  * them through its AMP sends: the delay send feeds the delay, the reverb send feeds the reverb. The sum of both is the
@@ -22,15 +23,15 @@ void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in,
                       uint32_t n);
 void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r, uint32_t n);
 void fx_reverb_block(const MasterPerformancePreset *p, int32_t *x, int32_t *r, uint32_t n);
-/* fx_reverb_block in its two halves, which share no state but a ring: the front takes the send (predelay, the tank's
+/* fx_reverb_block in its two halves, which share no state but a ring: the front takes the send (the tank's
  * input diffusion), the back gives the wet left (x) and right (r) of the send the front took FX_BLOCK_MAX samples
  * earlier. The FM1 runs the front on core 0 beside the delay, the back on core 1, at the same time. */
 void fx_reverb_front(const MasterPerformancePreset *p, const int32_t *send, uint32_t n);
 void fx_reverb_back(const MasterPerformancePreset *p, int32_t *x, int32_t *r, uint32_t n);
 void fx_mix_block(const int32_t *delay_l, const int32_t *delay_r, int32_t *rev_l, int32_t *rev_r, uint32_t n);
 
-/* The MIX page (2026-11-02): the performance's live mix, 0..127 each, RAM only until the performance format's bump
- * (LOOP TONE's thinner half excepted: it is DELAY HP, kept in its stored bits by fx_tone_sync).
+/* The MIX page (2026-11-02): the performance's mix, 0..127 each, saved with it since v11 (perf_state.mix; LOOP
+ * TONE's thinner half is DELAY HP too, kept in its stored bits by fx_tone_sync).
  *  - BALANCE (DUAL / SPLIT): the two layers, a fader each after its MFX and before its sends (synth_runtime.c); 64
  *    both at full, towards 0 layer 2 fades to silence, towards 127 layer 1. SINGL: DRY / WET, the same byte: towards
  *    0 the effects fade, towards 127 the dry (after the sends: the echoes go on, the dub drop-out).
@@ -43,7 +44,8 @@ void fx_mix_block(const int32_t *delay_l, const int32_t *delay_r, int32_t *rev_l
  *    fx_cross_keep (the reverb's out, for the next pass: the back runs on core 1 while the delay does).
  *    fx_process_block does the same. */
 enum { FX_L_BALANCE, FX_L_TONE, FX_L_DLY_REV, FX_L_REV_DLY, FX_L_COUNT };
-extern uint8_t fx_live[FX_L_COUNT];
+#define fx_live (perf_state.mix)                  /* (preset.h) */
+PS_STATIC_ASSERT(FX_L_COUNT == PERF_NMIX, "the MIX page's bytes in the performance");
 enum { FX_X_DLY_REV, FX_X_REV_DLY };
 #define fx_cross (&fx_live[FX_L_DLY_REV])          /* the two cross-feeds, [FX_X_*] */
 /* LOOP TONE's thinner half is DELAY HP (its 7 bits in delay_pingpong, 0 off, 1..127): turned, the knob writes them;

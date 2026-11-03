@@ -223,7 +223,6 @@ static void boot(void)
     ui_sm_attach_arp(&sm, synth_arp());
     ui_sm_attach_store(&sm, syn_slot_query, 0);
     ui_sm_attach_instrument(&sm, &instrument);
-    ui_sm_attach_mfx(&sm, mfx_params);
     seq_palette_set(SQPAL_ORANGE);
     settings_load();
     factory_install();

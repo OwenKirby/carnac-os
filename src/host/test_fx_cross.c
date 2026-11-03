@@ -57,6 +57,7 @@ static void run(int type, int fbk, int time, int a, int b, double g, double off,
 
 int main(void)
 {
+    perf_defaults(&perf_state);                      /* the MIX page's bytes (fx_live) at their defaults */
     static const double W1[1] = {25.0}, W2[2] = {16.0, 20.0}, W4[1] = {30.0};
     double db[2], hot[2], floor_db[2], pk;
     for (int t = 0; t < REVTYPE_COUNT; t++) {

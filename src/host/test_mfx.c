@@ -93,7 +93,7 @@ static double model_db(double f, int manual, int fb)
 {
     static float l[128], r[128];
     mfx_init();
-    mfx_params[0] = (MfxParams){MFX_STONE_PHASER, {(uint8_t)manual, 0, (uint8_t)fb, 0}, 0};
+    MFX_PARAMS(0) = (MfxParams){MFX_STONE_PHASER, {(uint8_t)manual, 0, (uint8_t)fb, 0}, 0};
     double ph = 0.0, w = 2.0 * M_PI * f / SR, amp = 100.0, acc_in = 0.0, acc_out = 0.0;
     for (int b = 0; b < 1034; b++) {            /* the MANUAL glide settles in the first 0.75 s */
         for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(amp * sin(ph)); ph += w; }
@@ -155,7 +155,7 @@ int main(void)
         static const uint8_t fbs[4] = {0, 64, 100, 127};
         static float l[128], r[128];
         mfx_init();
-        mfx_params[0] = (MfxParams){MFX_STONE_PHASER, {64, 64, fbs[fi], 127}, 0};
+        MFX_PARAMS(0) = (MfxParams){MFX_STONE_PHASER, {64, 64, fbs[fi], 127}, 0};
         srand(1);
         double ein = 0.0, eout = 0.0;
         for (int b = 0; b < 3445; b++) {                   /* 10 s */
@@ -172,7 +172,7 @@ int main(void)
     {
         static float l[128], r[128];
         mfx_init();
-        mfx_params[0] = (MfxParams){MFX_STONE_PHASER, {64, 127, 127, 127}, 127};
+        MFX_PARAMS(0) = (MfxParams){MFX_STONE_PHASER, {64, 127, 127, 127}, 127};
         double peak = 0.0;
         int bad = 0;
         for (int b = 0; b < 6890; b++) {
@@ -190,7 +190,7 @@ int main(void)
     /* 4. OFF */
     {
         float l[64], r[64];
-        mfx_params[0].type = MFX_OFF;
+        MFX_PARAMS(0).type = MFX_OFF;
         for (int i = 0; i < 64; i++) l[i] = r[i] = (float)i;
         mfx_layer_block(0, l, r, 64);
         for (int i = 0; i < 64; i++) if (l[i] != (float)i || r[i] != (float)i) { printf("OFF changed the signal\n"); fails++; break; }
@@ -200,7 +200,7 @@ int main(void)
     for (int st = 0; st < 2; st++) {
         static float l[128], r[128];
         mfx_init();
-        mfx_params[0] = (MfxParams){MFX_STONE_PHASER, {64, (uint8_t)(127.0 * log2(1.0 / 0.08) / 8.29 + 0.5), 60,
+        MFX_PARAMS(0) = (MfxParams){MFX_STONE_PHASER, {64, (uint8_t)(127.0 * log2(1.0 / 0.08) / 8.29 + 0.5), 60,
                                                        127}, (uint8_t)(st ? 127 : 0)};
         srand(2);
         double diff = 0.0, sum = 0.0;
@@ -222,7 +222,7 @@ int main(void)
         static float l[128], r[128];
         for (int ki = 0; ki < 4; ki++) {
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_BULLROARER, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, 0};
+            MFX_PARAMS(0) = (MfxParams){MFX_BULLROARER, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, 0};
             srand(3);
             double ein = 0.0, eout = 0.0, peak = 0.0, diff = 0.0;
             int bad = 0;
@@ -252,7 +252,7 @@ int main(void)
         static float l[128], r[128];
         for (int ki = 0; ki < 5; ki++) {
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_ENSEMBLE, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4]};
+            MFX_PARAMS(0) = (MfxParams){MFX_ENSEMBLE, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4]};
             srand(4);
             double ein = 0.0, eout = 0.0, peak = 0.0, diff = 0.0;
             int bad = 0;
@@ -275,7 +275,7 @@ int main(void)
             if (K[ki][4] == 127 && K[ki][3] && sd < -15.0) { printf("ENSEMBLE WIDTH 127: the sides barely differ\n"); fails++; }
         }
         mfx_init();
-        mfx_params[0] = (MfxParams){MFX_ENSEMBLE, {127, 127, 127, 127}, 127};
+        MFX_PARAMS(0) = (MfxParams){MFX_ENSEMBLE, {127, 127, 127, 127}, 127};
         double peak = 0.0;
         for (int b = 0; b < 3445; b++) {
             for (int i = 0; i < 128; i++) { l[i] = (float)((rand() / (double)RAND_MAX - 0.5) * 120000.0); r[i] = -l[i]; }
@@ -302,11 +302,11 @@ int main(void)
                 double ph = 0.0, before = 0.0, after = 0.0, during = 0.0, y1 = 0.0, y2 = 0.0;
                 *(kk < 4 ? &p.knob[kk] : kk == 4 ? &p.lr : &p.row[kk - 5]) = 0;
                 mfx_init();
-                mfx_params[0] = p;
+                MFX_PARAMS(0) = p;
                 for (int b = 0; b < 1000; b++) {                 /* 2.9 s; the turn from block 600 */
                     if (b >= 600 && b < 664) {
                         uint8_t v = (uint8_t)(b - 599 >= 64 ? 127 : 2 * (b - 599));
-                        *(kk < 4 ? &mfx_params[0].knob[kk] : kk == 4 ? &mfx_params[0].lr : &mfx_params[0].row[kk - 5]) = v;
+                        *(kk < 4 ? &MFX_PARAMS(0).knob[kk] : kk == 4 ? &MFX_PARAMS(0).lr : &MFX_PARAMS(0).row[kk - 5]) = v;
                     }
                     for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 220.0 / SR; }
                     mfx_layer_block(0, l, r, 128);
@@ -335,7 +335,7 @@ int main(void)
         static float l[128], r[128];
         for (int ki = 0; ki < 5; ki++) {
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_ENS_PHASER, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4],
+            MFX_PARAMS(0) = (MfxParams){MFX_ENS_PHASER, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4],
                                         {K[ki][5], K[ki][6]}};
             srand(5);
             double ein = 0.0, eout = 0.0, peak = 0.0;
@@ -356,7 +356,7 @@ int main(void)
             if (peak > 400000.0) { printf("ENS+PHASER not bounded\n"); fails++; }
         }
         mfx_init();
-        mfx_params[0] = (MfxParams){MFX_ENS_PHASER, {127, 127, 127, 127}, 127, {127, 127}};
+        MFX_PARAMS(0) = (MfxParams){MFX_ENS_PHASER, {127, 127, 127, 127}, 127, {127, 127}};
         double peak = 0.0;
         for (int b = 0; b < 3445; b++) {
             for (int i = 0; i < 128; i++) { l[i] = (float)((rand() / (double)RAND_MAX - 0.5) * 120000.0); r[i] = -l[i]; }
@@ -375,7 +375,7 @@ int main(void)
         static float l[128], r[128];
         for (int ki = 0; ki < 5; ki++) {
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_CHORUS, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4], {K[ki][5], 0}};
+            MFX_PARAMS(0) = (MfxParams){MFX_CHORUS, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4], {K[ki][5], 0}};
             srand(6);
             double ein = 0.0, eout = 0.0, peak = 0.0;
             int bad = 0;
@@ -405,10 +405,10 @@ int main(void)
         for (int ti = 0; ti < 7; ti++)
             for (int wi = 0; wi < 2; wi++) {
                 mfx_init();
-                mfx_params[0] = (MfxParams){T[ti], {64, 64, 64, 64}, (uint8_t)(wi ? 127 : 0),
+                MFX_PARAMS(0) = (MfxParams){T[ti], {64, 64, 64, 64}, (uint8_t)(wi ? 127 : 0),
                                             {(uint8_t)(T[ti] == MFX_BBD_FLANGER ? 0 : 30),
                                              (uint8_t)(T[ti] == MFX_TAPE_FLANGER ? 1 : T[ti] == MFX_BBD_FLANGER ? 0 : 40)}};
-                if (T[ti] == MFX_PITCH_SHIFT) mfx_params[0].knob[MFX_K_PS_PITCH] = 19;
+                if (T[ti] == MFX_PITCH_SHIFT) MFX_PARAMS(0).knob[MFX_K_PS_PITCH] = 19;
                 srand(7);
                 double el = 0.0, er = 0.0;
                 for (int b = 0; b < 1378; b++) {
@@ -435,7 +435,7 @@ int main(void)
         static float l[128], r[128];
         for (int ki = 0; ki < 5; ki++) {
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4],
+            MFX_PARAMS(0) = (MfxParams){MFX_TAPE_FLANGER, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4],
                                         {K[ki][5], K[ki][6]}};
             srand(8);
             double ein = 0.0, eout = 0.0, peak = 0.0;
@@ -456,7 +456,7 @@ int main(void)
             if (peak > 400000.0) { printf("TAPE FLANGER not bounded\n"); fails++; }
         }
         mfx_init();
-        mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {127, 127, 127, 127}, 127, {0, 1}};
+        MFX_PARAMS(0) = (MfxParams){MFX_TAPE_FLANGER, {127, 127, 127, 127}, 127, {0, 1}};
         double peak = 0.0;
         for (int b = 0; b < 3445; b++) {
             for (int i = 0; i < 128; i++) { l[i] = (float)((rand() / (double)RAND_MAX - 0.5) * 120000.0); r[i] = -l[i]; }
@@ -472,7 +472,7 @@ int main(void)
             uint8_t tape = (uint8_t)(ti ? 127 : 0);
             double lo = 1e30, hi = 0.0, acc = 0.0;
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {32, 0, 30, tape}, 0, {0, 1}};
+            MFX_PARAMS(0) = (MfxParams){MFX_TAPE_FLANGER, {32, 0, 30, tape}, 0, {0, 1}};
             srand(9);
             for (int b = 0; b < 10336; b++) {               /* 30 s: most of a sweep */
                 for (int i = 0; i < 128; i++) l[i] = r[i] = pink();
@@ -497,9 +497,9 @@ int main(void)
         {
             double ph = 0.0, before = 0.0, during = 0.0, y1 = 0.0, y2 = 0.0;
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {100, 40, 0, 0}, 0, {0, 0}};
+            MFX_PARAMS(0) = (MfxParams){MFX_TAPE_FLANGER, {100, 40, 0, 0}, 0, {0, 0}};
             for (int b = 0; b < 800; b++) {
-                if (b == 600) mfx_params[0].row[MFX_R_POLARITY] = 1;
+                if (b == 600) MFX_PARAMS(0).row[MFX_R_POLARITY] = 1;
                 for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 220.0 / SR; }
                 mfx_layer_block(0, l, r, 128);
                 for (int i = 0; i < 128; i++) {
@@ -526,7 +526,7 @@ int main(void)
             double ein = 0.0, eout = 0.0, peak = 0.0;
             int bad = 0;
             mfx_init();
-            mfx_params[0] = p;
+            MFX_PARAMS(0) = p;
             srand(10);
             for (int b = 0; b < 3445; b++) {
                 for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
@@ -547,7 +547,7 @@ int main(void)
         for (int mo = 0; mo < 3; mo += 2) {
             double el = 0.0, er = 0.0;
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {(uint8_t)mo, 0}};
+            MFX_PARAMS(0) = (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {(uint8_t)mo, 0}};
             srand(11);
             for (int b = 0; b < 1378; b++) {
                 for (int i = 0; i < 128; i++) { l[i] = pink(); r[i] = 0.f; }
@@ -569,7 +569,7 @@ int main(void)
             double ph = 0.0, want = 330.0 * pow(2.0, (S[si] - 12) / 12.0), e = 0.0, ef = 0.0;
             int n = 0;
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_PITCH_SHIFT, {(uint8_t)S[si], 64, 0, 127}, 0, {0, 0}};
+            MFX_PARAMS(0) = (MfxParams){MFX_PITCH_SHIFT, {(uint8_t)S[si], 64, 0, 127}, 0, {0, 0}};
             for (int b = 0; b < 700; b++) {
                 for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 330.0 / SR; }
                 mfx_layer_block(0, l, r, 128);
@@ -593,7 +593,7 @@ int main(void)
             double ph = 0.0, rms = 0.0, worst = 0.0, f = 330.0 * pow(2.0, (S[si] - 12) / 12.0);
             int n = 0;
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_PITCH_SHIFT, {(uint8_t)S[si], 64, 0, 127}, 0, {0, 0}};
+            MFX_PARAMS(0) = (MfxParams){MFX_PITCH_SHIFT, {(uint8_t)S[si], 64, 0, 127}, 0, {0, 0}};
             for (int b = 0; b < 700; b++) {
                 for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 330.0 / SR; }
                 mfx_layer_block(0, l, r, 128);
@@ -613,7 +613,7 @@ int main(void)
                              : (MfxParams){MFX_PITCH_SHIFT, {12, 75, 0, 64}, 127, {30, 0}};
             double ein = 0.0, eout = 0.0, peak = 0.0;
             mfx_init();
-            mfx_params[0] = p;
+            MFX_PARAMS(0) = p;
             srand(12);
             for (int b = 0; b < 3445; b++) {
                 for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
@@ -641,7 +641,7 @@ int main(void)
             int at = -1;
             double best = 0.0;
             mfx_init();
-            mfx_params[0] = (MfxParams){MFX_BBD_ECHO, {99, 0, 64, 127}, 0, {0, 0}};
+            MFX_PARAMS(0) = (MfxParams){MFX_BBD_ECHO, {99, 0, 64, 127}, 0, {0, 0}};
             for (int b = 0; b < 40; b++) {
                 for (int i = 0; i < 128; i++) l[i] = r[i] = (b == 2 && i < 8) ? 20000.f : 0.f;
                 mfx_layer_block(0, l, r, 128);
@@ -658,7 +658,7 @@ int main(void)
                                   : (MfxParams){MFX_BBD_ECHO, {110, 127, 127, 100}, 127, {0, 60}};
             double ein = 0.0, eout = 0.0, peak = 0.0;
             mfx_init();
-            mfx_params[0] = p;
+            MFX_PARAMS(0) = p;
             srand(14);
             for (int b = 0; b < 3445; b++) {
                 for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
@@ -681,7 +681,7 @@ int main(void)
             float near[2];
             for (int ei = 0; ei < 2; ei++) {
                 mfx_init();
-                mfx_params[0] = (MfxParams){MFX_BBD_ECHO, {99, 0, (uint8_t)(ei ? 127 : 64), 127}, 0, {0, 0}};
+                MFX_PARAMS(0) = (MfxParams){MFX_BBD_ECHO, {99, 0, (uint8_t)(ei ? 127 : 64), 127}, 0, {0, 0}};
                 srand(15);
                 for (int b = 0; b < 400; b++) {
                     for (int i = 0; i < 128; i++) l[i] = r[i] = 3.f * pink();
@@ -695,7 +695,7 @@ int main(void)
             double e[2][2] = {{0.0, 0.0}, {0.0, 0.0}};             /* [ENV 64, 127][while played, after] */
             for (int ei = 0; ei < 2; ei++) {
                 mfx_init();
-                mfx_params[0] = (MfxParams){MFX_BBD_ECHO, {99, 60, (uint8_t)(ei ? 127 : 64), 127}, 0, {1, 0}};
+                MFX_PARAMS(0) = (MfxParams){MFX_BBD_ECHO, {99, 60, (uint8_t)(ei ? 127 : 64), 127}, 0, {1, 0}};
                 srand(16);
                 for (int b = 0; b < 700; b++) {
                     for (int i = 0; i < 128; i++) l[i] = r[i] = b < 400 ? 3.f * pink() : 0.f;

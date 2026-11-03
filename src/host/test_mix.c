@@ -23,7 +23,9 @@ static int32_t buf[64];
 
 static void setup(uint8_t mode, uint8_t dly_send, uint8_t rev_send)
 {
+    uint8_t bal = fx_live[FX_L_BALANCE];             /* (the performance's since v11: live_defaults resets it) */
     live_defaults();
+    fx_live[FX_L_BALANCE] = bal;
     perf_state.perf_mode = mode;
     perf_state.delay_feedback = 60;
     for (int l = 0; l < 2; l++) {
@@ -78,7 +80,7 @@ static double band(const double *x, int n, double f, double t0, double t1)
 static void tone_bands(uint8_t t, double *tr1, double *ba1, double *tr3, double *ba3)
 {
     static MasterPerformancePreset p;
-    static double out[SR * 2];
+    static double out[SR * 2 + 128];                 /* (the last 128-frame block runs past SR * 2) */
     memset(&p, 0, sizeof p);
     p.delay_time = 59; p.delay_feedback = 90;
     if (t > 64u) p.delay_pingpong = (uint8_t)(((t - 64u) * 127u / 63u) << 1);   /* (as fx_tone_sync writes it) */

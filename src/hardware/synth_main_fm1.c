@@ -513,7 +513,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         v[4] = audio_peak_pct; v[5] = shed_count; v[6] = voice_shed;
         v[7] = (uint32_t)lv[0]; v[8] = (uint32_t)lv[1]; v[9] = (uint32_t)lv[2]; v[10] = nv;
         v[11] = perf_state.reverb_type; v[12] = perf_state.reverb_decay; v[13] = perf_state.reverb_damp;
-        v[14] = perf_state.reverb_predelay; v[15] = DELAY_TYPE(&perf_state); v[16] = perf_state.delay_time;
+        v[14] = 0u /* (REV PREDELAY, gone in v11) */; v[15] = DELAY_TYPE(&perf_state); v[16] = perf_state.delay_time;
         v[17] = perf_state.delay_feedback; v[18] = perf_state.delay_degrade; v[19] = perf_state.delay_pingpong;
         v[20] = engine_state[0].amp.reverb_send; v[21] = engine_state[0].amp.delay_send;
         v[22] = engine_state[1].amp.reverb_send; v[23] = engine_state[1].amp.delay_send; v[24] = perf_state.perf_mode;
@@ -847,7 +847,6 @@ static void fm1_main(void)
     ui_sm_attach_arp(&sm, synth_arp());
     ui_sm_attach_store(&sm, syn_slot_query, 0);
     ui_sm_attach_instrument(&sm, &instrument);
-    ui_sm_attach_mfx(&sm, mfx_params);
     seq_palette_set(SQPAL_ORANGE);
     settings_load();                                /* the THEME of the last session */
     factory_install();                              /* the factory bank (slots 0..31), under whatever is saved */

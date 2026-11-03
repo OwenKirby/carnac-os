@@ -1938,8 +1938,8 @@ static void pu_viz_fx(const UIStateMachine *sm)
     int32_t x, h = 52, k, xr, len, y, top, dark = 1 + p->delay_degrade / 43;
     int32_t fog_h = 50 - (int32_t)p->reverb_damp * 26 / 127;
     pu_ground(PV_GROUND, PUC_STONE);
-    /* the reverb's fog, behind the stones: from the pre-delay, as long as the decay, lower as it is damped */
-    xr = PV_X0 + 8 + (int32_t)p->reverb_predelay * 30 / 127;
+    /* the reverb's fog, behind the stones: as long as the decay, lower as it is damped */
+    xr = PV_X0 + 8;
     len = 24 + (int32_t)p->reverb_decay * 170 / 127;
     for (x = xr; x < xr + len && x < PV_X0 + PV_W; x++) {
         int32_t d = x - xr;

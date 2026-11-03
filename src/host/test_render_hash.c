@@ -202,14 +202,14 @@ int main(int argc, char **argv)
         perf_state.midi_ch[1] = perf_state.midi_ch[0];
         patch(&engine_state[0], VARCH_SINGLE, 1, 0);
         patch(&engine_state[1], VARCH_DUAL_OSC, 0, 1);
-        mfx_params[0] = mfx_params[1] = mp;
-        mfx_params[0].type = t < MFX_COUNT ? t : (uint8_t)MFX_ENSEMBLE;
-        mfx_params[1].type = t < MFX_COUNT ? t : (uint8_t)MFX_OFF;
+        MFX_PARAMS(0) = MFX_PARAMS(1) = mp;
+        MFX_PARAMS(0).type = t < MFX_COUNT ? t : (uint8_t)MFX_ENSEMBLE;
+        MFX_PARAMS(1).type = t < MFX_COUNT ? t : (uint8_t)MFX_OFF;
         play(t % 2 ? 128u : 32u);
-        snprintf(line, sizeof line, "mfx L1 %u L2 %u  %08x", mfx_params[0].type, mfx_params[1].type, h);
+        snprintf(line, sizeof line, "mfx L1 %u L2 %u  %08x", MFX_PARAMS(0).type, MFX_PARAMS(1).type, h);
         report(line);
     }
-    mfx_params[0].type = mfx_params[1].type = MFX_OFF;
+    MFX_PARAMS(0).type = MFX_PARAMS(1).type = MFX_OFF;
 
     fclose(golden);
     if (writing)
