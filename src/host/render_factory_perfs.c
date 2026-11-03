@@ -2,7 +2,7 @@
  * its patches, effects, tempo, sequence and arp pattern), PLAY pressed, 8 bars on the internal clock, then stopped and
  * 3 s of tail, to a 16-bit stereo WAV per performance. Prints each one's peak and RMS level. Test scaffolding only.
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
- *       src/host/pcm_images_host.c src/host/foundations_image_host.c src/host/render_factory_perfs.c -lm \
+ *       src/host/pcm_images_host.c src/host/wt_areas_host.c src/host/render_factory_perfs.c -lm \
  *       -o render_factory_perfs
  *   render_factory_perfs OUTDIR       writes OUTDIR/NN_NAME.wav */
 #include <math.h>
@@ -54,9 +54,9 @@ int main(int argc, char **argv)
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
     }
     {   /* wavetable bank 0, Foundations, as uploaded to a unit (without it bank 0 plays the fallback sine) */
-        extern const uint8_t foundations_image_host[];
-        extern const uint32_t foundations_image_host_len;
-        wavetable_bank_attach(foundations_image_host, foundations_image_host_len);
+        extern const uint8_t wt_area2_host[];
+        extern const uint32_t wt_area2_host_len;
+        wavetable_area_attach(0, wt_area2_host, wt_area2_host_len);
     }
     factory_install();
     for (s = 0; s < FP_NPERF; s++) {

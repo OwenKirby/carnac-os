@@ -6,7 +6,7 @@
  *  3. LOOP TONE (the delay alone, a short burst, FEEDBACK 90): the first echo is untouched (its treble and bass within
  *     0.5 dB of the middle's); the later repeats lose treble below the middle (DARK, >= 6 dB less at 3 kHz) and
  *     bass above it (THIN, >= 4 dB less at 80 Hz).
- *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(DSP) src/host/foundations_image_host.c src/host/test_mix.c -lm */
+ *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(DSP) src/host/wt_areas_host.c src/host/test_mix.c -lm */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,9 +105,9 @@ int main(void)
 {
     synth_init();
     {
-        extern const uint8_t foundations_image_host[];
-        extern const uint32_t foundations_image_host_len;
-        wavetable_bank_attach(foundations_image_host, foundations_image_host_len);
+        extern const uint8_t wt_area2_host[];
+        extern const uint32_t wt_area2_host_len;
+        wavetable_area_attach(0, wt_area2_host, wt_area2_host_len);
     }
     double a, b;
     /* 1. BALANCE */

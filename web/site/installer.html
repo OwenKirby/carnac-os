@@ -5,8 +5,8 @@
      fm1pkg.js, unchanged. web/site/make_site.py inlines them and the package's metadata at the marks below.
      Added for Carnac: the FM1 is asked which Carnac it runs (editor INFO, F0 7D 46 4C 01 F7) before anything is
      written, an older package than the one on the FM1 needs a tick first, and the install is checked by that same
-     INFO answering "CARNAC OS <version>". Then the waves (the PCM waves src/dsp/pcm_area*.bin and wavetable bank 0,
-     src/dsp/foundations_bank.bin) are written to their flash areas with the editor's PCM commands
+     INFO answering "CARNAC OS <version>". Then the waves (the PCM waves src/dsp/pcm_area*.bin and the wavetable
+     areas, src/dsp/wt_area2.bin and wt_area3.bin) are written to their flash areas with the editor's PCM commands
      (src/hardware/pcm_store_upload.py's protocol), each only when the FM1 does not hold that image already. -->
 <html lang="en">
 <head>
@@ -61,7 +61,7 @@
       and close other apps that use MIDI.</span></div>
     <div class="step"><b>2</b><span>Press <em>Find my FM1</em>. The browser asks to allow MIDI: allow it.</span></div>
     <div class="step"><b>3</b><span>Press <em>Install</em>. It takes about three minutes: the firmware, then the waves
-      (the PCM sounds and the Foundations wavetable; the FM1 goes quiet for moments while they are written). Do not unplug the cable or close this page while it writes.</span></div>
+      (the PCM sounds and wavetable frames; the FM1 goes quiet for moments while they are written). Do not unplug the cable or close this page while it writes.</span></div>
   </div>
 
   <div class="panel">
@@ -175,7 +175,7 @@ async function carnacVersion(link) {
 
 /* the waves (src/hardware/pcm_store_fm1.c): 100 BEGIN [area], 101 WRITE [off x3, data], 102 END [header],
    103 INFO [area, first] -> areas, area, entries, KiB x2, used x3, names; 104 ID [area] -> area, held, hcrc x5 (the
-   image's header CRC); data in groups of 7 behind their top bits. Area 2 holds wavetable bank 0, not PCM. */
+   image's header CRC); data in groups of 7 behind their top bits. Areas 2 and 3 hold wavetable frames, not PCM. */
 const PCM_BEGIN = 100, PCM_WRITE = 101, PCM_END = 102, PCM_INFO = 103, PCM_ID = 104, PCM_HDR = 32, PCM_CHUNK = 256;
 const pcmPack = (b) => {
   const o = [];

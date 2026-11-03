@@ -1,7 +1,7 @@
 /* MFX listening renders (2026-11-01): the same scenes dry and through each MFX setting, as WAVs to compare by ear,
  * and the host cost of the effect (both layers' worth of its work: one layer, stereo).
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
- *       src/host/pcm_images_host.c src/host/foundations_image_host.c src/host/render_mfx_demo.c -lm -o render_mfx_demo
+ *       src/host/pcm_images_host.c src/host/wt_areas_host.c src/host/render_mfx_demo.c -lm -o render_mfx_demo
  *   render_mfx_demo OUTDIR          writes OUTDIR/<scene>.wav, prints peak / RMS and the cost
  *
  * Scenes: a slow SPREAD pad playing a minor progression (dry, then STONE PHASER slow / with FEEDBACK / full FEEDBACK,
@@ -159,11 +159,11 @@ int main(int argc, char **argv)
     {
         extern const uint8_t pcm_image_host0[], pcm_image_host1[];
         extern const uint32_t pcm_image_host_len0, pcm_image_host_len1;
-        extern const uint8_t foundations_image_host[];
-        extern const uint32_t foundations_image_host_len;
+        extern const uint8_t wt_area2_host[];
+        extern const uint32_t wt_area2_host_len;
         pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0);
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
-        wavetable_bank_attach(foundations_image_host, foundations_image_host_len);
+        wavetable_area_attach(0, wt_area2_host, wt_area2_host_len);
     }
     const uint8_t slow = rate_knob(0.12), mid = rate_knob(0.5), fast = rate_knob(4.0);
     printf("STONE PHASER (RATE knobs: 0.12 Hz = %u, 0.5 Hz = %u, 4 Hz = %u):\n", slow, mid, fast);

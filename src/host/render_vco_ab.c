@@ -3,7 +3,7 @@
  * osc_prepare / osc_render_block at a 32-sample tick. Every pair plays Foundations first, then VCO.
  *
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
- *       src/host/foundations_image_host.c src/host/render_vco_ab.c -lm -o ab.exe
+ *       src/host/wt_areas_host.c src/host/render_vco_ab.c -lm -o ab.exe
  *   ./ab.exe listening/vco_ab [TONES_DIR]
  *
  * TONES_DIR (optional) gets single tones of each, for spectrum checks (analyse_vco_ab.py). */
@@ -18,9 +18,9 @@
 #define SR 44100
 #define BLK 32
 
-extern const uint8_t foundations_image_host[];
-extern const uint32_t foundations_image_host_len;
-int wavetable_bank_attach(const uint8_t *img, uint32_t size);
+extern const uint8_t wt_area2_host[];
+extern const uint32_t wt_area2_host_len;
+int wavetable_area_attach(uint32_t slot, const uint8_t *img, uint32_t size);
 
 static const char *NAMES[8] = { "TRIANGLE", "SAW", "SQUARE", "PULSE35", "PULSE20", "PULSE10", "PULSEMIN", "SAW+SQUARE" };
 static double ns_found, ns_vco; static long n_found, n_vco;
@@ -163,7 +163,7 @@ int main(int argc, char **argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: render_vco_ab OUT_DIR [TONES_DIR]\n"); return 1; }
     const char *dir = argv[1];
-    if (!wavetable_bank_attach(foundations_image_host, foundations_image_host_len)) {
+    if (wavetable_area_attach(0, wt_area2_host, wt_area2_host_len) < 0) {
         fprintf(stderr, "Foundations did not attach\n"); return 1;
     }
     match_gain();

@@ -8,7 +8,7 @@
  * meant to alter it: check by ear that it is right, then rewrite the golden file with --write and say why.
  *
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
- *       src/host/foundations_image_host.c src/host/test_render_hash.c -o test_render_hash
+ *       src/host/wt_areas_host.c src/host/test_render_hash.c -o test_render_hash
  *   test_render_hash [--write] [golden file]     (default src/host/render_hash_golden.txt, run from the repo root) */
 #include <stdio.h>
 #include <stdint.h>
@@ -115,9 +115,9 @@ int main(int argc, char **argv)
     golden = fopen(path, writing ? "w" : "r");
     if (!golden) { printf("cannot open %s\n", path); return 1; }
     {   /* wavetable bank 0, Foundations, as on a unit it was uploaded to (2026-10-26) */
-        extern const uint8_t foundations_image_host[];
-        extern const uint32_t foundations_image_host_len;
-        if (wavetable_bank_attach(foundations_image_host, foundations_image_host_len) != 1) {
+        extern const uint8_t wt_area2_host[];
+        extern const uint32_t wt_area2_host_len;
+        if (wavetable_area_attach(0, wt_area2_host, wt_area2_host_len) < 0) {
             printf("the Foundations image does not attach\n");
             return 1;
         }

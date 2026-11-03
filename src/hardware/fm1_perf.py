@@ -204,11 +204,11 @@ def cmd_run(wt_ram=False):
 
 
 def sync_waves():
-    """after an install: the PCM waves and wavetable bank 0 (pcm_store_upload.py sync), each only when the FM1 does
+    """after an install: the PCM waves and the wavetable areas (pcm_store_upload.py sync), each only when the FM1 does
     not hold this repo's image already"""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import pcm_store_upload
-    print("waves: checking the PCM areas and bank 0")
+    print("waves: checking the PCM and wavetable areas")
     pcm_store_upload.sync(pcm_store_upload.Link(wait=20.0))
 
 

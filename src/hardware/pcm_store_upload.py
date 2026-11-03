@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """PCM waves for the FM1 (2026-10-21): upload an image to one of the free flash areas the firmware reads PCM waves from
 (src/dsp/pcm_store.h, src/hardware/pcm_store_fm1.c), over USB-MIDI. The images come from src/dsp/gen_pcm_waves.py
-(src/dsp/pcm_area0.bin, pcm_area1.bin: the chimes, ensembles and their attacks, format version 2). Area 2 is not PCM:
-it holds wavetable bank 0's own image (Foundations, src/dsp/foundations_bank.bin from src/dsp/gen_foundations.py;
-firmware from 2026-10-26 on).
+(src/dsp/pcm_area0.bin, pcm_area1.bin: the chimes, ensembles and their attacks, format version 2). Areas 2 and 3 are
+not PCM: they hold wavetable frames (src/dsp/wt_area2.bin: bank 0, Foundations, and three frames of Dust;
+wt_area3.bin: three more; from src/dsp/gen_wt_areas.py; firmware from 2026-11-03 on. Before, area 2 held
+Foundations alone, foundations_bank.bin).
 
   pcm_store_upload.py info                             what each area holds
   pcm_store_upload.py sync                             write every area whose image differs from this repo's
-                                                       (pcm_area0.bin, pcm_area1.bin, foundations_bank.bin);
+                                                       (pcm_area0.bin, pcm_area1.bin, wt_area2.bin, wt_area3.bin);
                                                        fm1_perf.py install runs it after the firmware
-  pcm_store_upload.py upload IMAGE --area A            write IMAGE to area A (0: 36 KiB, 1: 56 KiB, 2: bank 0)
+  pcm_store_upload.py upload IMAGE --area A            write IMAGE to area A (0: 36 KiB, 1: 56 KiB, 2 and 3:
+                                                       wavetable frames)
   pcm_store_upload.py clear --area A                   empty area A
   pcm_store_upload.py syx IMAGE OUT.syx --area A       no device: the upload's SysEx frames, for
                                                        src/host/test_pcm_store.c
 
 Each image is made for its own area (a wave refers to its samples by area): upload pcm_area0.bin to area 0 and
-pcm_area1.bin to area 1, foundations_bank.bin to area 2. Needs mido and a backend such as python-rtmidi for the device commands.
+pcm_area1.bin to area 1, wt_area2.bin to area 2, wt_area3.bin to area 3. Needs mido and a backend such as python-rtmidi for the device commands.
 """
 import argparse
 import struct
@@ -29,14 +31,14 @@ PCM_BEGIN, PCM_WRITE, PCM_END, PCM_INFO, PCM_ID = 100, 101, 102, 103, 104
 MAGIC, VERSION = 0x57505243, 2
 HDR_SIZE, ENTRY_SIZE, NAME_LEN = 32, 36, 12
 KINDS = {1: "loop", 2: "one-shot", 3: "wave"}
-AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000}
-BANK_AREA, BANK_MAGIC, BANK_VERSION = 2, 0x42575243, 1   # wavetables.h WT_BANK_* ("CRWB")
-BANK_LEN = 32 + 8 * 1024 * 2
+AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000, 3: 0x2000}
+WT_AREAS, WT_MAGIC, WT_VERSION = (2, 3), 0x46575243, 1   # wavetables.h WT_AREA_* ("CRWF")
+FRAME_BYTES = 1024 * 2
 CHUNK = 256
 DSP = Path(__file__).resolve().parents[1] / "dsp"
-IMAGES = {0: DSP / "pcm_area0.bin", 1: DSP / "pcm_area1.bin", 2: DSP / "foundations_bank.bin"}
+IMAGES = {0: DSP / "pcm_area0.bin", 1: DSP / "pcm_area1.bin", 2: DSP / "wt_area2.bin", 3: DSP / "wt_area3.bin"}
 RC = {1: "arguments", 2: "flash", 3: "order", 4: "too big for the area", 5: "refused by the image check"}
-CHECK = {-1: "no image", -2: "header", -3: "an entry (area 2: another bank)", -4: "data CRC"}
+CHECK = {-1: "no image", -2: "header", -3: "an entry (areas 2, 3: another bank set)", -4: "data CRC"}
 
 
 # -------------------------------------------------------------------------------------------------------- image ---
@@ -55,24 +57,24 @@ def parse_image(img):
     return count, n, [(e[0].rstrip(b"\0").decode("ascii", "replace"), KINDS.get(e[1], "?")) for e in ents]
 
 
-def check_bank(img):
-    """SystemExit unless img is a whole bank image (wavetables.h wt_bank_hdr_t)"""
+def check_wt(img):
+    """SystemExit unless img is a whole wavetable area image (wavetables.h wt_area_hdr_t)"""
     if len(img) < HDR_SIZE:
-        sys.exit("too short for a bank image")
-    magic, ver, banks, n, crc = struct.unpack_from("<IHHII", img)
-    if magic != BANK_MAGIC or zlib.crc32(img[:28]) != struct.unpack_from("<I", img, 28)[0] or ver != BANK_VERSION:
-        sys.exit("not a wavetable bank image (src/dsp/gen_foundations.py makes it)")
-    if banks != 1 or n != len(img) or n != BANK_LEN or zlib.crc32(img[HDR_SIZE:]) != crc:
-        sys.exit("damaged bank image (length or data CRC)")
+        sys.exit("too short for a wavetable area image")
+    magic, ver, _tag, count, _rsv, n, crc = struct.unpack_from("<IBBBBII", img)
+    if magic != WT_MAGIC or zlib.crc32(img[:28]) != struct.unpack_from("<I", img, 28)[0] or ver != WT_VERSION:
+        sys.exit("not a wavetable area image (src/dsp/gen_wt_areas.py makes them)")
+    if not 0 < count <= 12 or n != len(img) or n != HDR_SIZE + count * FRAME_BYTES or zlib.crc32(img[HDR_SIZE:]) != crc:
+        sys.exit("damaged wavetable area image (length or data CRC)")
 
 
 def check_for_area(img, area):
-    """the image must be of the area's kind: a bank image for area 2, a PCM image for the others"""
-    is_bank = len(img) >= 4 and struct.unpack_from("<I", img)[0] == BANK_MAGIC
-    if (area == BANK_AREA) != is_bank:
-        sys.exit(f"area {area} takes {'the bank image' if area == BANK_AREA else 'a PCM image'}"
-                 f" ({'foundations_bank.bin' if area == BANK_AREA else 'pcm_area0.bin or pcm_area1.bin'})")
-    check_bank(img) if is_bank else parse_image(img)
+    """the image must be of the area's kind: a wavetable area image for areas 2 and 3, a PCM image for the others"""
+    is_wt = len(img) >= 4 and struct.unpack_from("<I", img)[0] == WT_MAGIC
+    if (area in WT_AREAS) != is_wt:
+        sys.exit(f"area {area} takes {'a wavetable area image' if area in WT_AREAS else 'a PCM image'}"
+                 f" ({f'wt_area{area}.bin' if area in WT_AREAS else 'pcm_area0.bin or pcm_area1.bin'})")
+    check_wt(img) if is_wt else parse_image(img)
 
 
 # ------------------------------------------------------------------------------------------------------ the link ---
@@ -141,6 +143,8 @@ def area_info(link, area):
     if len(r) < 3 or r[1] != area or len(r) < 8:
         sys.exit(f"area {area}: no such area on the device")
     n, size, used = r[2], (r[3] | r[4] << 7) * 1024, r[5] | r[6] << 7 | r[7] << 14
+    if area in WT_AREAS:                             # wavetable frames: a count, no names
+        return n, size, used, []
     names, i, first = [], 8, 0
     while True:
         while len(names) < n and i < len(r):
@@ -157,7 +161,8 @@ def info(link):
     areas = link.req(PCM_INFO, [0, 0])[0]
     for a in range(min(areas, len(AREA_SIZE))):
         n, size, used, names = area_info(link, a)
-        print(f"area {a}: {size // 1024} KiB, {'empty' if not used else f'{used} bytes used, {n} entries'}")
+        what = "wavetable frames" if a in WT_AREAS else "entries"
+        print(f"area {a}: {size // 1024} KiB, {'empty' if not used else f'{used} bytes used, {n} {what}'}")
         for k, nm in enumerate(names):
             print(f"  {k:2d} {nm}")
 
@@ -188,7 +193,7 @@ def sync(link):
         have = held_id(link, a)
         if have is None:                             # an older firmware: compare entries and length
             n, _, used, _ = area_info(link, a)
-            count = 1 if a == BANK_AREA else struct.unpack_from("<H", img, 6)[0]
+            count = img[6] if a in WT_AREAS else struct.unpack_from("<H", img, 6)[0]
             same = used == len(img) and n == count
         else:
             same = have == want

@@ -234,9 +234,9 @@ static void boot(void)
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
     }
     {   /* wavetable bank 0, Foundations (src/dsp/gen_foundations.py), as on a unit it was uploaded to */
-        extern const uint8_t foundations_image_host[];
-        extern const uint32_t foundations_image_host_len;
-        wavetable_bank_attach(foundations_image_host, foundations_image_host_len);
+        extern const uint8_t wt_area2_host[];
+        extern const uint32_t wt_area2_host_len;
+        wavetable_area_attach(0, wt_area2_host, wt_area2_host_len);
     }
     syn_boot_perf();                                /* performance 0, as the FM1 boots (after the PCM waves) */
     for (k = 0; k < NKEYS; k++)

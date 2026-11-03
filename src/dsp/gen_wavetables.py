@@ -452,6 +452,10 @@ STORE_SIZE = 0x48000          # wavetables.h WT_IMAGE_MAX: the image is linked i
 STORE_DATA_OFF = 0x20
 STORE_MAGIC = 0x42545746      # "FWTB"
 STORE_VERSION = 1
+# The image's last SPILL_FRAMES frames are not linked into the FM1's app (2026-11-03: the app flash was full): they
+# live in the store flash's wavetable areas (gen_wt_areas.py, wavetables.h WT_SPILL_FRAMES); host and browser builds
+# link them as before.
+SPILL_FRAMES = 6
 
 
 def build_bank(index, fn):
@@ -591,12 +595,17 @@ def write_image_c(path, image, names):
         " * Banks: " + ", ".join(f"{b + len(STORE_BANKS)} {n}" for b, n in enumerate(names)) + ". */",
         '#include "wavetables.h"',
         "",
-        f"_Alignas(4) const uint8_t wavetable_image_host[{len(image)}] = {{",
+        "/* WT_IMAGE_SPILLED (the FM1): the last WT_SPILL_FRAMES frames are left out, read from the store flash instead",
+        " * (gen_wt_areas.py) */",
+        "_Alignas(4) const uint8_t wavetable_image_host[WT_IMAGE_LINKED_LEN] = {",
         "    " + ", ".join(str(b) for b in image[:STORE_DATA_OFF]) + ",",
     ]
+    cut = len(image) - SPILL_FRAMES * FRAME_LEN * 2
     for i in range(STORE_DATA_OFF, len(image), 32):
+        if i == cut:
+            out.append("#ifndef WT_IMAGE_SPILLED")
         out.append("    " + ",".join(str(b) for b in image[i:i + 32]) + ",")
-    out += ["};"]
+    out += ["#endif", "};"]
     path.write_text("\n".join(out) + "\n", encoding="ascii")
 
 
@@ -630,7 +639,14 @@ def main():
     ap.add_argument("--out", type=Path, default=Path(__file__).with_name("wavetables.c"))
     ap.add_argument("--preview", type=Path, help="folder for one audition WAV per bank")
     ap.add_argument("--preview-hz", type=float, default=110.0)
+    ap.add_argument("--image-c-only", action="store_true",
+                    help="rewrite wavetables_image.c from wavetables_image.bin as it is (nothing redrawn)")
     args = ap.parse_args()
+    if args.image_c_only:
+        image = args.out.with_name("wavetables_image.bin").read_bytes()
+        write_image_c(args.out.with_name("wavetables_image.c"), image, list(IMAGE_BANKS))
+        print("wrote wavetables_image.c from wavetables_image.bin")
+        return
 
     names = [name for name, _ in BANK_DEFS]          # the drawing order: seeds and dither streams follow it
     frames = np.stack([build_bank(b, fn) for b, (_, fn) in enumerate(BANK_DEFS)])
