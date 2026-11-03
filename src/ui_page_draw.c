@@ -71,6 +71,7 @@
 #include "dsp/attacks.h"                     /* STRIKE: the attack outline on the OSCMIXER page */
 #include "dsp/pcm_osc.h"                     /* a PCM wave's name and picture on the OSC / OSCMIXER pages */
 #include "dsp/mfx.h"                         /* the MFX page: the effect's sweep as it moves (mfx_peek) */
+#include "dsp/fx.h"                          /* the MIX page: the live mix (fx_live) and the loop's level */
 /* ----------------------------------------------------------- colours --- */
 #define PUC_STONE SQ_STONE[sq_pal]                 /* an unlit stone (ui_seq_draw.c) */
 #define PUC_HL SQ_PAL_LANE[sq_pal][SQC_BG]          /* the noisy ground's base: white text sits on it */
@@ -385,7 +386,8 @@ static int32_t pu_voice_pan(const SynthVoiceNode *n)
 /* ------------------------------------------------------------- pages --- */
 static const char *const PU_TITLE[UIPAGE_COUNT] = {
     "OSC 1", "OSC 2", "ATTACK", "OSC MIX", "FILTER 1", "FILTER 2", "FLT MIX", "ENV 1", "ENV 2", "ENV 3", "LFO 1", "LFO 2", "LFO 3",
-    "MOD 1", "MOD 2", "MOD 3", "AMP", "MFX", "EFFECTS", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "ARP", "SAVE", "SEQ",
+    "MOD 1", "MOD 2", "MOD 3", "AMP", "MFX", "EFFECTS", "MIX", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "ARP", "SAVE",
+    "SEQ",
 };
 /* the first page and size of each section (UIStateMachine.c SECTION_FIRST / SECTION_COUNT, by page) */
 static void pu_section(uint8_t page, uint8_t *first, uint8_t *n)
@@ -412,7 +414,7 @@ static uint8_t pu_page_pal(const UIStateMachine *sm)
 /* each page's name in the header's list of its section's pages */
 static const char *const PU_TAB[UIPAGE_COUNT] = {
     "OSC1", "OSC2", "ATTACK", "OSCMIX", "FLT1", "FLT2", "FLTMIX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3",
-    "MOD1", "MOD2", "MOD3", "AMP", "MFX", "FX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ",
+    "MOD1", "MOD2", "MOD3", "AMP", "MFX", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ",
 };
 #define PU_TAB_GAP 8                 /* between two pages' names */
 
@@ -465,6 +467,9 @@ static void pu_draw_head(const UIStateMachine *sm)
         }
     } else if (page == UIPAGE_EFFECTS) {
         sq_rune(6, y, "DELAY > REVERB", SQC(MID), 0);
+    } else if (page == UIPAGE_MIX) {                 /* "DUAL  L1 / L2" or "SINGL  DRY / WET" */
+        x = sq_rune(6, y, MODE[mode], SQC(THEME), 0) + 7;
+        sq_rune(x, y, mode == PERF_SINGL_SYNTH ? "DRY / WET" : "L1 / L2", SQC(MID), 0);
     } else if (page == UIPAGE_PERF) {                /* "DUAL  PERF 024": PERF MODE is this page's (2026-10-17) */
         x = sq_rune(6, y, MODE[mode], SQC(THEME), 0) + 7;
         pu_num(b, sm->perf_slot, 0u, 3u);
@@ -1687,8 +1692,9 @@ static uint32_t pu_voices_sig(uint32_t h)
  * delay grows: AGE moves them all on), one colour for the mono sum, THEME / MID / ACCENT as WIDTH spreads them;
  * SHIMMER sets the dashes fluttering; AGE raises dust drifting over the plain. CHORUS: two gusts, its two sides'
  * delays (THEME, ACCENT), swinging against each other as WIDTH has them; AGE's dust. ENS+PHASER: the ensemble's three
- * lines as faint gusts, the phaser's sweep the one lit (THEME), eddies in it with COLOUR. OFF: the stones in still
- * air. */
+ * lines as faint gusts, the phaser's sweep the one lit (THEME), eddies in it with COLOUR. TAPE FLANGER: the second
+ * deck's gust (a side each with L/R PHASE) sweeping through a faint fixed one, the reference, where they meet; TAPE's
+ * dust. OFF: the stones in still air. */
 #define PW_MAXH (PU_TRACK_Y - PU_MENU_Y - PU_ROW_H)  /* the plain under one row: 134 */
 static const uint8_t PW_SX[9] = {10, 34, 57, 83, 108, 133, 160, 185, 211};   /* the stones: x (of PV_W), height */
 static const uint8_t PW_SH[9] = {44, 56, 38, 61, 47, 35, 53, 42, 31};         /* (at a plain of 114) */
@@ -1827,8 +1833,40 @@ static void pu_viz_mfx(const UIStateMachine *sm)
         }
         t0 = pw_bbd_x(lo);
         t1 = pw_bbd_x(hi);
+    } else if (t == MFX_BBD_FLANGER) {               /* a gust a side at its delay; FEEDBACK's eddies */
+        still = (uint8_t)(m->knob[MFX_K_BF_DEPTH] == 0u);
+        for (i = 0; i < 2; i++) {
+            float u = mfx_peek(layer, i);
+            gx[ng] = pw_x(u < 0.f ? (float)m->knob[MFX_K_BF_CENTER] / 127.f : u);   /* (CENTER's scale) */
+            gc[ng++] = i ? SQC(ACCENT) : SQC(THEME);
+        }
+        s = 46 - (24 * (int32_t)m->knob[MFX_K_BF_FEEDBACK]) / 127;
+        eddy = m->knob[MFX_K_BF_FEEDBACK];
+    } else if (t == MFX_PITCH_SHIFT) {               /* the gust stands at the pitch (left lower, right higher) */
+        float u = mfx_peek(layer, 0);
+        gx[ng] = pw_x(u < 0.f ? 0.5f : u);
+        gc[ng++] = SQC(THEME);
+        still = 0u;
+        flutter = (int32_t)m->knob[MFX_K_PS_FEEDBACK] * 2;
+        dust = m->row[MFX_R_AGE];
+        t0 = pw_x(0.5f);
+        t1 = t0;
+    } else if (t == MFX_TAPE_FLANGER) {
+        float lo = mfx_peek(layer, 3), hi = mfx_peek(layer, 4), ref = mfx_peek(layer, 2);
+        still = (uint8_t)(m->knob[MFX_K_TF_DEPTH] == 0u);
+        dust = m->knob[MFX_K_TF_TAPE];
+        for (i = 0; i < (m->lr > 0u && !still ? 2 : 1); i++) {      /* the second deck, a side each */
+            float u = mfx_peek(layer, i);
+            gx[ng] = pw_x(u < 0.f ? (lo + hi) * 0.5f : u);
+            gc[ng++] = i ? SQC(ACCENT) : SQC(THEME);
+        }
+        gx[ng] = pw_x(ref < 0.f ? 0.26f : ref);                     /* the reference deck: where they meet */
+        faint[ng] = 1u;
+        gc[ng++] = SQC(MID);
+        t0 = pw_x(lo);
+        t1 = pw_x(hi);
     }
-    if (t0 >= 0) {                                   /* the gusts' path: a worn track on the ground */
+    if (t0 >= 0) {                                  /* the gusts' path: a worn track on the ground */
         for (x = t0; x <= t1; x++)
             if ((x & 1) == 0) cv_pset(x, pw_g + 2, SQC(DIM));
         cv_rect(t0, pw_g + 1, 1, 3, SQC(MID));
@@ -1910,6 +1948,76 @@ static void pu_viz_fx(const UIStateMachine *sm)
     sq_text(PV_X0 + 12, CAP_IN(S, 13), &AF_S, DELAY_TYPE(p) == DELAYTYPE_BBD ? "BBD" : "TAPE", SQC(MID));
     if (DELAY_SYNC(p))
         sq_text(PV_X0 + 46, CAP_IN(S, 13), &AF_S, "SYNC", SQC(MID));
+}
+
+/* --------------------------------------------------------------- mix --- */
+/* The MIX page (2026-11-02, dsp/fx.h fx_live): at the left the balance's two stones (L1, L2; SINGL: DRY, WET), each
+ * as tall as its level (synth_runtime.c mix_targets' law), dark when silent. At the right the delay's and the
+ * reverb's stones and the loop between them, a ring of dashes: the upper arc DLY > REV, the lower REV > DLY, each
+ * as dense as its amount, running while the loop carries sound; lit in ACCENT once the return reaches its headroom
+ * (fx_cross_level: the loop holding itself up). LOOP TONE named over it (DARK, THIN or OPEN). */
+static uint32_t pm_t;                                /* the loop's dashes' clock: a step a frame while it runs */
+
+static float pu_mix_gain(uint8_t k, int side)        /* side 0: the first (L1 / DRY), 1: the second */
+{
+    float lo = k < 64u ? (float)k / 64.f : 1.f, hi = k > 64u ? (float)(127u - (k > 127u ? 127u : k)) / 63.f : 1.f;
+    return side ? lo * lo : hi * hi;
+}
+
+static void pu_viz_mix(const UIStateMachine *sm)
+{
+    static const int32_t SX[2] = {PV_X0 + 12, PV_X0 + 50};
+    const uint8_t single = (uint8_t)(sm->perf->perf_mode == PERF_SINGL_SYNTH), k = fx_live[FX_L_BALANCE];
+    const uint8_t tone = fx_live[FX_L_TONE];
+    const int32_t cx = PV_X0 + 160, cy = 32, rx = 38, ry = 20;
+    const float lvl = fx_cross_level();
+    char b[12];
+    int32_t s, a;
+    pu_ground(PV_GROUND, PUC_STONE);
+    for (s = 0; s < 2; s++) {                         /* the balance */
+        float g = pu_mix_gain(k, s);
+        int32_t h = 6 + (int32_t)(g * 46.f);
+        pu_menhir(SX[s], PV_GROUND, 16, h, g < 0.01f ? SQC(DIM) : g > 0.5f ? SQC(THEME) : SQC(MID));
+        sq_text(SX[s] + 1, CAP_IN(S, 13), &AF_S, single ? (s ? "WET" : "DRY") : (s ? "L2" : "L1"), SQC(MID));
+    }
+    pu_menhir(cx - rx - 12, PV_GROUND, 10, 40, SQC(TEXT));   /* the delay, the reverb */
+    pu_menhir(cx + rx + 2, PV_GROUND, 10, 40, SQC(TEXT));
+    sq_text(cx - rx - 16, CAP_IN(S, 13), &AF_S, "DLY", SQC(MID));
+    sq_text_r(cx + rx + 14, CAP_IN(S, 13), &AF_S, "REV", SQC(MID), SQC(BG));
+    for (a = 0; a < 256; a++) {                       /* the loop: upper arc DLY > REV (left to right), lower back;
+                                                       * a quarter step at a time between PU_SIN's 64 */
+        int32_t i = a >> 2, f = a & 3, up = i >= 48 || i < 16, j = up ? FX_X_DLY_REV : FX_X_REV_DLY;
+        uint32_t amt = fx_cross[j];
+        int32_t sx = (PU_SIN[i & 63] * (4 - f) + PU_SIN[(i + 1) & 63] * f) >> 2;
+        int32_t sy = (PU_SIN[(i + 16) & 63] * (4 - f) + PU_SIN[(i + 17) & 63] * f) >> 2;
+        int32_t x = cx + ((rx * sx + 128) >> 8), y = cy - ((ry * sy + 128) >> 8);
+        int32_t pos = up ? (a + 64) & 255 : 256 - ((a - 64) & 255);   /* along the way it runs */
+        uint32_t per = 16u, len = amt == 0u ? 1u : 2u + amt * 10u / 127u;
+        if ((((uint32_t)pos + (amt ? pm_t * 2u : 0u)) % per) >= len)
+            continue;
+        cv_pset(x, y, amt == 0u ? PUC_STONE : lvl > 0.9f ? SQC(ACCENT) : lvl > 0.25f ? SQC(THEME) : SQC(MID));
+        if (amt > 80u)
+            cv_pset(x, y + 1, lvl > 0.9f ? SQC(ACCENT) : SQC(MID));
+    }
+    if (tone == 64u)
+        pu_cat(b, "OPEN");
+    else
+        pu_num(pu_cat(b, tone < 64u ? "DARK " : "THIN "), tone < 64u ? 64 - tone : tone - 64, 0u, 1u);
+    sq_text(cx - 18, cy - 4, &AF_S, b, tone == 64u ? SQC(DIM) : SQC(MID));
+}
+
+/* the MIX page's inputs: its bytes, the mode, and while the loop carries sound its clock and level */
+static uint32_t pu_mix_sig(UIStateMachine *sm, uint32_t h)
+{
+    float lvl = fx_cross_level();
+    h = sq_mix_bytes(h, fx_live, FX_L_COUNT);
+    h = sq_mix(h, sm->perf->perf_mode);
+    if ((fx_cross[0] || fx_cross[1]) && lvl > 0.01f) {
+        pm_t++;
+        h = sq_mix(h, pm_t);
+        h = sq_mix(h, (uint32_t)(lvl * 16.f));
+    }
+    return h;
 }
 
 /* ------------------------------------------------------------- global --- */
@@ -2581,6 +2689,8 @@ static uint32_t pu_viz_live(UIStateMachine *sm, uint32_t h)
         return pu_voices_sig(h);
     case UIPAGE_MFX:
         return pu_mfx_sig(sm, h);
+    case UIPAGE_MIX:
+        return pu_mix_sig(sm, h);
     case UIPAGE_PERF:                                /* the dolmen measures the live patches, sequence and arp */
         h = sq_mix_bytes(h, (const uint8_t *)sm->engine[0], sizeof(EngineState));
         h = sq_mix_bytes(h, (const uint8_t *)sm->engine[1], sizeof(EngineState));
@@ -2613,6 +2723,7 @@ static void pu_draw_viz(UIStateMachine *sm)
     case UIPAGE_LFO1: case UIPAGE_LFO2: case UIPAGE_LFO3: pu_viz_lfo(sm, (uint8_t)(page - UIPAGE_LFO1)); break;
     case UIPAGE_AMP: pu_viz_amp(sm); break;
     case UIPAGE_EFFECTS: pu_viz_fx(sm); break;
+    case UIPAGE_MIX: pu_viz_mix(sm); break;
     case UIPAGE_GLOBAL: pu_viz_global(sm); break;
     case UIPAGE_HOME1: case UIPAGE_HOME2: pu_viz_home(sm); break;
     case UIPAGE_HOME3: pu_viz_split(sm); break;

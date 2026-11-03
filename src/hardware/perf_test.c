@@ -19,6 +19,7 @@
 #include "UIStateMachine.h"
 #include "dsp/wavetables.h"
 #include "dsp/mfx.h"
+#include "dsp/fx.h"                  /* the MIX page's live mix (F_MIX), kept and restored */
 #include "hardware/mem_section.h"
 
 /* PT_WT_RAM (2026-10-15): the banks the scenarios play (OSC1: bank 0, the default; OSC2 of the heavy patches: bank 3)
@@ -75,6 +76,9 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_MFX2 0x8000u               /* ... on both layers, DUAL (K_IDLE: nothing playing, the effect alone) */
 #define F_MFXT(t) ((uint32_t)(t) << 16)   /* with F_MFX / F_MFX2: the type instead (MFX_*, 2026-11-02), at its
                                       * defaults (UIStateMachine.c mfx_type_set) */
+#define F_MIX 0x1000000u             /* the MIX page all engaged (2026-11-02, dsp/fx.h fx_live): BALANCE / DRY-WET off its
+                                      * middle (the faders' ramps), LOOP TONE dark (the delay's feedback low-pass), both
+                                      * cross-feeds high (the loop) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
 
@@ -208,6 +212,23 @@ static const PtScen SCEN[] = {
     {"IDLE CHORUS x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_CHORUS), UIPAGE_HOME1},
     {"SPREAD H CEL ENPH", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_ENS_PHASER), UIPAGE_HOME1},
     {"SEQ+ARP HOME ENPH2", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_MFX2 | F_MFXT(MFX_ENS_PHASER), UIPAGE_HOME1},
+    /* the MIX page (2026-11-02), beside the same rows without it: SPREAD H CEL+PP, SEQ+ARP CELEST+PP, HEAVY SPRING+PP */
+    {"SPREAD H CEL MIX", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MIX, UIPAGE_HOME1},
+    {"SEQ+ARP CEL MIX", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_CEL | F_MIX, UIPAGE_HOME1},
+    {"HEAVY SPRING MIX", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_SPR | F_MIX, UIPAGE_HOME1},
+    /* TAPE FLANGER (2026-11-02): the full rate's two read heads a side */
+    {"IDLE TAPE FLANGER", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_TAPE_FLANGER), UIPAGE_HOME1},
+    {"IDLE TAPE FLNG x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_TAPE_FLANGER), UIPAGE_HOME1},
+    {"SPREAD H CEL TFLG", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_TAPE_FLANGER), UIPAGE_HOME1},
+    {"SEQ+ARP HOME TFLG2", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_MFX2 | F_MFXT(MFX_TAPE_FLANGER), UIPAGE_HOME1},
+    /* BBD FLANGER, PITCH SHIFT (2026-11-02; PITCH SHIFT +7 with FEEDBACK: its splices' searches) */
+    {"IDLE BBD FLANGER", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_BBD_FLANGER), UIPAGE_HOME1},
+    {"IDLE BBD FLNG x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_BBD_FLANGER), UIPAGE_HOME1},
+    {"SPREAD H CEL BBDF", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_BBD_FLANGER), UIPAGE_HOME1},
+    {"IDLE PITCH SHIFT", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_PITCH_SHIFT), UIPAGE_HOME1},
+    {"PITCH SHIFT HELD", K_HELD, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_PITCH_SHIFT), UIPAGE_HOME1},
+    {"IDLE PITCH SHFT x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_PITCH_SHIFT), UIPAGE_HOME1},
+    {"SPREAD H CEL PSHF", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_PITCH_SHIFT), UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -221,6 +242,7 @@ static struct {
     SequencerLane lanes[SEQ_NLANE];
     ArpState arp;
     MfxParams mfx[2];
+    uint8_t live[FX_L_COUNT];        /* the MIX page's (dsp/fx.h fx_live) */
 } pt;
 
 /* the audio side's tally (the ISR adds, pt_tick reads and clears under the lock) */
@@ -393,13 +415,23 @@ static void setup(const PtScen *s)
             [MFX_ENSEMBLE] = {MFX_ENSEMBLE, {40, 74, 45, 64}, 100, {0, 0}},
             [MFX_ENS_PHASER] = {MFX_ENS_PHASER, {74, 64, 26, 120}, 100, {30, 76}},
             [MFX_CHORUS] = {MFX_CHORUS, {45, 94, 46, 64}, 127, {20, 0}},
+            [MFX_TAPE_FLANGER] = {MFX_TAPE_FLANGER, {40, 40, 64, 40}, 0, {0, 0}},
+            [MFX_BBD_FLANGER] = {MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {1, 0}},
+            [MFX_PITCH_SHIFT] = {MFX_PITCH_SHIFT, {19, 64, 60, 64}, 127, {30, 0}},
         };
-        uint32_t t = s->flags >> 16;
+        uint32_t t = (s->flags >> 16) & 0xFFu;
         mfx_params[0] = MP[t > MFX_STONE_PHASER && t < MFX_COUNT ? t : MFX_STONE_PHASER];
         if (s->flags & F_MFX2) {
             mfx_params[1] = mfx_params[0];
             perf_state.perf_mode = PERF_DUAL_SYNTH;
         }
+    }
+    if (s->flags & F_MIX) {
+        static const uint8_t LIVE[FX_L_COUNT] = {40u, 24u, 110u, 110u};
+        for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = LIVE[i];
+    } else {
+        static const uint8_t LIVE[FX_L_COUNT] = {64u, 64u, 0u, 0u};
+        for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = LIVE[i];
     }
     if (s->flags & F_FX_ANY) {
         perf_state.reverb_type = (s->flags & F_FX_CEL) ? REVTYPE_CELESTIAL : (s->flags & F_FX_TUM) ? REVTYPE_TUMULUS
@@ -437,6 +469,7 @@ static void restore(void)
     arp_state = pt.arp;
     mfx_params[0] = pt.mfx[0];
     mfx_params[1] = pt.mfx[1];
+    for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = pt.live[i];
     synth_restart();
     wt_to_flash();
     ld.over = 0;
@@ -459,6 +492,7 @@ void pt_start(uint32_t now_ms, uint8_t mode)
     pt.arp = arp_state;
     pt.mfx[0] = mfx_params[0];
     pt.mfx[1] = mfx_params[1];
+    for (int i = 0; i < FX_L_COUNT; i++) pt.live[i] = fx_live[i];
     for (l = 0; l < NSCEN; l++)
         pt.res[l] = (PtResult){0};
     pt.scen = 0;

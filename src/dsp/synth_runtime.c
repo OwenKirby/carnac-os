@@ -686,6 +686,47 @@ static void mfx_job(uint32_t arg)
     else
         mfx_layer_block(l, layer_l[l], layer_r[l], fx_frames);
 }
+/* The MIX page's BALANCE (fx.h fx_live, 2026-11-02): DUAL / SPLIT the layers' faders, SINGL DRY / WET. 64: all at 1
+ * (and nothing done: the render as before, bit for bit); towards an end the other side falls as the square of the
+ * distance (-20 dB at ~70 % of the way, silent at the end). Each gain glides (~23 ms, as the knobs), ramped over a pass */
+enum { MIXG_L1, MIXG_L2, MIXG_DRY, MIXG_WET, MIXG_N };
+static float mix_g[MIXG_N] = {1.f, 1.f, 1.f, 1.f};
+
+static void mix_targets(int single, float *t)
+{
+    uint32_t k = fx_live[FX_L_BALANCE] > 127u ? 127u : fx_live[FX_L_BALANCE];
+    float lo = k < 64u ? (float)k * (1.f / 64.f) : 1.f, hi = k > 64u ? (float)(127u - k) * (1.f / 63.f) : 1.f;
+    for (int i = 0; i < MIXG_N; i++) t[i] = 1.f;
+    lo *= lo;
+    hi *= hi;
+    if (single) { t[MIXG_WET] = lo; t[MIXG_DRY] = hi; }      /* towards 0 the effects fade, towards 127 the dry */
+    else { t[MIXG_L2] = lo; t[MIXG_L1] = hi; }               /* towards 0 layer 2 fades, towards 127 layer 1 */
+}
+
+/* gain i a pass on towards `to`: its start and end (*g0, *g1); 0 when it is 1 throughout (nothing to do) */
+static int mix_step(int i, float to, float *g0, float *g1)
+{
+    float g = mix_g[i];
+    *g0 = g;
+    if (g != to) {
+        g += (to - g) * 0.12f;                                /* (a pass, 2.9 ms: ~23 ms) */
+        if (g - to < 1e-4f && to - g < 1e-4f) g = to;
+        mix_g[i] = g;
+    }
+    *g1 = g;
+    return *g0 != 1.f || g != 1.f;
+}
+
+static void mix_apply(float g0, float g1, uint32_t n, float *a, float *b)
+{
+    float d = (g1 - g0) * (1.f / (float)n), g = g0;
+    for (uint32_t s = 0; s < n; s++) {
+        g += d;
+        a[s] *= g;
+        b[s] *= g;
+    }
+}
+
 static void fx_reverb_job(uint32_t arg)
 {
     (void)arg;
@@ -869,6 +910,13 @@ static void render_pass(int32_t *out, uint32_t frames)
                         mfx_job((uint32_t)l | 2u);
                 }
     }
+    /* the MIX page's BALANCE (fx.h): DUAL / SPLIT, each layer's fader here (after its MFX, before its sends: a faded
+     * layer's echoes fade with it); SINGL, DRY / WET, applied below */
+    float g_to[MIXG_N], g0, g1;
+    mix_targets(perf_state.perf_mode == PERF_SINGL_SYNTH, g_to);
+    for (int l = 0; l < NLAYER; l++)
+        if (mix_step(MIXG_L1 + l, g_to[MIXG_L1 + l], &g0, &g1))
+            mix_apply(g0, g1, frames, layer_l[l], layer_r[l]);
     float to_dly[NLAYER], to_rev[NLAYER];          /* knob 0..127 -> 0..~1, the old per-voice 258 / 32768, mono 1/2 */
     for (int l = 0; l < NLAYER; l++) {
         to_dly[l] = (float)((int32_t)engine_state[l].amp.delay_send * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
@@ -882,11 +930,15 @@ static void render_pass(int32_t *out, uint32_t frames)
             lvl_peak[3] = fx_rev_in[frame] < 0 ? -fx_rev_in[frame] : fx_rev_in[frame];
     }
     fx_frames = frames;
+    fx_tone_sync(&perf_state);                         /* LOOP TONE's thinner half is DELAY HP (fx.h) */
+    fx_cross_to_dly(fx_dly, frames);                   /* REV > DLY: the reverb's last pass (fx.h, 2026-11-02) */
     int on2 = !fx_one_core && core2_run && core2_run(fx_reverb_job, 0u);
     fx_delay_block(&perf_state, fx_dly, fx_dly_l, fx_dly_r, frames);
+    fx_cross_to_rev(fx_dly_l, fx_dly_r, fx_rev_in, frames);   /* DLY > REV: this pass's echoes */
     fx_reverb_front(&perf_state, fx_rev_in, frames);   /* (for the back's next pass: it reads a pass behind) */
     if (!on2 || core2_wait())
         fx_reverb_job(0u);
+    fx_cross_keep(fx_rev_l, fx_rev_r, frames);         /* (core 1 done: the reverb's out, for the next pass) */
     for (uint32_t frame = 0; lvl_on && frame < frames; ++frame) {   /* the meters (synth_levels): before the wet sum */
         int32_t r = fx_rev_l[frame] < 0 ? -fx_rev_l[frame] : fx_rev_l[frame];
         int32_t d = fx_dly_l[frame] < 0 ? -fx_dly_l[frame] : fx_dly_l[frame];
@@ -894,6 +946,16 @@ static void render_pass(int32_t *out, uint32_t frames)
         if (d > lvl_peak[1]) lvl_peak[1] = d;
     }
     fx_mix_block(fx_dly_l, fx_dly_r, fx_rev_l, fx_rev_r, frames);
+    /* SINGL's DRY / WET: the dry after the sends (the echoes go on without it), the wet after the loop's taps */
+    if (mix_step(MIXG_DRY, g_to[MIXG_DRY], &g0, &g1))
+        for (int l = 0; l < NLAYER; l++)
+            mix_apply(g0, g1, frames, layer_l[l], layer_r[l]);
+    if (mix_step(MIXG_WET, g_to[MIXG_WET], &g0, &g1))
+        for (uint32_t frame = 0; frame < frames; ++frame) {
+            float g = g0 + (g1 - g0) * (float)(frame + 1u) * (1.f / (float)frames);
+            fx_rev_l[frame] = (int32_t)((float)fx_rev_l[frame] * g);
+            fx_rev_r[frame] = (int32_t)((float)fx_rev_r[frame] * g);
+        }
     for (uint32_t frame = 0; frame < frames; ++frame) {
         int64_t left = mix_q15(layer_l[0][frame] + layer_l[1][frame]), right = mix_q15(layer_r[0][frame] + layer_r[1][frame]);
         if (lvl_on && (left < 0 ? -left : left) > lvl_peak[2]) lvl_peak[2] = (int32_t)(left < 0 ? -left : left);

@@ -50,6 +50,9 @@ build seq_idle $DSP src/host/test_seq_idle.c && build seq_idle_ref -DSYNTH_SEQ_N
     && run seq_idle sh -c "'$OUT/seq_idle.exe' | diff - '$OUT/seq_idle_ref.txt' && echo 'MAQ / ARP idle fast paths: bit-exact'"
 build drive_tables src/host/gen_drive_tables.c && run drive_tables sh -c "'$OUT/drive_tables.exe' | diff - src/dsp/drive_tables.h && echo 'drive_tables.h matches its generator'"
 build fx_hash src/dsp/fx.c src/host/test_fx_hash.c && run fx_hash "$OUT/fx_hash.exe"
+build spring_dub src/dsp/fx.c src/host/test_spring_dub.c && run spring_dub "$OUT/spring_dub.exe"
+build fx_cross src/dsp/fx.c src/host/test_fx_cross.c && run fx_cross "$OUT/fx_cross.exe"
+build mix $DSP src/host/foundations_image_host.c src/host/test_mix.c && run mix "$OUT/mix.exe"
 build flash_record src/dsp/preset.c src/host/test_flash_record.c && run flash_record "$OUT/flash_record.exe"
 if python src/hardware/wt_store_upload.py syx src/dsp/wavetables_image.bin "$OUT/upload.syx" >/dev/null 2>&1; then
     build wt_store src/host/test_wt_store.c src/dsp/wavetable_attach.c src/dsp/wavetables.c src/dsp/wavetables_image.c \

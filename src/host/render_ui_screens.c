@@ -387,6 +387,15 @@ int main(int argc, char **argv)
     mfx_params[0] = (MfxParams){MFX_CHORUS, {45, 94, 46, 64}, 127, {80, 0}};
     run(44100u / 2u);
     shot(dir, "mfx_chorus");
+    mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {40, 63, 64, 60}, 64, {0, 1}};
+    run(44100u / 2u);
+    shot(dir, "mfx_tape_flanger");
+    mfx_params[0] = (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 100}, 0, {1, 0}};
+    run(44100u / 2u);
+    shot(dir, "mfx_bbd_flanger");
+    mfx_params[0] = (MfxParams){MFX_PITCH_SHIFT, {19, 75, 90, 64}, 127, {80, 0}};
+    run(44100u / 2u);
+    shot(dir, "mfx_pitch_shift");
     mfx_params[0].type = MFX_OFF;
     note(0, 48, 0); note(0, 55, 0); note(0, 63, 0);
 
@@ -399,6 +408,23 @@ int main(int argc, char **argv)
     perf_state.delay_type = DELAYTYPE_BBD; perf_state.delay_sync = 1; perf_state.reverb_type = REVTYPE_SPRING;
     shot(dir, "effects_bbd");                     /* the delay type, SYNC and the reverb's name together */
     perf_state.delay_type = DELAYTYPE_TAPE; perf_state.delay_sync = 0; perf_state.reverb_type = REVTYPE_TOMB;
+    /* MIX (2026-11-02): DUAL, layer 2 back, LOOP TONE dark, the loop up and running (its dashes lit); then SINGL's
+     * DRY/WET, thinner repeats */
+    perf_state.perf_mode = PERF_DUAL_SYNTH;
+    perf_state.reverb_type = REVTYPE_MOD;
+    fx_live[FX_L_BALANCE] = 40u; fx_live[FX_L_TONE] = 30u; fx_live[FX_L_DLY_REV] = 120u; fx_live[FX_L_REV_DLY] = 115u;
+    note(0, 48, 100); note(1, 60, 100);
+    run(44100u * 4u);
+    go(UIPAGE_MIX);
+    shot(dir, "mix_dual_loop");
+    note(0, 48, 0); note(1, 60, 0);
+    perf_state.perf_mode = PERF_SINGL_SYNTH;
+    fx_live[FX_L_BALANCE] = 100u; fx_live[FX_L_TONE] = 90u; fx_live[FX_L_DLY_REV] = 0u; fx_live[FX_L_REV_DLY] = 0u;
+    run(44100u);
+    go(UIPAGE_MIX);
+    shot(dir, "mix_single_drywet");
+    fx_live[FX_L_BALANCE] = 64u; fx_live[FX_L_TONE] = 64u;
+    perf_state.delay_pingpong = 0u;
     run(30000);
     go(UIPAGE_GLOBAL);
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 7);

@@ -228,6 +228,42 @@ int main(int argc, char **argv)
         printf("  host cost, one layer stereo: CHORUS %.1f ns/sample\n",
                cost((MfxParams){MFX_CHORUS, {45, 94, 46, 64}, 127, {20, 0}}));
     }
+    {   /* TAPE FLANGER: knobs MANUAL / RATE / DEPTH / TAPE, lr L/R PHASE, row[1] POLARITY. RATE knob for Hz: 0.03 *
+         * 2^(k * 7.38 / 127): 0.08 Hz = 24, 0.15 Hz = 40, 0.5 Hz = 63, 2 Hz = 105. MANUAL ~32: the decks in step */
+        printf("TAPE FLANGER:\n");
+        render(argv[1], "61_pad_tape_positive", SC_PAD, (MfxParams){MFX_TAPE_FLANGER, {40, 40, 64, 40}, 0, {0, 0}}, 0);
+        render(argv[1], "62_pad_tape_negative", SC_PAD, (MfxParams){MFX_TAPE_FLANGER, {40, 40, 64, 40}, 0, {0, 1}}, 0);
+        render(argv[1], "63_pad_tape_slow_deep_worn", SC_PAD, (MfxParams){MFX_TAPE_FLANGER, {56, 24, 127, 110}, 0, {0, 0}}, 0);
+        render(argv[1], "64_pad_tape_negative_wide", SC_PAD, (MfxParams){MFX_TAPE_FLANGER, {40, 40, 64, 40}, 64, {0, 1}}, 0);
+        render(argv[1], "65_pad_tape_clean_tape", SC_PAD, (MfxParams){MFX_TAPE_FLANGER, {40, 40, 64, 0}, 0, {0, 0}}, 0);
+        render(argv[1], "66_bass_tape_fast", SC_BASS, (MfxParams){MFX_TAPE_FLANGER, {36, 105, 30, 40}, 0, {0, 0}}, 0);
+        render(argv[1], "67_noise_tape_positive", SC_NOISE, (MfxParams){MFX_TAPE_FLANGER, {40, 63, 64, 40}, 0, {0, 0}}, 0);
+        render(argv[1], "68_noise_tape_negative", SC_NOISE, (MfxParams){MFX_TAPE_FLANGER, {40, 63, 64, 40}, 0, {0, 1}}, 0);
+        printf("  host cost, one layer stereo: TAPE FLANGER %.1f ns/sample\n",
+               cost((MfxParams){MFX_TAPE_FLANGER, {40, 40, 64, 40}, 0, {0, 0}}));
+    }
+    {   /* BBD FLANGER: knobs CENTER / RATE / DEPTH / FEEDBACK, row[0] MODE (I, II, III, CHORUS), row[1] POLARITY */
+        printf("BBD FLANGER:\n");
+        render(argv[1], "71_pad_bbdf_flanger1", SC_PAD, (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {0, 0}}, 0);
+        render(argv[1], "72_pad_bbdf_flanger2_wide", SC_PAD, (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {1, 0}}, 0);
+        render(argv[1], "73_pad_bbdf_flanger3_crossed", SC_PAD, (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 90}, 0, {2, 0}}, 0);
+        render(argv[1], "74_pad_bbdf_chorus", SC_PAD, (MfxParams){MFX_BBD_FLANGER, {95, 45, 60, 0}, 0, {3, 0}}, 0);
+        render(argv[1], "75_noise_bbdf_jet_negative", SC_NOISE, (MfxParams){MFX_BBD_FLANGER, {30, 25, 110, 120}, 0, {1, 1}}, 0);
+        render(argv[1], "76_bass_bbdf_fast", SC_BASS, (MfxParams){MFX_BBD_FLANGER, {40, 90, 50, 80}, 0, {1, 0}}, 0);
+        printf("  host cost, one layer stereo: BBD FLANGER %.1f ns/sample\n",
+               cost((MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {1, 0}}));
+    }
+    {   /* PITCH SHIFT: knobs PITCH (0..24, 12 none) / FINE / FEEDBACK / MIX, lr SPREAD, row[0] AGE */
+        printf("PITCH SHIFT:\n");
+        render(argv[1], "81_pad_pitch_doubling", SC_PAD, (MfxParams){MFX_PITCH_SHIFT, {12, 75, 0, 64}, 127, {30, 0}}, 0);
+        render(argv[1], "82_pad_pitch_octave_up", SC_PAD, (MfxParams){MFX_PITCH_SHIFT, {24, 64, 0, 50}, 0, {20, 0}}, 0);
+        render(argv[1], "83_bass_pitch_octave_down", SC_BASS, (MfxParams){MFX_PITCH_SHIFT, {0, 64, 0, 64}, 0, {20, 0}}, 0);
+        render(argv[1], "84_pad_pitch_fifth_spiral", SC_PAD, (MfxParams){MFX_PITCH_SHIFT, {19, 64, 100, 70}, 40, {40, 0}}, 0);
+        render(argv[1], "85_pad_pitch_down_spiral_aged", SC_PAD, (MfxParams){MFX_PITCH_SHIFT, {7, 64, 105, 75}, 60, {110, 0}}, 0);
+        render(argv[1], "86_pad_pitch_shimmer_octave_fb", SC_PAD, (MfxParams){MFX_PITCH_SHIFT, {24, 64, 90, 55}, 90, {30, 0}}, 0);
+        printf("  host cost, one layer stereo: PITCH SHIFT %.1f ns/sample\n",
+               cost((MfxParams){MFX_PITCH_SHIFT, {19, 64, 60, 64}, 127, {30, 0}}));
+    }
     printf("  host cost, one layer stereo: STONE PHASER %.1f ns/sample\n",
            cost((MfxParams){MFX_STONE_PHASER, {64, mid, 100, 127}, 0}));
     {   /* beside the voices: 8 held pad notes, the whole render, without and with it (best of 5) */

@@ -10,6 +10,7 @@
 #include "preset.h"
 #include "dsp/synth_runtime.h"
 #include "dsp/attacks.h"
+#include "dsp/fx.h"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
@@ -293,8 +294,8 @@ int main(void)
     CHECK(sm.page == UIPAGE_HOME1 && sm.s.active_synth_layer == 0, "SINGL on HOME2 -> HOME1 (%u)", sm.page);
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     ui_sm_enforce(&sm);
-    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_AMP, "GLO cycles AMP -> MFX -> EFFECTS -> AMP (%u)", sm.page);
+    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_AMP, "GLO cycles AMP -> MFX -> EFFECTS -> MIX -> AMP (%u)", sm.page);
     /* MFX (2026-11-01): TYPE alone at OFF, no knobs; a new type starts at its defaults, shows its own row and knobs */
     press(BTN_GLO);
     CHECK(sm.page == UIPAGE_MFX, "GLO -> MFX (%u)", sm.page);
@@ -320,19 +321,47 @@ int main(void)
         ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
         CHECK(m->type == MFX_OFF, "TYPE -> OFF");
     }
-    /* DELAY HP and PING PONG share delay_pingpong (bits 1..7, bit 0): each row turns its own bits */
     press(BTN_GLO);
     CHECK(sm.page == UIPAGE_EFFECTS, "GLO -> EFFECTS (%u)", sm.page);
-    perf_state.delay_pingpong = 1u;
-    sm.s.current_param_focus = (uint8_t)find_row("DELAY HP");
-    ui_sm_handle(&sm, UIEV_ALGO_ENC, 127);
-    CHECK(perf_state.delay_pingpong == 255u && DELAY_HP(&perf_state) == 127u && DELAY_PINGPONG(&perf_state) == 1u,
-          "DELAY HP to 127 keeps PING PONG (%u)", perf_state.delay_pingpong);
-    sm.s.current_param_focus = (uint8_t)find_row("PING PONG");
-    ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
-    CHECK(perf_state.delay_pingpong == 254u && ui_sm_row_value(&sm, (uint8_t)find_row("DELAY HP")) == 127u,
-          "PING PONG off keeps DELAY HP (%u)", perf_state.delay_pingpong);
-    perf_state.delay_pingpong = 0u;
+    CHECK(find_row("DELAY HP") < 0 && find_row("DLY > REV") < 0, "EFFECTS: DELAY HP and the cross-feeds moved to MIX");
+    /* MIX (2026-11-02): knob 1 BALANCE in DUAL, DRY/WET in SINGL (one byte); LOOP TONE's thinner half is DELAY HP
+     * (fx_tone_sync), beside PING PONG in delay_pingpong */
+    press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_MIX, "GLO -> MIX (%u)", sm.page);
+    {
+        UiKnobInfo info;
+        int br = find_row("BALANCE"), dw = find_row("DRY/WET"), tr = find_row("LOOP TONE");
+        CHECK(br >= 0 && dw >= 0 && tr >= 0, "MIX rows (%d %d %d)", br, dw, tr);
+        CHECK(ui_sm_row_state(&sm, (uint8_t)br) == UIROW_ACTIVE && ui_sm_row_state(&sm, (uint8_t)dw) == UIROW_HIDDEN,
+              "DUAL: BALANCE, not DRY/WET");
+        CHECK(ui_sm_knob(&sm, UIPAGE_MIX, 0, 0, &info) == &fx_live[FX_L_BALANCE] && info.label[0] == 'B',
+              "DUAL: knob 1 BALANCE (%s)", info.label);
+        CHECK(ui_sm_knob(&sm, UIPAGE_MIX, 0, 2, &info) == &fx_cross[FX_X_DLY_REV], "knob 3 DLY > REV");
+        perf_state.delay_pingpong = 1u;
+        fx_tone_sync(&perf_state);
+        sm.s.current_param_focus = (uint8_t)tr;
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 127);
+        fx_tone_sync(&perf_state);
+        CHECK(fx_live[FX_L_TONE] == 127u && DELAY_HP(&perf_state) == 127u && DELAY_PINGPONG(&perf_state) == 1u,
+              "LOOP TONE 127 = DELAY HP 127, PING PONG kept (%u, %u)", fx_live[FX_L_TONE], perf_state.delay_pingpong);
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, -127);
+        fx_tone_sync(&perf_state);
+        CHECK(fx_live[FX_L_TONE] == 0u && DELAY_HP(&perf_state) == 0u && DELAY_PINGPONG(&perf_state) == 1u,
+              "LOOP TONE 0 (darkest): DELAY HP off (%u, %u)", fx_live[FX_L_TONE], perf_state.delay_pingpong);
+        perf_state.delay_pingpong = (uint8_t)(20u << 1);   /* a performance loaded with DELAY HP 20 */
+        fx_tone_sync(&perf_state);
+        CHECK(fx_live[FX_L_TONE] == 74u && DELAY_HP(&perf_state) == 20u,
+              "a loaded DELAY HP 20 sets LOOP TONE 74 (%u, %u)", fx_live[FX_L_TONE], DELAY_HP(&perf_state));
+        perf_state.perf_mode = PERF_SINGL_SYNTH;
+        CHECK(ui_sm_row_state(&sm, (uint8_t)br) == UIROW_HIDDEN && ui_sm_row_state(&sm, (uint8_t)dw) == UIROW_ACTIVE &&
+              ui_sm_knob(&sm, UIPAGE_MIX, 0, 0, &info) == &fx_live[FX_L_BALANCE] && info.label[0] == 'D',
+              "SINGL: knob 1 DRY/WET (%s)", info.label);
+        perf_state.perf_mode = PERF_DUAL_SYNTH;
+        perf_state.delay_pingpong = 0u;
+        fx_tone_sync(&perf_state);
+        fx_live[FX_L_TONE] = 64u;
+        fx_tone_sync(&perf_state);
+    }
     press(BTN_GLO);
     press(BTN_SAVE);
     CHECK(sm.page == UIPAGE_SAVE_COMMIT, "SAVE opens the save page (%u)", sm.page);

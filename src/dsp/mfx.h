@@ -39,23 +39,52 @@
  * CHORUS (2026-11-02): the classic two-channel synth chorus (docs/effect schematics, alpha juno chorus.png: a BBD a
  * side, the clocks swung against each other by one triangle, a compander round each), made variable (the user's):
  * RATE, DEPTH, DELAY (the sweep's centre), MIX. Rows: WIDTH (the second side's LFO behind the first's: 127 the
- * classic opposite swing), AGE (as ENSEMBLE's). */
-enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_BULLROARER, MFX_COUNT };
-#define MFX_OFFERED (MFX_CHORUS + 1)      /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
+ * classic opposite swing), AGE (as ENSEMBLE's).
+ *
+ * TAPE FLANGER (2026-11-02): through-zero flanging as the studios did it before any box could, with two tape machines
+ * playing the same tape: a reference deck, and a second slowed by a thumb on its reel so it falls behind, catches up
+ * and runs past. Both decks' heads and wobbles (a deck's own flutter and wander, the reference's too: the nulls are
+ * never quite perfect), the tape's saturation, its hiss riding the level. Knobs: MANUAL (where the second deck sits
+ * against the reference: ~32 in step with it, below that ahead, above behind), RATE (the thumb's sweep), DEPTH (how
+ * far it pushes), TAPE (the machines' wear: hotter, darker heads, more flutter and hiss). Rows: POLARITY (POSITIVE
+ * the decks summed; NEGATIVE one wired out of phase, the sound vanishing where they meet), L/R PHASE (as STONE
+ * PHASER's; 0 is one tape for both sides).
+ *
+ * BBD FLANGER (2026-11-02): the late-70s rack stereo flanger (docs/effect schematics, roland sbf325.png, its block
+ * diagram): a bucket brigade a channel, each with its FEEDBACK, the direct and the delay summed at the output, the
+ * delay's phase switchable, one LFO (CENTER FREQ, RATE, DEPTH) whose sweep the second channel can take inverted.
+ * Knobs: CENTER (the delay the sweep centres on), RATE, DEPTH, FEEDBACK. Rows: MODE (FLANGER I: the channels swept
+ * alike; II: B's sweep inverted; III: as II with the delays crossed, A's out of B and B's out of A; CHORUS: no
+ * feedback, the sweep inverted), POLARITY (TAPE FLANGER's row: POSITIVE, NEGATIVE the delay inverted).
+ *
+ * PITCH SHIFT (2026-11-02): the mid-70s digital pitch changer: two read heads circling a short memory (~16 ms), each
+ * faded out as it wraps, the other faded in, the converters' grit; with feedback the shifted sound goes round again,
+ * a step further each time (the famous spirals). Knobs: PITCH (-12 .. +12 semitones, gliding between), FINE (+-50
+ * cents), FEEDBACK, MIX. Rows: SPREAD (the right side's FINE mirrored: 127 the classic stereo micro-pitch doubling,
+ * one side up, the other down), AGE (the converters: fewer bits, a darker band, hiss). */
+enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER, MFX_BBD_FLANGER,
+       MFX_PITCH_SHIFT, MFX_BULLROARER, MFX_COUNT };
+#define MFX_OFFERED (MFX_PITCH_SHIFT + 1)   /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
 enum { MFX_K_MANUAL, MFX_K_RATE, MFX_K_FEEDBACK, MFX_K_DEPTH };    /* STONE PHASER's knobs */
 enum { MFX_K_WHIRL, MFX_K_REACH, MFX_K_TWIST, MFX_K_DUST };         /* BULLROARER's */
 enum { MFX_K_AGE = 0, MFX_K_SHIMMER = 2 };                          /* ENSEMBLE's (RATE, DEPTH as above) */
 enum { MFX_K_ENS_RATE, MFX_K_ENS_DEPTH, MFX_K_PH_RATE, MFX_K_PH_DEPTH };   /* ENS+PHASER's */
 enum { MFX_K_CH_RATE, MFX_K_CH_DEPTH, MFX_K_CH_DELAY, MFX_K_CH_MIX };     /* CHORUS's */
-enum { MFX_R_AGE, MFX_R_COLOUR };                                   /* further rows (row[]): ENS+PHASER's AGE, COLOUR;
-                                                                     * CHORUS's AGE */
+enum { MFX_K_TF_MANUAL, MFX_K_TF_RATE, MFX_K_TF_DEPTH, MFX_K_TF_TAPE };   /* TAPE FLANGER's */
+enum { MFX_K_BF_CENTER, MFX_K_BF_RATE, MFX_K_BF_DEPTH, MFX_K_BF_FEEDBACK };   /* BBD FLANGER's */
+enum { MFX_K_PS_PITCH, MFX_K_PS_FINE, MFX_K_PS_FEEDBACK, MFX_K_PS_MIX };      /* PITCH SHIFT's (PITCH: 0..24, 12 none) */
+enum { MFX_R_AGE, MFX_R_COLOUR, MFX_R_POLARITY = 1, MFX_R_MODE = 0 };   /* further rows (row[]): ENS+PHASER's AGE,
+                                                                     * COLOUR; CHORUS's and PITCH SHIFT's AGE; TAPE and
+                                                                     * BBD FLANGER's POLARITY (0, 1); BBD FLANGER's MODE */
+enum { MFX_BF_FLANGER1, MFX_BF_FLANGER2, MFX_BF_FLANGER3, MFX_BF_CHORUS, MFX_BF_MODES };
 
 typedef struct {
     uint8_t type;                /* MFX_* */
     uint8_t knob[4];             /* 0..127, the type's own controls */
     uint8_t lr;                  /* the type's menu row, 0..127: L/R PHASE (the right side's LFO behind the left's),
                                   * ENSEMBLE's and ENS+PHASER's WIDTH */
-    uint8_t row[2];              /* further rows, 0..127: ENS+PHASER's AGE, COLOUR; CHORUS's AGE */
+    uint8_t row[2];              /* further rows, 0..127: ENS+PHASER's AGE, COLOUR; CHORUS's AGE; TAPE FLANGER's
+                                  * POLARITY (0, 1) */
 } MfxParams;
 
 /* each layer's MFX (not stored yet: the patch format bump comes with the CC map's) */
@@ -66,7 +95,9 @@ void mfx_init(void);
 
 /* the MFX page's peek at the effect as it moves (read by the UI, written by the audio): STONE PHASER's sweep on side i
  * (0, 1), ENSEMBLE's line i delay (0..2) as a share of the brigade's reach, and (3, 4) the shortest and longest its
- * lines swing to at these settings (ENS+PHASER: the same, and 5 its phaser's sweep); 0..1, or -1 when there is none */
+ * lines swing to at these settings (ENS+PHASER: the same, and 5 its phaser's sweep); TAPE FLANGER: the second deck
+ * on side i (0, 1), 2 the reference (where they meet), 3 / 4 the thumb's sweep's ends; 0..1, or -1 when there is
+ * none */
 float mfx_peek(int layer, int i);
 
 /* the layer's MFX over n frames of its dry sum, in place (Q15 units, the bus's floats); nothing at OFF */

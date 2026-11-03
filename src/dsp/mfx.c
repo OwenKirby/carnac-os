@@ -59,6 +59,9 @@ typedef struct { float key[2], rate, cin, cfb, h; } SpSet;                      
 typedef struct { float key[4], rate, swing, dc, drive, undrive, hiss; HrSvf f; } EnSet;   /* ENSEMBLE (ens_wet) */
 typedef struct { float key[3], fast, rate, fb, h; } SsSet;                          /* ENS+PHASER's phaser */
 typedef struct { float key[6], rate, depth, centre, gw, gd, drive, undrive, hiss; HrSvf f; } ChSet;   /* CHORUS */
+typedef struct { float key[2], rate, f, sa, sb, xlim, ylim, hiss; } TfSet;            /* TAPE FLANGER */
+typedef struct { float key[4], rate, d0, oct, fb; } BfSet;                          /* BBD FLANGER */
+typedef struct { float key[6], ratio[2], fb, gd, gw, hiss; HrSvf f; int32_t mask; } PsSet;   /* PITCH SHIFT */
 
 /* the knobs k[0..n-1] against a set's key: 1 if they differ (and the key takes them) */
 static inline int mfx_moved(float *key, const float *k, int n)
@@ -84,6 +87,15 @@ typedef struct {
                                              /* ENSEMBLE / ENS+PHASER: the boards' settings, their three read heads
                                               * (16.16, start and step), the phaser's coefficient and COLOUR */
         struct { HrSvf f; float drive, undrive, hiss, gw, gd, offset, centre, depth, wow; } ch;   /* CHORUS */
+        struct { float f, sa, sb, xlim, ylim, hiss, pol, dpol; int32_t r0, rd, m0[2], md[2]; } tf;
+                                             /* TAPE FLANGER: the decks' settings, the reference's read head and each
+                                              * side's second deck's (16.16, start and step a frame) */
+        struct { HrSvf f; float fb, g0, g1, hiss; int32_t d0[2], dd[2]; uint8_t cross; } bf;
+                                             /* BBD FLANGER: the boards' filter, FEEDBACK, the delay's gain (with the
+                                              * POLARITY, ramped g0 -> g1), each side's read head; MODE III's crossing */
+        struct { HrSvf f; float fb, gd, gw, hiss, slope[2]; int32_t mask; } ps;
+                                             /* PITCH SHIFT: the converters' filter, FEEDBACK, the mix, each side's
+                                              * head's pace (1 - ratio), AGE's bits */
     } u;
 } MfxStep;
 #define MFX_STEPS (MFX_PASS_MAX / MFX_SUB)
@@ -100,12 +112,15 @@ typedef struct {
                                               * B1's C11 (TPT state); X, the sample before (the loop); the shelf; the
                                               * 4009's control, 0..1, glided */
     float flt[4];                            /* the half-rate types' filters: ENSEMBLE's output 2-pole (0, 1); CHORUS's
-                                              * anti-alias (0, 1) and reconstruction (2, 3) */
+                                              * anti-alias (0, 1) and reconstruction (2, 3); TAPE FLANGER's heads (0) */
     float ss_z[5];                           /* ENS+PHASER's phaser: its chain */
     float env, prev, ch_d;                   /* the compander's level follower; the last half-rate wet sample (the
                                               * interpolation); CHORUS's delay at the last step (half-rate samples) */
     uint32_t rng, w;                         /* the hiss's noise; the line's write place */
     float br_pre[2], br_post[2], br_d;       /* BULLROARER: its filters, its delay at the last step (samples) */
+    float fbv;                               /* BBD FLANGER, PITCH SHIFT: the last wet sample (the feedback) */
+    float ps_d, ps_d2;                       /* PITCH SHIFT: the head's delay, the new one's while it splices */
+    uint32_t ps_xf;                          /* ... the splice's crossfade frames left (0: none) */
 } __attribute__((aligned(64))) MfxSide;
 
 typedef struct {
@@ -123,13 +138,24 @@ typedef struct {
     uint32_t br_rng, br_wow_n;               /* (its draws; BULLROARER's noise too) */
     uint32_t br_w;                           /* BULLROARER (run whole, on one core): the write place */
     float br_orbit, br_twist;                /* ... the whirl's phase, the cord's (0..1) */
+    float tf_pol;                            /* TAPE FLANGER: the polarity at the last step (ramped a frame) */
+    float tf_dr, tf_dm[2];                   /* ... the reference's delay and each side's second deck's at
+                                              * the last step (samples; 0: none yet) */
+    float tf_fl[2], tf_wow[2], tf_wow_to[2]; /* ... each deck's flutter (its phase), its wander and where it heads */
+    uint32_t tf_wow_n[2];
+    float bf_d[2];                           /* BBD FLANGER: each side's delay at the last step (half-rate samples) */
+    float bf_g;                              /* ... the delay's gain at the last step (POLARITY: ramped) */
+    float bf_in[2][MFX_PASS_MAX / 2u];       /* ... MODE III: both sides' half-rate input, for the crossed delays */
     float kn[7];                             /* the knobs and the rows (lr, row[]), glided (0..127): a turn moves no
                                               * setting in steps */
     SpSet sp_set;                            /* each model's settings as last worked out from the knobs (MfxSet) */
     EnSet en_set;
     SsSet ss_set;
     ChSet ch_set;
-    uint8_t type;                           /* what the state is for: a new type starts clean */
+    TfSet tf_set;
+    BfSet bf_set;
+    PsSet ps_set;
+    uint8_t type;                          /* what the state is for: a new type starts clean */
 } __attribute__((aligned(64))) MfxState;     /* each layer's on cache lines of its own: layer 2's may run on core 1
                                                * (synth_runtime.c, as fx.c FX_LINE) */
 
@@ -737,6 +763,432 @@ static void ch_side(MfxState *s, int ch, float *y)
     sd->rng = rng;
 }
 
+/* ---- TAPE FLANGER ---- */
+/* Two tape machines playing the same tape, summed, the second slowed by a thumb on its reel's flange (mfx.h):
+ *  - The record head: the tape's soft headroom (TAPE hotter into it, the level held after), into one line a side (the
+ *    one copy both decks play), int16 at the full rate (BULLROARER's 512: 11.6 ms). Through zero needs the full rate:
+ *    as the decks meet the comb's notches run up past 20 kHz, the whoosh, which half a rate would cut off.
+ *  - The reference deck reads TF_REF behind the head (the whole effect a 3 ms delay, as the studios' was); the second
+ *    deck TF_REF + the lead, from 3 ms ahead of the reference to 8.5 ms behind it. The thumb's sweep is the rounded
+ *    triangle the decks' inertia gives it (ENSEMBLE's chorus oscillator's shape), MANUAL its centre (-2 .. +6 ms, in
+ *    step at ~32), DEPTH its width (to 8 ms).
+ *  - Each deck its own flutter (a capstan's ~0.1 % at 6.3 and 7.1 Hz, the two machines never alike) and wander (a new
+ *    heading every ~0.4 s), the reference's too: one tape for both sides, so the sides share them. TAPE 0 stills
+ *    them: then the decks meet exactly and NEGATIVE nulls to silence.
+ *  - The playback heads' loss (a 1-pole, 15 kHz at TAPE 0 to 6 kHz worn; linear and alike on both decks, run once on
+ *    their sum) and the tape's hiss, riding the level as behind a noise reduction (a quiet layer stays quiet).
+ *  - The sum: (reference +- second) / 2, unity where they meet in phase. */
+#define TF_LEN 512u                              /* the line (as BR_LEN), a power of two */
+#define TF_MS (MFX_SR * 0.001f)
+#define TF_REF (3.f * TF_MS)                     /* the reference deck's delay */
+#define TF_DMAX ((float)(TF_LEN - 3u))           /* the second deck's furthest (the interpolation's neighbour) */
+#define TF_FLUT 1.2f                             /* each deck's flutter at TAPE 127, samples (+-27 us) */
+#define TF_WOW 6.f                               /* ... its wander, samples (+-0.14 ms) */
+#define TF_K0 (BR_SCALE * 32767.f)               /* bus units into the line's */
+#define TF_OUT 1.f                               /* output trim (test_mfx: the level) */
+
+/* a deck's wander: a new heading every ~0.4 s, amt samples */
+static void tf_drift(MfxState *s, int j, float amt)
+{
+    if (s->tf_wow_n[j] == 0u) {
+        s->br_rng = s->br_rng * 1664525u + 1013904223u;
+        s->tf_wow_to[j] = amt * ((float)(int32_t)s->br_rng * (1.f / 2147483648.f));
+        s->tf_wow_n[j] = 1100u + 97u * (uint32_t)j;
+    }
+    s->tf_wow_n[j]--;
+    s->tf_wow[j] += (s->tf_wow_to[j] - s->tf_wow[j]) * 0.005f;
+}
+
+/* a read head's start and step over m frames, from the delay a (samples) at the last step to d */
+static inline void tf_head(float a, float d, uint32_t m, int32_t *h0, int32_t *dh)
+{
+    *h0 = (int32_t)(a * HR_Q);
+    *dh = (int32_t)((d - a) * (1.f / (float)m) * HR_Q);
+}
+
+/* TAPE FLANGER's step, for both sides (the plan): the settings, the thumb, both decks' wobbles, the read heads */
+static void tf_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
+{
+    TfSet *st = &s->tf_set;
+    const float kk[2] = {k[MFX_K_TF_RATE], k[MFX_K_TF_TAPE]};
+    const float tape = kk[1] * (1.f / 127.f), dt = (float)step->m * (1.f / MFX_SR);
+    int j;
+    if (mfx_moved(st->key, kk, 2)) {
+        st->rate = 0.03f * amp_exp2f(kk[0] * (7.38f / 127.f));       /* 0.03 .. 5 Hz, even in octaves */
+        /* the record head: sat(x drive) undrive (br_sat: u (1.5 - 0.5 u^2), flat at +-1 past 1), with the output's
+         * gain G (the decks' (ref +- second) / 2 back to bus units) folded in: x (sa - sb x^2) below xlim, +-ylim past */
+        const float drive = BR_SCALE * (1.f + 2.f * tape), undrive = 32767.f / (1.f + 2.f * tape);
+        const float g = TF_OUT * 0.5f / TF_K0;
+        st->f = br_g(15000.f - 9000.f * tape);
+        st->sa = 1.5f * drive * undrive * g;
+        st->sb = 0.5f * drive * drive * drive * undrive * g;
+        st->xlim = 1.f / drive;
+        st->ylim = undrive * g;
+        st->hiss = (0.0015f + 0.01f * tape * tape) * g * (1.f / 2147483648.f);   /* (the noise's int32 scale) */
+    }
+    step->u.tf.f = st->f;
+    step->u.tf.sa = st->sa;
+    step->u.tf.sb = st->sb;
+    step->u.tf.xlim = st->xlim;
+    step->u.tf.ylim = st->ylim;
+    step->u.tf.hiss = st->hiss;
+    {                                                                /* POLARITY, glided and ramped a frame: a
+                                                                      * crossfade, no click */
+        float p = row[MFX_R_POLARITY], pol = p >= 1.f ? -1.f : 1.f - 2.f * p;
+        float a = s->tf_dr == 0.f ? pol : s->tf_pol;
+        step->u.tf.pol = a;
+        step->u.tf.dpol = (pol - a) * (1.f / (float)step->m);
+        s->tf_pol = pol;
+    }
+    /* the decks' wobbles (one tape: both sides alike) */
+    float wob[2];
+    s->tf_fl[0] += 6.3f * dt;
+    s->tf_fl[1] += 7.1f * dt;
+    for (j = 0; j < 2; j++) {
+        if (s->tf_fl[j] >= 1.f) s->tf_fl[j] -= 1.f;
+        tf_drift(s, j, TF_WOW * tape);
+        wob[j] = TF_FLUT * tape * br_sin(s->tf_fl[j]) + s->tf_wow[j];
+    }
+    const float centre = (-2.f + k[MFX_K_TF_MANUAL] * (8.f / 127.f)) * TF_MS;
+    const float half = k[MFX_K_TF_DEPTH] * (4.f / 127.f) * TF_MS, offset = lr * (0.5f / 127.f);
+    float dr = TF_REF + wob[0];
+    tf_head(s->tf_dr == 0.f ? dr : s->tf_dr, dr, step->m, &step->u.tf.r0, &step->u.tf.rd);
+    for (j = 0; j < 2; j++) {
+        float d = TF_REF + centre + half * en_slow(j ? s->lfo - offset : s->lfo) + wob[1];
+        d = d < 0.f ? 0.f : d > TF_DMAX ? TF_DMAX : d;
+        tf_head(s->tf_dr == 0.f ? d : s->tf_dm[j], d, step->m, &step->u.tf.m0[j], &step->u.tf.md[j]);
+        s->tf_dm[j] = d;
+    }
+    s->tf_dr = dr;
+    step->lfo = s->lfo;
+    s->lfo += st->rate * dt;
+    if (s->lfo >= 1.f) s->lfo -= 1.f;
+}
+
+/* one interpolated read of the tape at head h (16.16 samples behind the record head at w) */
+static inline float tf_read(const int16_t *line, uint32_t w, int32_t h)
+{
+    uint32_t p = (w - (uint32_t)(h >> 16)) & (TF_LEN - 1u), q = (p - 1u) & (TF_LEN - 1u);
+    float a = (float)line[p];
+    return a + (float)(h & 0xFFFF) * (1.f / HR_Q) * ((float)line[q] - a);
+}
+
+/* the hiss's level follower, a step at a time (2026-11-02, was a sample at a time): from the step's peak, with the
+ * per-sample follower's attack (0.02) and release (0.0005) taken over the step's m frames */
+static inline float tf_env(float env, float peak, uint32_t m)
+{
+    float av = peak * TF_K0;
+    if (av > env)
+        return env + (1.f - amp_exp2f((float)m * -0.029146f)) * (av - env);   /* 1 - 0.98^m */
+    return env + (1.f - amp_exp2f((float)m * -0.000722f)) * (av - env);       /* 1 - 0.9995^m */
+}
+
+/* TAPE FLANGER on one side (ch) over the planned pass, y in place: its own tape from its own input.
+ * Optimized 2026-11-02 (the same sound): the record head's saturation folded into one polynomial (x (a - b x^2), the
+ * drive and its make-up in a and b; flat at +-ylim past xlim), the hiss's follower a step at a time (tf_env), the
+ * POLARITY at rest an add or a subtract (its multiply only while it crossfades), the output gain 1 (TF_OUT) */
+static void tf_side(MfxState *s, int ch, float *y)
+{
+    MfxSide *sd = &s->side[ch];
+    int16_t *line = sd->line.i;
+    float lp = sd->flt[0], env = sd->env;
+    uint32_t w = sd->w, rng = sd->rng;
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MfxStep *step = &s->plan[k];
+        const uint32_t m = step->m;
+        const float f = step->u.tf.f, sa = step->u.tf.sa, sb = step->u.tf.sb, xl = step->u.tf.xlim;
+        const float yl = step->u.tf.ylim, hs = env * step->u.tf.hiss, dpol = step->u.tf.dpol;
+        float pol = step->u.tf.pol, peak = 0.f;
+        int32_t hr = step->u.tf.r0, hm = step->u.tf.m0[ch];
+        const int32_t er = step->u.tf.rd, em = step->u.tf.md[ch];
+        /* one frame: the record head (its saturation folded), the step's peak, both decks, the hiss, the heads */
+#define TF_FRAME(MOVING) do { \
+            float x = y[i], ax = x < 0.f ? -x : x; \
+            peak = ax > peak ? ax : peak; \
+            line[w] = (int16_t)(ax < xl ? x * (sa - sb * x * x) : x < 0.f ? -yl : yl); \
+            hr += er; hm += em; \
+            rng = rng * 1664525u + 1013904223u; \
+            float v = tf_read(line, w, hr) MOVING + hs * (float)(int32_t)rng; \
+            lp += f * (v - lp); \
+            y[i] = lp; \
+            w = (w + 1u) & (TF_LEN - 1u); \
+        } while (0)
+        if (dpol != 0.f || (pol != 1.f && pol != -1.f)) {
+            for (uint32_t i = 0; i < m; i++) {                     /* POLARITY crossfading */
+                pol += dpol;
+                TF_FRAME(+ pol * tf_read(line, w, hm));
+            }
+        } else if (pol > 0.f) {
+            for (uint32_t i = 0; i < m; i++)
+                TF_FRAME(+ tf_read(line, w, hm));
+        } else {
+            for (uint32_t i = 0; i < m; i++)
+                TF_FRAME(- tf_read(line, w, hm));
+        }
+#undef TF_FRAME
+        env = tf_env(env, peak, m);
+        y += m;
+    }
+    sd->flt[0] = lp; sd->env = env;
+    sd->w = w;
+    sd->rng = rng;
+}
+
+/* ---- BBD FLANGER ---- */
+/* From the block diagram (docs/effect schematics, roland sbf325.png): each channel a delay line with its FEEDBACK
+ * (the pot from the line's output back to its input), the DIRECT and the delay summed at the output, the delay's
+ * phase switched (NON / INV), one LFO (CENTER FREQ, RATE, DEPTH, a triangle) driving both lines' clocks, channel
+ * B's through an inverter (NON / INV). The mode buttons switch the feedback, the crossing (A's delay to B's output,
+ * B's to A's) and the inverter; here FLANGER I (alike), II (B inverted), III (II crossed), CHORUS (no feedback, B
+ * inverted). The schematic's parts are not legible enough to read the lines' range: taken as a BBD flanger's, the
+ * clock swept exponentially (the comb moves evenly in pitch; the delay as 1 / clock), CENTER 0.25 .. 10 ms, DEPTH
+ * up to +-1.5 octaves of clock. The lines run at half rate (CHORUS's machinery: the band ~9.5 kHz, the BBD's own),
+ * soft at the top of their headroom (the feedback saturates there, it cannot run away), a little hiss riding the
+ * level. The direct and the delay alike at the output (BF_MIX each). */
+#define BF_DMIN (0.25f * HR_SR * 0.001f)        /* CENTER 0, half-rate samples */
+#define BF_DOCT 5.32f                            /* CENTER's range in octaves (to 10 ms) */
+#define BF_UN (65536.f / 1.5f)                   /* the line's level back to the bus's (br_sat's slope 1.5) */
+#define BF_MIX 0.6f                              /* the direct and the delay each (test_mfx: the level) */
+
+static HrSvf bf_filter(void)                     /* the boards' band (the same each way), worked out once */
+{
+    static HrSvf f;
+    static int ok;
+    if (!ok) { f = hr_svf(9500.f, 1.f / 0.9f); ok = 1; }
+    return f;
+}
+
+static int bf_mode(const float *row)
+{
+    int m = (int)(row[MFX_R_MODE] + 0.5f);
+    return m < 0 ? 0 : m >= MFX_BF_MODES ? MFX_BF_MODES - 1 : m;
+}
+
+/* BBD FLANGER's step, for both sides (the plan) */
+static void bf_plan(MfxState *s, MfxStep *step, const float *k, const float *row)
+{
+    BfSet *st = &s->bf_set;
+    const float kk[4] = {k[MFX_K_BF_CENTER], k[MFX_K_BF_RATE], k[MFX_K_BF_DEPTH], k[MFX_K_BF_FEEDBACK]};
+    const int mode = bf_mode(row);
+    const uint32_t mp = step->m >> 1;
+    int j;
+    if (mfx_moved(st->key, kk, 4)) {
+        st->rate = 0.05f * amp_exp2f(kk[1] * (7.64f / 127.f));      /* 0.05 .. 10 Hz */
+        st->d0 = BF_DMIN * amp_exp2f(kk[0] * (BF_DOCT / 127.f));
+        st->oct = kk[2] * (1.5f / 127.f);
+        st->fb = kk[3] * (0.92f / 127.f);
+    }
+    step->u.bf.f = bf_filter();
+    step->u.bf.fb = mode == MFX_BF_CHORUS ? 0.f : st->fb;
+    step->u.bf.hiss = 0.002f * (1.f / 2147483648.f);
+    step->u.bf.cross = (uint8_t)(mode == MFX_BF_FLANGER3);
+    {                                                       /* POLARITY: the delay's gain, ramped */
+        float p = row[MFX_R_POLARITY], g = BF_MIX * (p >= 1.f ? -1.f : 1.f - 2.f * p) * (1.f - 0.5f * step->u.bf.fb);
+                                                            /* (FEEDBACK's resonance made up, in part) */
+        step->u.bf.g0 = s->bf_d[0] == 0.f ? g : s->bf_g;
+        step->u.bf.g1 = s->bf_g = g;
+    }
+    float tri = s->lfo < 0.5f ? 4.f * s->lfo - 1.f : 3.f - 4.f * s->lfo;
+    const float im = mp ? 1.f / (float)mp : 0.f;
+    for (j = 0; j < 2; j++) {
+        float t = j && mode != MFX_BF_FLANGER1 ? -tri : tri;    /* B's sweep through the inverter */
+        float d = st->d0 * amp_exp2f(-st->oct * t);
+        d = d < 2.f ? 2.f : d > EN_DMAX ? EN_DMAX : d;
+        float a = s->bf_d[j] == 0.f ? d : s->bf_d[j];
+        step->u.bf.d0[j] = (int32_t)(a * HR_Q);
+        step->u.bf.dd[j] = (int32_t)((d - a) * im * HR_Q);
+        s->bf_d[j] = d;
+    }
+    step->lfo = s->lfo;
+    s->lfo += st->rate * (float)step->m * (1.f / MFX_SR);
+    if (s->lfo >= 1.f) s->lfo -= 1.f;
+}
+
+/* BBD FLANGER on one side (ch): its line fed from its own input (MODE III: the other side's, s->bf_in), the direct
+ * its own */
+static void bf_side(MfxState *s, int ch, float *y)
+{
+    MfxSide *sd = &s->side[ch];
+    float *line = sd->line.f;
+    float a1 = sd->flt[0], a2 = sd->flt[1], b1 = sd->flt[2], b2 = sd->flt[3], env = sd->env, fbv = sd->fbv;
+    float p = sd->prev;
+    uint32_t w = sd->w, rng = sd->rng, xi = 0;
+    const float *xin = s->bf_in[ch ^ 1];
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MfxStep *step = &s->plan[k];
+        const uint32_t m = step->m, mp = m >> 1, cross = step->u.bf.cross;
+        const HrSvf f = step->u.bf.f;
+        const float fb = step->u.bf.fb, hiss = step->u.bf.hiss;
+        float wet[MFX_SUB / 2];
+        int32_t hd = step->u.bf.d0[ch];
+        const int32_t dd = step->u.bf.dd[ch];
+        for (uint32_t i = 0; i < mp; i++) {
+            float x = cross ? xin[xi + i] : y[2u * i] + y[2u * i + 1u];   /* (the pair x 2) */
+            float av = (x < 0.f ? -x : x) * 0.5f;              /* the hiss rides the level */
+            env += (av > env ? 0.04f : 0.001f) * (av - env);
+            float a = hr_lp(&f, 0.5f * x + fb * fbv, &a1, &a2);   /* the input and the FEEDBACK into the line */
+            line[w] = br_sat(a * BR_SCALE) * BF_UN;
+            hd += dd;
+            HrTap t = hr_at(w, hd);
+            rng = rng * 1664525u + 1013904223u;
+            fbv = hr_lp(&f, hr_read(line, &t) + env * hiss * (float)(int32_t)rng, &b1, &b2);
+            wet[i] = fbv;
+            w = (w + 1u) & (HR_LEN - 1u);
+        }
+        xi += mp;
+        {                                                      /* back up, the direct beside it */
+            float g = step->u.bf.g0, dg = (step->u.bf.g1 - g) * (mp ? 1.f / (float)mp : 0.f);
+            for (uint32_t i = 0; i < mp; i++) {
+                g += dg;
+                float v = g * wet[i];
+                y[2u * i] = BF_MIX * y[2u * i] + 0.5f * (p + v);
+                y[2u * i + 1u] = BF_MIX * y[2u * i + 1u] + v;
+                p = v;
+            }
+            if (m & 1u)
+                y[m - 1u] = BF_MIX * y[m - 1u] + p;
+        }
+        y += m;
+    }
+    sd->flt[0] = a1; sd->flt[1] = a2; sd->flt[2] = b1; sd->flt[3] = b2;
+    sd->env = env; sd->fbv = fbv; sd->prev = p;
+    sd->w = w;
+    sd->rng = rng;
+}
+
+/* ---- PITCH SHIFT ---- */
+/* The late-70s digital pitch changer: the input written into a short memory, a read head moving through it at the
+ * pitch ratio's pace (its delay grows by 1 - ratio a sample). When it runs out of memory (up: it catches the writer;
+ * down: it falls behind) it splices: it jumps most of the memory's length, to where the waveform there lines up with
+ * the one it was reading (the best of the candidate jumps by cross-correlation over a short stretch: the "de-glitched"
+ * units' trick; a free splice lands on any phase and leaves sustained notes up to a semitone or two out), and
+ * crossfades to it over PS_XF frames. The memory at half rate (22.05 kHz, int16, 512: ~23 ms). The converters: the band
+ * (~10 kHz, ~5 kHz at AGE 127), the bits (16, ~10 at AGE 127), a little hiss riding the level. FEEDBACK takes the
+ * shifted sound back in, so each pass goes a step further (up or down: the spiral). MIX equal power. */
+#define PS_W 352.f                               /* the span the head moves in, half-rate samples (~16 ms) */
+#define PS_DM 4.f                                /* the shortest delay a head reads, half-rate samples */
+#define PS_JMIN 176                              /* a splice's jump: PS_JMIN .. PS_W (ps_jump: coarse, then fine) */
+#ifndef PS_L
+#define PS_L 64                                  /* the stretch the candidates are compared over (half-rate samples,
+                                                  * every PS_LSTEP-th: ~2.9 ms, a period of a low note; 0.7 ms was too
+                                                  * short to find the phase and left some splices clicking) */
+#endif
+#define PS_LSTEP 2
+#define PS_XF 48u                                /* the splice's crossfade, half-rate samples (~2.2 ms) */
+#define PS_UN (1.f / (1.5f * 32767.f * BR_SCALE))   /* the line's level back to the bus's (br_sat's slope 1.5) */
+
+/* PITCH SHIFT's step, for both sides (the plan) */
+static void ps_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
+{
+    PsSet *st = &s->ps_set;
+    const float kk[6] = {k[MFX_K_PS_PITCH], k[MFX_K_PS_FINE], k[MFX_K_PS_FEEDBACK], k[MFX_K_PS_MIX], lr, row[MFX_R_AGE]};
+    if (mfx_moved(st->key, kk, 6)) {
+        const float semi = (kk[0] > 24.f ? 24.f : kk[0]) - 12.f, cents = (kk[1] - 64.f) * (50.f / 63.f);
+        const float spread = kk[4] * (1.f / 127.f), mix = kk[3] * (1.f / 127.f), age = kk[5] * (1.f / 127.f);
+        const float trim = 1.f / (1.f + 0.25f * br_sin(0.5f * mix));   /* (as CHORUS's MIX) */
+        st->ratio[0] = amp_exp2f((semi + cents * 0.01f) * (1.f / 12.f));
+        st->ratio[1] = amp_exp2f((semi + cents * (1.f - 2.f * spread) * 0.01f) * (1.f / 12.f));
+        st->fb = kk[2] * (0.85f / 127.f);
+        st->gw = trim * br_sin(0.25f * mix) / (1.f + st->fb);   /* (the feedback's build-up made up) */
+        st->gd = trim * br_sin(0.25f * mix + 0.25f);
+        st->f = hr_svf(10000.f * (1.f - 0.5f * age), 1.f / 0.8f);
+        st->mask = (int32_t)~((1u << (uint32_t)(6.f * age + 0.5f)) - 1u);   /* (the low bits dropped) */
+        st->hiss = (0.001f + 0.006f * age * age) * (1.f / 2147483648.f);
+    }
+    step->u.ps.f = st->f;
+    step->u.ps.fb = st->fb;
+    step->u.ps.gd = st->gd;
+    step->u.ps.gw = st->gw;
+    step->u.ps.hiss = st->hiss;
+    step->u.ps.mask = st->mask;
+    step->u.ps.slope[0] = 1.f - st->ratio[0];
+    step->u.ps.slope[1] = 1.f - st->ratio[1];
+    step->lfo = s->lfo;
+}
+
+/* the splice's jump from a head at delay d (whole half-rate samples), up (+1: further back) or down (-1): the one
+ * whose last PS_L samples best match the head's own */
+static int ps_jump(const int16_t *line, uint32_t w, int d, int dir)
+{
+    /* the jumps that land inside the memory (up: no further back than its end; down: no nearer than PS_DM) */
+    int jmax = dir > 0 ? (int)(PS_DM + PS_W) - d : d - (int)PS_DM, jmin = PS_JMIN < jmax ? PS_JMIN : jmax / 2;
+    /* coarse to fine (2026-11-02, a third of the work for the same choice): every 4th jump over every 4th sample,
+     * then the 7 about the best over every 2nd */
+    int best = jmin, j, i, lo, hi, pass;
+    float bc = -3.4e38f;
+    for (pass = 0; pass < 2; pass++) {
+        const int step = pass ? 1 : 4, stride = pass ? PS_LSTEP : 2 * PS_LSTEP;
+        lo = pass ? best - 3 : jmin;
+        hi = pass ? best + 3 : jmax;
+        lo = lo < jmin ? jmin : lo;
+        hi = hi > jmax ? jmax : hi;
+        bc = -3.4e38f;
+        for (j = lo; j <= hi; j += step) {
+            int d2 = d + dir * j;
+            float c = 0.f;
+            for (i = 0; i < PS_L; i += stride)
+                c += (float)line[(w - (uint32_t)(d + i)) & (TF_LEN - 1u)] *
+                     (float)line[(w - (uint32_t)(d2 + i)) & (TF_LEN - 1u)];
+            if (c > bc) { bc = c; best = j; }
+        }
+    }
+    return dir * best;
+}
+
+/* PITCH SHIFT on one side (ch) over the planned pass, y in place */
+static void ps_side(MfxState *s, int ch, float *y)
+{
+    MfxSide *sd = &s->side[ch];
+    int16_t *line = sd->line.i;
+    float a1 = sd->flt[0], a2 = sd->flt[1], b1 = sd->flt[2], b2 = sd->flt[3], env = sd->env, fbv = sd->fbv;
+    float d = sd->ps_d, d2 = sd->ps_d2;
+    uint32_t w = sd->w, rng = sd->rng, xf = sd->ps_xf;
+    if (d == 0.f) d = PS_DM + 0.5f * PS_W;              /* (a fresh start: the middle) */
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MfxStep *step = &s->plan[k];
+        const uint32_t m = step->m, mp = m >> 1;
+        const HrSvf f = step->u.ps.f;
+        const float fb = step->u.ps.fb, hiss = step->u.ps.hiss, slope = step->u.ps.slope[ch];
+        const float edge = (float)PS_XF * (slope < 0.f ? -slope : slope) + 1.f;   /* the head's travel over a splice */
+        const int32_t mask = step->u.ps.mask;
+        float wet[MFX_SUB / 2];
+        for (uint32_t i = 0; i < mp; i++) {
+            float x = y[2u * i] + y[2u * i + 1u];                    /* (the pair x 2) */
+            float av = (x < 0.f ? -x : x) * 0.5f;
+            env += (av > env ? 0.04f : 0.001f) * (av - env);
+            float a = hr_lp(&f, 0.5f * x + fb * fbv, &a1, &a2);      /* the input filter, the FEEDBACK */
+            line[w] = (int16_t)((int32_t)(br_sat(a * BR_SCALE) * 32767.f) & mask);   /* the converter */
+            d += slope;
+            float v = tf_read(line, w, (int32_t)(d * HR_Q));
+            if (xf) {                                                /* splicing: the new place fades in */
+                d2 += slope;
+                float g = (float)xf * (1.f / (float)PS_XF);
+                v = v * g + (1.f - g) * tf_read(line, w, (int32_t)(d2 * HR_Q));
+                if (--xf == 0u) d = d2;
+            } else if (slope < 0.f ? d < PS_DM + edge : d > PS_DM + PS_W - edge) {   /* nearly out of memory
+                                                                      * (the end it moves towards: up, the
+                                                                      * writer; down, the memory's end): splice,
+                                                                      * early enough that the old head stays in
+                                                                      * it through the crossfade */
+                int di = (int)d;
+                d2 = d + (float)ps_jump(line, w, di, slope < 0.f ? 1 : -1);
+                xf = PS_XF;
+            }
+            rng = rng * 1664525u + 1013904223u;
+            fbv = hr_lp(&f, v * PS_UN + env * hiss * (float)(int32_t)rng, &b1, &b2);
+            wet[i] = fbv;
+            w = (w + 1u) & (TF_LEN - 1u);
+        }
+        hr_up(y, wet, m, &sd->prev, step->u.ps.gw, step->u.ps.gd);
+        y += m;
+    }
+    sd->flt[0] = a1; sd->flt[1] = a2; sd->flt[2] = b1; sd->flt[3] = b2;
+    sd->env = env; sd->fbv = fbv;
+    sd->ps_d = d; sd->ps_d2 = d2; sd->ps_xf = xf;
+    sd->w = w;
+    sd->rng = rng;
+}
+
 float mfx_peek(int layer, int i)
 {
     const MfxState *s = &mfx_st[layer & 1];
@@ -746,6 +1198,22 @@ float mfx_peek(int layer, int i)
     if (t == MFX_ENS_PHASER && i == 5) return s->ss_ctl;
     if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && i >= 0 && i < 3) return s->en_d[i] * (1.f / EN_DMAX);
     if (t == MFX_CHORUS && i >= 0 && i < 2) return s->side[i].ch_d * (1.f / EN_DMAX);
+    if (t == MFX_BBD_FLANGER && i >= 0 && i < 2) {   /* each side's delay, on CENTER's scale (octaves from its least) */
+        union { float f; uint32_t u; } v = {s->bf_d[i] * (1.f / BF_DMIN)};
+        float m = (float)(v.u & 0x7FFFFFu) * (1.f / 8388608.f);           /* log2: the exponent, the mantissa's curve */
+        float l2 = (float)((int32_t)(v.u >> 23) - 127) + m * (1.3465f - 0.3465f * m);
+        return s->bf_d[i] <= 0.f ? -1.f : l2 * (1.f / BF_DOCT);
+    }
+    if (t == MFX_PITCH_SHIFT && i >= 0 && i < 2)   /* the pitch, -12 .. +12 semitones as 0..1 */
+        return (s->kn[MFX_K_PS_PITCH] > 24.f ? 24.f : s->kn[MFX_K_PS_PITCH]) * (1.f / 24.f);
+    if (t == MFX_TAPE_FLANGER && i >= 0 && i < 5) {  /* the second deck, the reference, the thumb's sweep's ends */
+        const uint8_t *k = mfx_params[layer & 1].knob;
+        float d = i < 2 ? s->tf_dm[i] : i == 2 ? TF_REF
+                : TF_REF + (-2.f + (float)k[MFX_K_TF_MANUAL] * (8.f / 127.f)
+                            + (i == 3 ? -4.f : 4.f) * (float)k[MFX_K_TF_DEPTH] * (1.f / 127.f)) * TF_MS;
+        d = d < 0.f ? 0.f : d > TF_DMAX ? TF_DMAX : d;
+        return d * (1.f / TF_DMAX);
+    }
     if (t == MFX_CHORUS && (i == 3 || i == 4)) {     /* where its delay swings between */
         const uint8_t *k = mfx_params[layer & 1].knob;
         float c = (1.f + (float)k[MFX_K_CH_DELAY] * (7.f / 127.f)) * (HR_SR * 0.001f);
@@ -781,7 +1249,9 @@ static void mfx_begin(MfxState *s, const MfxParams *p)
     s->kn[5] = (float)p->row[0];
     s->kn[6] = (float)p->row[1];
     s->ss_ctl = 0.5f;
-    s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = -1.f;   /* (none worked out) */
+    s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = s->tf_set.key[0] = -1.f;
+    s->bf_set.key[0] = s->ps_set.key[0] = -1.f;
+                                                /* (none worked out) */
     s->side[1].rng = 0x9E3779B9u;               /* (each side's hiss its own) */
 }
 
@@ -806,6 +1276,7 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
     if (p->type == MFX_OFF || p->type >= MFX_COUNT)
         return 0;
     if (n > MFX_PASS_MAX) n = MFX_PASS_MAX;
+    uint32_t xi = 0;                            /* (BBD FLANGER MODE III: where the pass's half-rate input is) */
     /* a control step at a time: each model's settings follow the glided knobs (their set-up is a few dozen
      * operations, against the step's thousands) */
     for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
@@ -823,6 +1294,18 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
             ep_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
         else if (p->type == MFX_CHORUS)
             ch_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
+        else if (p->type == MFX_TAPE_FLANGER)
+            tf_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
+        else if (p->type == MFX_BBD_FLANGER) {
+            bf_plan(s, step, s->kn, s->kn + 5);
+            if (step->u.bf.cross)                    /* MODE III: both sides' input, for the crossed lines */
+                for (uint32_t i = 0; i < (m >> 1); i++) {
+                    s->bf_in[0][xi + i] = l[f0 + 2u * i] + l[f0 + 2u * i + 1u];
+                    s->bf_in[1][xi + i] = r[f0 + 2u * i] + r[f0 + 2u * i + 1u];
+                }
+            xi += m >> 1;
+        } else if (p->type == MFX_PITCH_SHIFT)
+            ps_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
         else
             en_plan(s, step, s->kn, s->kn[4], EN_FAST, EN_GAIN);
     }
@@ -838,6 +1321,12 @@ void mfx_layer_side(int layer, int side, float *y)
         sp_side(s, side & 1, y);
     else if (s->type == MFX_CHORUS)
         ch_side(s, side & 1, y);
+    else if (s->type == MFX_TAPE_FLANGER)
+        tf_side(s, side & 1, y);
+    else if (s->type == MFX_BBD_FLANGER)
+        bf_side(s, side & 1, y);
+    else if (s->type == MFX_PITCH_SHIFT)
+        ps_side(s, side & 1, y);
     else
         en_side(s, side & 1, y);
 }

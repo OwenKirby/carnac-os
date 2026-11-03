@@ -123,8 +123,11 @@ static void send_limit(float *envp, const int32_t *in, int32_t *out, uint32_t n)
     *envp = env;
 }
 
+static void xf_init(void);                         /* the cross-feeds, below */
+
 void fx_init(void)
 {
+    xf_init();
     memset(tape, 0, sizeof tape);
     memset(pre_buf, 0, sizeof pre_buf);
     memset(sfx_rev_comb, 0, sizeof sfx_rev_comb);
@@ -572,37 +575,63 @@ static void tank_reverb_block(const MasterPerformancePreset *p, int32_t *x, int3
  * pitch, so every echo of the spring comes back as a falling chirp (the "drip", the laser "pew"), smeared further on
  * each trip. Each spring: a loop of a delay (one trip), a low-pass (REVERB DAMP), the decay (REVERB TIME) and
  * SP_STAGES stretched first-order allpasses, (a + z^-K) / (1 + a z^-K) with a < 0, which delay the lows more than the
- * highs: the dispersion (measured: 170 Hz arrives 5.3 ms after 4 kHz in the first echo, twice that in the second).
- * The springs' trips (34.7 and 43.2 ms) differ, so their flutter echoes do not line up; each feeds one side, a little
- * of the other mixed in. The front high-passes the send (a spring tank has little bass) and scales it in. TIME 0 ..
- * 127: RT60 ~0.3 .. ~4.5 s; level as PLATE's.
- * Cost (2026-10-16): 12 stages at a = -0.78 (16 at -0.7 chirp alike, but cost the FM1 0.8 % more than CELESTIAL:
- * float adds cost it ~6 cycles); host 14.1 ns a sample on core 1 and 3.0 on core 0, CELESTIAL 18.7 and 6.8. One trip
- * is longer than a block, so the loop runs a whole block at a time: the delay's reads for the block, the filters,
- * the allpass stages two at a time with their histories in registers (a load and a store per sample per pair instead
- * of per stage), then the delay's writes. Lines int16 in one 4096 ring (FV-1 layout, as the tank). */
-#define SP_RING 4096u
+ * highs: the dispersion. The springs' trips (34.7 and 43.2 ms) differ, so their flutter echoes do not line up; each
+ * feeds one side, a little of the other mixed in. TIME 0 .. 100: RT60 ~0.3 .. ~4.5 s; past 100 the dub feedback
+ * (below); level as before.
+ * 2026-11-02, more sproing (the user: "it should sproing a bit more"): a real tank's chirp spreads over tens of ms a
+ * trip (the paper's ~100 stages), this one's was ~6.6 ms (150 Hz against 4.5 kHz, the first echo). A spring carries
+ * nothing much above ~4.5 kHz, so its loops now run at half rate (22.05 kHz, the MFX brigades' trick): each stage's
+ * sample twice as long, twice the stages for the same work, 24 at K = 2 (no mirrored chirp under the half rate's
+ * Nyquist): ~15 ms a trip, 30 by the second echo. The front, as a tank's driver: the send high-passed (~120 Hz: a
+ * tank has little bass, but the lowest notes chirp the longest, the "dwoing"), the driver's soft headroom (a hard hit
+ * crashes the springs a little), the transducer's top (~4.5 kHz, the half rate's anti-alias filter too).
+ * The loops run block-wise: the delay's reads for the block, the filters, the allpass stages two at a time with their
+ * histories in registers, then the delay's writes. Lines int16 in one ring (FV-1 layout, as the tank). Half rate: the
+ * back takes the send's frames in pairs (across blocks: a pair may straddle two), averaged; its echoes come back up by
+ * linear interpolation, a frame late. */
+#define SP_RING 2048u
 #define SP_MASK (SP_RING - 1u)
-#define SP_D1 1531u                                       /* one trip, samples */
-#define SP_D2 1907u
+#define SP_D1 765u                                        /* one trip, half-rate samples (34.7 ms) */
+#define SP_D2 953u                                        /* (43.2 ms) */
 #define SP_S1 0u                                          /* each line's region start */
 #define SP_S2 (SP_D1 + 1u)
-PS_STATIC_ASSERT(SP_S2 + SP_D2 + 1u <= SP_RING && SP_D1 >= FX_BLOCK_MAX && SP_D2 >= FX_BLOCK_MAX,
+#define SP_HB (FX_BLOCK_MAX / 2u + 1u)                    /* a block's half-rate samples, at most */
+PS_STATIC_ASSERT(SP_S2 + SP_D2 + 1u <= SP_RING && SP_D1 >= SP_HB && SP_D2 >= SP_HB,
                  "the springs fit their ring, and a trip is at least a block");
 #ifndef SP_STAGES
-#define SP_STAGES 12                                      /* allpass stages a spring (even: two a pass) */
+#define SP_STAGES 24                                      /* allpass stages a spring (even: two a pass) */
 #endif
-#define SP_K 3                                            /* the stretch: z^-3 */
+#define SP_K 2                                            /* the stretch: z^-2 at half rate */
 #ifndef SP_A
-#define SP_A (-0.78f)                                     /* per stage 24 samples at DC, 0.4 at 7.35 kHz */
+#define SP_A (-0.78f)                                     /* per stage 16 half-rate samples at DC (1.5 ms), 0.25 at 5.5 kHz */
 #endif
 #define SP_IN_GAIN 0.2f                                   /* the send into the loops (headroom in the lines) */
 #ifndef SP_OUT_GAIN
-#define SP_OUT_GAIN 0.69f                                 /* x 4 / 4: each side 3/4 its spring + 1/4 the other's */
+#define SP_OUT_GAIN 0.49f                                 /* x 4 / 4: each side 3/4 its spring + 1/4 the other's
+                                                           * (2026-11-02: -3 dB, the lower high-pass's bass: pink
+                                                           * noise's wet level as before) */
 #endif
-#define SP_HP_C 0.0233f                                   /* the front's high-pass, ~165 Hz */
+#define SP_HP_C 0.0170f                                   /* the front's high-pass, ~120 Hz */
+#define SP_TOP_C 0.473f                                   /* the transducer's top, ~4.5 kHz (a 1-pole at the full rate) */
+#define SP_DRV (1.f / 24000.f)                            /* the driver's headroom: flat at 24000 (the send's units) */
 #define SP_TINY 1e-4f                                     /* a state this small (LSB) is flushed to 0 at a block's end */
 PS_STATIC_ASSERT((SP_STAGES & 1) == 0, "the stages run in pairs");
+/* The dub feedback (2026-11-02, the user's: TIME past 100, as DELAY FEEDBACK past 100): the tank's return patched back
+ * into its send on the desk, through the channel's EQ (the boom and the fizz off: 250 Hz .. 2.5 kHz, 1-poles at half
+ * rate) and into the driver again, its headroom holding the howl (the return's alone: the send itself unchanged). One trip late, as on the desk. Over TIME 100 .. 127
+ * the feedback rises (self-oscillating from ~SP_FB_ON) while the springs' own decay backs off (their ring's headroom:
+ * the howl is the desk's loop, not the tank's) */
+#ifndef SP_FB_G
+#define SP_FB_G 0.5f                                      /* the return's gain into the send at TIME 127 (x k^2: on
+                                                           * the edge at ~113, a held tail; ~2 s to howl at 116, ~1 at
+                                                           * 120, at once at 127) */
+#endif
+#ifndef SP_FBH
+#define SP_FBH 700.f                                      /* the driver's headroom in the loops' units: the howl's
+                                                           * cap, -14 .. -20 dBFS out (a loud tail, not the mix) */
+#endif
+#define SP_FB_HP 0.0688f                                  /* the desk EQ: 250 Hz high-pass, 2.5 kHz low-pass (half rate) */
+#define SP_FB_LP 0.51f
 
 /* The loop is float (2026-10-16): in int, each stage's rounding (up to 1 LSB, 12 stages) went round the loop, and
  * the tail never died (measured: ~200 LSB for ever at TIME 127, a faint tone). In float the stages' error is ~2^-16
@@ -610,16 +639,20 @@ PS_STATIC_ASSERT((SP_STAGES & 1) == 0, "the stages run in pairs");
  * SP_TINY are flushed at each block's end, so the FPU never meets a denormal. (The FM1's single-precision multiply
  * costs ~7 cycles, the integer one ~10.) */
 static int16_t sp_ring[SP_RING] SYNTH_POOL FX_LINE;     /* core 1 (sp_p, sp_sp: fx_spring_c1, below) */
-static float sp_hp;                                       /* the front's high-pass (core 0); float: an integer one
-                                                           * stuck a few LSB off zero and fed the loops a DC */
+static float sp_hp, sp_top;                               /* the front's high-pass and top (core 0); float: an integer
+                                                           * one stuck a few LSB off zero and fed the loops a DC */
 typedef struct {
     float lp;                                             /* the loop's low-pass (no DC blocker: the send comes in
                                                            * high-passed and nothing in the loop adds a DC) */
     float h[SP_STAGES / 2][3][SP_K];                      /* each pair's last K inputs, middles and outputs */
+    float prev;                                           /* the last echo out (the interpolation's) */
 } SpSpring;
 static struct FX_LINE {                               /* core 1: the springs' state */
     SpSpring sp[2];
     uint32_t p;
+    float pend;                                           /* a pair's first frame, when a block ended between */
+    float fb_hp, fb_lp;                                   /* the dub feedback's desk EQ */
+    uint32_t odd;                                         /* 1: pend holds it */
 } fx_spring_c1;
 #define sp_sp (fx_spring_c1.sp)
 #define sp_p (fx_spring_c1.p)
@@ -627,9 +660,8 @@ static struct FX_LINE {                               /* core 1: the springs' st
 static void spring_init(void)
 {
     memset(sp_ring, 0, sizeof sp_ring);
-    memset(sp_sp, 0, sizeof sp_sp);
-    sp_p = 0;
-    sp_hp = 0.f;
+    memset(&fx_spring_c1, 0, sizeof fx_spring_c1);
+    sp_hp = sp_top = 0.f;
 }
 
 static inline float sp_flush(float v) { return v < SP_TINY && v > -SP_TINY ? 0.f : v; }
@@ -640,36 +672,37 @@ static inline float sp_flush(float v) { return v < SP_TINY && v > -SP_TINY ? 0.f
  * this one has already moved its history to the block's end */
 static inline __attribute__((always_inline)) void sp_pair(float *b, uint32_t n, float (*h)[SP_K])
 {
-    float x1 = h[0][0], x2 = h[0][1], x3 = h[0][2];
-    float m1 = h[1][0], m2 = h[1][1], m3 = h[1][2];
-    float y1 = h[2][0], y2 = h[2][1], y3 = h[2][2];
+    float x1 = h[0][0], x2 = h[0][1];
+    float m1 = h[1][0], m2 = h[1][1];
+    float y1 = h[2][0], y2 = h[2][1];
     for (uint32_t s = 0; s < n; s++) {
         float x = b[s];
-        float m = x3 + SP_A * (x - m3);
-        float y = m3 + SP_A * (m - y3);
-        x3 = x2; x2 = x1; x1 = x;
-        m3 = m2; m2 = m1; m1 = m;
-        y3 = y2; y2 = y1; y1 = y;
+        float m = x2 + SP_A * (x - m2);
+        float y = m2 + SP_A * (m - y2);
+        x2 = x1; x1 = x;
+        m2 = m1; m1 = m;
+        y2 = y1; y1 = y;
         b[s] = y;
     }
-    h[0][0] = sp_flush(x1); h[0][1] = sp_flush(x2); h[0][2] = sp_flush(x3);
-    h[1][0] = sp_flush(m1); h[1][1] = sp_flush(m2); h[1][2] = sp_flush(m3);
-    h[2][0] = sp_flush(y1); h[2][1] = sp_flush(y2); h[2][2] = sp_flush(y3);
+    h[0][0] = sp_flush(x1); h[0][1] = sp_flush(x2);
+    h[1][0] = sp_flush(m1); h[1][1] = sp_flush(m2);
+    h[2][0] = sp_flush(y1); h[2][1] = sp_flush(y2);
 }
+PS_STATIC_ASSERT(SP_K == 2, "sp_pair keeps two samples of history");
 
-/* one spring over a block: in, the front's send; out, its echoes (the trip's end, as read) */
-static inline __attribute__((always_inline)) void spring_run(SpSpring *sp, const int32_t *in, float *out, uint32_t n,
+/* one spring over a block of n half-rate samples: in, the send; out, its echoes (the trip's end, as read) */
+static inline __attribute__((always_inline)) void spring_run(SpSpring *sp, const float *in, float *out, uint32_t n,
                                                              const uint32_t start, const uint32_t d, float decay,
                                                              float lp_c)
 {
-    float b[FX_BLOCK_MAX];
+    float b[SP_HB];
     uint32_t p = sp_p;
     float lp = sp->lp;
     for (uint32_t s = 0; s < n; s++) {                    /* the trip's end, filtered, decayed, plus the send */
         float o = (float)sp_ring[(p - s + start + d) & SP_MASK];
         out[s] = o;
         lp += lp_c * (o - lp);
-        b[s] = (float)in[s] + decay * lp;
+        b[s] = in[s] + decay * lp;
     }
     sp->lp = sp_flush(lp);
     for (uint32_t k = 0; k < SP_STAGES; k += 2)           /* the dispersion */
@@ -679,32 +712,82 @@ static inline __attribute__((always_inline)) void spring_run(SpSpring *sp, const
         sp_ring[(p - s + start) & SP_MASK] = (int16_t)clamp16((int32_t)b[s]);
 }
 
-/* the front's part: the send high-passed and scaled into the loops, in place */
+/* the front's part, the tank's driver: the send high-passed, through the driver's headroom and the transducer's top,
+ * scaled into the loops, in place */
 static void spring_front(int32_t *x, uint32_t n)
 {
-    float hp = sp_hp;
+    float hp = sp_hp, top = sp_top;
     for (uint32_t s = 0; s < n; s++) {
         float v = (float)x[s];
         hp += SP_HP_C * (v - hp);
-        x[s] = (int32_t)((v - hp) * SP_IN_GAIN);
+        float u = (v - hp) * SP_DRV;
+        u = u > 1.f ? 1.f : u < -1.f ? -1.f : u * (1.5f - 0.5f * u * u);
+        top += SP_TOP_C * (u * (1.f / SP_DRV) - top);
+        x[s] = (int32_t)(top * SP_IN_GAIN);
     }
     sp_hp = sp_flush(hp);
+    sp_top = sp_flush(top);
 }
 
 /* the back: x the front's send in, the left output out; r the right */
 static void spring_block(const MasterPerformancePreset *p, int32_t *x, int32_t *r, uint32_t n)
 {
     int32_t knob_t = p->reverb_decay > 127u ? 127 : p->reverb_decay, knob_d = p->reverb_damp > 127u ? 127 : p->reverb_damp;
-    float decay = 0.52f + (float)knob_t * (0.44f / 127.f);   /* a trip's gain 0.52 .. 0.96 */
-    float lp_c = 0.51f - (float)knob_d * (0.32f / 127.f);    /* the loop's low-pass ~5 kHz .. ~1.5 kHz */
-    float o1[FX_BLOCK_MAX], o2[FX_BLOCK_MAX];
-    spring_run(&sp_sp[0], x, o1, n, SP_S1, SP_D1, decay, lp_c);
-    spring_run(&sp_sp[1], x, o2, n, SP_S2, SP_D2, decay, lp_c);
-    sp_p = (sp_p - n) & SP_MASK;
-    for (uint32_t s = 0; s < n; s++) {                    /* each side its spring, a quarter of the other */
-        x[s] = (int32_t)((o1[s] * 3.f + o2[s]) * SP_OUT_GAIN);
-        r[s] = (int32_t)((o2[s] * 3.f + o1[s]) * SP_OUT_GAIN);
+    float decay, fb = 0.f;
+    if (knob_t <= 100)
+        decay = 0.52f + (float)knob_t * (0.44f / 100.f);    /* a trip's gain 0.52 .. 0.96 */
+    else {                                                  /* the dub feedback (above) */
+        float k = (float)(knob_t - 100) * (1.f / 27.f);
+        decay = 0.96f - 0.26f * k * k * k;                 /* (late: the tail only grows as TIME turns up) */
+        fb = SP_FB_G * k * k;                               /* (rising on a curve: the top builds fastest) */
     }
+    float lp_c = 0.76f - (float)knob_d * (0.41f / 127.f);    /* the loop's low-pass ~5 kHz .. ~1.5 kHz (half rate) */
+    float u[SP_HB], o1[SP_HB], o2[SP_HB];
+    uint32_t m = 0, odd = fx_spring_c1.odd;
+    float pend = fx_spring_c1.pend;
+    for (uint32_t s = 0; s < n; s++) {                    /* the frames in pairs, averaged */
+        if (odd) u[m++] = 0.5f * (pend + (float)x[s]);
+        else pend = (float)x[s];
+        odd ^= 1u;
+    }
+    if (fb > 0.f) {                                       /* the return (the trips' ends, read ahead), the desk EQ, back
+                                                           * into the driver with the send */
+        float hp = fx_spring_c1.fb_hp, lp = fx_spring_c1.fb_lp;
+        for (uint32_t s = 0; s < m; s++) {
+            float v = 0.5f * ((float)sp_ring[(sp_p - s + SP_S1 + SP_D1) & SP_MASK]
+                              + (float)sp_ring[(sp_p - s + SP_S2 + SP_D2) & SP_MASK]);
+            hp += SP_FB_HP * (v - hp);
+            lp += SP_FB_LP * (v - hp - lp);
+            float z = fb * lp * (1.f / SP_FBH);             /* (the return alone: the send as below TIME 100) */
+            z = z > 1.f ? 1.f : z < -1.f ? -1.f : z * (1.5f - 0.5f * z * z);
+            u[s] += z * SP_FBH;
+        }
+        fx_spring_c1.fb_hp = sp_flush(hp);
+        fx_spring_c1.fb_lp = sp_flush(lp);
+    }
+    spring_run(&sp_sp[0], u, o1, m, SP_S1, SP_D1, decay, lp_c);
+    spring_run(&sp_sp[1], u, o2, m, SP_S2, SP_D2, decay, lp_c);
+    sp_p = (sp_p - m) & SP_MASK;
+    /* back up: a pair's first frame the last echo, its second halfway to the new one (a frame late) */
+    float a = sp_sp[0].prev, b = sp_sp[1].prev;
+    odd = fx_spring_c1.odd;
+    m = 0;
+    for (uint32_t s = 0; s < n; s++) {                    /* each side its spring, a quarter of the other */
+        float e1 = a, e2 = b;
+        if (odd) {
+            e1 = 0.5f * (a + o1[m]);
+            e2 = 0.5f * (b + o2[m]);
+            a = o1[m];
+            b = o2[m++];
+        }
+        odd ^= 1u;
+        x[s] = (int32_t)((e1 * 3.f + e2) * SP_OUT_GAIN);
+        r[s] = (int32_t)((e2 * 3.f + e1) * SP_OUT_GAIN);
+    }
+    sp_sp[0].prev = a;
+    sp_sp[1].prev = b;
+    fx_spring_c1.odd = odd;
+    fx_spring_c1.pend = pend;
 }
 
 /* ---- blocks (2026-10-15): the same integer arithmetic as the per-sample code before, in the same order, with the
@@ -768,8 +851,16 @@ static void delay_targets(const MasterPerformancePreset *p, int pp, int bbd)
  * cutoff, howls from 116 up to DELAY HP 100 and only at 127 at DELAY HP 127 (the top's 3.0 cap) */
 #define DELAY_HP_TOP_TAPE 200000.f
 #define DELAY_HP_TOP_BBD 550000.f
-typedef struct { int32_t lo, hi, hi2, run_c; float scoop_c; int runaway; } DelayFb;
-static DelayFb delay_fb(uint32_t knob, uint32_t degrade, uint32_t hp, int bbd)
+/* LOOP TONE darker (2026-11-02, fx.h): the runaway's low-pass, in the loop at any FEEDBACK, each repeat through it
+ * again: from ~7.6 kHz just under the middle to ~400 Hz at 0 (the lower of it and the runaway's own past 100). At
+ * the middle and below FEEDBACK 101 the loop is as before, bit for bit */
+/* LOOP TONE (fx.h): how dark, 0 .. 1 below the middle; DELAY HP's amount (0 off, 1..127) above it */
+static inline float tone_dark(uint8_t v) { return v < 64u ? (float)(64u - v) * (1.f / 64.f) : 0.f; }
+static inline uint32_t tone_hp(uint8_t v) { return v > 64u ? ((uint32_t)(v > 127u ? 127u : v) - 64u) * 127u / 63u : 0u; }
+#define TONE_DARK_HZ 8000.f
+#define TONE_DARK_OCT 4.3f
+typedef struct { int32_t lo, hi, hi2, run_c; float scoop_c; int runaway, lp_on; } DelayFb;
+static DelayFb delay_fb(uint32_t knob, uint32_t degrade, uint32_t hp, int bbd, uint8_t tone)
 {
     DelayFb f;
     /* the top: 1.22 at DEGRADE 0 .. 1.62 at 127 (a worn tape's or BBD's filters lose more each pass: without this,
@@ -784,6 +875,13 @@ static DelayFb delay_fb(uint32_t knob, uint32_t degrade, uint32_t hp, int bbd)
     f.hi2 = g - f.lo - f.hi;                               /* (only DELAY HP's top reaches it) */
     f.runaway = k > 100;
     f.run_c = 32767 - (k > 100 ? (k - 100) * 900 : 0);     /* 127: 8467, ~2 kHz */
+    f.lp_on = f.runaway;
+    if (tone < 64u) {                                      /* LOOP TONE darker */
+        float fc = TONE_DARK_HZ * amp_exp2f(-TONE_DARK_OCT * tone_dark(tone));
+        int32_t c = (int32_t)(32767.f * (1.f - amp_exp2f(-fc * (2.f * 3.14159265f * 1.442695f / 44100.f))));
+        f.run_c = f.runaway && f.run_c < c ? f.run_c : c;
+        f.lp_on = 1;
+    }
     return f;
 }
 
@@ -802,7 +900,7 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
     const int32_t gap_tgt = tp.gap_tgt_q16, speed_tgt = tp.speed_tgt_q24;
     const int32_t wow_q8 = wow * WOW_STEP_Q8, flutter_q8 = flutter * FLUTTER_STEP_Q8;
     const int32_t loss_c = head_loss_q15(filter), hp_c = tape_hp_q15(filter);
-    const DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), 0);             /* (delay_fb: past 100 it self-oscillates) */
+    const DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), 0, fx_live[FX_L_TONE]);             /* (delay_fb: past 100 it self-oscillates) */
     int32_t run_lp = tp.run_lp;
     float scoop = fb.scoop_c != 0.f ? tp.scoop : 0.f;
     uint32_t seed = tp.seed_rng;
@@ -851,11 +949,13 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
 
         /* record: input plus feedback, saturated, then band-limited for the tape speed */
         int32_t fbs = o, hiss = 0;
-        if (fb.runaway) {                                 /* past 100: the darkening low-pass and the hiss seed */
+        if (fb.lp_on) {                                   /* past 100 or LOOP TONE darker: the darkening low-pass */
             run_lp += mr_mulq15(o - run_lp, fb.run_c);
             fbs = run_lp;
-            seed = seed * 1664525u + 1013904223u;
-            hiss = (int32_t)(int16_t)(seed >> 16) >> 12;
+            if (fb.runaway) {                             /* past 100: the hiss seed */
+                seed = seed * 1664525u + 1013904223u;
+                hiss = (int32_t)(int16_t)(seed >> 16) >> 12;
+            }
         }
         if (fb.scoop_c != 0.f) {                          /* DELAY HP */
             scoop += ((float)fbs - scoop) * fb.scoop_c;
@@ -916,7 +1016,7 @@ static void bbd_delay_block(const MasterPerformancePreset *p, const int32_t *in,
     if (lp_c > lp_cap) lp_c = lp_cap;
     const int32_t hp_c = tape_hp_q15(filter), nz_k = 8 + (int32_t)filter;
     const int32_t wow_q8 = wow * WOW_STEP_Q8, flutter_q8 = flutter * FLUTTER_STEP_Q8;
-    const DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), 1);
+    const DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), 1, fx_live[FX_L_TONE]);
     int32_t run_lp = tp.bb_run_lp;
     float scoop = fb.scoop_c != 0.f ? tp.bb_scoop : 0.f;
     uint32_t wpos = tp.wpos_q16, wow_ph = tp.wow_ph, flutter_ph = tp.flutter_ph, rng = tp.bb_rng;
@@ -961,10 +1061,11 @@ static void bbd_delay_block(const MasterPerformancePreset *p, const int32_t *in,
 
         /* record: input plus feedback plus the noise, saturated, through the anti-alias filter; a bucket each tick */
         int32_t fbs = o;
-        if (fb.runaway) {                                 /* past 100: the darkening low-pass and the hiss seed */
+        if (fb.lp_on) {                                   /* past 100 or LOOP TONE darker: the darkening low-pass */
             run_lp += mr_mulq15(o - run_lp, fb.run_c);
             fbs = run_lp;
-            noise += (int32_t)(int16_t)(rng >> 16) >> 9;   /* (8x the tape's: its filters round toward zero and
+            if (fb.runaway)                               /* past 100: the hiss seed */
+                noise += (int32_t)(int16_t)(rng >> 16) >> 9;   /* (8x the tape's: its filters round toward zero and
                                                            * swallowed a smaller seed; measured: from silence at 127 both
                                                            * reach their howl in ~20 s) */
         }
@@ -1118,12 +1219,133 @@ void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t
 void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in, int32_t *reverb_io, int32_t *wet_r,
                       uint32_t n)
 {
-    /* Two independent effects, each on its own send: the delay output is not fed into the reverb. */
-    int32_t dl[FX_BLOCK_MAX], dr[FX_BLOCK_MAX];
+    /* Two effects, each on its own send, and the cross-feeds between them in the render's order (fx.h) */
+    int32_t din[FX_BLOCK_MAX], dl[FX_BLOCK_MAX], dr[FX_BLOCK_MAX];
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
-    fx_delay_block(p, delay_in, dl, dr, n);
+    memcpy(din, delay_in, n * sizeof din[0]);
+    fx_cross_to_dly(din, n);
+    fx_delay_block(p, din, dl, dr, n);
+    fx_cross_to_rev(dl, dr, reverb_io, n);
     fx_reverb_block(p, reverb_io, wet_r, n);
+    fx_cross_keep(reverb_io, wet_r, n);
     fx_mix_block(dl, dr, reverb_io, wet_r, n);
+}
+
+/* ---- the cross-feeds (2026-11-02, fx.h) ----
+ * Each way: the source's two sides summed (mono, as the sends), a 1-pole high-pass at ~150 Hz and low-pass at ~4.5
+ * kHz (the loop darkens and thins a little each time round, as through old desks and tape: never mud, never fizz;
+ * LOOP TONE moves them, as it does the delay's own feedback: the loop follows the repeats),
+ * times the amount (XF_MAX (k / 127)^2: fine at the bottom; ramped over the block, no zipper), soft-clipped alone on
+ * XF_H (a return holds at its headroom: a loop blooms up to it and cannot run away) and added to the other's send. */
+#ifndef XF_MAX
+#define XF_MAX 0.7f                                       /* the amount at 127 (both at 127, FEEDBACK 80, TIME 90: every
+                                                           * reverb type blooms and holds, -15 .. -22 dBFS) */
+#endif
+#ifndef XF_H
+#define XF_H 1500.f                                       /* a return's headroom, the sends' units (the bloom's cap: a
+                                                           * hot send settles where a quiet one does) */
+#endif
+#define XF_HP 0.0211f                                     /* ~150 Hz (LOOP TONE thinner: DELAY HP's, when higher) */
+#define XF_LP_HZ 4500.f                                   /* the low-pass at LOOP TONE 64 (darker: down to ~400 Hz) */
+uint8_t fx_live[FX_L_COUNT] = {64u, 64u, 0u, 0u};        /* BALANCE, LOOP TONE at their middles; no cross-feed */
+static struct {
+    float hp[2], lp[2], g[2];                             /* each way's filters, its gain at the last block's end */
+    float rev[FX_BLOCK_MAX];                              /* the reverb's last pass, mono (REV > DLY's source) */
+    uint32_t nrev;
+    float hp_c, lp_c;                                     /* the band-limit's coefficients at LOOP TONE tone_key */
+    int tone_key;
+    float lvl[2];                                         /* each way's return as a share of XF_H, held and falling */
+} xf;
+
+static void xf_init(void) { memset(&xf, 0, sizeof xf); xf.tone_key = -1; }   /* (the amounts, fx_live, are the UI's) */
+
+/* 1 if way j is on, or still ramping down to off */
+static inline int xf_on(int j) { return fx_cross[j] != 0u || xf.g[j] != 0.f; }
+
+/* the band-limit for LOOP TONE: the high-pass DELAY HP's where above ~150 Hz, the low-pass 4.5 kHz falling to ~400 Hz */
+static void xf_tone(void)
+{
+    uint8_t v = fx_live[FX_L_TONE];
+    if ((int)v == xf.tone_key)
+        return;
+    uint32_t hp = tone_hp(v);
+    float c = hp ? DELAY_HP_C0 * amp_exp2f((float)(int32_t)(hp - 1u) * DELAY_HP_OCT) : 0.f;
+    xf.hp_c = c > XF_HP ? c : XF_HP;
+    xf.lp_c = 1.f - amp_exp2f(-XF_LP_HZ * amp_exp2f(-3.5f * tone_dark(v)) * (2.f * 3.14159265f * 1.442695f / 44100.f));
+    xf.tone_key = (int)v;
+}
+
+/* way j: src (mono, n) into dst, the amount ramped from its last */
+static void xf_way(int j, const float *src, int32_t *dst, uint32_t n)
+{
+    float k = (float)(fx_cross[j] > 127u ? 127u : fx_cross[j]) * (1.f / 127.f), g1 = XF_MAX * k * k;
+    float g = xf.g[j], dg = (g1 - g) * (1.f / (float)n), hp = xf.hp[j], lp = xf.lp[j], peak = 0.f;
+    xf_tone();
+    const float hp_c = xf.hp_c, lp_c = xf.lp_c;
+    for (uint32_t s = 0; s < n; s++) {
+        g += dg;
+        hp += hp_c * (src[s] - hp);
+        lp += lp_c * (src[s] - hp - lp);
+        float z = g * lp * (1.f / XF_H);
+        z = z > 1.f ? 1.f : z < -1.f ? -1.f : z * (1.5f - 0.5f * z * z);
+        dst[s] += (int32_t)(z * XF_H);
+        float a = z < 0.f ? -z : z;
+        peak = a > peak ? a : peak;
+    }
+    xf.g[j] = g1;
+    xf.hp[j] = hp < 1e-3f && hp > -1e-3f ? 0.f : hp;      /* (no denormals) */
+    xf.lp[j] = lp < 1e-3f && lp > -1e-3f ? 0.f : lp;
+    xf.lvl[j] = peak > xf.lvl[j] * 0.97f ? peak : xf.lvl[j] * 0.97f;   /* (held, falling ~0.3 s) */
+}
+
+float fx_cross_level(void) { return xf.lvl[0] > xf.lvl[1] ? xf.lvl[0] : xf.lvl[1]; }
+
+void fx_tone_sync(MasterPerformancePreset *p)
+{
+    static uint8_t last_tone = 64u, last_hp = 0u;
+    uint8_t hp = DELAY_HP(p), v = fx_live[FX_L_TONE];
+    if (v != last_tone) {                                 /* turned: the thinner half is DELAY HP */
+        hp = (uint8_t)tone_hp(v);
+        p->delay_pingpong = (uint8_t)((p->delay_pingpong & 1u) | (uint8_t)(hp << 1));
+    } else if (hp != last_hp) {                           /* loaded (or set elsewhere): the knob follows */
+        v = hp ? (uint8_t)(64u + ((uint32_t)hp * 63u + 126u) / 127u) : 64u;
+        fx_live[FX_L_TONE] = v;
+    }
+    last_tone = v;
+    last_hp = hp;
+}
+
+void fx_cross_to_dly(int32_t *delay_in, uint32_t n)
+{
+    if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
+    if (!xf_on(FX_X_REV_DLY))
+        xf.lvl[FX_X_REV_DLY] *= 0.97f;
+    if (n == 0u || !xf_on(FX_X_REV_DLY))
+        return;
+    for (uint32_t s = xf.nrev; s < n; s++) xf.rev[s] = 0.f;   /* (a pass longer than the last) */
+    xf_way(FX_X_REV_DLY, xf.rev, delay_in, n);
+}
+
+void fx_cross_to_rev(const int32_t *delay_l, const int32_t *delay_r, int32_t *reverb_in, uint32_t n)
+{
+    float m[FX_BLOCK_MAX];
+    if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
+    if (!xf_on(FX_X_DLY_REV))
+        xf.lvl[FX_X_DLY_REV] *= 0.97f;
+    if (n == 0u || !xf_on(FX_X_DLY_REV))
+        return;
+    for (uint32_t s = 0; s < n; s++) m[s] = 0.5f * ((float)delay_l[s] + (float)delay_r[s]);
+    xf_way(FX_X_DLY_REV, m, reverb_in, n);
+}
+
+void fx_cross_keep(const int32_t *rev_l, const int32_t *rev_r, uint32_t n)
+{
+    if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
+    xf.nrev = 0u;
+    if (!xf_on(FX_X_REV_DLY))
+        return;
+    for (uint32_t s = 0; s < n; s++) xf.rev[s] = 0.5f * ((float)rev_l[s] + (float)rev_r[s]);
+    xf.nrev = n;
 }
 
 void fx_mix_block(const int32_t *delay_l, const int32_t *delay_r, int32_t *rev_l, int32_t *rev_r, uint32_t n)

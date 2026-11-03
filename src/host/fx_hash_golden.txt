@@ -28,9 +28,9 @@ reverb 5 hot         9be4902c
 reverb 5 bbd         949f4888
 reverb 5 hp 0       dcc57bb5
 reverb 5 hp 1       c28672a7
-reverb 0 pingpong 0  efec8006
-reverb 0 pingpong 1  169b4641
-reverb 0 hot         e015449d
-reverb 0 bbd         a76e9ba3
-reverb 0 hp 0       3d1cf0d0
-reverb 0 hp 1       c3cff444
+reverb 0 pingpong 0  6f0a0c4d
+reverb 0 pingpong 1  91424904
+reverb 0 hot         38c1b3e9
+reverb 0 bbd         6950b7e2
+reverb 0 hp 0       ef7c05ad
+reverb 0 hp 1       67c3808b

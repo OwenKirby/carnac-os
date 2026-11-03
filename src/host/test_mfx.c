@@ -15,6 +15,11 @@
  *  9. ENS+PHASER: its level on pink noise at five settings within 1 dB of LEVEL_DB (as STONE PHASER), bounded.
  * 10. CHORUS: its level on pink noise at five settings, bounded.
  * 11. The stereo image kept: left-only input leaves the right silent on every type.
+ * 13. BBD FLANGER: level per MODE, full FEEDBACK bounded, MODE III crossing; PITCH SHIFT in tune on a sustained
+ *     tone (+-15 cents), its levels, bounded.
+ * 12. TAPE FLANGER: its level on pink noise at five settings within 1 dB of TF_POS_DB / TF_NEG_DB, bounded loud; through zero (TAPE 0,
+ *     NEGATIVE, the thumb sweeping through the reference): the sound all but vanishes where the decks meet, and not
+ *     quite with the tape's wobbles (TAPE 127); POLARITY flipped mid-tone without a click.
  *   gcc -O2 -Isrc -Isrc/dsp src/dsp/mfx.c src/host/test_mfx.c -lm -o test_mfx */
 #include <complex.h>
 #include <math.h>
@@ -25,6 +30,8 @@
 #define SR 44100.0
 #define LEVEL_DB 2.0
 #define CH_LEVEL_DB 0.8                     /* CHORUS at MIX 64 */
+#define TF_POS_DB 1.5                       /* TAPE FLANGER POSITIVE: the decks' low end adds, as STONE PHASER's */
+#define TF_NEG_DB -2.5                      /* ... NEGATIVE: its low end thinned where the decks meet */
 #define SP_OUT 1.30                         /* mfx.c's */
 static int fails;
 
@@ -283,11 +290,15 @@ int main(void)
      *    as a quick turn's detents); the output's second difference while it turns stays within 1.5x of the larger of
      *    before and after, settled (unglided, each step steps the output: the zipper) */
     {
-        static const uint8_t T[4] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS};
+        static const uint8_t T[7] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
+                                     MFX_BBD_FLANGER, MFX_PITCH_SHIFT};
+        static const char *const TN[7] = {"STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS", "TAPE FLANGER",
+                                          "BBD FLANGER", "PITCH SHIFT"};
         static float l[128], r[128];
-        for (int ti = 0; ti < 4; ti++)
-            for (int kk = 0; kk < (ti == 2 ? 7 : ti == 3 ? 6 : 5); kk++) {   /* the knobs, lr, row[] */
-                MfxParams p = {T[ti], {64, 64, 64, 64}, 64, {64, 64}};
+        for (int ti = 0; ti < 7; ti++)
+            for (int kk = 0; kk < (ti == 2 ? 7 : ti == 3 ? 6 : 5); kk++) {   /* (TAPE FLANGER's POLARITY: 12) */   /* the knobs, lr, row[] */
+                MfxParams p = {T[ti], {64, 64, 64, 64}, 64, {(uint8_t)(ti == 5 ? 0 : 64), (uint8_t)(ti >= 4 ? 0 : 64)}};
+                if (T[ti] == MFX_PITCH_SHIFT) p.knob[MFX_K_PS_PITCH] = 19;   /* (+7: 0..24) */
                 double ph = 0.0, before = 0.0, after = 0.0, during = 0.0, y1 = 0.0, y2 = 0.0;
                 *(kk < 4 ? &p.knob[kk] : kk == 4 ? &p.lr : &p.row[kk - 5]) = 0;
                 mfx_init();
@@ -310,7 +321,7 @@ int main(void)
                 double calm = before > after ? before : after;
                 if (during > 1.5 * calm + 1.0) {
                     printf("%s knob %d turned: zipper (second difference %.0f while turning, %.0f before, %.0f after)\n",
-                           ti == 3 ? "CHORUS" : ti == 2 ? "ENS+PHASER" : ti ? "ENSEMBLE" : "STONE PHASER", kk + 1, during, before, after);
+                           TN[ti], kk + 1, during, before, after);
                     fails++;
                 }
             }
@@ -388,12 +399,16 @@ int main(void)
     /* 11. the stereo image kept: every type with sound on the left only leaves the right all but silent (its own hiss,
      *     ducked by the level, at most), at WIDTH 0 and 127 */
     {
-        static const uint8_t T[4] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS};
+        static const uint8_t T[7] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
+                                     MFX_BBD_FLANGER, MFX_PITCH_SHIFT};
         static float l[128], r[128];
-        for (int ti = 0; ti < 4; ti++)
+        for (int ti = 0; ti < 7; ti++)
             for (int wi = 0; wi < 2; wi++) {
                 mfx_init();
-                mfx_params[0] = (MfxParams){T[ti], {64, 64, 64, 64}, (uint8_t)(wi ? 127 : 0), {30, 40}};
+                mfx_params[0] = (MfxParams){T[ti], {64, 64, 64, 64}, (uint8_t)(wi ? 127 : 0),
+                                            {(uint8_t)(T[ti] == MFX_BBD_FLANGER ? 0 : 30),
+                                             (uint8_t)(T[ti] == MFX_TAPE_FLANGER ? 1 : T[ti] == MFX_BBD_FLANGER ? 0 : 40)}};
+                if (T[ti] == MFX_PITCH_SHIFT) mfx_params[0].knob[MFX_K_PS_PITCH] = 19;
                 srand(7);
                 double el = 0.0, er = 0.0;
                 for (int b = 0; b < 1378; b++) {
@@ -409,6 +424,212 @@ int main(void)
                 }
             }
         printf("stereo image: left-only input stays left on every type\n");
+    }
+
+    /* 12. TAPE FLANGER: pink noise level within 1 dB of TF_POS_DB (NEGATIVE: TF_NEG_DB, its low end thinned where the
+     *     decks meet), bounded loud; through zero; POLARITY flipped without a click */
+    {
+        static const uint8_t K[5][7] = {{40, 40, 64, 40, 0, 0, 0}, {32, 80, 127, 0, 127, 0, 0},
+                                        {100, 127, 127, 127, 64, 0, 0}, {40, 40, 64, 40, 0, 0, 1},
+                                        {0, 0, 0, 127, 0, 0, 0}};
+        static float l[128], r[128];
+        for (int ki = 0; ki < 5; ki++) {
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {K[ki][0], K[ki][1], K[ki][2], K[ki][3]}, K[ki][4],
+                                        {K[ki][5], K[ki][6]}};
+            srand(8);
+            double ein = 0.0, eout = 0.0, peak = 0.0;
+            int bad = 0;
+            for (int b = 0; b < 3445; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) {
+                    if (!isfinite(l[i]) || !isfinite(r[i])) bad = 1;
+                    eout += (double)l[i] * l[i];
+                    if (fabs(l[i]) > peak) peak = fabs(l[i]);
+                }
+            }
+            double db = 10.0 * log10(eout / ein), want = K[ki][6] ? TF_NEG_DB : TF_POS_DB;
+            printf("TAPE FLANGER %3u %3u %3u %3u L/R %3u %s: pink noise %+.2f dB\n", K[ki][0], K[ki][1], K[ki][2],
+                   K[ki][3], K[ki][4], K[ki][6] ? "NEGATIVE" : "POSITIVE", db);
+            if (bad || fabs(db - want) > 1.0) { printf("TAPE FLANGER level off its %+.1f dB or not finite\n", want); fails++; }
+            if (peak > 400000.0) { printf("TAPE FLANGER not bounded\n"); fails++; }
+        }
+        mfx_init();
+        mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {127, 127, 127, 127}, 127, {0, 1}};
+        double peak = 0.0;
+        for (int b = 0; b < 3445; b++) {
+            for (int i = 0; i < 128; i++) { l[i] = (float)((rand() / (double)RAND_MAX - 0.5) * 120000.0); r[i] = -l[i]; }
+            mfx_layer_block(0, l, r, 128);
+            for (int i = 0; i < 128; i++) if (!(fabs(l[i]) <= peak)) peak = fabs(l[i]);
+        }
+        printf("TAPE FLANGER everything full, loud noise: peak %.0f\n", peak);
+        if (!isfinite(peak) || peak > 400000.0) { printf("TAPE FLANGER not bounded\n"); fails++; }
+
+        /* through zero: pink noise, the slowest thumb (0.03 Hz) through the reference (MANUAL 32, DEPTH 30: about
+         * -0.9 .. +1 ms), NEGATIVE; the quietest block (2.9 ms) against the loudest, clean tape and worn */
+        for (int ti = 0; ti < 2; ti++) {
+            uint8_t tape = (uint8_t)(ti ? 127 : 0);
+            double lo = 1e30, hi = 0.0, acc = 0.0;
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {32, 0, 30, tape}, 0, {0, 1}};
+            srand(9);
+            for (int b = 0; b < 10336; b++) {               /* 30 s: most of a sweep */
+                for (int i = 0; i < 128; i++) l[i] = r[i] = pink();
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) acc += (double)l[i] * l[i];
+                if (b > 100) {
+                    if (acc < lo) lo = acc;
+                    if (acc > hi) hi = acc;
+                }
+                acc = 0.0;
+            }
+            double dip = 10.0 * log10(lo / hi);
+            printf("TAPE FLANGER through zero, NEGATIVE, TAPE %3u: quietest block %.1f dB under the loudest\n", tape, dip);
+            if (ti == 0 && dip > -40.0) { printf("TAPE FLANGER: clean decks do not null where they meet\n"); fails++; }
+            if (ti == 1 && (dip > -10.0 || dip < -60.0)) {
+                printf("TAPE FLANGER: worn decks' null not deep-but-imperfect\n");
+                fails++;
+            }
+        }
+
+        /* POLARITY flipped mid-tone (220 Hz, the decks apart: MANUAL 100, DEPTH 0): no click */
+        {
+            double ph = 0.0, before = 0.0, during = 0.0, y1 = 0.0, y2 = 0.0;
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_TAPE_FLANGER, {100, 40, 0, 0}, 0, {0, 0}};
+            for (int b = 0; b < 800; b++) {
+                if (b == 600) mfx_params[0].row[MFX_R_POLARITY] = 1;
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 220.0 / SR; }
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) {
+                    double d2 = fabs(l[i] - 2.0 * y1 + y2);
+                    y2 = y1; y1 = l[i];
+                    if (b >= 500 && b < 600 && d2 > before) before = d2;
+                    if (b >= 600 && b < 700 && d2 > during) during = d2;
+                }
+            }
+            printf("TAPE FLANGER POLARITY flip: second difference %.0f (%.0f before)\n", during, before);
+            if (during > 1.5 * before + 1.0) { printf("TAPE FLANGER POLARITY flip clicks\n"); fails++; }
+        }
+    }
+
+    /* 13. BBD FLANGER and PITCH SHIFT (2026-11-02) */
+    {
+        static float l[128], r[128];
+        /* BBD FLANGER: pink noise level per MODE; full FEEDBACK + NEGATIVE bounded; MODE III crosses (the left's
+         * delay out of the right), MODE I keeps the image */
+        static const char *const MN[4] = {"FLANGER I", "FLANGER II", "FLANGER III", "CHORUS"};
+        for (int mo = 0; mo < 5; mo++) {
+            MfxParams p = mo < 4 ? (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {(uint8_t)mo, 0}}
+                                 : (MfxParams){MFX_BBD_FLANGER, {20, 60, 127, 127}, 0, {0, 1}};
+            double ein = 0.0, eout = 0.0, peak = 0.0;
+            int bad = 0;
+            mfx_init();
+            mfx_params[0] = p;
+            srand(10);
+            for (int b = 0; b < 3445; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) {
+                    if (!isfinite(l[i]) || !isfinite(r[i])) bad = 1;
+                    eout += (double)l[i] * l[i];
+                    if (fabs(l[i]) > peak) peak = fabs(l[i]);
+                }
+            }
+            double db = 10.0 * log10(eout / ein), want = mo == 3 ? 0.0 : LEVEL_DB;
+            printf("BBD FLANGER %-11s: pink noise %+.2f dB\n", mo < 4 ? MN[mo] : "FB 127 NEG", db);
+            if (bad || (mo < 4 && fabs(db - want) > 1.5) || (mo == 4 && db > 5.0) || peak > 400000.0) {
+                printf("BBD FLANGER level off, unbounded or not finite\n");
+                fails++;
+            }
+        }
+        for (int mo = 0; mo < 3; mo += 2) {
+            double el = 0.0, er = 0.0;
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {(uint8_t)mo, 0}};
+            srand(11);
+            for (int b = 0; b < 1378; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = pink(); r[i] = 0.f; }
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) { el += (double)l[i] * l[i]; er += (double)r[i] * r[i]; }
+            }
+            double db = 10.0 * log10(er / el + 1e-30);
+            printf("BBD FLANGER %s, left-only input: the right %.1f dB under the left\n", MN[mo], -db);
+            if ((mo == 0 && db > -40.0) || (mo == 2 && db < -12.0)) {
+                printf("BBD FLANGER: MODE I must keep the image, MODE III must cross\n");
+                fails++;
+            }
+        }
+        /* PITCH SHIFT: a sustained tone lands in tune (the energy's centre within 15 cents of the interval, 330 Hz in,
+         * MIX 127); pink noise level of the detune doubling within 1.5 dB of dry; full FEEDBACK bounded */
+        static const int S[6] = {0, 5, 7, 17, 19, 24};
+        static float tone[44100];
+        for (int si = 0; si < 6; si++) {
+            double ph = 0.0, want = 330.0 * pow(2.0, (S[si] - 12) / 12.0), e = 0.0, ef = 0.0;
+            int n = 0;
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_PITCH_SHIFT, {(uint8_t)S[si], 64, 0, 127}, 0, {0, 0}};
+            for (int b = 0; b < 700; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 330.0 / SR; }
+                mfx_layer_block(0, l, r, 128);
+                if (b >= 300) for (int i = 0; i < 128 && n < 44100; i++) tone[n++] = l[i];
+            }
+            for (double f = want - 90.0; f <= want + 90.0; f += 1.0) {
+                double w = 2.0 * cos(2.0 * M_PI * f / SR), s1 = 0.0, s2 = 0.0;
+                for (int i = 0; i < n; i++) { double s0 = tone[i] + w * s1 - s2; s2 = s1; s1 = s0; }
+                double pw = s1 * s1 + s2 * s2 - w * s1 * s2;
+                e += pw;
+                ef += pw * f;
+            }
+            double cents = 1200.0 * log2(ef / e / want);
+            printf("PITCH SHIFT %+3d st: 330 Hz in, %+.1f cents off\n", S[si] - 12, cents);
+            if (fabs(cents) > 15.0) { printf("PITCH SHIFT out of tune\n"); fails++; }
+        }
+        /* no crackle: a 330 Hz sine at each interval (MIX 127, no FEEDBACK): the output's largest second difference
+         * within 8x a clean sine's at the shifted pitch and level (the half-rate interpolation alone gives up to ~5.6x
+         * an octave down; a splice that reads outside the memory gave 40..150x, 2026-11-02) */
+        for (int si = 0; si < 6; si++) {
+            double ph = 0.0, rms = 0.0, worst = 0.0, f = 330.0 * pow(2.0, (S[si] - 12) / 12.0);
+            int n = 0;
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_PITCH_SHIFT, {(uint8_t)S[si], 64, 0, 127}, 0, {0, 0}};
+            for (int b = 0; b < 700; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8000.0 * sin(ph)); ph += 2.0 * M_PI * 330.0 / SR; }
+                mfx_layer_block(0, l, r, 128);
+                if (b >= 100) for (int i = 0; i < 128 && n < 44100; i++) tone[n++] = l[i];
+            }
+            for (int i = 0; i < n; i++) rms += (double)tone[i] * tone[i];
+            double allow = sqrt(2.0 * rms / n) * pow(2.0 * M_PI * f / SR, 2.0);
+            for (int i = 2; i < n; i++) {
+                double d2 = fabs(tone[i] - 2.0 * tone[i - 1] + tone[i - 2]);
+                if (d2 > worst) worst = d2;
+            }
+            printf("PITCH SHIFT %+3d st: worst second difference %.1fx a clean sine's\n", S[si] - 12, worst / allow);
+            if (worst > 8.0 * allow) { printf("PITCH SHIFT crackles\n"); fails++; }
+        }
+        for (int pi = 0; pi < 2; pi++) {
+            MfxParams p = pi ? (MfxParams){MFX_PITCH_SHIFT, {24, 64, 127, 127}, 0, {127, 0}}
+                             : (MfxParams){MFX_PITCH_SHIFT, {12, 75, 0, 64}, 127, {30, 0}};
+            double ein = 0.0, eout = 0.0, peak = 0.0;
+            mfx_init();
+            mfx_params[0] = p;
+            srand(12);
+            for (int b = 0; b < 3445; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) {
+                    eout += (double)l[i] * l[i];
+                    if (!(fabs(l[i]) <= peak)) peak = isfinite(l[i]) ? fabs(l[i]) : 1e30;
+                }
+            }
+            double db = 10.0 * log10(eout / ein);
+            printf("PITCH SHIFT %s: pink noise %+.2f dB, peak %.0f\n", pi ? "+12 FB 127 AGE 127" : "detune doubling", db, peak);
+            if ((pi == 0 && fabs(db) > 1.5) || (pi && db > 3.0) || peak > 400000.0) {
+                printf("PITCH SHIFT level off or unbounded\n");
+                fails++;
+            }
+        }
     }
 
     printf(fails ? "%d MFX checks failed\n" : "all MFX checks passed\n", fails);

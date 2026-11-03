@@ -12,6 +12,7 @@
 #include "dsp/seq_scale.h"           /* a NOTE lane's SCALE: the knob and the keyboard held to it */
 #include "dsp/midi_clock.h"          /* MIDI_CLOCK_BPM_BASE: the INT TEMPO row in BPM */
 #include <stddef.h>
+#include "dsp/fx.h"                  /* the MIX page's live mix (fx_live, ST_LIVE) */
 
 #if defined(__GNUC__) || defined(__clang__)
 #define UI_BARRIER() __asm__ volatile("" ::: "memory")   /* the spelling X0X's register check allows */
@@ -60,8 +61,9 @@ enum {                               /* how a row reads and writes its value */
 #define RF_BPM (1u << 6)
 #define RF_SLOT (1u << 7)
 
-enum { ST_NONE, ST_ENGINE, ST_PERF, ST_ARP, ST_LANE, ST_MFX };  /* the data block a page's rows index (ST_MFX: the
-                                                                 * layer's MfxParams) */
+enum { ST_NONE, ST_ENGINE, ST_PERF, ST_ARP, ST_LANE, ST_MFX, ST_LIVE };  /* the data block a page's rows index
+                                                                          * (ST_MFX: the layer's MfxParams; ST_LIVE:
+                                                                          * dsp/fx.h fx_live, the MIX page) */
 
 typedef struct {
     const char *label;
@@ -330,13 +332,26 @@ PS_STATIC_ASSERT(sizeof(EngineState) < 255u, "MOD_ROWS: via = 1 + an EngineState
 
 /* MFX (2026-11-01): the type, then its own rows (archs: here the types that show the row, a bit each). L/R PHASE and
  * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]) */
-static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS"};
+static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS",
+                                                              "TAPE FLANGER", "BBD FLANGER", "PITCH SHIFT"};
+static const char *const MFX_BF_MODE_NAMES[MFX_BF_MODES] = {"FLANGER I", "FLANGER II", "FLANGER III", "CHORUS"};
+/* PITCH SHIFT's PITCH (a list knob, 0..24): semitones */
+static const char *const MFX_PS_PITCH_NAMES[25] = {"-12", "-11", "-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2",
+                                                   "-1", "0", "+1", "+2", "+3", "+4", "+5", "+6", "+7", "+8", "+9",
+                                                   "+10", "+11", "+12"};
+static const char *const MFX_POLARITY_NAMES[2] = {"POSITIVE", "NEGATIVE"};
 #define MT(x) ((uint16_t)(1u << MFX_##x))
 static const UiRow MFX_ROWS[] = {
     {"TYPE", OFS(MfxParams, type), 0, MFX_OFFERED - 1, RK_BYTE, 0, MFX_TYPE_NAMES, A_ALL},
-    {"L/R PHASE", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(STONE_PHASER)},
+    {"MODE", (uint8_t)(OFS(MfxParams, row) + MFX_R_MODE), 0, MFX_BF_MODES - 1, RK_BYTE, 0, MFX_BF_MODE_NAMES,
+     MT(BBD_FLANGER)},
+    {"POLARITY", (uint8_t)(OFS(MfxParams, row) + MFX_R_POLARITY), 0, 1, RK_BYTE, 0, MFX_POLARITY_NAMES,
+     MT(TAPE_FLANGER) | MT(BBD_FLANGER)},
+    {"SPREAD", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(PITCH_SHIFT)},
+    {"L/R PHASE", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(STONE_PHASER) | MT(TAPE_FLANGER)},
     {"COLOUR", (uint8_t)(OFS(MfxParams, row) + MFX_R_COLOUR), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENS_PHASER)},
-    {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENS_PHASER) | MT(CHORUS)},
+    {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE), 0, VAL_MAX, RK_BYTE, 0, NULL,
+     MT(ENS_PHASER) | MT(CHORUS) | MT(PITCH_SHIFT)},
     {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS)},
 };
 #undef MT
@@ -348,10 +363,18 @@ static const UiRow EFFECTS_ROWS[] = {
     {"DELAY TYPE", PERF(delay_type), 0, DELAYTYPE_COUNT - 1, RK_BIT0, 0, DELAYTYPE_NAMES, A_ALL},
     {"DELAY SYNC", PERF(delay_sync), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},
     {"DEGRADE", PERF(delay_degrade), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"PING PONG", PERF(delay_pingpong), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},
-    {"DELAY HP", PERF(delay_pingpong), 0, VAL_MAX, RK_HIGH7, 0, NULL, A_ALL},
+    {"PING PONG", PERF(delay_pingpong), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},   /* (DELAY HP: MIX's LOOP TONE) */
     {"REV TYPE", PERF(reverb_type), 0, REVTYPE_COUNT - 1, RK_BYTE, 0, REVTYPE_NAMES, A_ALL},
     {"REV PREDELAY", PERF(reverb_predelay), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+};
+/* MIX (2026-11-02, dsp/fx.h fx_live): the performance's live mix, its rows its knobs (as ZONES). BALANCE in DUAL /
+ * SPLIT and DRY/WET in SINGL are one byte, a row each (the other hidden: ui_sm_row_state) */
+static const UiRow MIX_ROWS[] = {
+    {"BALANCE", FX_L_BALANCE, 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    {"DRY/WET", FX_L_BALANCE, 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    {"LOOP TONE", FX_L_TONE, 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    {"DLY > REV", FX_L_DLY_REV, 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"REV > DLY", FX_L_REV_DLY, 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
 };
 #define INST(member) OFS(InstrumentSettings, member)
 static const UiRow GLOBAL_ROWS[] = {   /* the MIDI setup first (2026-10-27, user) */
@@ -463,6 +486,7 @@ static const UiPage UI_PAGES[] = {
     SYNTH(AMP_ROWS, NROWS(AMP_ROWS), amp, 0, AmpParams),
     {MFX_ROWS, NROWS(MFX_ROWS), ST_MFX, 0, UICTX_SYNTH},
     {EFFECTS_ROWS, NROWS(EFFECTS_ROWS), ST_PERF, 0, UICTX_SYNTH},
+    {MIX_ROWS, NROWS(MIX_ROWS), ST_LIVE, 0, UICTX_SYNTH},
     {HOME1_ROWS, NROWS(HOME1_ROWS), ST_PERF, 0, UICTX_SYNTH},
     {HOME2_ROWS, NROWS(HOME2_ROWS), ST_PERF, 0, UICTX_SYNTH},
     {HOME3_ROWS, NROWS(HOME3_ROWS), ST_PERF, 0, UICTX_SYNTH},
@@ -480,8 +504,8 @@ static const uint8_t SECTION_FIRST[BTN_COUNT] = {
     UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ
 };
 static const uint8_t SECTION_COUNT[BTN_COUNT] = {
-    4, 3, 3, 3, NMODSLOT, 3, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* GLO: AMP, MFX, FX. HOME: LAYER, ZONES, the browser,
-                                                                 * GLOBAL */
+    4, 3, 3, 3, NMODSLOT, 4, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* GLO: AMP, MFX, FX, MIX. HOME: LAYER, ZONES, the
+                                                                 * browser, GLOBAL */
 };
 
 /* -------------------------------------------------------- knob table --- */
@@ -585,8 +609,21 @@ static const UiKnob MFX_KNOBS[MFX_OFFERED][4] = {
     {KMFX(MFX_K_ENS_RATE, "ENS RATE"), KMFX(MFX_K_ENS_DEPTH, "ENS DEPTH"), KMFX(MFX_K_PH_RATE, "PHS RATE"),
      KMFX(MFX_K_PH_DEPTH, "PHS DEPTH")},
     {KMFX(MFX_K_CH_RATE, "RATE"), KMFX(MFX_K_CH_DEPTH, "DEPTH"), KMFX(MFX_K_CH_DELAY, "DELAY"), KMFX(MFX_K_CH_MIX, "MIX")},
+    {KMFX(MFX_K_TF_MANUAL, "MANUAL"), KMFX(MFX_K_TF_RATE, "RATE"), KMFX(MFX_K_TF_DEPTH, "DEPTH"),
+     KMFX(MFX_K_TF_TAPE, "TAPE")},
+    {KMFX(MFX_K_BF_CENTER, "CENTER"), KMFX(MFX_K_BF_RATE, "RATE"), KMFX(MFX_K_BF_DEPTH, "DEPTH"),
+     KMFX(MFX_K_BF_FEEDBACK, "FEEDBACK")},
+    {{"PITCH", (uint8_t)(OFS(MfxParams, knob) + MFX_K_PS_PITCH), UIKNOB_LIST, 25, MFX_PS_PITCH_NAMES},
+     UIK("FINE", (uint8_t)(OFS(MfxParams, knob) + MFX_K_PS_FINE), UIKNOB_BIP), KMFX(MFX_K_PS_FEEDBACK, "FEEDBACK"),
+     KMFX(MFX_K_PS_MIX, "MIX")},
 };
 #undef KMFX
+/* MIX: knob 1 BALANCE (DUAL / SPLIT) or DRY/WET (SINGL), the same byte (fx_live) */
+static const UiKnob MIX_KNOBS[5] = {
+    UIK("BALANCE", FX_L_BALANCE, UIKNOB_BIP), UIK("TONE", FX_L_TONE, UIKNOB_BIP),          /* (short: 60 px) */
+    UIK("DLY>REV", FX_L_DLY_REV, UIKNOB_RAW), UIK("REV>DLY", FX_L_REV_DLY, UIKNOB_RAW),
+    UIK("DRY/WET", FX_L_BALANCE, UIKNOB_BIP),
+};
 static const UiKnob EFFECTS_KNOBS[4] = {
     UIK("DELAY TIME", PERF(delay_time), UIKNOB_RAW), UIK("DELAY FDBK", PERF(delay_feedback), UIKNOB_RAW),
     UIK("REVERB TIME", PERF(reverb_decay), UIKNOB_RAW), UIK("REVERB DAMP", PERF(reverb_damp), UIKNOB_RAW),
@@ -729,6 +766,7 @@ static uint8_t *page_block_for(const UIStateMachine *sm, const UiPage *pg, uint8
     case ST_ARP: return (uint8_t *)sm->arp;
     case ST_LANE: return (uint8_t *)cur_lane(sm);
     case ST_MFX: return (uint8_t *)ui_sm_mfx(sm, layer) + pg->base;
+    case ST_LIVE: return fx_live + pg->base;
     default: return 0;
     }
 }
@@ -862,6 +900,10 @@ static void mfx_type_set(MfxParams *m, uint8_t t)
         {40, 74, 45, 64, 100, 0, 0}, /* ENSEMBLE: a little aged, the unit's 0.78 Hz, some shimmer, wide */
         {74, 64, 15, 110, 100, 30, 40},   /* ENS+PHASER: the strings at the unit's rate, a slow 0.1 Hz sweep */
         {45, 94, 46, 64, 127, 20, 0},     /* CHORUS: the classic I (0.5 Hz, 1.7 .. 5.4 ms), the sides swinging apart */
+        {40, 40, 64, 40, 0, 0, 0},        /* TAPE FLANGER: a slow 0.15 Hz thumb through zero (-1.5 .. +2.5 ms), some
+                                           * wear, POSITIVE, one tape for both sides */
+        {50, 30, 80, 70, 0, 1, 0},        /* BBD FLANGER: a slow resonant jet (~1.4 ms, 0.3 Hz), FLANGER II, POSITIVE */
+        {12, 75, 0, 64, 127, 30, 0},      /* PITCH SHIFT: the classic stereo micro-pitch doubling (+-9 cents) */
     };
     uint8_t i;
     if (t == m->type || t >= MFX_OFFERED)
@@ -967,6 +1009,8 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
     if (mode == PERF_SINGL_SYNTH &&
         ((flags & RF_LAYER2) != 0u || ((pg->store == ST_ENGINE || pg->store == ST_MFX) && sm->s.active_synth_layer != 0u)))
         return UIROW_GREYED;
+    if ((r == &MIX_ROWS[0] && mode == PERF_SINGL_SYNTH) || (r == &MIX_ROWS[1] && mode != PERF_SINGL_SYNTH))
+        return UIROW_HIDDEN;         /* MIX: BALANCE with two layers, DRY/WET with one */
     if (pg->store == ST_MFX && r != &MFX_ROWS[0] &&  /* MFX: the type's own rows, none at OFF */
         (r->archs & (1u << ui_sm_mfx(sm, sm->s.active_synth_layer)->type)) == 0u)
         return UIROW_HIDDEN;
@@ -2402,6 +2446,7 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
             break;
         }
         case UIPAGE_EFFECTS: k = &EFFECTS_KNOBS[knob]; break;
+        case UIPAGE_MIX: k = &MIX_KNOBS[knob == 0u && perf_mode(sm) == PERF_SINGL_SYNTH ? 4u : knob]; break;
         case UIPAGE_HOME1: case UIPAGE_HOME2: k = &HOME_KNOBS[knob]; break;
         case UIPAGE_HOME3: k = &ZONES_KNOBS[knob]; break;
         case UIPAGE_ARP: k = &ARP_KNOBS[knob]; break;

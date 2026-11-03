@@ -51,7 +51,8 @@ enum {
     UIPAGE_ENV1, UIPAGE_ENV2, UIPAGE_ENV3,                        /* ENV */
     UIPAGE_LFO1, UIPAGE_LFO2, UIPAGE_LFO3,                        /* LFO */
     UIPAGE_MOD1, UIPAGE_MOD2, UIPAGE_MOD3,                        /* EDIT: NMODSLOT pages (4.5) */
-    UIPAGE_AMP, UIPAGE_MFX, UIPAGE_EFFECTS,                       /* GLO (MFX 2026-11-01: the layer's modulation FX) */
+    UIPAGE_AMP, UIPAGE_MFX, UIPAGE_EFFECTS, UIPAGE_MIX,           /* GLO (MFX 2026-11-01: the layer's modulation FX;
+                                                                   * MIX 2026-11-02: the performance's live mix) */
     UIPAGE_HOME1, UIPAGE_HOME2, UIPAGE_HOME3,                     /* HOME: LAYER (5.3 View 1 / 2 by layer focus), ZONES
                                                                    * (View 3), */
     UIPAGE_PERF, UIPAGE_GLOBAL,                                   /* .. the performance browser (6.1), GLOBAL
