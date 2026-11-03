@@ -1842,6 +1842,21 @@ static void pu_viz_mfx(const UIStateMachine *sm)
         }
         s = 46 - (24 * (int32_t)m->knob[MFX_K_BF_FEEDBACK]) / 127;
         eddy = m->knob[MFX_K_BF_FEEDBACK];
+    } else if (t == MFX_BBD_ECHO) {                  /* a gust a tap at its echo's distance (the clock's swoop moves
+                                                      * them); FEEDBACK's eddies; DUCK: faint while held down */
+        float g = mfx_peek(layer, 2);
+        for (i = 0; i < (m->lr > 0u ? 2 : 1); i++) {
+            float u = mfx_peek(layer, i);
+            gx[ng] = pw_x(u < 0.f ? (float)m->knob[MFX_K_QE_TIME] / 254.f : u);
+            faint[ng] = (uint8_t)(g >= 0.f && g < 0.5f);
+            gc[ng++] = i ? SQC(ACCENT) : SQC(THEME);
+        }
+        still = 0u;
+        flutter = m->knob[MFX_K_QE_ENV] > 64u ? (int32_t)(m->knob[MFX_K_QE_ENV] - 64u) * 3
+                                               : (int32_t)(64u - m->knob[MFX_K_QE_ENV]) * 3;
+        s = 46 - (24 * (int32_t)m->knob[MFX_K_QE_FEEDBACK]) / 127;
+        eddy = m->knob[MFX_K_QE_FEEDBACK];
+        dust = m->row[MFX_R_AGE2];
     } else if (t == MFX_PITCH_SHIFT) {               /* the gust stands at the pitch (left lower, right higher) */
         float u = mfx_peek(layer, 0);
         gx[ng] = pw_x(u < 0.f ? 0.5f : u);

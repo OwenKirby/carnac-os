@@ -264,6 +264,17 @@ int main(int argc, char **argv)
         printf("  host cost, one layer stereo: PITCH SHIFT %.1f ns/sample\n",
                cost((MfxParams){MFX_PITCH_SHIFT, {19, 64, 60, 64}, 127, {30, 0}}));
     }
+    {   /* BBD ECHO: knobs TIME / FEEDBACK / ENV (64 none) / MIX, lr WIDTH, row[0] ENV MODE (SWOOP, DUCK), row[1] AGE */
+        printf("BBD ECHO:\n");
+        render(argv[1], "91_bass_echo_slap", SC_BASS, (MfxParams){MFX_BBD_ECHO, {99, 35, 64, 55}, 40, {0, 30}}, 0);
+        render(argv[1], "92_bass_echo_swoop_up", SC_BASS, (MfxParams){MFX_BBD_ECHO, {99, 50, 115, 60}, 40, {0, 30}}, 0);
+        render(argv[1], "93_bass_echo_swoop_down", SC_BASS, (MfxParams){MFX_BBD_ECHO, {104, 55, 10, 60}, 40, {0, 50}}, 0);
+        render(argv[1], "94_pad_echo_duck_bloom", SC_PAD, (MfxParams){MFX_BBD_ECHO, {115, 85, 120, 70}, 90, {1, 40}}, 0);
+        render(argv[1], "95_pad_echo_dub_worn", SC_PAD, (MfxParams){MFX_BBD_ECHO, {120, 118, 80, 60}, 127, {0, 110}}, 0);
+        render(argv[1], "96_pad_echo_short_talking", SC_PAD, (MfxParams){MFX_BBD_ECHO, {25, 100, 120, 64}, 60, {0, 20}}, 0);
+        printf("  host cost, one layer stereo: BBD ECHO %.1f ns/sample\n",
+               cost((MfxParams){MFX_BBD_ECHO, {99, 50, 115, 60}, 40, {0, 30}}));
+    }
     printf("  host cost, one layer stereo: STONE PHASER %.1f ns/sample\n",
            cost((MfxParams){MFX_STONE_PHASER, {64, mid, 100, 127}, 0}));
     {   /* beside the voices: 8 held pad notes, the whole render, without and with it (best of 5) */

@@ -333,18 +333,22 @@ PS_STATIC_ASSERT(sizeof(EngineState) < 255u, "MOD_ROWS: via = 1 + an EngineState
 /* MFX (2026-11-01): the type, then its own rows (archs: here the types that show the row, a bit each). L/R PHASE and
  * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]) */
 static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS",
-                                                              "TAPE FLANGER", "BBD FLANGER", "PITCH SHIFT"};
+                                                              "TAPE FLANGER", "BBD FLANGER", "PITCH SHIFT",
+                                                              "BBD ECHO"};
 static const char *const MFX_BF_MODE_NAMES[MFX_BF_MODES] = {"FLANGER I", "FLANGER II", "FLANGER III", "CHORUS"};
 /* PITCH SHIFT's PITCH (a list knob, 0..24): semitones */
 static const char *const MFX_PS_PITCH_NAMES[25] = {"-12", "-11", "-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2",
                                                    "-1", "0", "+1", "+2", "+3", "+4", "+5", "+6", "+7", "+8", "+9",
                                                    "+10", "+11", "+12"};
 static const char *const MFX_POLARITY_NAMES[2] = {"POSITIVE", "NEGATIVE"};
+static const char *const MFX_QE_MODE_NAMES[MFX_QE_MODES] = {"SWOOP", "DUCK"};
 #define MT(x) ((uint16_t)(1u << MFX_##x))
 static const UiRow MFX_ROWS[] = {
     {"TYPE", OFS(MfxParams, type), 0, MFX_OFFERED - 1, RK_BYTE, 0, MFX_TYPE_NAMES, A_ALL},
     {"MODE", (uint8_t)(OFS(MfxParams, row) + MFX_R_MODE), 0, MFX_BF_MODES - 1, RK_BYTE, 0, MFX_BF_MODE_NAMES,
      MT(BBD_FLANGER)},
+    {"ENV MODE", (uint8_t)(OFS(MfxParams, row) + MFX_R_MODE), 0, MFX_QE_MODES - 1, RK_BYTE, 0, MFX_QE_MODE_NAMES,
+     MT(BBD_ECHO)},
     {"POLARITY", (uint8_t)(OFS(MfxParams, row) + MFX_R_POLARITY), 0, 1, RK_BYTE, 0, MFX_POLARITY_NAMES,
      MT(TAPE_FLANGER) | MT(BBD_FLANGER)},
     {"SPREAD", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(PITCH_SHIFT)},
@@ -352,7 +356,9 @@ static const UiRow MFX_ROWS[] = {
     {"COLOUR", (uint8_t)(OFS(MfxParams, row) + MFX_R_COLOUR), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENS_PHASER)},
     {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE), 0, VAL_MAX, RK_BYTE, 0, NULL,
      MT(ENS_PHASER) | MT(CHORUS) | MT(PITCH_SHIFT)},
-    {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS)},
+    {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE2), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(BBD_ECHO)},
+    {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL,
+     MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS) | MT(BBD_ECHO)},
 };
 #undef MT
 
@@ -616,6 +622,8 @@ static const UiKnob MFX_KNOBS[MFX_OFFERED][4] = {
     {{"PITCH", (uint8_t)(OFS(MfxParams, knob) + MFX_K_PS_PITCH), UIKNOB_LIST, 25, MFX_PS_PITCH_NAMES},
      UIK("FINE", (uint8_t)(OFS(MfxParams, knob) + MFX_K_PS_FINE), UIKNOB_BIP), KMFX(MFX_K_PS_FEEDBACK, "FEEDBACK"),
      KMFX(MFX_K_PS_MIX, "MIX")},
+    {KMFX(MFX_K_QE_TIME, "TIME"), KMFX(MFX_K_QE_FEEDBACK, "FEEDBACK"),
+     UIK("ENV", (uint8_t)(OFS(MfxParams, knob) + MFX_K_QE_ENV), UIKNOB_BIP), KMFX(MFX_K_QE_MIX, "MIX")},
 };
 #undef KMFX
 /* MIX: knob 1 BALANCE (DUAL / SPLIT) or DRY/WET (SINGL), the same byte (fx_live) */
@@ -904,6 +912,8 @@ static void mfx_type_set(MfxParams *m, uint8_t t)
                                            * wear, POSITIVE, one tape for both sides */
         {50, 30, 80, 70, 0, 1, 0},        /* BBD FLANGER: a slow resonant jet (~1.4 ms, 0.3 Hz), FLANGER II, POSITIVE */
         {12, 75, 0, 64, 127, 30, 0},      /* PITCH SHIFT: the classic stereo micro-pitch doubling (+-9 cents) */
+        {99, 35, 92, 55, 40, 0, 30},      /* BBD ECHO: a 60 ms slap, a few repeats, the clock swooping up on hard
+                                           * notes, a little wide, a little worn */
     };
     uint8_t i;
     if (t == m->type || t >= MFX_OFFERED)

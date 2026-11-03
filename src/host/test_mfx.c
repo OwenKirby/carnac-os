@@ -290,12 +290,12 @@ int main(void)
      *    as a quick turn's detents); the output's second difference while it turns stays within 1.5x of the larger of
      *    before and after, settled (unglided, each step steps the output: the zipper) */
     {
-        static const uint8_t T[7] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
-                                     MFX_BBD_FLANGER, MFX_PITCH_SHIFT};
-        static const char *const TN[7] = {"STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS", "TAPE FLANGER",
-                                          "BBD FLANGER", "PITCH SHIFT"};
+        static const uint8_t T[8] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
+                                     MFX_BBD_FLANGER, MFX_PITCH_SHIFT, MFX_BBD_ECHO};
+        static const char *const TN[8] = {"STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS", "TAPE FLANGER",
+                                          "BBD FLANGER", "PITCH SHIFT", "BBD ECHO"};
         static float l[128], r[128];
-        for (int ti = 0; ti < 7; ti++)
+        for (int ti = 0; ti < 8; ti++)
             for (int kk = 0; kk < (ti == 2 ? 7 : ti == 3 ? 6 : 5); kk++) {   /* (TAPE FLANGER's POLARITY: 12) */   /* the knobs, lr, row[] */
                 MfxParams p = {T[ti], {64, 64, 64, 64}, 64, {(uint8_t)(ti == 5 ? 0 : 64), (uint8_t)(ti >= 4 ? 0 : 64)}};
                 if (T[ti] == MFX_PITCH_SHIFT) p.knob[MFX_K_PS_PITCH] = 19;   /* (+7: 0..24) */
@@ -397,7 +397,7 @@ int main(void)
     }
 
     /* 11. the stereo image kept: every type with sound on the left only leaves the right all but silent (its own hiss,
-     *     ducked by the level, at most), at WIDTH 0 and 127 */
+     *     ducked by the level, at most), at WIDTH 0 and 127 (BBD ECHO not: one brigade, mono, as the pedals) */
     {
         static const uint8_t T[7] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
                                      MFX_BBD_FLANGER, MFX_PITCH_SHIFT};
@@ -629,6 +629,84 @@ int main(void)
                 printf("PITCH SHIFT level off or unbounded\n");
                 fails++;
             }
+        }
+    }
+
+    /* 14. BBD ECHO (2026-11-02): the echo lands at TIME; pink noise level at MIX 64 near dry; full FEEDBACK (and
+     *     AGE) bounded; SWOOP: played loud with ENV up, the clock runs faster (the echo nearer); DUCK: the echo held
+     *     down while played, back when the playing stops (pink: -1..-3.5 dB at MIX 64, its wet dark) */
+    {
+        static float l[128], r[128];
+        {                                       /* a click; the echo's peak (MIX 127, no FEEDBACK, ENV 64: none) */
+            int at = -1;
+            double best = 0.0;
+            mfx_init();
+            mfx_params[0] = (MfxParams){MFX_BBD_ECHO, {99, 0, 64, 127}, 0, {0, 0}};
+            for (int b = 0; b < 40; b++) {
+                for (int i = 0; i < 128; i++) l[i] = r[i] = (b == 2 && i < 8) ? 20000.f : 0.f;
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++)
+                    if (fabs(l[i]) > best) { best = fabs(l[i]); at = (b - 2) * 128 + i; }
+            }
+            double ms = at * 1000.0 / SR, want = 44.0 * pow(2.0, 99.0 * 5.02 / 127.0) * 4000.0 / SR;
+            printf("BBD ECHO TIME 99: the echo at %.1f ms (%.1f wanted)\n", ms, want);
+            if (fabs(ms - want) > 3.0) { printf("BBD ECHO: the echo is not at TIME\n"); fails++; }
+        }
+        for (int pi = 0; pi < 3; pi++) {
+            MfxParams p = pi == 0 ? (MfxParams){MFX_BBD_ECHO, {99, 35, 64, 64}, 40, {0, 30}}
+                        : pi == 1 ? (MfxParams){MFX_BBD_ECHO, {60, 127, 64, 127}, 0, {0, 127}}
+                                  : (MfxParams){MFX_BBD_ECHO, {110, 127, 127, 100}, 127, {0, 60}};
+            double ein = 0.0, eout = 0.0, peak = 0.0;
+            mfx_init();
+            mfx_params[0] = p;
+            srand(14);
+            for (int b = 0; b < 3445; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = pink(); ein += (double)l[i] * l[i]; }
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) {
+                    eout += (double)l[i] * l[i];
+                    if (!(fabs(l[i]) <= peak)) peak = isfinite(l[i]) ? fabs(l[i]) : 1e30;
+                    if (!(fabs(r[i]) <= peak)) peak = isfinite(r[i]) ? fabs(r[i]) : 1e30;
+                }
+            }
+            double db = 10.0 * log10(eout / ein);
+            printf("BBD ECHO %s: pink noise %+.2f dB, peak %.0f\n",
+                   pi == 0 ? "slap, MIX 64" : pi == 1 ? "FB 127 AGE 127, all wet" : "FB 127 SWOOP 127", db, peak);
+            if ((pi == 0 && (db < -3.5 || db > 1.0)) || db > 6.0 || peak > 400000.0) {   /* (its wet ~4 kHz: dark) */
+                printf("BBD ECHO level off or unbounded\n");
+                fails++;
+            }
+        }
+        {                                       /* SWOOP: the clock under loud playing; DUCK: the echo's level */
+            float near[2];
+            for (int ei = 0; ei < 2; ei++) {
+                mfx_init();
+                mfx_params[0] = (MfxParams){MFX_BBD_ECHO, {99, 0, (uint8_t)(ei ? 127 : 64), 127}, 0, {0, 0}};
+                srand(15);
+                for (int b = 0; b < 400; b++) {
+                    for (int i = 0; i < 128; i++) l[i] = r[i] = 3.f * pink();
+                    mfx_layer_block(0, l, r, 128);
+                }
+                near[ei] = mfx_peek(0, 0);
+            }
+            printf("BBD ECHO SWOOP: played loud, the echo at %.2f of the reach (ENV 127) against %.2f (ENV 64)\n", near[1],
+                   near[0]);
+            if (!(near[1] < 0.75f * near[0])) { printf("BBD ECHO: SWOOP does not move the clock\n"); fails++; }
+            double e[2][2] = {{0.0, 0.0}, {0.0, 0.0}};             /* [ENV 64, 127][while played, after] */
+            for (int ei = 0; ei < 2; ei++) {
+                mfx_init();
+                mfx_params[0] = (MfxParams){MFX_BBD_ECHO, {99, 60, (uint8_t)(ei ? 127 : 64), 127}, 0, {1, 0}};
+                srand(16);
+                for (int b = 0; b < 700; b++) {
+                    for (int i = 0; i < 128; i++) l[i] = r[i] = b < 400 ? 3.f * pink() : 0.f;
+                    mfx_layer_block(0, l, r, 128);
+                    if ((b >= 200 && b < 400) || (b >= 450 && b < 500))   /* (after: 0.15 .. 0.33 s on) */
+                        for (int i = 0; i < 128; i++) e[ei][b >= 400] += (double)l[i] * l[i];
+                }
+            }
+            double held = 10.0 * log10(e[1][0] / e[0][0]), after = 10.0 * log10(e[1][1] / e[0][1]);
+            printf("BBD ECHO DUCK 127: the echo %.1f dB while played, %.1f dB just after (against ENV 64)\n", held, after);
+            if (held > -8.0 || after < -4.0) { printf("BBD ECHO: DUCK does not duck and bloom\n"); fails++; }
         }
     }
 

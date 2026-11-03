@@ -61,10 +61,19 @@
  * faded out as it wraps, the other faded in, the converters' grit; with feedback the shifted sound goes round again,
  * a step further each time (the famous spirals). Knobs: PITCH (-12 .. +12 semitones, gliding between), FINE (+-50
  * cents), FEEDBACK, MIX. Rows: SPREAD (the right side's FINE mirrored: 127 the classic stereo micro-pitch doubling,
- * one side up, the other down), AGE (the converters: fewer bits, a darker band, hiss). */
+ * one side up, the other down), AGE (the converters: fewer bits, a darker band, hiss).
+ *
+ * BBD ECHO (2026-11-02): a short bucket-brigade echo (4 .. 130 ms, slapback and doubling) whose clock or level
+ * follows how hard it is played. One brigade a layer, mono as the pedals were, its clock about a quarter of the
+ * rate (the long BBD's dark band); the right side reads further along it (WIDTH). Knobs: TIME, FEEDBACK (to the
+ * edge of running away; the brigade's headroom holds it), ENV (the follower's amount, both ways from the middle),
+ * MIX. Rows: ENV MODE (SWOOP: the playing speeds the clock up, ENV past the middle, or slows it, below: what is in
+ * the brigade bends in pitch and settles back as the note fades; DUCK: the echo held down while playing and blooming
+ * after, below the middle the other way, the echo only on what is played hard), AGE (a darker band, hiss, the clock
+ * wandering), WIDTH. */
 enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER, MFX_BBD_FLANGER,
-       MFX_PITCH_SHIFT, MFX_BULLROARER, MFX_COUNT };
-#define MFX_OFFERED (MFX_PITCH_SHIFT + 1)   /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
+       MFX_PITCH_SHIFT, MFX_BBD_ECHO, MFX_BULLROARER, MFX_COUNT };
+#define MFX_OFFERED (MFX_BBD_ECHO + 1)   /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
 enum { MFX_K_MANUAL, MFX_K_RATE, MFX_K_FEEDBACK, MFX_K_DEPTH };    /* STONE PHASER's knobs */
 enum { MFX_K_WHIRL, MFX_K_REACH, MFX_K_TWIST, MFX_K_DUST };         /* BULLROARER's */
 enum { MFX_K_AGE = 0, MFX_K_SHIMMER = 2 };                          /* ENSEMBLE's (RATE, DEPTH as above) */
@@ -73,10 +82,13 @@ enum { MFX_K_CH_RATE, MFX_K_CH_DEPTH, MFX_K_CH_DELAY, MFX_K_CH_MIX };     /* CHO
 enum { MFX_K_TF_MANUAL, MFX_K_TF_RATE, MFX_K_TF_DEPTH, MFX_K_TF_TAPE };   /* TAPE FLANGER's */
 enum { MFX_K_BF_CENTER, MFX_K_BF_RATE, MFX_K_BF_DEPTH, MFX_K_BF_FEEDBACK };   /* BBD FLANGER's */
 enum { MFX_K_PS_PITCH, MFX_K_PS_FINE, MFX_K_PS_FEEDBACK, MFX_K_PS_MIX };      /* PITCH SHIFT's (PITCH: 0..24, 12 none) */
-enum { MFX_R_AGE, MFX_R_COLOUR, MFX_R_POLARITY = 1, MFX_R_MODE = 0 };   /* further rows (row[]): ENS+PHASER's AGE,
+enum { MFX_K_QE_TIME, MFX_K_QE_FEEDBACK, MFX_K_QE_ENV, MFX_K_QE_MIX };    /* BBD ECHO's (ENV: 64 none) */
+enum { MFX_R_AGE, MFX_R_COLOUR, MFX_R_POLARITY = 1, MFX_R_MODE = 0, MFX_R_AGE2 = 1 };   /* further rows (row[]): ENS+PHASER's AGE,
                                                                      * COLOUR; CHORUS's and PITCH SHIFT's AGE; TAPE and
-                                                                     * BBD FLANGER's POLARITY (0, 1); BBD FLANGER's MODE */
+                                                                     * BBD FLANGER's POLARITY (0, 1); BBD FLANGER's MODE;
+                                                                     * BBD ECHO's ENV MODE (MODE) and AGE (AGE2) */
 enum { MFX_BF_FLANGER1, MFX_BF_FLANGER2, MFX_BF_FLANGER3, MFX_BF_CHORUS, MFX_BF_MODES };
+enum { MFX_QE_SWOOP, MFX_QE_DUCK, MFX_QE_MODES };
 
 typedef struct {
     uint8_t type;                /* MFX_* */

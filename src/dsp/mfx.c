@@ -25,6 +25,15 @@
 #include "hardware/synth_libc.h"
 #include "mfx.h"
 #include "amplifier.h"                 /* amp_exp2f (no libm on the FM1) */
+#include "hardware/mem_section.h"      /* BBD ECHO's brigades in .pool */
+#include "dsp_cold.h"                  /* SYNTH_COLD: the settings and set-up code, built for size */
+
+/* BULLROARER (the prototype, not offered) is left out of the FM1's build: its flash went to BBD ECHO (2026-11-03) */
+#if defined(FELUCCA_ID)
+#define MFX_HAS_BULLROARER 0
+#else
+#define MFX_HAS_BULLROARER 1
+#endif
 
 #define MFX_SR 44100.f
 #define MFX_SUB 16u                      /* frames a control step: the sweep, the LFO */
@@ -62,6 +71,7 @@ typedef struct { float key[6], rate, depth, centre, gw, gd, drive, undrive, hiss
 typedef struct { float key[2], rate, f, sa, sb, xlim, ylim, hiss; } TfSet;            /* TAPE FLANGER */
 typedef struct { float key[4], rate, d0, oct, fb; } BfSet;                          /* BBD FLANGER */
 typedef struct { float key[6], ratio[2], fb, gd, gw, hiss; HrSvf f; int32_t mask; } PsSet;   /* PITCH SHIFT */
+typedef struct { float key[6], n[2], fb, gd, gw, amt, hiss, wow, post, drive; HrSvf f; } QeSet;   /* BBD ECHO */
 
 /* the knobs k[0..n-1] against a set's key: 1 if they differ (and the key takes them) */
 static inline int mfx_moved(float *key, const float *k, int n)
@@ -155,6 +165,17 @@ typedef struct {
     TfSet tf_set;
     BfSet bf_set;
     PsSet ps_set;
+    QeSet qe_set;
+    /* BBD ECHO (run whole in the plan: one brigade for both sides, qe_line) */
+    float qe_acc, qe_u, qe_f;                /* the tick's input (4 frames summed), the filtered input at the last
+                                              * tick, the clock's place between buckets */
+    float qe_env, qe_hp, qe_fbv;             /* the follower; the loop's high-pass; the left tap's last (FEEDBACK) */
+    float qe_p[2], qe_c[2], qe_lp[2];        /* each side's wet at the tick before and the last (interpolated
+                                              * between), its reconstruction filter */
+    float qe_n[2];                           /* each tap's place (buckets), sliding to TIME's (a tick at a time)
+                                              * (0: none yet) */
+    float qe_pk[3];                          /* (mfx_peek: each tap's delay as a share of the reach, the echo's gain) */
+    uint32_t qe_w, qe_q, qe_rng;             /* the next bucket; the frames into the tick; the hiss's noise */
     uint8_t type;                          /* what the state is for: a new type starts clean */
 } __attribute__((aligned(64))) MfxState;     /* each layer's on cache lines of its own: layer 2's may run on core 1
                                                * (synth_runtime.c, as fx.c FX_LINE) */
@@ -306,6 +327,7 @@ static inline float br_sat(float u)
 /* a one-pole's coefficient for fc Hz */
 static inline float br_g(float fc) { return 1.f - amp_exp2f(-fc * (2.f * MFX_PI * 1.442695f / MFX_SR)); }
 
+#if MFX_HAS_BULLROARER
 static void bullroarer(MfxState *s, const float *k, float lr, float *l, float *r, uint32_t n)
 {
     /* WHIRL 0.1 .. 8 Hz (even in octaves); the cord winds every 6 turns (no slower than once in 30 s) */
@@ -374,6 +396,7 @@ static void bullroarer(MfxState *s, const float *k, float lr, float *l, float *r
         }
     }
 }
+#endif
 
 /* ---- ENSEMBLE ---- */
 /* From the schematic (docs/effect schematics, the Solina sheets 015.0212 / 015.0214): the control circuit and the
@@ -1189,7 +1212,153 @@ static void ps_side(MfxState *s, int ch, float *y)
     sd->rng = rng;
 }
 
-float mfx_peek(int layer, int i)
+/* ---- BBD ECHO ----
+ * A pedal's long bucket brigade (as the 1024..4096-stage chips of the late-70s analog echoes) clocked at about a
+ * quarter of the rate: its band ~4 kHz and darker as it ages, its headroom soft. TIME sets the stages it reads
+ * through (the delay at the rest clock); the follower moves the clock itself (SWOOP), so what is already in the
+ * brigade comes out bent in pitch by the clock's change between writing and reading (faster now: higher and sooner;
+ * a slow clock: lower, longer, darker), and settles back as the note fades; or the echo's level (DUCK). The brigade
+ * writes a bucket at each clock tick (between ticks of the rate, interpolated), the taps read between buckets. One
+ * brigade a layer (mono, as the pedals), the right side's tap further along it (WIDTH). The loop: FEEDBACK from the
+ * left tap through a high-pass back into the input filter. Run whole in the plan (a tick every 4 frames: light). */
+#define QE_LEN 1536u                             /* the buckets (int16: 3 KB a layer, in .pool) */
+#define QE_NMIN 44.f                             /* TIME 0: 4 ms at the rest clock (11.025 kHz), in buckets */
+#define QE_OCT 5.02f                             /* TIME's range in octaves (to 130 ms) */
+#define QE_NMAX ((float)QE_LEN - 4.f)
+#define QE_UN (1.f / (1.5f * 32767.f * BR_SCALE))   /* the brigade's level back to the bus's (br_sat's slope 1.5) */
+#define QE_EH 4000.f                             /* the follower's half point (bus units: its curve e / (e + EH)) */
+#define QE_ATK 0.05f                             /* the follower a tick: ~2 ms up */
+#define QE_REL 0.0005f                           /* ... ~180 ms back: the swoop's settling, the bloom */
+#define QE_NSLIDE 0.6f                           /* a tap's slide a tick at most, buckets (a TIME turn: the pitch
+                                                  * 0.4 .. 1.6 while it moves, as a tape echo's) */
+#define QE_DREL 0.0015f                          /* DUCK's follower back: ~60 ms (the bloom) */
+#define QE_HPG 0.068f                            /* the loop's high-pass, ~120 Hz at the tick rate */
+
+static int16_t qe_line[2][QE_LEN] SYNTH_POOL;
+
+/* a TPT state-variable low-pass's coefficients at the tick rate (11.025 kHz): fc, 1 / Q */
+static SYNTH_COLD HrSvf qe_svf(float fc, float k)
+{
+    HrSvf f;
+    float p = fc * (1.f / 22050.f), g = br_sin(p) / br_sin(p + 0.25f);
+    f.a1 = 1.f / (1.f + g * (g + k));
+    f.a2 = g * f.a1;
+    f.a3 = g * f.a2;
+    return f;
+}
+
+/* one tap: the brigade n buckets behind the clock's place (w the next bucket, fr how far past the last) */
+static inline float qe_tap(const int16_t *line, uint32_t w, float fr, float n)
+{
+    float r = n - fr;
+    int32_t k = (int32_t)r, p = (int32_t)w - 1 - k;
+    float t = r - (float)k;
+    if (p < 0) p += (int32_t)QE_LEN;
+    int32_t q = p ? p - 1 : (int32_t)QE_LEN - 1;
+    float a = (float)line[p];
+    return a + t * ((float)line[q] - a);
+}
+
+/* BBD ECHO's settings from its knobs kk (TIME, FEEDBACK, ENV, MIX, WIDTH, AGE), when one has moved */
+static SYNTH_COLD void qe_settings(QeSet *st, const float *kk)
+{
+    const float mix = kk[3] * (1.f / 127.f), age = kk[5] * (1.f / 127.f);
+    const float trim = 1.f / (1.f + 0.25f * br_sin(0.5f * mix));   /* (as CHORUS's MIX) */
+    float n = QE_NMIN * amp_exp2f(kk[0] * (QE_OCT / 127.f)), nr = n * (1.f + 0.35f * kk[4] * (1.f / 127.f));
+    st->n[0] = n > QE_NMAX ? QE_NMAX : n;
+    st->n[1] = nr > QE_NMAX ? QE_NMAX : nr;
+    st->fb = kk[1] * (1.02f / 127.f);                       /* (the brigade's headroom and the filters hold the top) */
+    st->amt = (kk[2] - 64.f) * (1.f / 63.f);
+    st->amt = st->amt > 1.f ? 1.f : st->amt < -1.f ? -1.f : st->amt;
+    st->gw = trim * br_sin(0.25f * mix);
+    st->gd = trim * br_sin(0.25f * mix + 0.25f);
+    st->f = qe_svf(4200.f * (1.f - 0.4f * age), 1.f / 0.75f);
+    st->post = br_g(4800.f * (1.f - 0.35f * age));
+    st->hiss = (0.0015f + 0.006f * age * age) * (1.f / 2147483648.f);
+    st->wow = 0.002f + 0.012f * age;
+    st->drive = BR_SCALE * (1.f + age);                     /* hotter into the brigade as it ages (and back out) */
+}
+
+/* BBD ECHO over m frames (a control step), both sides in place */
+static void bbd_echo(MfxState *s, const float *k, const float *row, float lr, float *l, float *r, uint32_t m)
+{
+    QeSet *st = &s->qe_set;
+    int16_t *line = qe_line[s == &mfx_st[1]];
+    const float kk[6] = {k[MFX_K_QE_TIME], k[MFX_K_QE_FEEDBACK], k[MFX_K_QE_ENV], k[MFX_K_QE_MIX], lr, row[MFX_R_AGE2]};
+    const int duck = row[MFX_R_MODE] >= 0.5f;
+    if (mfx_moved(st->key, kk, 6))
+        qe_settings(st, kk);
+    hr_wow(s, st->wow);
+    const HrSvf f = st->f;
+    const float fb = st->fb, gd = st->gd, gw = st->gw, post = st->post, drive = st->drive;
+    const float undrive = QE_UN * BR_SCALE / drive;       /* the brigade back to bus units */
+    float acc = s->qe_acc, u = s->qe_u, fr = s->qe_f, env = s->qe_env, hp = s->qe_hp, fbv = s->qe_fbv;
+    float n0 = s->qe_n[0] == 0.f ? st->n[0] : s->qe_n[0], n1 = s->qe_n[1] == 0.f ? st->n[1] : s->qe_n[1];
+    const float rel = duck ? QE_DREL : QE_REL;
+    float pl = s->qe_p[0], pr = s->qe_p[1], cl = s->qe_c[0], cr = s->qe_c[1], ll = s->qe_lp[0], lrr = s->qe_lp[1];
+    float s1 = s->side[0].flt[0], s2 = s->side[0].flt[1], g = s->qe_pk[2];
+    uint32_t w = s->qe_w, q = s->qe_q, rng = s->qe_rng;
+    for (uint32_t i = 0; i < m; i++) {
+        acc += l[i] + r[i];
+        if (++q == 4u) {                                     /* a tick */
+            float x = acc * 0.125f, ax = x < 0.f ? -x : x, c = 1.f + s->br_wow;
+            acc = 0.f;
+            q = 0u;
+            env += (ax > env ? QE_ATK : rel) * (ax - env);
+            float e = env / (env + QE_EH);
+            if (!duck)
+                c *= amp_exp2f(st->amt * e);                 /* SWOOP: the clock follows */
+            if (duck) {                                      /* DUCK: the level */
+                float d = 1.4f * e > 1.f ? 1.f : 1.4f * e;
+                g = st->amt >= 0.f ? 1.f - st->amt * d : 1.f + st->amt * (1.f - d);
+            }
+            hp += QE_HPG * (fbv - hp);
+            float up = u;
+            u = hr_lp(&f, x + fb * (fbv - hp), &s1, &s2);   /* the input, the FEEDBACK into the input filter */
+            fr += c;
+            if (fr >= 1.f) {                                 /* the buckets the clock passed (at most 2) */
+                const float ic = 1.f / c;
+                do {
+                    fr -= 1.f;
+                    float v = u + fr * ic * (up - u);        /* (where between the ticks it passed) */
+                    line[w] = (int16_t)(br_sat(v * drive) * 32767.f);
+                    w = w + 1u == QE_LEN ? 0u : w + 1u;
+                } while (fr >= 1.f);
+            }
+            rng = rng * 1664525u + 1013904223u;
+            float h = env * st->hiss * (float)(int32_t)rng;
+            float dn0 = 0.05f * (st->n[0] - n0), dn1 = 0.05f * (st->n[1] - n1);   /* the taps slide to TIME */
+            n0 += dn0 > QE_NSLIDE ? QE_NSLIDE : dn0 < -QE_NSLIDE ? -QE_NSLIDE : dn0;
+            n1 += dn1 > QE_NSLIDE ? QE_NSLIDE : dn1 < -QE_NSLIDE ? -QE_NSLIDE : dn1;
+            float vl = qe_tap(line, w, fr, n0), vr = qe_tap(line, w, fr, n1);
+            vl *= undrive;
+            vr *= undrive;
+            fbv = vl;
+            pl = cl; pr = cr;
+            cl = g * (vl + h);
+            cr = g * (vr + h);
+        }
+        float t = (float)q * 0.25f;
+        ll += post * (pl + t * (cl - pl) - ll);
+        lrr += post * (pr + t * (cr - pr) - lrr);
+        l[i] = gd * l[i] + gw * ll;
+        r[i] = gd * r[i] + gw * lrr;
+    }
+    s->qe_acc = acc; s->qe_u = u; s->qe_f = fr; s->qe_env = env; s->qe_hp = hp; s->qe_fbv = fbv;
+    s->qe_p[0] = pl; s->qe_p[1] = pr; s->qe_c[0] = cl; s->qe_c[1] = cr; s->qe_lp[0] = ll; s->qe_lp[1] = lrr;
+    s->side[0].flt[0] = s1; s->side[0].flt[1] = s2;
+    s->qe_w = w; s->qe_q = q; s->qe_rng = rng;
+    s->qe_n[0] = n0; s->qe_n[1] = n1;
+    {                                                        /* (the page's peek: where each tap's echo is now) */
+        float cc = 1.f + s->br_wow, e = env / (env + QE_EH);
+        if (!duck) cc *= amp_exp2f(st->amt * e);
+        s->qe_pk[0] = n0 / (cc * QE_NMAX * 2.f);
+        s->qe_pk[1] = n1 / (cc * QE_NMAX * 2.f);
+        s->qe_pk[2] = g;
+    }
+}
+
+SYNTH_COLD float mfx_peek(int layer, int i)
 {
     const MfxState *s = &mfx_st[layer & 1];
     uint8_t t = mfx_params[layer & 1].type;
@@ -1203,6 +1372,11 @@ float mfx_peek(int layer, int i)
         float m = (float)(v.u & 0x7FFFFFu) * (1.f / 8388608.f);           /* log2: the exponent, the mantissa's curve */
         float l2 = (float)((int32_t)(v.u >> 23) - 127) + m * (1.3465f - 0.3465f * m);
         return s->bf_d[i] <= 0.f ? -1.f : l2 * (1.f / BF_DOCT);
+    }
+    if (t == MFX_BBD_ECHO && i >= 0 && i < 3) {      /* each tap's delay (0..1: up to twice TIME's reach, the slow
+                                                      * clock's), the echo's gain */
+        float v = s->qe_pk[i];
+        return v > 1.f ? 1.f : v;
     }
     if (t == MFX_PITCH_SHIFT && i >= 0 && i < 2)   /* the pitch, -12 .. +12 semitones as 0..1 */
         return (s->kn[MFX_K_PS_PITCH] > 24.f ? 24.f : s->kn[MFX_K_PS_PITCH]) * (1.f / 24.f);
@@ -1237,7 +1411,7 @@ float mfx_peek(int layer, int i)
 #define MFX_KGLIDE 0.0155f
 
 /* a new type (or back from OFF) starts from silence, at its knobs */
-static void mfx_begin(MfxState *s, const MfxParams *p)
+static SYNTH_COLD void mfx_begin(MfxState *s, const MfxParams *p)
 {
     int j;
     float lfo = s->lfo;
@@ -1250,7 +1424,12 @@ static void mfx_begin(MfxState *s, const MfxParams *p)
     s->kn[6] = (float)p->row[1];
     s->ss_ctl = 0.5f;
     s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = s->tf_set.key[0] = -1.f;
-    s->bf_set.key[0] = s->ps_set.key[0] = -1.f;
+    s->bf_set.key[0] = s->ps_set.key[0] = s->qe_set.key[0] = -1.f;
+    if (p->type == MFX_BBD_ECHO)                 /* (its brigade, outside the state) */
+        memset(qe_line[s == &mfx_st[1]], 0, sizeof qe_line[0]);
+    s->qe_pk[0] = s->qe_pk[1] = -1.f;
+    s->qe_pk[2] = 1.f;
+    s->qe_rng = 0x2545F491u;
                                                 /* (none worked out) */
     s->side[1].rng = 0x9E3779B9u;               /* (each side's hiss its own) */
 }
@@ -1282,8 +1461,14 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
     for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
         uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
         mfx_glide(s, p);
-        if (p->type == MFX_BULLROARER) {        /* (the prototype: whole, here) */
+        if (p->type == MFX_BULLROARER) {        /* (the prototype: whole, here; dry on the FM1) */
+#if MFX_HAS_BULLROARER
             bullroarer(s, s->kn, s->kn[4], l + f0, r + f0, m);
+#endif
+            continue;
+        }
+        if (p->type == MFX_BBD_ECHO) {          /* (one brigade for both sides: whole, here) */
+            bbd_echo(s, s->kn, s->kn + 5, s->kn[4], l + f0, r + f0, m);
             continue;
         }
         MfxStep *step = &s->plan[s->nstep++];

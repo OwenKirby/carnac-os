@@ -229,6 +229,10 @@ static const PtScen SCEN[] = {
     {"PITCH SHIFT HELD", K_HELD, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_PITCH_SHIFT), UIPAGE_HOME1},
     {"IDLE PITCH SHFT x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_PITCH_SHIFT), UIPAGE_HOME1},
     {"SPREAD H CEL PSHF", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_PITCH_SHIFT), UIPAGE_HOME1},
+    /* BBD ECHO (2026-11-02): run whole in the plan (one brigade a layer) */
+    {"IDLE BBD ECHO", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_BBD_ECHO), UIPAGE_HOME1},
+    {"IDLE BBD ECHO x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_BBD_ECHO), UIPAGE_HOME1},
+    {"SPREAD H CEL ECHO", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_BBD_ECHO), UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -418,6 +422,7 @@ static void setup(const PtScen *s)
             [MFX_TAPE_FLANGER] = {MFX_TAPE_FLANGER, {40, 40, 64, 40}, 0, {0, 0}},
             [MFX_BBD_FLANGER] = {MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {1, 0}},
             [MFX_PITCH_SHIFT] = {MFX_PITCH_SHIFT, {19, 64, 60, 64}, 127, {30, 0}},
+            [MFX_BBD_ECHO] = {MFX_BBD_ECHO, {99, 50, 115, 60}, 40, {0, 30}},
         };
         uint32_t t = (s->flags >> 16) & 0xFFu;
         mfx_params[0] = MP[t > MFX_STONE_PHASER && t < MFX_COUNT ? t : MFX_STONE_PHASER];

@@ -396,6 +396,9 @@ int main(int argc, char **argv)
     mfx_params[0] = (MfxParams){MFX_PITCH_SHIFT, {19, 75, 90, 64}, 127, {80, 0}};
     run(44100u / 2u);
     shot(dir, "mfx_pitch_shift");
+    mfx_params[0] = (MfxParams){MFX_BBD_ECHO, {99, 70, 110, 60}, 60, {0, 40}};
+    run(44100u / 2u);
+    shot(dir, "mfx_bbd_echo");
     mfx_params[0].type = MFX_OFF;
     note(0, 48, 0); note(0, 55, 0); note(0, 63, 0);
 
