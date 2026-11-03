@@ -520,6 +520,8 @@ static void pu_knob_read(UIStateMachine *sm, uint8_t page, uint8_t k, PuKnob *o,
         ui_sm_note_name((uint8_t)v, b);                                 /* SPLIT NOTE: C4 */
     else if (info.kind == UIKNOB_FINE)
         ui_sm_fine_text((uint8_t)v, b);                                 /* FINE TUNE: +125C */
+    else if (info.kind == UIKNOB_DTIME)
+        ui_sm_dtime_text((uint8_t)v, b);                                /* DELAY TIME: 1/8T, 472MS */
     else if (info.kind == UIKNOB_PORTA && v == 0)
         b[0] = 'O', b[1] = 'F', b[2] = 'F', b[3] = 0;                     /* PORTA TIME 0: no glide */
     else

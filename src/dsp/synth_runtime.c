@@ -931,6 +931,7 @@ static void render_pass(int32_t *out, uint32_t frames)
     }
     fx_frames = frames;
     fx_tone_sync(&perf_state);                         /* LOOP TONE's thinner half is DELAY HP (fx.h) */
+    fx_pulse_q8 = midi_clock_period_q8();              /* DELAY SYNC follows the tempo, internal or MIDI */
     fx_cross_to_dly(fx_dly, frames);                   /* REV > DLY: the reverb's last pass (fx.h, 2026-11-02) */
     int on2 = !fx_one_core && core2_run && core2_run(fx_reverb_job, 0u);
     fx_delay_block(&perf_state, fx_dly, fx_dly_l, fx_dly_r, frames);

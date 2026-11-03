@@ -1,13 +1,13 @@
 /* Host test: the effects' cross-feeds (src/dsp/fx.c, 2026-11-02: DLY > REV and REV > DLY, fx_cross). A 0.3 s noise
  * burst at about -12 dBFS into both sends, then silence, through fx_process_block (the render's order), every reverb
  * type. "Its floor": the same settings with both amounts at 0 (the tape's own hiss, the tails), at the same moment.
- *  1. One way alone (each at 127, DELAY FEEDBACK 80, REVERB TIME 90): at 25 s no more than 3 dB over its floor (a
+ *  1. One way alone (each at 127, DELAY FEEDBACK 80, REVERB TIME 90): at 25 s settled (XF_QUIET) (a
  *     one-way send cannot hold itself up).
  *  2. Both at 127, the same settings: the loop blooms and holds, steady (16 s against 20 s within 2 dB) within
  *     XF_LO .. XF_HI dBFS RMS; a hot send (about 4x full scale) settles at the same level (within 2 dB) and bounded.
  *  3. Both at 127 with the longest settings (FEEDBACK 100, TIME 100): bounded, no louder than XF_TOP (SPRING at its
  *     longest stacks three loops: about -7 dBFS, the loudest).
- *  4. Both pulled back to 0 at 10 s mid-bloom: at 30 s no more than 3 dB over its floor.
+ *  4. Both pulled back to 0 at 10 s mid-bloom: at 30 s settled.
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware src/dsp/fx.c src/host/test_fx_cross.c -lm -o test_fx_cross */
 #include <math.h>
 #include <stdio.h>
@@ -19,6 +19,9 @@
 #define XF_LO -26.0
 #define XF_HI -10.0
 #define XF_TOP -6.0
+/* settled: no more than 3 dB over its floor, or under XF_QUIET (2026-11-03: the floor is the tape's own residue,
+ * ~-54 dBFS, and the slowed tape's anti-aliasing took it ~2 dB lower while the loops' tails stayed where they were) */
+#define XF_QUIET -50.0
 static int fails;
 static const char *const TN[REVTYPE_COUNT] = {"SPRING", "TOMB", "MOD", "CELESTIAL", "DOLMEN", "TUMULUS"};
 
@@ -65,7 +68,7 @@ int main(void)
         run(t, 80, 90, 0, 0, 1.0, 0.0, W1, 1, floor_db, &pk);
         for (int way = 0; way < 2; way++) {
             run(t, 80, 90, way ? 0 : 127, way ? 127 : 0, 1.0, 0.0, W1, 1, db, &pk);
-            if (db[0] > floor_db[0] + 3.0) {
+            if (db[0] > floor_db[0] + 3.0 && db[0] > XF_QUIET) {
                 printf("%s: %s alone holds itself up (%.1f dBFS at 25 s, floor %.1f)\n", TN[t],
                        way ? "REV > DLY" : "DLY > REV", db[0], floor_db[0]);
                 fails++;
@@ -87,7 +90,7 @@ int main(void)
         /* 4. */
         run(t, 80, 90, 0, 0, 1.0, 0.0, W4, 1, floor_db, &pk);
         run(t, 80, 90, 127, 127, 1.0, 10.0, W4, 1, db, &pk);
-        if (db[0] > floor_db[0] + 3.0) {
+        if (db[0] > floor_db[0] + 3.0 && db[0] > XF_QUIET) {
             printf("%s: pulled back to 0, the loop holds on (%.1f dBFS at 30 s, floor %.1f)\n", TN[t], db[0], floor_db[0]);
             fails++;
         }

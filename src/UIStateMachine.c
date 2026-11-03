@@ -632,7 +632,7 @@ static const UiKnob MIX_KNOBS[5] = {
     UIK("DRY/WET", FX_L_BALANCE, UIKNOB_BIP),
 };
 static const UiKnob EFFECTS_KNOBS[4] = {
-    UIK("DELAY TIME", PERF(delay_time), UIKNOB_RAW), UIK("DELAY FDBK", PERF(delay_feedback), UIKNOB_RAW),
+    UIK("DELAY TIME", PERF(delay_time), UIKNOB_DTIME), UIK("DELAY FDBK", PERF(delay_feedback), UIKNOB_RAW),
     UIK("REVERB TIME", PERF(reverb_decay), UIKNOB_RAW), UIK("REVERB DAMP", PERF(reverb_damp), UIKNOB_RAW),
 };
 /* 2.2 ARP (chord page): the live dial values a capture copies into a step (UIStateMachine.arp_knob, by index) */
@@ -1588,6 +1588,29 @@ const char *ui_sm_fine_text(uint8_t v, char *buf)
         buf[i++] = (char)('0' + (n / d) % 10);
     buf[i++] = 'C';
     buf[i] = '\0';
+    return buf;
+}
+
+/* DELAY TIME as text (2026-11-03, user: "draw the timing divisions beneath the DLY TIME knob"): under DELAY SYNC
+ * the division it plays (fx_delay_sync_den: 1/24 is the sixteenth triplet, 1/12 the eighth's, 1/6 the quarter's,
+ * 1/3 the half's), else the delay in milliseconds (fx_delay_len) */
+const char *ui_sm_dtime_text(uint8_t v, char *buf)
+{
+    static const char DIV[8][6] = {"1/16T", "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2T", "1/2"};
+    if (DELAY_SYNC(&perf_state)) {
+        const char *d = DIV[fx_delay_sync_idx(v)];
+        uint8_t i = 0u;
+        while (d[i]) { buf[i] = d[i]; i++; }
+        buf[i] = '\0';
+        return buf;
+    }
+    uint32_t ms = (fx_delay_free_len(v) * 10u + 220u) / 441u, d = 1000u;
+    uint8_t i = 0u;
+    while (d > 1u && ms < d)
+        d /= 10u;
+    for (; d >= 1u; d /= 10u)
+        buf[i++] = (char)('0' + (ms / d) % 10u);
+    buf[i++] = 'M'; buf[i++] = 'S'; buf[i] = '\0';
     return buf;
 }
 

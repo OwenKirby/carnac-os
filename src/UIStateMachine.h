@@ -88,8 +88,9 @@ enum {
     UIKNOB_BPM,                      /* stored 0..127, shown as MIDI_CLOCK_BPM_BASE + value BPM: GLOBAL's INT TEMPO */
     UIKNOB_NOTE,                     /* a MIDI note 0..127, shown by name: ZONES' SPLIT NOTE */
     UIKNOB_FINE,                     /* OSC FINE TUNE: shown in cents, osc_fine_cents */
-    UIKNOB_PORTA                     /* LAYER's knob 4: the focused layer's PORTA TIME in the performance, 0 shown OFF
+    UIKNOB_PORTA,                    /* LAYER's knob 4: the focused layer's PORTA TIME in the performance, 0 shown OFF
                                       * (no glide) */
+    UIKNOB_DTIME                     /* DELAY TIME: the sync division (1/8, 1/8T ...) under DELAY SYNC, else in ms */
 };
 typedef struct {
     const char *label;               /* "" for UIKNOB_NONE */
@@ -350,6 +351,7 @@ const char *ui_sm_seq_root_name(uint8_t root);
 /* a MIDI note as text, C-1 .. G9 ("C#3"), or "TIE" for SEQ_NOTE_TIE; buf at least 5 bytes */
 const char *ui_sm_note_name(uint8_t note, char *buf);
 const char *ui_sm_fine_text(uint8_t v, char *buf);   /* OSC FINE TUNE in cents: "+125C" (at least 6 bytes) */
+const char *ui_sm_dtime_text(uint8_t v, char *buf);  /* DELAY TIME: "1/16T" or "472MS" (at least 7 bytes) */
 
 /* ------------------------------------------------------------- ARP --- */
 /* 8.1 function keys: the black keys among the step keys, by the step key below them (G#4 LATCH .. F#5 ACCENT) */
