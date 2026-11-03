@@ -108,13 +108,16 @@ int16_t osc_mixer_osc2(const OscMixVoice *mv, int16_t wave1_q15, WavetableOsc *o
 }
 
 void osc_mixer_osc2_block(const OscMixVoice *mv, const int32_t *w1, WavetableOsc *osc2, int32_t *w2, int n) {
-    if (!osc2->pcm.on) {
+    int fm = mv->xmod_type != OSCMIX_XMOD_AM && mv->xmod_type != OSCMIX_XMOD_RING &&
+             mv->xmod_type != OSCMIX_XMOD_PM && mv->depth != 0;
+    /* a bank: sample by sample. VCO (oscillators.c) only for FM and PM, which move its pitch or phase per sample;
+     * plain, AM and RING take the block below, the same values (2026-11-02: the per-sample call cost DUAL OSC 7 points) */
+    if (!osc2->pcm.on && (!osc2->vco || fm || mv->xmod_type == OSCMIX_XMOD_PM)) {
         for (int i = 0; i < n; i++)
             w2[i] = osc_mixer_osc2(mv, (int16_t)w1[i], osc2);
         return;
     }
-    if (mv->xmod_type != OSCMIX_XMOD_AM && mv->xmod_type != OSCMIX_XMOD_RING && mv->xmod_type != OSCMIX_XMOD_PM &&
-        mv->depth != 0) {                       /* FM: osc_mixer_osc2's pitch, per sample */
+    if (fm) {                                   /* FM: osc_mixer_osc2's pitch, per sample */
         for (int i = 0; i < n; i++) {
             int32_t fm_hz = ((int32_t)(int16_t)w1[i] * mv->depth) >> 12;
             int32_t f = (int32_t)mv->freq2_q16 + fm_hz * 98304;

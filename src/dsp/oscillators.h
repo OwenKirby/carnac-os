@@ -29,8 +29,24 @@ typedef struct {
     uint16_t rd_off[5];
     uint16_t rd_mask[5];
     uint8_t rd_shift[5];
+    /* VCO (bank 0, oscillators.c "VCO"): the SH-2 VCO-1, its edges band-limited per sample. osc_prepare sets
+     * the shape for the tick from the scan (an). frame_a / frame_b still hold Foundations' frames, for SUB CURRENT. */
+    uint8_t vco;                 // bank 0 plays VCO
+    struct osc_an {
+        const int16_t *fa, *fb;  // the curved parts' tables (TRIANGLE, SAW, SAW + SQUARE), or none (fa 0)
+        const int16_t *fs;       // SAW + SQUARE's table after its square edge (edges & 2)
+        int32_t mf, w;           // fa -> fb crossfade (Q15); with fa alone, its weight (Q15)
+        int32_t hi, lo;          // the pulse's two levels (its weight and the DC in them)
+        uint32_t up;             // the pulse's rising edge, as a cycle phase
+        int32_t key;             // the scan the shape was worked out for, + 1 (0, as a zeroed voice has: none yet)
+        uint8_t seg;             // the loop: 0 TRI -> SAW, 2 PULSE, 3 a table + a pulse (SAW -> SQ, MIN -> SAW + SQ)
+        float jw, bw, ju, j2;    // half-jumps at the reset / rising edge / square edge, slope change at the reset
+    } an;
     PcmOsc pcm;                  // a PCM wave instead of the bank (pcm.on, set by osc_select_wave): pcm_osc.h
 } WavetableOsc;
+
+/* 0: bank 0 reads Foundations' frames as before (host A/B and the PERF TEST's comparison build) */
+extern int osc_bank0_vco;
 
 /* One sample of two frames at a cycle phase: linear within each frame (the level at off, its index shift and mask),
  * then across them by morph_frac_q15. Integer on purpose: int16 tables read with a 1-cycle add and a 10-cycle

@@ -119,6 +119,8 @@ def main():
                          "4 (2026-10-26): the DSP runs from the XIP flash through the I-cache, and with 2-byte "
                          "functions a UI change of 2 mod 4 bytes flipped every instruction's fetch phase (PERF TEST "
                          "rows moved by up to 5 points with the DSP unchanged); 4 costs ~110 B")
+    ap.add_argument("-D", "--define", action="append", default=[], metavar="NAME=VALUE",
+                    help="a -D for both units, e.g. OSC_BANK0_VCO=0 (a comparison build with the same layout)")
     a = ap.parse_args()
     os.environ.setdefault("JIELI_TOOLCHAIN", "/opt/jieli/toolchain")
     os.environ.setdefault("AC79_SDK", "/opt/fw-AC79_AIoT_SDK")
@@ -152,6 +154,7 @@ def main():
             flags.append(f'-DSYNTH_VERSION="{a.release.upper()}"')
         if a.prof:
             flags += ["-DSYNTH_PROF", '-DSYNTH_VERSION="PROF"']
+        flags += [f"-D{d}" for d in a.define]
         o2 = [f if f != "-Os" else "-O2" for f in flags]
         if a.dsp_align:                                 # (JieLi's clang 4 ignores -falign-functions: LLVM's own switch)
             o2 += ["-mllvm", f"-align-all-functions={a.dsp_align.bit_length() - 1}"]

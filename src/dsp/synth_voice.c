@@ -874,11 +874,12 @@ static void render_single(SynthVoiceNode *v, float *mix, int n) {
 }
 
 /* DUAL OSC and FULL: OSC1 + cross-modulated OSC2 by balance, + sub + noise, as the filter's float input. With a PCM
- * wave on either oscillator: OSC1 as a block, OSC2 against it (osc_mixer_osc2_block), mixed as osc_mixer_render
- * mixes; otherwise the cross-modulation reads OSC1 sample by sample */
+ * wave or the VCO (bank 0) on either oscillator: OSC1 as a block, OSC2 against it (osc_mixer_osc2_block), mixed as
+ * osc_mixer_render mixes; otherwise the cross-modulation reads OSC1 sample by sample (2026-11-02: the VCO sample by
+ * sample cost DUAL OSC ~55 profile ticks) */
 static void dual_osc_block(SynthVoiceNode *v, float *x, int n) {
     int32_t o[VB];
-    if (v->osc1.pcm.on || v->osc2.pcm.on) {
+    if (v->osc1.pcm.on || v->osc2.pcm.on || v->osc1.vco || v->osc2.vco) {
         int32_t w1[VB], w2[VB];
         osc_render_block(&v->osc1, w1, n);
         osc_mixer_osc2_block(&v->mix, w1, &v->osc2, w2, n);

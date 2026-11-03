@@ -1,6 +1,8 @@
 
 #include "oscillators.h"
 #include "wavetables.h"
+#include "dsp_cold.h"
+#include "mem_section.h"
 #include <stdint.h>
 
 void osc_init(WavetableOsc *osc) {
@@ -13,6 +15,7 @@ void osc_init(WavetableOsc *osc) {
     osc->morph_q12 = 0;
     osc->xfade_q15 = 0;
     osc->pcm = (PcmOsc){0};
+    osc->an.key = 0;                        /* VCO's shape: worked out at the first prepare */
     osc_prepare(osc, 0, 0);
 }
 
@@ -187,6 +190,318 @@ static uint32_t phase_step(uint32_t frequency_q16) {
     return ((frequency_q16 >> 8) * 380u) + (((frequency_q16 >> 8) * 3u) >> 3);
 }
 
+/* ---------------------------------------------------------------------------------------------------- VCO ------
+ * Bank 0: the Roland SH-2's VCO-1 (service notes, 1979, OPH62; docs/roland OTA filters), the circuit Foundations'
+ * frames were drawn from (gen_foundations.py), so the waves match them and the same scan positions name the same
+ * shapes: 0 TRIANGLE, 1 SAW, 2 SQUARE (49 %), 3..6 the PULSE WIDTH down to MIN (4.5 %), 7 SAW + SQUARE. The
+ * difference: between 2 and 6 the comparator's threshold moves, so the edge moves (real PWM) where the frames could
+ * only crossfade, and no mip level dulls the top octaves.
+ *   core      IC22's exponential pair into the IC18a integrator (C44): a ramp, bent a little: t + K t (1 - t)
+ *   reset     IC18b fires Q30 to empty C44: a few microseconds, under a tenth of a sample, so a step, band-limited
+ *             by polyBLEP on the two samples around it (polyBLAMP for the slope change)
+ *   TRIANGLE  IC16b's precision rectifier: the valley rounded (AN_E), the halves a few percent apart (AN_GNEG)
+ *   PULSE     the comparator: high from the width's threshold to the reset
+ *   out       a hint of output-stage asymmetry (AN_A); no DC (the coupling capacitor's job: each part's mean is off)
+ *   SAW + SQ  the mixer's soft saturation (tanh)
+ * The curved parts (TRIANGLE, SAW, SAW + SQUARE) have no edge inside a cycle but the reset (and SAW + SQUARE's square
+ * edge), so they are drawn once, unband-limited, into 1025-point int16 tables (an_init; the 1025th point is the
+ * value just before the reset, so a read never interpolates across it; SAW + SQUARE is two tables, before and after
+ * its square edge, for the same reason) and read like a wavetable; the pulse is two
+ * integer levels. Only the samples next to an edge do float work. 2026-11-02: computing the curves per sample in
+ * float cost +2.5 PERF TEST points a SINGLE voice and +33 on SPREAD.
+ * Host A/B against Foundations: src/host/render_vco_ab.c. */
+#ifndef OSC_BANK0_VCO
+#define OSC_BANK0_VCO 1      /* -DOSC_BANK0_VCO=0: Foundations' frames, the same code laid out the same way */
+#endif
+int osc_bank0_vco = OSC_BANK0_VCO;
+
+#define AN_K     0.11f          /* ramp bend */
+#define AN_E     0.035f         /* triangle valley rounding */
+#define AN_GNEG  0.965f         /* rectifier halves */
+#define AN_A     0.025f         /* output asymmetry */
+#define AN_G     14533.0f       /* +-1 -> the sample scale, Foundations' level (SAW at A2 matched) */
+#define AN_SSD   (1.25f * 0.55f) /* SAW + SQUARE into the mixer */
+#define AN_N     1024           /* table points a cycle (+1) */
+#define AN_SQ_I  522            /* SQUARE's rising edge, in table points: 1 - 0.49 of a cycle, on a point */
+#define AN_SQ_UP ((uint32_t)AN_SQ_I << 22)
+#define AN_DT    (1.0f / 4294967296.0f)
+
+enum { AN_TRI, AN_SAW, AN_SS, AN_SS2 };            /* AN_SS: SAW + SQUARE with the square low, AN_SS2: high */
+static int16_t an_tab[4][AN_N + 1] SYNTH_POOL;
+static float an_jump[3], an_dslope[3], an_ss_sq;  /* each part's jump and slope change at the reset; SS's square edge */
+static uint8_t an_ready;
+static const float AN_WIDTH[5] = { 0.49f, 0.35f, 0.20f, 0.10f, 0.045f };   /* the pulse at scan 2..6 */
+
+static float an_core(float t) { return t + AN_K * t * (1.0f - t); }
+static float an_soft(float x) { float x2 = x * x; return x * (27.0f + x2) / (27.0f + 9.0f * x2); }   /* tanh */
+static SYNTH_COLD float an_sqrt(float x) {         /* (start-up only: the DSP links no libm) */
+    float r = x > 1.0f ? x : 1.0f;
+    for (int i = 0; i < 20; i++) r = 0.5f * (r + x / r);
+    return r;
+}
+
+/* the three curved parts at cycle point t (t = 1: just before the reset), +-1 scale, asymmetry in */
+static SYNTH_COLD float an_curve(int k, float t, int sq) {
+    float s = 2.0f * an_core(t) - 1.0f, y;
+    if (k == AN_TRI) {
+        float x = s > 0.0f ? s : AN_GNEG * s;
+        float r = an_sqrt(x * x + AN_E * AN_E), rmax = an_sqrt(1.0f + AN_E * AN_E);
+        y = 1.0f - 2.0f * (r - AN_E) / (rmax - AN_E);
+    } else if (k == AN_SAW) {
+        y = s;
+    } else {
+        y = an_soft(AN_SSD * (s + (float)sq)) / an_soft(1.25f);
+    }
+    return y + AN_A * y * y;
+}
+
+static SYNTH_COLD void an_init(void) {
+    for (int k = 0; k < 3; k++) {
+        float dc = 0.0f;
+        for (int i = 0; i < 4 * AN_N; i++) {
+            float t = (i + 0.5f) * (1.0f / (4 * AN_N));
+            dc += an_curve(k, t, t >= (float)AN_SQ_I / AN_N ? 1 : -1);
+        }
+        float m = dc * (1.0f / (4 * AN_N));
+        for (int h = 0; h < (k == AN_SS ? 2 : 1); h++)
+            for (int i = 0; i <= AN_N; i++) {
+                float v = AN_G * (an_curve(k, (float)i / AN_N, h ? 1 : -1) - m);
+                an_tab[k + h][i] = (int16_t)(v < 0.0f ? v - 0.5f : v + 0.5f);
+            }
+        const int16_t *A = an_tab[k], *B = an_tab[k == AN_SS ? AN_SS2 : k];   /* after / before the reset */
+        an_jump[k] = (float)(A[0] - B[AN_N]);
+        an_dslope[k] = (float)((A[1] - A[0]) - (B[AN_N] - B[AN_N - 1])) * AN_N;
+    }
+    an_ss_sq = (float)(an_tab[AN_SS2][AN_SQ_I] - an_tab[AN_SS][AN_SQ_I]);
+    an_ready = 1;
+}
+
+/* polyBLEP: the residual of a jump of 2 at distance d (cycle phase) from the edge; d within a step of it */
+static inline float an_edge(uint32_t d, uint32_t step, float inv) {
+    if (d < step) { float u = 1.0f - (float)(int32_t)d * inv; return -u * u; }
+    float u = 1.0f - (float)(int32_t)(0u - d) * inv;
+    return u * u;
+}
+
+/* polyBLAMP: the residual of a slope change of 1 per cycle at distance d (within a step), in cycle units */
+static inline float an_ramp(uint32_t d, uint32_t step, float inv) {
+    if (d >= step) d = 0u - d;
+    float u = 1.0f - (float)(int32_t)d * inv;
+    return u * u * u * (1.0f / 3.0f) * (float)step * AN_DT;
+}
+
+static inline int32_t an_q15(float a) { return (int32_t)(a * 32768.0f + 0.5f); }
+static inline uint32_t an_up_for(float w) { return (uint32_t)((1.0f - w) * 16777216.0f) << 8; }
+static inline float an_inv(uint32_t step) { return step ? 1.0f / (float)step : 0.0f; }
+
+/* the pulse at width w and weight g: its two levels with its DC taken off */
+static void an_pulse(WavetableOsc *osc, float w, float g) {
+    float dcp = 2.0f * w - 1.0f + AN_A;
+    osc->an.hi = (int32_t)(g * AN_G * (1.0f + AN_A - dcp));
+    osc->an.lo = (int32_t)(g * AN_G * (-1.0f + AN_A - dcp));
+    osc->an.up = an_up_for(w);
+}
+
+static void an_shape(WavetableOsc *osc);
+
+/* control rate: the shape, when the scan has moved */
+static inline void an_prepare(WavetableOsc *osc) {
+    if (osc->an.key != osc->morph_q12 + 1 || !an_ready) an_shape(osc);
+}
+
+/* the scan -> the tables and weights, the pulse, the edge corrections */
+static SYNTH_COLD void an_shape(WavetableOsc *osc) {
+    if (!an_ready) an_init();
+    osc->an.key = osc->morph_q12 + 1;
+    float m = (float)osc->morph_q12 * (1.0f / 4096.0f);
+    if (m > 7.0f) m = 7.0f;
+    osc->an.fa = osc->an.fb = osc->an.fs = 0;
+    osc->an.mf = osc->an.w = osc->an.hi = osc->an.lo = 0;
+    osc->an.up = 0;
+    osc->an.jw = osc->an.bw = osc->an.ju = osc->an.j2 = 0.0f;
+    if (m < 1.0f) {                         /* TRIANGLE -> SAW */
+        float a = m;
+        osc->an.seg = 0;
+        osc->an.fa = an_tab[AN_TRI]; osc->an.fb = an_tab[AN_SAW]; osc->an.mf = an_q15(a);
+        osc->an.jw = 0.5f * ((1.0f - a) * an_jump[AN_TRI] + a * an_jump[AN_SAW]);
+        osc->an.bw = 0.5f * ((1.0f - a) * an_dslope[AN_TRI] + a * an_dslope[AN_SAW]);
+    } else if (m < 2.0f) {                  /* SAW -> SQUARE */
+        float a = m - 1.0f;
+        osc->an.fa = osc->an.fs = an_tab[AN_SAW]; osc->an.w = an_q15(1.0f - a);
+        an_pulse(osc, (float)(AN_N - AN_SQ_I) / AN_N, a);
+        osc->an.up = AN_SQ_UP;
+        osc->an.jw = 0.5f * (1.0f - a) * an_jump[AN_SAW] - a * AN_G;
+        osc->an.bw = 0.5f * (1.0f - a) * an_dslope[AN_SAW];
+        osc->an.ju = a * AN_G; osc->an.seg = 3;  /* region 3's loop: a table and a pulse (no square edge: j2 0) */
+    } else if (m < 6.0f) {                  /* PULSE: the threshold moves */
+        int i = (int)m - 2;
+        an_pulse(osc, AN_WIDTH[i] + (AN_WIDTH[i + 1] - AN_WIDTH[i]) * (m - (float)(int)m), 1.0f);
+        osc->an.jw = -AN_G; osc->an.ju = AN_G; osc->an.seg = 2;
+    } else {                                /* PULSE MIN -> SAW + SQUARE */
+        float a = m - 6.0f;
+        osc->an.fa = an_tab[AN_SS]; osc->an.fs = an_tab[AN_SS2]; osc->an.w = an_q15(a);
+        an_pulse(osc, AN_WIDTH[4], 1.0f - a);
+        osc->an.jw = 0.5f * a * an_jump[AN_SS] - (1.0f - a) * AN_G;
+        osc->an.bw = 0.5f * a * an_dslope[AN_SS];
+        osc->an.ju = (1.0f - a) * AN_G;
+        osc->an.j2 = 0.5f * a * an_ss_sq; osc->an.seg = 3;
+    }
+}
+
+/* the corrections next to an edge (polyBLEP / polyBLAMP), out of line: the loops stay small and only call it within a
+ * step of an edge (a few samples a cycle) */
+static SYNTH_COLD int32_t an_fix(const struct osc_an *p, int seg, uint32_t ph, uint32_t step) {
+    float c = 0.0f, inv = an_inv(step);     /* (here, not per tick or per sample: 2026-11-02 the FM path's divide) */
+    uint32_t w2 = step + step;
+    if (ph + step < w2) c += p->jw * an_edge(ph, step, inv) + p->bw * an_ramp(ph, step, inv);
+    if (seg) {
+        uint32_t d = ph - p->up;
+        if (d + step < w2) c += p->ju * an_edge(d, step, inv);
+    }
+    if (seg == 3) {
+        uint32_t d = ph - AN_SQ_UP;
+        if (d + step < w2) c += p->j2 * an_edge(d, step, inv);
+    }
+    return (int32_t)c;
+}
+
+/* one sample of one playhead at cycle phase ph (after its step), for scan region seg (a constant where it is inlined,
+ * so each region gets its own loop): the table(s) and the pulse in integers, an_fix within a step of an edge
+ * ((d + step) < 2 step: d in [-step, step)). The shape comes in as scalars, held in registers by the loops. */
+static inline __attribute__((always_inline)) int32_t an_head(const int seg, uint32_t ph, uint32_t step,
+        const int16_t *fa, const int16_t *fb, const int16_t *fs, int32_t mf, int32_t w, int32_t hi, int32_t lo,
+        uint32_t up, const struct osc_an *fix) {
+    int32_t y;
+    if (seg == 2) {
+        y = ph >= up ? hi : lo;
+    } else {
+        uint32_t i0 = ph >> 22;
+        int32_t fr = (int32_t)((ph >> 7) & 0x7FFFu);
+        const int16_t *a = (seg == 3 && ph >= AN_SQ_UP ? fs : fa) + i0;
+        int32_t s = a[0], v = s + (((a[1] - s) * fr) >> 15);
+        if (seg == 0) {
+            y = v;
+            if (mf) {                           /* (TRIANGLE alone: one table, as the frames read) */
+                const int16_t *b = fb + i0;
+                int32_t sb = b[0], vb = sb + (((b[1] - sb) * fr) >> 15);
+                y = v + (((vb - v) * mf) >> 15);
+            }
+        } else {
+            y = ((v * w) >> 15) + (ph >= up ? hi : lo);
+        }
+    }
+    uint32_t w2 = step + step;
+    int near = ph + step < w2;
+    if (seg != 0) near |= ph - up + step < w2;
+    if (seg == 3) near |= ph - AN_SQ_UP + step < w2;
+    if (near) y += an_fix(fix, seg, ph, step);
+    return y;
+}
+
+#define AN_SHAPE(o) const struct osc_an *fix = &(o)->an; \
+    const int16_t *fa = fix->fa, *fb = fix->fb, *fs = fix->fs; \
+    const int32_t mf = fix->mf, w = fix->w, hi = fix->hi, lo = fix->lo; const uint32_t up = fix->up
+#define AN_ARGS fa, fb, fs, mf, w, hi, lo, up, fix
+
+/* one sample of one playhead, any region (the per-sample paths: osc_render, FM, SPREAD with a playhead out); one copy */
+static __attribute__((noinline)) int32_t an_one(const WavetableOsc *o, uint32_t ph, uint32_t step) {
+    AN_SHAPE(o);
+    switch (fix->seg) {
+    case 0:  return an_head(0, ph, step, AN_ARGS);
+    case 2:  return an_head(2, ph, step, AN_ARGS);
+    default: return an_head(3, ph, step, AN_ARGS);
+    }
+}
+
+/* SPREAD's mix, sample by sample: the live playheads' mean, crossfaded from the undetuned one at low spread */
+static __attribute__((noinline)) int32_t an_spread_sample(WavetableOsc *o) {
+    int32_t mix = 0;
+    for (int i = 0; i < 4; i++) {
+        if (!(o->live & (1u << i))) continue;
+        o->phases_q16[i] += o->step_increments[i];
+        mix += an_one(o, o->phases_q16[i], o->step_increments[i]);
+    }
+    mix >>= 2;
+    if (o->xfade_q15 < 32768) {
+        int32_t c = an_one(o, o->center_phase, o->center_step);
+        mix = c + (((mix - c) * o->xfade_q15) >> 15);
+    }
+    return mix;
+}
+
+/* osc_render's VCO sample, out of line: osc_render stays small enough to inline into the per-sample OSC2 paths
+ * (2026-11-02: with this inside it, DUAL OSC paid ~50 profile ticks even with OSC2 on another bank) */
+static __attribute__((noinline)) int32_t an_render_one(WavetableOsc *o) {
+    return o->xfade_q15 == 0 ? an_one(o, o->center_phase, o->center_step) : an_spread_sample(o);
+}
+
+/* the undetuned playhead over a block, one region */
+static inline __attribute__((always_inline)) void an_block(const int seg, WavetableOsc *o, int32_t *out, int n) {
+    AN_SHAPE(o);
+    uint32_t ph = o->center_phase;
+    const uint32_t step = o->center_step;
+    for (int i = 0; i < n; i++) {
+        ph += step;
+        out[i] = an_head(seg, ph, step, AN_ARGS);
+    }
+    o->center_phase = ph;
+}
+
+/* SPREAD with all four playheads live, one region (as osc_render_spread4): each playhead over the block in turn,
+ * summed into out, then the undetuned one's crossfade (one inlined read a region, for the flash: 2026-11-02 five
+ * unrolled reads a region overflowed the XIP by 1.7 KB) */
+static inline __attribute__((always_inline)) void an_spread4(const int seg, WavetableOsc *o, int32_t *out, int n) {
+    AN_SHAPE(o);
+    for (int i = 0; i < n; i++) out[i] = 0;
+    for (int h = 0; h < 5; h++) {
+        uint32_t ph = h < 4 ? o->phases_q16[h] : o->center_phase;
+        const uint32_t step = h < 4 ? o->step_increments[h] : o->center_step;
+        if (h < 4) {
+            for (int i = 0; i < n; i++) {
+                ph += step;
+                out[i] += an_head(seg, ph, step, AN_ARGS);
+            }
+            o->phases_q16[h] = ph;
+            continue;
+        }
+        const int32_t xf = o->xfade_q15;
+        if (xf >= 32768) {
+            for (int i = 0; i < n; i++) out[i] >>= 2;
+            o->center_phase = ph + step * (uint32_t)n;
+            break;
+        }
+        for (int i = 0; i < n; i++) {
+            ph += step;
+            int32_t c = an_head(seg, ph, step, AN_ARGS), mix = out[i] >> 2;
+            out[i] = c + (((mix - c) * xf) >> 15);
+        }
+        o->center_phase = ph;
+    }
+}
+
+/* osc_render_block for VCO: a loop for each region */
+static void an_render_block(WavetableOsc *o, int32_t *out, int n) {
+    if (o->xfade_q15 != 0) {
+        if (o->live != 0xF) {                   /* a playhead above Nyquist */
+            for (int i = 0; i < n; i++) {
+                o->center_phase += o->center_step;
+                out[i] = an_spread_sample(o);
+            }
+            return;
+        }
+        switch (o->an.seg) {
+        case 0:  an_spread4(0, o, out, n); return;
+        case 2:  an_spread4(2, o, out, n); return;
+        default: an_spread4(3, o, out, n); return;
+        }
+    }
+    switch (o->an.seg) {
+    case 0:  an_block(0, o, out, n); return;
+    case 2:  an_block(2, o, out, n); return;
+    default: an_block(3, o, out, n); return;
+    }
+}
+
 int32_t wt_read_morph(int bank, int morph_q12, uint8_t level, uint32_t phase) {
     int morph = morph_q12 >> 12;
     int32_t morph_frac_q15 = (morph_q12 & 0xFFF) << 3;
@@ -221,6 +536,10 @@ int16_t osc_process_skulpt_spread_fixed(WavetableOsc *osc, uint32_t frequency_q1
      * over the first SPREAD_XFADE values. At spread 0 the other four follow it, so a later spread starts from
      * one coherent wave and returning to 0 leaves no phase-offset copies behind (they would comb-filter the tone). */
     osc->center_phase += base_step;
+    if (osc->vco) {              /* VCO: the undetuned playhead alone (only the FM path calls this, spread 0) */
+        osc->phases_q16[0] = osc->phases_q16[1] = osc->phases_q16[2] = osc->phases_q16[3] = osc->center_phase;
+        return (int16_t)an_one(osc, osc->center_phase, base_step);
+    }
     uint8_t center_level = wt_level_for_freq(frequency_q16);
     if (raw_spread <= 0) {
         osc->step_increments[0] = osc->step_increments[1] = osc->step_increments[2] = osc->step_increments[3] = base_step;
@@ -269,6 +588,7 @@ void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread) {
         osc->center_step = phase_step(frequency_q16);
         osc->xfade_q15 = 0;
         osc->live = 0;
+        osc->vco = 0;
         pcm_prepare(&osc->pcm, frequency_q16, osc->morph_q12);
         /* SPREAD: the loops' own detuned playheads at the bank's ratios and crossfade */
         if (raw_spread <= 0)
@@ -285,6 +605,7 @@ void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread) {
     osc->frame_a = wavetable_frames[osc->bank * NUM_MORPH_STEPS + morph];
     osc->frame_b = morph_frac_q15 ? wavetable_frames[osc->bank * NUM_MORPH_STEPS + morph + 1] : osc->frame_a;
     osc->morph_frac_q15 = morph_frac_q15;
+    osc->vco = (uint8_t)(osc->bank == 0 && osc_bank0_vco);
 
     osc->center_step = phase_step(frequency_q16);
     osc->center_level = wt_level_for_freq(frequency_q16);
@@ -292,6 +613,7 @@ void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread) {
     if (raw_spread <= 0) {
         osc->live = 0;
         osc->xfade_q15 = 0;
+        if (osc->vco) an_prepare(osc);
         return;
     }
     /* spread 0 -> on: the four detuned playheads start from the undetuned one, so a spread starts from one coherent
@@ -314,6 +636,7 @@ void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread) {
         osc->live |= (uint8_t)(1u << i);
     }
     osc->xfade_q15 = raw_spread >= SPREAD_XFADE ? 32768 : (raw_spread << 15) / SPREAD_XFADE;
+    if (osc->vco) an_prepare(osc);
 }
 
 /* the undetuned playhead's read at its current phase */
@@ -324,6 +647,8 @@ static inline int32_t osc_read_center(const WavetableOsc *osc) {
 
 int16_t osc_render(WavetableOsc *osc) {
     osc->center_phase += osc->center_step;
+    if (osc->vco)
+        return (int16_t)an_render_one(osc);
     if (osc->xfade_q15 == 0)        /* spread 0: the detuned playheads rejoin it when a spread starts (osc_prepare) */
         return (int16_t)osc_read_center(osc);
     int32_t mix_q15 = 0;
@@ -373,6 +698,10 @@ void osc_render_block(WavetableOsc *osc, int32_t *out, int n) {
     if (osc->pcm.on) {                              /* a PCM wave (pcm_osc.c); the phase turns on, for the sub */
         osc->center_phase += osc->center_step * (uint32_t)n;
         pcm_render_block(&osc->pcm, out, n);
+        return;
+    }
+    if (osc->vco) {
+        an_render_block(osc, out, n);
         return;
     }
     if (osc->xfade_q15 != 0) {                 /* SPREAD: four playheads and the crossfade, as osc_render */
