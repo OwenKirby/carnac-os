@@ -22,11 +22,12 @@ void adsr_note_off(ADSR *env);
 void adsr_note_on_legato(ADSR *env, const EnvParams *p, int is_any_other_voice_held);
 
 // Advances the envelope 2^shift samples (one control tick; shift 0 = one sample).
-// time_mod: velocity and key-position time modulation, in envelope steps (spec 4.4).
+// time_mod: key-position time modulation (KEY > TIME, every stage), atk_mod: VEL > ATTACK (the attack only), in
+// envelope steps (spec 4.4).
 // release_boost_q15: 0 = no repeat, 32767 = the notes were struck back to back (AUTO DECAY acts on it).
 // Returns the unipolar Q15 level at the end of the tick; polarity inversion is the caller's job.
 // frame: the audio frame of this tick, for the clock-synced retrigger (midi_clock_phase_at).
-int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, uint16_t release_boost_q15, uint8_t shift,
-                     uint32_t frame);
+int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, uint16_t release_boost_q15,
+                     uint8_t shift, uint32_t frame);
 
 #endif

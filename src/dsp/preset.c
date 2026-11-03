@@ -1,4 +1,5 @@
 #include "preset.h"
+#include <stddef.h>
 #include "maq_seq.h"                 /* MAQ_GATE_DEFAULT */
 #include "hardware/mem_section.h"
 #include "hardware/synth_libc.h"
@@ -107,7 +108,7 @@ void engine_defaults(EngineState *e)
         p->decay = 32;
         p->sustain = 64;
         p->release = 32;
-        p->vel_to_time = BIPOLAR_CENTER;
+        p->vel_to_attack = BIPOLAR_CENTER;
         p->key_to_time = BIPOLAR_CENTER;
     }
 
@@ -123,7 +124,7 @@ void engine_defaults(EngineState *e)
 
     for (unsigned i = 0; i < NMODSLOT; i++) {
         e->mod[i].func = MFN_ADD;
-        e->mod[i].amount = BIPOLAR_CENTER;
+        e->mod[i].amount = VAL_MAX;      /* LEVEL full (2026-11-03): a new slot's sends work at once */
     }
 
     e->amp.pan_mod_src = MSRC_KEYBOARD;
@@ -213,4 +214,67 @@ void patch_load(uint8_t layer, uint8_t slot)
     engine_state[layer] = patch_bank[slot];
     engine_load_count[layer]++;
     perf_state.layer_patch[layer] = slot;
+}
+
+/* ---- MOD SENDS (2026-11-03) ---- */
+#define EOFS(member) ((uint8_t)offsetof(EngineState, member))
+#define NO 0xFFu
+const uint8_t mdst_ofs[MDST_COUNT][3] = {
+    {NO, NO, NO},
+    {EOFS(osc[0].scan_mod_src), EOFS(osc[0].scan_mod_amt), EOFS(osc[0].scan)},
+    {EOFS(osc[0].pitch_mod_src), EOFS(osc[0].pitch_mod_amt), NO},
+    {EOFS(osc[1].scan_mod_src), EOFS(osc[1].scan_mod_amt), EOFS(osc[1].scan)},
+    {EOFS(osc[1].pitch_mod_src), EOFS(osc[1].pitch_mod_amt), NO},
+    {EOFS(oscmix.mix_mod_src), EOFS(oscmix.mix_mod_amt), EOFS(oscmix.balance)},
+    {EOFS(oscmix.xmod_mod_src), EOFS(oscmix.xmod_mod_amt), EOFS(oscmix.xmod_amt)},
+    {EOFS(oscmix.spread_mod_src), EOFS(oscmix.spread_mod_amt), EOFS(oscmix.spread)},
+    {EOFS(oscmix.noise_mod_src), EOFS(oscmix.noise_mod_amt), EOFS(oscmix.noise_level)},
+    {EOFS(oscmix.noise_col_mod_src), EOFS(oscmix.noise_col_mod_amt), EOFS(oscmix.noise_colour)},
+    {EOFS(filter[0].mod_src), EOFS(filter[0].mod_amt), EOFS(filter[0].cutoff)},
+    {EOFS(filter[0].morph_mod_src), EOFS(filter[0].morph_mod_amt), EOFS(filter[0].morph)},
+    {EOFS(filter[1].mod_src), EOFS(filter[1].mod_amt), EOFS(filter[1].cutoff)},
+    {EOFS(filter[1].morph_mod_src), EOFS(filter[1].morph_mod_amt), EOFS(filter[1].morph)},
+    {EOFS(fltmix.balance_mod_src), EOFS(fltmix.balance_mod_amt), EOFS(fltmix.balance)},
+    {EOFS(fltmix.routing_mod_src), EOFS(fltmix.routing_mod_amt), EOFS(fltmix.routing)},
+    {EOFS(fltmix.bin_phase_mod_src), EOFS(fltmix.bin_phase_mod_amt), EOFS(fltmix.bin_mod_phase)},
+    {EOFS(fltmix.bin_cutoff_mod_src), EOFS(fltmix.bin_cutoff_mod_amt), EOFS(fltmix.bin_cutoff_offset)},
+    {EOFS(lfo[0].speed_mod_src), EOFS(lfo[0].speed_mod_amt), EOFS(lfo[0].rate)},
+    {EOFS(lfo[1].speed_mod_src), EOFS(lfo[1].speed_mod_amt), EOFS(lfo[1].rate)},
+    {EOFS(lfo[2].speed_mod_src), EOFS(lfo[2].speed_mod_amt), EOFS(lfo[2].rate)},
+    {EOFS(amp.amp_mod_src), EOFS(amp.amp_mod_depth), NO},
+    {EOFS(amp.pan_mod_src), EOFS(amp.pan_mod_depth), NO},
+    {NO, NO, EOFS(filter[0].resonance)}, {NO, NO, EOFS(filter[1].resonance)},
+    {NO, NO, EOFS(filter[0].drive)}, {NO, NO, EOFS(filter[1].drive)},
+    {NO, NO, NO},                                            /* GLIDE: PORTA TIME is the performance's */
+    {NO, NO, EOFS(mfx.knob[0])}, {NO, NO, EOFS(mfx.knob[1])}, {NO, NO, EOFS(mfx.knob[2])}, {NO, NO, EOFS(mfx.knob[3])},
+    {NO, NO, EOFS(amp.delay_send)}, {NO, NO, EOFS(amp.reverb_send)},
+};
+#undef NO
+#undef EOFS
+/* the destinations whose own amount is bipolar (64 = 0): NOISE LEVEL / COLOUR, the morphs, the FILTER MIXER's, the
+ * LFO speeds; the others' run 0..127 */
+#define MDST_BIPOLAR ((1u << MDST_NOISE_LEVEL) | (1u << MDST_NOISE_COLOUR) | (1u << MDST_F1_MORPH) | \
+                      (1u << MDST_F2_MORPH) | (1u << MDST_BALANCE) | (1u << MDST_ROUTING) | (1u << MDST_PHASE) | \
+                      (1u << MDST_CUTOFF_LR) | (1u << MDST_LFO1_SPEED) | (1u << MDST_LFO2_SPEED) | (1u << MDST_LFO3_SPEED))
+
+void engine_slot_routes_to_sends(EngineState *e)
+{
+    uint8_t *b = (uint8_t *)e;
+    unsigned d, i;
+    for (d = 1u; d < MDST_COUNT; d++) {
+        uint8_t so = mdst_ofs[d][0], ao = mdst_ofs[d][1], src;
+        int a;
+        if (so == 0xFFu || (src = b[so]) < MSRC_MODSLOT1 || src > MSRC_MODSLOT4)
+            continue;
+        a = (MDST_BIPOLAR >> d) & 1u ? (int)b[ao] - (int)BIPOLAR_CENTER : ((int)b[ao] + 1) / 2;
+        if (a > 63) a = 63;
+        for (i = 0u; i < NMODSEND && a != 0; i++)
+            if (e->send[i].dest == MDST_NONE) {
+                e->send[i].dest = (uint8_t)(d | (unsigned)(src - MSRC_MODSLOT1) << MSEND_SLOT_SHIFT);
+                e->send[i].amount = (uint8_t)((int)BIPOLAR_CENTER + a);
+                break;
+            }
+        b[so] = MSRC_NONE;
+        b[ao] = (MDST_BIPOLAR >> d) & 1u ? (uint8_t)BIPOLAR_CENTER : 0u;
+    }
 }

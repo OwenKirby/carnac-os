@@ -210,6 +210,27 @@ int main(void)
     CHECK(count(0xB0) == 1 && ev[nth(0xB0, 0)].d1 == 1 && ev[nth(0xB0, 0)].d2 == 99, "mod wheel CC1 = 99");
     CHECK(count(0xC0) == 0, "no Program Change outside DUAL_SYNTH");
 
+    /* ---- POLY AT lane (2026-11-03): presses the notes the SEQ sounds on its target, at its step and as they strike ---- */
+    reset();
+    lanes[2].event_type = SEQEV_POLY_AT; lanes[2].target_mask = SEQ_TGT_L1;
+    for (i = 0; i < (int)SEQ_NSTEP; i++) lanes[2].steps[i].value = (uint8_t)(70 + i);
+    maq_set_playing(&q, 1);
+    run(STEP_FRAMES * 2u + 10u);                    /* two steps */
+    a = nth(0xA0, 0);
+    CHECK(a >= 0 && ev[a].d1 == lanes[0].steps[0].note_buffer[0] && ev[a].d2 == 70 && (ev[a].st & 0x0Fu) == 0,
+          "POLY AT presses the sounding note at 70 (%d: note %u, %u)", a, a >= 0 ? ev[a].d1 : 0, a >= 0 ? ev[a].d2 : 0);
+    {
+        int k, seen71 = 0;
+        for (k = 0; k < nev; k++)
+            if ((ev[k].st & 0xF0u) == 0xA0u && ev[k].d2 == 71) seen71 = 1;
+        CHECK(seen71, "POLY AT: step 2's pressure 71 reaches step 2's note");
+    }
+    lanes[2].event_type = SEQEV_MODWHEEL;           /* EV: changed: it presses no more */
+    run(STEP_FRAMES + 10u);
+    nev = 0;
+    run(STEP_FRAMES * 2u);
+    CHECK(count(0xA0) == 0, "POLY AT: a lane changed away still presses (%d)", count(0xA0));
+
     /* ---- step record (7.2): the playhead holds, retriggers on the clock, knobs per lane, keyboard capture ---- */
     reset();
     maq_set_playing(&q, 1);

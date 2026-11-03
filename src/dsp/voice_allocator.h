@@ -103,6 +103,13 @@ typedef struct __attribute__((aligned(64))) {
     uint8_t silent;               // 1 = the last tick found the voice finished: it renders silence
     uint8_t src;                  // VSRC_*: who struck the note
     AnalogVoice analog;          // ANALOG: this slot's character, drift and note scatter (dsp/analog.h)
+    int16_t mfx_mod[4];           // its MOD SENDS to the layer's MFX knobs, knob units: the newest voice's move the MFX
+                                  // (at the end: no hot field above it moves)
+    int16_t fx_mod[2];            // .. to the layer's DELAY / REVERB SEND (2026-11-03), knob units, as mfx_mod
+    int16_t glide_mod;            // .. to GLIDE: PORTA TIME knob units, the glide under way speeds up or slows down
+    int16_t rand_q15;             // RANDOM: this note's value, -32768..32767, picked at its note-on
+    uint8_t poly_at;              // POLY AT: this note's pressure 0..127 ..
+    uint8_t poly_seen;            // .. 1 once one has come for it (until then POLY AT reads the channel's AFTERTOUCH)
 } SynthVoiceNode;
 
 /* a voice nobody hears and nobody holds: free to take (STACK's ENV2 path keeps a voice sounding after ENV1 ends) */

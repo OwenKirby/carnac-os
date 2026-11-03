@@ -52,6 +52,8 @@ typedef struct {
     uint8_t notes[SEQ_NNOTE];
     uint8_t n_notes, vel;
     uint8_t ch[2];
+    uint8_t pat_on, pat_val;         /* a POLY AT lane: pressing (its last unmuted step's value) .. */
+    uint8_t pat_ch[2];               /* .. the SEQ's notes on these channels (MAQ_CH_NONE = unused) */
     uint8_t bursts_left;             /* ratchet bursts still to come after the running one */
     uint8_t strike;                  /* the next note of the running burst to strike */
     uint8_t due_kind;                /* MAQ_DUE_* */

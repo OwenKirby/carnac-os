@@ -3,8 +3,8 @@
 instead of the app, which was full.
 
   area 2 (pcm_store_fm1.c, 24 KiB at 0xBC000): bank 0 (Foundations, from foundations_bank.bin) and the wavetable
-          image's frames 107..109 (bank 14, Dust, frames 3..5)
-  area 3 (8 KiB at 0xDE000): the image's frames 110..112 (Dust, frames 6..8)
+          image's frames 114..116 (bank 14, Dust, frames 3..5)
+  area 3 (8 KiB at 0xDE000): the image's frames 117..119 (Dust, frames 6..8)
 
 The image's last WT_SPILL_FRAMES (gen_wavetables.py SPILL_FRAMES) are left out of the FM1's app; host and browser
 builds link the whole image and attach area 2 for bank 0. Nothing is redrawn: the frames are copied byte for byte

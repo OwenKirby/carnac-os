@@ -15,7 +15,9 @@
 enum {                               /* 7.5 event registry (spec numbers 01..14) */
     SEQEV_NOTE, SEQEV_DYNAMICS, SEQEV_TRANSPOSE, SEQEV_TIMING, SEQEV_GATE, SEQEV_RATCHET,
     SEQEV_PROB_SKIP, SEQEV_PROB_MUTE, SEQEV_MODWHEEL, SEQEV_AFTERTOUCH, SEQEV_CUSTOMCC1,
-    SEQEV_CUSTOMCC2, SEQEV_PROG_CHANGE, SEQEV_LAYER, SEQEV_COUNT
+    SEQEV_CUSTOMCC2, SEQEV_PROG_CHANGE, SEQEV_LAYER,
+    SEQEV_POLY_AT,                   /* (2026-11-03) pressure on the notes the SEQ sounds on its target (MIDI poly AT) */
+    SEQEV_COUNT
 };
 
 /* 7.3: one step of one MAQ lane. 6 bytes, no padding (flash layout). */

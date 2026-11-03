@@ -97,6 +97,9 @@ enum { MFX_QE_SWOOP, MFX_QE_DUCK, MFX_QE_MODES };
 
 /* clears every layer's effect state (synth_init) */
 void mfx_init(void);
+/* MOD SENDS to the MFX knobs 1..4 (2026-11-03), knob units, added to the knobs before their glide: set a control tick
+ * by synth_voice.c (the newest voice's), 0 when none; a list knob (PITCH SHIFT's PITCH) takes none */
+extern float mfx_mod_off[2][4];
 
 /* the MFX page's peek at the effect as it moves (read by the UI, written by the audio): STONE PHASER's sweep on side i
  * (0, 1), ENSEMBLE's line i delay (0..2) as a share of the brigade's reach, and (3, 4) the shortest and longest its

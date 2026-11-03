@@ -17,12 +17,12 @@ int16_t compute_morphed_lfo_fixed(LfoRuntimeState *state, int raw_shape);
 // The same shape read phase_offset (2^32 = one cycle) ahead of the playhead, without moving it or redrawing the random
 // values: BINAURAL reads the right ear's LFOs this way. Depth and fade are the caller's (envelope_amp_q15).
 int16_t lfo_peek_fixed(const LfoRuntimeState *state, int raw_shape, uint32_t phase_offset);
-// speed_mod_q15: the resolved speed modulation source (bipolar Q15), scaled here by the speed amount
+// speed_mod_q15: the resolved speed modulation source (bipolar Q15) times SPEED MOD AMT (-64..+63), plus the MOD SENDS
 uint32_t calculate_lfo_step_increment_fixed(const LfoParams *cfg, int32_t speed_mod_q15);
 void run_poly_lfo_envelope_fixed(const LfoParams *cfg, LfoRuntimeState *state, uint8_t shift);
 // One control tick (2^shift samples) of the playhead: advances the phase and runs the delay and fade. A clock-synced LFO (spec 4.4 MIDI Clock
 // Sync) takes its phase from midi_clock_phase() instead of stepping, so its cycles land on the clock grid.
-// speed_mod_q15 is the resolved speed modulation source. In REL mode, while key_held, the playhead sits at
+// speed_mod_q15 is the speed modulation as above. In REL mode, while key_held, the playhead sits at
 // its phase start and its output is 0. It starts on the release (spec 4.4). frame: the audio frame of this tick,
 // the one the clock is asked about (midi_clock_phase_at).
 void lfo_advance(const LfoParams *cfg, LfoRuntimeState *state, int32_t speed_mod_q15, int key_held, uint8_t shift,

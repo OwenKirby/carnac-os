@@ -285,6 +285,14 @@ static void test_factory(void)
                 CHECK(e->mod[k].src_a < MSRC_COUNT && e->mod[k].src_b < MSRC_COUNT && e->mod[k].func < MFN_COUNT,
                       "patch %u slot %u", s, k);
         }
+        {   /* stored and loaded (v12, every byte at its width): it comes back exactly, so no value is wider than its
+             * field (flash_record.h ENG_W) */
+            static uint8_t rec[FREC_SIZE_ENGINE];
+            static EngineState back;
+            frec_pack(FREC_ENGINE, &patch_bank[s], rec);
+            CHECK(frec_unpack(FREC_ENGINE, rec, &back) == FREC_OK &&
+                  memcmp(&back, &patch_bank[s], sizeof back) == 0, "patch %u: changed by storing it", s);
+        }
     }
     for (s = 0; s < FP_NPERF; s++) {
         WholePerformance w, back;

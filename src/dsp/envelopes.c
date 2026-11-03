@@ -144,9 +144,9 @@ static uint32_t coef_analog(uint32_t coef_q31, int32_t dk_q16) {
     return c >= (int64_t)(1u << 31) ? (1u << 31) - 1u : (c < 1 ? 1u : (uint32_t)c);
 }
 
-int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, uint16_t release_boost_q15, uint8_t shift,
-                     uint32_t frame) {
-    int attack_i = clampi(p->attack + time_mod, 0, 127);
+int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, uint16_t release_boost_q15,
+                     uint8_t shift, uint32_t frame) {
+    int attack_i = clampi(p->attack + time_mod + atk_mod, 0, 127);
     int decay_i = clampi(p->decay + time_mod, 0, 127);
     int release_i = clampi(p->release + time_mod, 0, 127);
     // AUTO DECAY: rapid repeats speed up the release. Factor 1.0 + amount * boost, up to 2x at full amount.

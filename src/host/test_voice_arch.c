@@ -17,6 +17,7 @@
 #include "dsp/attacks.h"
 #include "dsp/synth_voice.h"
 #include "dsp/tuning.h"
+#include "dsp/mfx.h"
 
 static int32_t buf[64 * 2];
 static int fails;
@@ -153,6 +154,116 @@ static uint32_t strike_step(uint8_t sample, uint8_t tune, uint8_t note)
     for (int v = 0; v < POLYPHONY_VOICES; v++)
         if (poly_bank[v].is_gate_open) return poly_bank[v].atk_step;
     return 0;
+}
+
+
+/* MOD SENDS (2026-11-03): a send sounds as the destination's own source set to the slot at the send's amount would.
+ * The left channel of a held chord, the slot LFO1 alone (amount 100), each way; and an own source plus a send adds. */
+#define SEND_N 8192
+static int32_t send_out[2][SEND_N];
+typedef void (*SendTweak)(EngineState *e, int way);   /* way 0: the old route (own source = MOD1), 1: a send */
+static void send_take(uint8_t arch, SendTweak tw, int way, int32_t *out)
+{
+    synth_init();
+    EngineState *e = &engine_state[0];
+    base_patch(e, arch);
+    e->filter[0].mod_src = MSRC_NONE;
+    e->filter[0].mod_amt = 0;
+    e->mod[0] = (ModSlotParams){MSRC_LFO1, MFN_ADD, MSRC_NONE, 100};
+    e->lfo[0].rate = 90;
+    tw(e, way);
+    synth_midi_3(0x90, 48, 100);
+    synth_midi_3(0x90, 55, 90);
+    for (int n = 0; n < SEND_N; n += 64) {
+        synth_render_q15(buf, 64);
+        for (int i = 0; i < 64; i++) out[n + i] = buf[2 * i];
+    }
+}
+static void send1(EngineState *e, uint8_t dest, int amt)
+{
+    e->send[0].dest = (uint8_t)(dest | 0u << MSEND_SLOT_SHIFT);
+    e->send[0].amount = (uint8_t)(BIPOLAR_CENTER + amt);
+}
+static void tw_cut(EngineState *e, int way)
+{
+    if (way) send1(e, MDST_F1_CUTOFF, 50); else { e->filter[0].mod_src = MSRC_MODSLOT1; e->filter[0].mod_amt = 100; }
+}
+static void tw_pitch(EngineState *e, int way)
+{
+    if (way) send1(e, MDST_OSC1_PITCH, 50); else { e->osc[0].pitch_mod_src = MSRC_MODSLOT1; e->osc[0].pitch_mod_amt = 100; }
+}
+static void tw_morph(EngineState *e, int way)
+{
+    if (way) send1(e, MDST_F1_MORPH, -30); else { e->filter[0].morph_mod_src = MSRC_MODSLOT1; e->filter[0].morph_mod_amt = 64 - 30; }
+}
+static void tw_pan(EngineState *e, int way)
+{
+    if (way) send1(e, MDST_PAN, 40); else { e->amp.pan_mod_src = MSRC_MODSLOT1; e->amp.pan_mod_depth = 80; }
+}
+static void tw_scan(EngineState *e, int way)
+{
+    if (way) send1(e, MDST_OSC1_SCAN, 45); else { e->osc[0].scan_mod_src = MSRC_MODSLOT1; e->osc[0].scan_mod_amt = 90; }
+}
+static void tw_lfo2(EngineState *e, int way)   /* LFO2 on the cutoff, its speed swept by MOD1 */
+{
+    e->filter[0].mod_src = MSRC_LFO2; e->filter[0].mod_amt = 90; e->lfo[1].rate = 60;
+    if (way) send1(e, MDST_LFO2_SPEED, 40); else { e->lfo[1].speed_mod_src = MSRC_MODSLOT1; e->lfo[1].speed_mod_amt = 64 + 40; }
+}
+static void tw_amp(EngineState *e, int way)
+{
+    if (way) send1(e, MDST_AMP_LEVEL, 50); else { e->amp.amp_mod_src = MSRC_MODSLOT1; e->amp.amp_mod_depth = 100; }
+}
+static void tw_both(EngineState *e, int way)   /* ENV2 on the cutoff a little, plus a send (way 1) or not (way 0) */
+{
+    e->filter[0].mod_src = MSRC_ENV2; e->filter[0].mod_amt = 20;
+    if (way) send1(e, MDST_F1_CUTOFF, 50);
+}
+static void tw_mfx_k1(EngineState *e, int way)   /* STONE PHASER, MOD1 on its MANUAL (way 1) or not */
+{
+    e->mfx = (MfxParams){MFX_STONE_PHASER, {40, 0, 64, 127}, 0, {0, 0}};
+    if (way) send1(e, MDST_MFX_K1, 60);
+}
+static void tw_mfx_ps(EngineState *e, int way)   /* PITCH SHIFT: a send to its PITCH (a list knob) does nothing */
+{
+    e->mfx = (MfxParams){MFX_PITCH_SHIFT, {12, 75, 0, 64}, 127, {30, 0}};
+    if (way) send1(e, MDST_MFX_K1, 60);
+}
+static void tw_mod4(EngineState *e, int way)   /* MOD4 (2026-11-03) as MOD1: the same slot, the same send */
+{
+    if (way) {
+        e->mod[3] = e->mod[0];
+        e->mod[0] = (ModSlotParams){MSRC_NONE, MFN_ADD, MSRC_NONE, BIPOLAR_CENTER};
+        e->send[0].dest = (uint8_t)(MDST_F1_CUTOFF | 3u << MSEND_SLOT_SHIFT);
+        e->send[0].amount = (uint8_t)(BIPOLAR_CENTER + 50);
+    } else {
+        send1(e, MDST_F1_CUTOFF, 50);
+    }
+}
+/* the destinations with no own source of their own (2026-11-03): way 1 a send, way 0 none; the sound must change */
+static void tw_res(EngineState *e, int way) { e->filter[0].resonance = 40; if (way) send1(e, MDST_F1_RES, 60); }
+static void tw_drive2(EngineState *e, int way)
+{
+    e->arch = VARCH_DUAL_FILTER;
+    e->filter[1].drive = 10;
+    if (way) send1(e, MDST_F2_DRIVE, 60);
+}
+static void tw_dly(EngineState *e, int way) { e->amp.delay_send = 20; if (way) send1(e, MDST_DLY_SEND, 60); }
+static void tw_rev(EngineState *e, int way) { e->amp.reverb_send = 20; if (way) send1(e, MDST_REV_SEND, 60); }
+static void send_differs(const char *name, SendTweak tw)
+{
+    send_take(VARCH_DUAL_OSC, tw, 0, send_out[0]);
+    send_take(VARCH_DUAL_OSC, tw, 1, send_out[1]);
+    int diff = memcmp(send_out[0], send_out[1], sizeof send_out[0]) != 0;
+    CHECK(diff, "MOD SEND %s: changed nothing", name);
+    if (diff) printf("MOD SEND %-12s moves the sound\n", name);
+}
+static void send_same(const char *name, uint8_t arch, SendTweak tw)
+{
+    send_take(arch, tw, 0, send_out[0]);
+    send_take(arch, tw, 1, send_out[1]);
+    int same = memcmp(send_out[0], send_out[1], sizeof send_out[0]) == 0;
+    CHECK(same, "MOD SEND %s: does not sound as the own-source route", name);
+    if (same) printf("MOD SEND %-10s = the own-source route\n", name);
 }
 
 int main(void)
@@ -779,6 +890,91 @@ int main(void)
         CHECK(poly_bank[0].lfo_gain_q15[1] > 32000 && lfo_peak > 20000, "DEPTH MOD, wheel up: LFO2 gain %d, peak %d",
               (int)poly_bank[0].lfo_gain_q15[1], (int)lfo_peak);
         all_off();
+    }
+
+    {   /* MOD SENDS: each kind of destination; an own source plus a send adds */
+        send_same("F1 CUTOFF", VARCH_DUAL_OSC, tw_cut);
+        send_same("OSC1 PITCH", VARCH_DUAL_OSC, tw_pitch);
+        send_same("F1 MORPH", VARCH_DUAL_OSC, tw_morph);
+        send_same("PAN", VARCH_DUAL_OSC, tw_pan);
+        send_same("OSC1 SCAN", VARCH_DUAL_OSC, tw_scan);
+        send_same("LFO2 SPEED", VARCH_DUAL_OSC, tw_lfo2);
+        send_same("AMP LEVEL", VARCH_DUAL_OSC, tw_amp);
+        send_same("BIN PITCH", VARCH_BINAURAL, tw_pitch);
+        send_same("MFX PITCH", VARCH_DUAL_OSC, tw_mfx_ps);   /* (way 0: no send; a list knob takes none) */
+        send_take(VARCH_DUAL_OSC, tw_mfx_k1, 0, send_out[0]);
+        send_take(VARCH_DUAL_OSC, tw_mfx_k1, 1, send_out[1]);
+        CHECK(memcmp(send_out[0], send_out[1], sizeof send_out[0]) != 0, "MOD SEND: MOD1 on the phaser's MANUAL changed nothing");
+        send_take(VARCH_DUAL_OSC, tw_both, 0, send_out[0]);
+        send_take(VARCH_DUAL_OSC, tw_both, 1, send_out[1]);
+        CHECK(memcmp(send_out[0], send_out[1], sizeof send_out[0]) != 0, "MOD SEND: a send on top of ENV2 changed nothing");
+        send_same("MOD4", VARCH_DUAL_OSC, tw_mod4);
+        send_differs("F1 RESONANCE", tw_res);
+        send_differs("F2 DRIVE", tw_drive2);
+        send_differs("DELAY SEND", tw_dly);
+        send_differs("REVERB SEND", tw_rev);
+        all_off();
+    }
+
+    {   /* GLIDE TIME's sends: a glide under way goes faster with a negative send, slower with a positive one */
+        int32_t left[3];
+        for (int k = 0; k < 3; k++) {
+            synth_init();
+            base_patch(&engine_state[0], VARCH_DUAL_OSC);
+            engine_state[0].mod[0] = (ModSlotParams){MSRC_VELOCITY, MFN_ADD, MSRC_NONE, 127};
+            if (k) send1(&engine_state[0], MDST_GLIDE, k == 1 ? -50 : 50);
+            perf_state.porta_time[0] = 70;
+            perf_state.porta_mode[0] = PORTA_CONST_RATE;
+            synth_midi_3(0x90, 48, 127);
+            render(4410);                            /* (past the chord window: the next note glides from this) */
+            synth_midi_3(0x90, 72, 127);
+            render(4096);
+            left[k] = 0;
+            for (int v = 0; v < POLYPHONY_VOICES; v++)
+                if (poly_bank[v].is_gate_open && poly_bank[v].active_note == 72) left[k] = abs(poly_bank[v].glide_q16);
+            all_off();
+        }
+        printf("GLIDE TIME send: glide left %d (none), %d (-50), %d (+50)\n", (int)left[0], (int)left[1], (int)left[2]);
+        CHECK(left[0] > 0 && left[1] < left[0] && left[2] > left[0], "GLIDE TIME: the send did not change the glide's speed");
+        perf_state.porta_time[0] = 0;
+    }
+
+    {   /* RANDOM: a value per note; POLY AT: the note's own pressure, else the channel's */
+        synth_init();
+        base_patch(&engine_state[0], VARCH_DUAL_OSC);
+        synth_midi_3(0x90, 48, 100);
+        synth_midi_3(0x90, 55, 100);
+        synth_midi_3(0xD0, 30, 0);
+        synth_midi_3(0xA0, 48, 110);
+        render(64);
+        int a = -1, b = -1;
+        for (int v = 0; v < POLYPHONY_VOICES; v++) {
+            if (poly_bank[v].is_gate_open && poly_bank[v].active_note == 48) a = v;
+            if (poly_bank[v].is_gate_open && poly_bank[v].active_note == 55) b = v;
+        }
+        CHECK(a >= 0 && b >= 0, "RANDOM / POLY AT: the two notes did not start");
+        if (a >= 0 && b >= 0) {
+            CHECK(poly_bank[a].rand_q15 != poly_bank[b].rand_q15, "RANDOM: two notes drew the same value");
+            CHECK(poly_bank[a].poly_seen && poly_bank[a].poly_at == 110 && !poly_bank[b].poly_seen,
+                  "POLY AT: the pressure did not reach its own note only");
+        }
+        all_off();
+    }
+
+    {   /* VEL > ATTACK: a hard note's attack faster (a negative amount), its decay and release untouched */
+        int32_t lv[2];
+        for (int k = 0; k < 2; k++) {
+            synth_init();
+            base_patch(&engine_state[0], VARCH_DUAL_OSC);
+            engine_state[0].env[0].attack = 80;
+            engine_state[0].env[0].vel_to_attack = BIPOLAR_CENTER - 40;
+            synth_midi_3(0x90, 60, k ? 127 : 20);
+            render(4410);
+            lv[k] = poly_bank[0].amp_env.level_q15;
+            all_off();
+        }
+        printf("VEL > ATTACK: ENV1 after 100 ms %d (soft), %d (hard)\n", (int)lv[0], (int)lv[1]);
+        CHECK(lv[1] > lv[0] + 2000, "VEL > ATTACK: a hard note's attack is not faster");
     }
 
     printf(fails ?"\n%d FAILED\n" : "\nall checks passed\n", fails);

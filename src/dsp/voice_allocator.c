@@ -50,6 +50,10 @@ SYNTH_COLD void voice_allocator_init(void) {
             voice_mod_fn_reset(n, s);
         n->glide_q16 = 0;
         n->glide_step_q16 = 0;
+        n->glide_mod = 0;
+        n->fx_mod[0] = n->fx_mod[1] = 0;
+        n->rand_q15 = 0;
+        n->poly_at = n->poly_seen = 0;
         n->detune_cents = 0;
         n->unison_gain_q15 = 32767;
         n->unison_pan = 0;

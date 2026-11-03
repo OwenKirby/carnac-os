@@ -8,9 +8,10 @@ Reuses X0X's tools/build.py (github.com/charlesvestal/fm1-x0x) whole: the loader
 package, and its checks (entry stub, no soft doubles, RAM / pool / slot sizes, register access only in hal/,
 which here also covers our sources). Only the app's units differ:
 
-  synth_fm1.c   -Os  X0X's firmware/src/x0x.c up to its app (slots.c), then UIStateMachine.c, the canvas
+  synth_fm1.c   -Oz  X0X's firmware/src/x0x.c up to its app (slots.c), then UIStateMachine.c, the canvas
                      pieces, the screens and src/hardware/synth_main_fm1.c (the same cut as
-                     src/host/x0x_unity_check.sh, minus the DSP)
+                     src/host/x0x_unity_check.sh, minus the DSP). -Oz since 2026-11-03 (was -Os): 20 KB of app
+                     flash back; no audio code in it, only the screen gets a little slower
   synth_dsp.c   -O2  every src/dsp/*.c the firmware uses (the render path, the sequencers)
 
 Needs the JieLi toolchain and the AC79 SDK (x0x-firmware/BUILDING.md); runs natively on Linux x86-64 (WSL).
@@ -165,7 +166,7 @@ def main():
                  ("cc", "-c", b.FW / "hal" / "fm1_vec.S", "-o", objs[1]),
                  ("cc", "-c", b.FW / "hal" / "fm1_isr.S", "-o", objs[2]),
                  ("cc", "-c", b.FW / "hal" / "fm1_cpu1.S", "-o", objs[3]),
-                 ("cc", *flags, "-c", main_c, "-o", objs[4]),
+                 ("cc", *[f if f != "-Os" else "-Oz" for f in flags], "-c", main_c, "-o", objs[4]),
                  ("cc", *o2, "-c", dsp_c, "-o", objs[5]))
         return link(objs)
 

@@ -238,6 +238,8 @@ static void glide_to(SynthVoiceNode *v, int from_note, int to_note, uint8_t port
     v->glide_step_q16 = step;
 }
 
+static uint32_t rt_rand = 0x9E3779B9u;         /* RANDOM's generator (voice_play) */
+
 /* Points one voice at a note. retrig = 0 keeps the envelopes running (a legato note over a held one). A voice that is
  * fading out, or still on another architecture, always restarts clean: envelopes from 0, and its filters
  * cleared when the architecture changes, so no path starts half-initialised. */
@@ -266,6 +268,11 @@ SYNTH_COLD static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note
     v->layer = layer;
     v->src = src;
     v->route_q15 = route;
+    rt_rand = rt_rand ^ (rt_rand << 13);       /* RANDOM: a value per note, legato notes too (xorshift32) */
+    rt_rand = rt_rand ^ (rt_rand >> 17);
+    rt_rand = rt_rand ^ (rt_rand << 5);
+    v->rand_q15 = (int16_t)(rt_rand >> 16);
+    v->poly_at = v->poly_seen = 0;             /* POLY AT: the channel's AFTERTOUCH until this note has its own */
     v->ctrl_left = 0;                          /* the new pitch (and envelopes) take effect from the next sample */
     if (!retrig) return;
 
@@ -554,6 +561,15 @@ SYNTH_COLD static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2, 
     } else if (kind == 0x80u || (kind == 0x90u && data2 == 0u)) {
         midi_parse_three_bytes(&master_midi, status, data1, data2);
         note_off(data1, src);
+    } else if (kind == 0xA0u) {                    /* POLY AT (2026-11-03): the note's own pressure, on its layers' voices */
+        for (int i = 0; i < POLYPHONY_VOICES; i++) {
+            SynthVoiceNode *v = &poly_bank[i];
+            if (v->active_note != data1 || voice_is_free(v) || v->layer >= NLAYER ||
+                (perf_state.midi_ch[v->layer] & 0x0Fu) != channel || (src == VSRC_SEQ && v->src != VSRC_SEQ))
+                continue;                          /* (the SEQ's presses only its own notes) */
+            v->poly_at = data2 & 0x7Fu;
+            v->poly_seen = 1u;
+        }
     } else if (kind == 0xC0u) {                    /* Program Change: the stored patch into every layer on this channel */
         for (uint8_t l = 0; l < NLAYER; l++)
             if ((perf_state.midi_ch[l] & 0x0Fu) == channel && (l == 0u || rt_perf_mode() != PERF_SINGL_SYNTH))
@@ -919,8 +935,12 @@ static void render_pass(int32_t *out, uint32_t frames)
             mix_apply(g0, g1, frames, layer_l[l], layer_r[l]);
     float to_dly[NLAYER], to_rev[NLAYER];          /* knob 0..127 -> 0..~1, the old per-voice 258 / 32768, mono 1/2 */
     for (int l = 0; l < NLAYER; l++) {
-        to_dly[l] = (float)((int32_t)engine_state[l].amp.delay_send * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
-        to_rev[l] = (float)((int32_t)engine_state[l].amp.reverb_send * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
+        int32_t sd = (int32_t)engine_state[l].amp.delay_send + synth_fx_send_mod[l][0];   /* + the MOD SENDS there */
+        int32_t sr = (int32_t)engine_state[l].amp.reverb_send + synth_fx_send_mod[l][1];
+        sd = sd < 0 ? 0 : sd > 127 ? 127 : sd;
+        sr = sr < 0 ? 0 : sr > 127 ? 127 : sr;
+        to_dly[l] = (float)(sd * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
+        to_rev[l] = (float)(sr * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
     }
     for (uint32_t frame = 0; frame < frames; ++frame) {
         float m1 = layer_l[0][frame] + layer_r[0][frame], m2 = layer_l[1][frame] + layer_r[1][frame];

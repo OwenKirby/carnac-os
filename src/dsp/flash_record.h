@@ -17,10 +17,11 @@
 #include "PresetStructures.h"
 #include "global.h"
 #include "mfx.h"                    /* MFX_COUNT: a patch's MFX type, checked as it loads */
+#include "attacks.h"                /* ATK_COUNT: the ATTACK sample's width */
 
 /* the current layout of each kind: 1..0xFE */
-#define FREC_VER_ENGINE 11u          /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; 9: the filters' DRIVE, SH-2 for the SVF, one MS-20 (2026-10-21); 10: VEL > LEVEL, LFO DEPTH MOD, the cutoff MOD AMOUNT 0..127, the envelope flags packed (2026-10-26); 11: the MFX and 4 reserved bytes (2026-11-03, the format bump; nothing older migrates: before V1 patches may go) */
-#define FREC_VER_PERF   11u          /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4; 8: the patches' v9 (proto/sh2-filter builds); 9: the arp's v5 (2026-10-21); 10: the patches' v10 (2026-10-26); 11: the patches\' v11, REV PREDELAY removed, the MIX page\'s bytes and 16 reserved (2026-11-03; nothing older migrates) */
+#define FREC_VER_ENGINE 13u          /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; 9: the filters' DRIVE, SH-2 for the SVF, one MS-20 (2026-10-21); 10: VEL > LEVEL, LFO DEPTH MOD, the cutoff MOD AMOUNT 0..127, the envelope flags packed (2026-10-26); 11: the MFX and 4 reserved bytes (2026-11-03, the format bump; nothing older migrates: before V1 patches may go); 12: every byte at its own bit width (ENG_W, 2026-11-03), room after for fields added at the end; 13: MOD4, the sources renumbered (RANDOM, POLY AT), a send's destination 6 bits, VEL > ATTACK (2026-11-03) */
+#define FREC_VER_PERF   13u          /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4; 8: the patches' v9 (proto/sh2-filter builds); 9: the arp's v5 (2026-10-21); 10: the patches' v10 (2026-10-26); 11: the patches\' v11, REV PREDELAY removed, the MIX page\'s bytes and 16 reserved (2026-11-03; nothing older migrates); 12: the patches' v12; 13: the patches' v13 */
 #define FREC_VER_SEQ    3u           /* SequencerLane[SEQ_NLANE], one sequencer slot (SEQ_SETTINGS); 2: scale, scale_root; 3: the 32-slot bank (2026-10-17, the lane unchanged: the 128-slot bank's chunks are left out, so the factory sequences show) */
 #define FREC_VER_ARP    5u           /* ArpState, one arp slot (ARP_SEQ); 2: chord_root (a MIDI note) and the 24-way variation; 3: TIE, accents; 4: each step's RATE where its gate was, the pattern's GATE where TIME DIVISION was ; 5: RATE the notes' rate, TIMING the steps' length (in LAYER's byte), HOLD the first style, its strum none / up / down (older arps do not migrate) */
 #define FREC_VER_GLOBAL 1u           /* GlobalSystemConfig */
@@ -87,137 +88,81 @@ static inline void frec_pack(FrecKind k, const void *payload, uint8_t *rec)
 /* the version byte of a stored record, for a migration that needs to know which layout it holds */
 static inline uint8_t frec_stored_version(const uint8_t *rec) { return rec[0]; }
 
-/* ---- a patch in flash (v11): ENGINE_STORED_SIZE bytes. Every EngineState byte in order, but for the name, the two
- * bytes nothing reads (OSC1's SYNC: only OSC2 syncs; ENV1's INVERT: ENV1 is never inverted), the three LFOs' CLOCK SYNC
- * and KEY RESET, the envelopes' RETRIG SYNC and LEGATO and ENV2 / ENV3's INVERT (0 / 1 each) and the LFOs' DEPTH MOD
- * SRC; then the LFO flags as bits of one byte, the envelope flags as bits of the next, then the name at 6 bits a
- * character (UI_CHAR_MAP has 41), ANALOG in the last byte. Each filter's KEY TRACK rides in the high nibbles of its MOD
- * SRC (bits 0..3) and MORPH MOD SRC (bits 4..7) bytes, each LFO's DEPTH MOD SRC in the high nibble of its SPD MOD SRC
- * byte (a source fits 4 bits). v11 (2026-11-03) adds the MFX and the reserved bytes after the v10 ones; older patches
- * are not migrated (they read as empty slots). Unpacked, the two unread bytes are 0. */
-#define ENG_OFS_NAME ((uint32_t)offsetof(EngineState, name))
-#define ENG_OFS_UNREAD1 ((uint32_t)offsetof(EngineState, osc[0].sync))
-#define ENG_OFS_UNREAD2 ((uint32_t)offsetof(EngineState, env[0].invert))
-#define ENG_OFS_LFO ((uint32_t)offsetof(EngineState, lfo))
-#define ENG_OFS_ENV ((uint32_t)offsetof(EngineState, env))
-#define ENG_OFS_ANALOG ((uint32_t)offsetof(EngineState, analog))
-#define ENG_OFS_FKT ((uint32_t)offsetof(EngineState, filter_key_track))
-#define ENG_OFS_V10 ((uint32_t)offsetof(EngineState, env_vel_level))
-#define ENG_OFS_LDSRC ((uint32_t)offsetof(EngineState, lfo_depth_src))
-#define ENG_OFS_FMSRC(i) ((uint32_t)offsetof(EngineState, filter[i].mod_src))
-#define ENG_OFS_FMMSRC(i) ((uint32_t)offsetof(EngineState, filter[i].morph_mod_src))
-#define ENG_OFS_LSPD(i) ((uint32_t)offsetof(EngineState, lfo[i].speed_mod_src))
-#define ENG_NAME_PACKED ((NAME_LEN * 6u + 7u) / 8u)
-#define ENG_NFLAG (2u * NLFO)
-#define ENG_NEFLAG (2u * NENV + 2u)
-PS_STATIC_ASSERT(CHAR_MAP_LEN <= 64u, "a name character fits 6 bits");
-PS_STATIC_ASSERT(ENG_NFLAG <= 8u && ENG_NEFLAG <= 8u, "the LFO flags and the envelope flags fit a byte each");
-PS_STATIC_ASSERT(MSRC_COUNT <= 16u, "a mod source fits 4 bits: KEY TRACK and DEPTH MOD SRC have the high nibbles");
-PS_STATIC_ASSERT(NFILTER == 2u && NENV == 3u && ENG_OFS_FKT + NFILTER == ENG_OFS_V10, "KEY TRACK, then the v10 bytes");
-PS_STATIC_ASSERT(sizeof(EngineState) - 3u - NFILTER - ENG_NFLAG - ENG_NEFLAG - NLFO - NAME_LEN + 2u + ENG_NAME_PACKED + 1u ==
-                 ENGINE_STORED_SIZE, "the packed patch fills ENGINE_STORED_SIZE exactly, ANALOG its last byte");
-/* flag f (0..5): LFO f / 2's CLOCK SYNC (even) or KEY RESET (odd) */
-static inline uint32_t engine_flag_ofs(uint32_t f)
-{
-    return ENG_OFS_LFO + (f >> 1) * (uint32_t)sizeof(LfoParams) +
-           ((f & 1u) ? (uint32_t)offsetof(LfoParams, key_reset) : (uint32_t)offsetof(LfoParams, clock_sync));
-}
-/* envelope flag f (0..7): ENV f / 2's RETRIG SYNC (even) or LEGATO (odd); 6, 7: ENV2's, ENV3's INVERT */
-static inline uint32_t engine_eflag_ofs(uint32_t f)
-{
-    if (f >= 2u * NENV)
-        return ENG_OFS_ENV + (f - 5u) * (uint32_t)sizeof(EnvParams) + (uint32_t)offsetof(EnvParams, invert);
-    return ENG_OFS_ENV + (f >> 1) * (uint32_t)sizeof(EnvParams) +
-           ((f & 1u) ? (uint32_t)offsetof(EnvParams, legato) : (uint32_t)offsetof(EnvParams, retrig_sync));
-}
-static inline int engine_byte_stored(uint32_t i)
-{
-    uint32_t f;
-    if (i == ENG_OFS_UNREAD1 || i == ENG_OFS_UNREAD2 || i == ENG_OFS_ANALOG || (i >= ENG_OFS_FKT && i < ENG_OFS_V10) ||
-        (i >= ENG_OFS_NAME && i < ENG_OFS_NAME + NAME_LEN) || (i >= ENG_OFS_LDSRC && i < ENG_OFS_LDSRC + NLFO))
-        return 0;
-    for (f = 0; f < ENG_NFLAG; f++)
-        if (i == engine_flag_ofs(f))
-            return 0;
-    for (f = 0; f < ENG_NEFLAG; f++)
-        if (i == engine_eflag_ofs(f))
-            return 0;
-    return 1;
-}
+/* ---- a patch in flash (v12, 2026-11-03): ENGINE_STORED_SIZE bytes. Every EngineState byte in order at its own width
+ * (ENG_W: 7 bits for a 0..127 value, 5 for a mod source, 1 for a switch, 6 for a name character, a list's own width
+ * with a spare value or more), least significant bit first, the bytes after 0. A field added at the END of EngineState,
+ * its width at the end of ENG_W, reads 0 from a patch saved before it, so it needs no version bump if 0 is its off /
+ * default. A field added inside a struct breaks that struct's assert below, so its width gets chosen; a value wider
+ * than its field's width would lose its high bits (test_flash_record.c packs every factory patch to catch one). Older
+ * patches are not migrated (before V1 they may go).
+ *
+ * THE ZERO RULE (2026-11-03, binding from V1 on): after the V1 freeze a field is only ever added at the end (here, the
+ * performance's reserved[], the settings record), and every patch, performance and settings record saved before it
+ * reads it as 0. So 0 must mean "off / as before": a switch off, a source NONE, an amount that does nothing, a list's
+ * old behaviour as entry 0. A bipolar amount (64 = none) is stored XOR 64 (BIPOLAR_CENTER) so its stored 0 is its
+ * centre; a level whose old behaviour was full is stored inverted (127 - v). A reserved byte taken by a feature obeys
+ * the same rule. A field that cannot have a do-nothing 0 needs a version bump and a migration instead. */
+#define EW_V 7u                      /* a 0..127 value (VAL_MAX) */
+#define EW_SRC 5u                    /* a mod source, MSRC_* (MSRC_COUNT 19 of 32) */
+#define EW_SW 1u                     /* a 0 / 1 switch */
+#define EW_OSC EW_V, EW_V, EW_V, EW_V, 8u /* WAVE: a wave code, PCM waves from 64 */, EW_SRC, EW_V, EW_SRC, EW_V, EW_SW
+#define EW_OSCMIX EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_V, EW_SRC, 3u /* XMOD_* */, EW_V, EW_SRC, EW_V,                   \
+                  2u /* SUBOCT_* */, 3u /* SUBWAVE_* */, EW_V, EW_V, EW_SRC, EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_V,          \
+                  6u /* ATK_COUNT 20 */, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, 2u /* ATKTRK_* */, EW_V, EW_SRC, EW_V
+#define EW_FILTER EW_V, EW_V, EW_V, EW_V, 3u /* FLT_* */, EW_SRC, EW_SRC, EW_V, EW_V
+#define EW_FLTMIX EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_SRC, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_SRC, EW_V
+#define EW_ENV EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_SW, EW_SW, EW_V, EW_SW
+#define EW_LFO EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_V, EW_SW, EW_V, EW_SW
+#define EW_MOD EW_SRC, 4u /* MFN_* */, EW_SRC, EW_V
+#define EW_AMP EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_SRC, EW_V, 3u /* DRIVE_* */
+#define EW_SEND 8u, EW_V          /* a MOD SEND: MDST_* | slot << 6 (8 bits), its amount */
+#define EW_MFX 5u /* MFX_* */, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V
+#define EW_X3(a) a, a, a
+#define EW_X4(a) a, a, a, a
+#define EW_NAME EW_X4(EW_X4(6u))
+#define EW_BYTES(...) ((uint32_t)sizeof((const uint8_t[]){__VA_ARGS__}))
+PS_STATIC_ASSERT(EW_BYTES(EW_OSC) == sizeof(OscParams) && EW_BYTES(EW_OSCMIX) == sizeof(OscMixerParams) &&
+                 EW_BYTES(EW_FILTER) == sizeof(FilterParams) && EW_BYTES(EW_FLTMIX) == sizeof(FilterMixerParams) &&
+                 EW_BYTES(EW_ENV) == sizeof(EnvParams) && EW_BYTES(EW_LFO) == sizeof(LfoParams) &&
+                 EW_BYTES(EW_MOD) == sizeof(ModSlotParams) && EW_BYTES(EW_AMP) == sizeof(AmpParams) &&
+                 EW_BYTES(EW_MFX) == sizeof(MfxParams) && EW_BYTES(EW_SEND) == sizeof(ModSendParams) && EW_BYTES(EW_NAME) == NAME_LEN, "a width per stored byte");
+PS_STATIC_ASSERT(MSRC_COUNT <= 32u && XMOD_COUNT <= 8u && SUBOCT_COUNT <= 4u && SUBWAVE_COUNT <= 8u && ATK_COUNT <= 64u &&
+                 ATKTRK_COUNT <= 4u && FLT_COUNT <= 8u && MFN_COUNT <= 16u && DRIVE_COUNT <= 8u && MFX_COUNT <= 32u &&
+                 VARCH_COUNT <= 16u && CHAR_MAP_LEN <= 64u && NOSC == 2u && NFILTER == 2u && NENV == 3u && NLFO == 3u &&
+                 NMODSLOT == 4u && ENGINE_RESERVED == 4u && NMODSEND == 12u && MDST_COUNT <= 64u, "every list fits its width; the repeats below");
+static const uint8_t ENG_W[] = {
+    EW_OSC, EW_OSC, EW_OSCMIX, EW_FILTER, EW_FILTER, EW_FLTMIX, EW_X3(EW_ENV), EW_X3(EW_LFO), EW_X4(EW_MOD), EW_AMP,
+    4u /* arch, VARCH_* */, EW_NAME, EW_V /* ANALOG */, EW_V, EW_V /* KEY TRACK */, EW_X3(EW_V) /* VEL > LEVEL */,
+    EW_X3(EW_SRC) /* DEPTH MOD SRC */, EW_X3(EW_V) /* DEPTH MOD AMT */, EW_MFX, EW_X4(8u) /* reserved */,
+    EW_X4(EW_X3(EW_SEND)) /* the MOD SENDS (2026-11-03, added at the end: no bump) */
+};
+PS_STATIC_ASSERT(sizeof ENG_W == sizeof(EngineState), "ENG_W: one width per EngineState byte, in order");
+
 static inline void engine_store_pack(const EngineState *e, uint8_t *out)
 {
     const uint8_t *d = (const uint8_t *)e;
-    uint32_t i, k, j = 0, acc = 0, bits = 0, fl = 0, efl = 0;
-    for (i = 0; i < sizeof(EngineState); i++)
-        if (engine_byte_stored(i)) {
-            uint8_t b = d[i];
-            if (i == ENG_OFS_FMSRC(0) || i == ENG_OFS_FMSRC(1))
-                b = (uint8_t)((b & 15u) | (e->filter_key_track[i == ENG_OFS_FMSRC(1)] & 15u) << 4);
-            else if (i == ENG_OFS_FMMSRC(0) || i == ENG_OFS_FMMSRC(1))
-                b = (uint8_t)((b & 15u) | (e->filter_key_track[i == ENG_OFS_FMMSRC(1)] >> 4) << 4);
-            for (k = 0; k < NLFO; k++)
-                if (i == ENG_OFS_LSPD(k))
-                    b = (uint8_t)((b & 15u) | (e->lfo_depth_src[k] & 15u) << 4);
-            out[j++] = b;
-        }
-    for (i = 0; i < ENG_NFLAG; i++)
-        fl |= (d[engine_flag_ofs(i)] ? 1u : 0u) << i;
-    out[j++] = (uint8_t)fl;
-    for (i = 0; i < ENG_NEFLAG; i++)
-        efl |= (d[engine_eflag_ofs(i)] ? 1u : 0u) << i;
-    out[j++] = (uint8_t)efl;
-    for (i = 0; i < NAME_LEN; i++) {
-        acc |= (uint32_t)(e->name[i] & 63u) << bits;
-        bits += 6u;
-        while (bits >= 8u) {
-            out[j++] = (uint8_t)acc;
-            acc >>= 8;
-            bits -= 8u;
-        }
-    }
-    if (bits)
-        out[j++] = (uint8_t)acc;
-    out[j] = e->analog;
-}
-static inline void engine_name_unpack(const uint8_t *in, uint8_t *name)
-{
     uint32_t i, j = 0, acc = 0, bits = 0;
-    for (i = 0; i < NAME_LEN; i++) {
-        while (bits < 6u) {
-            acc |= (uint32_t)in[j++] << bits;
-            bits += 8u;
-        }
-        name[i] = (uint8_t)(acc & 63u);
-        acc >>= 6;
-        bits -= 6u;
+    memset(out, 0, ENGINE_STORED_SIZE);
+    for (i = 0; i < sizeof(EngineState) && j < ENGINE_STORED_SIZE; i++) {
+        acc |= ((uint32_t)d[i] & ((1u << ENG_W[i]) - 1u)) << bits;
+        for (bits += ENG_W[i]; bits >= 8u && j < ENGINE_STORED_SIZE; bits -= 8u, acc >>= 8)
+            out[j++] = (uint8_t)acc;
     }
+    if (bits && j < ENGINE_STORED_SIZE)
+        out[j] = (uint8_t)acc;
 }
 static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
 {
     uint8_t *d = (uint8_t *)e;
-    uint32_t i, j = 0;
-    for (i = 0; i < sizeof(EngineState); i++)
-        d[i] = engine_byte_stored(i) ? in[j++] : 0u;
-    for (i = 0; i < ENG_NFLAG; i++)
-        d[engine_flag_ofs(i)] = (uint8_t)((in[j] >> i) & 1u);
-    j++;
-    for (i = 0; i < ENG_NEFLAG; i++)
-        d[engine_eflag_ofs(i)] = (uint8_t)((in[j] >> i) & 1u);
-    j++;
-    for (i = 0; i < NLFO; i++) {
-        LfoParams *l = &e->lfo[i];
-        e->lfo_depth_src[i] = (uint8_t)(l->speed_mod_src >> 4);
-        l->speed_mod_src &= 15u;
+    uint32_t i, j = 0, acc = 0, bits = 0;
+    for (i = 0; i < sizeof(EngineState); i++) {
+        for (; bits < ENG_W[i]; bits += 8u)
+            acc |= (uint32_t)(j < ENGINE_STORED_SIZE ? in[j++] : 0u) << bits;
+        d[i] = (uint8_t)(acc & ((1u << ENG_W[i]) - 1u));
+        acc >>= ENG_W[i];
+        bits -= ENG_W[i];
     }
-    engine_name_unpack(in + j, e->name);
-    e->analog = in[ENGINE_STORED_SIZE - 1u] <= VAL_MAX ? in[ENGINE_STORED_SIZE - 1u] : (uint8_t)0u;
-    for (i = 0; i < NFILTER; i++) {
-        FilterParams *f = &e->filter[i];
-        uint8_t kt = (uint8_t)(f->mod_src >> 4 | (f->morph_mod_src >> 4) << 4);
-        e->filter_key_track[i] = kt <= VAL_MAX ? kt : (uint8_t)0u;
-        f->mod_src &= 15u;
-        f->morph_mod_src &= 15u;
-    }
+    if (e->analog > VAL_MAX) e->analog = 0u;
     if (e->mfx.type >= MFX_COUNT)                   /* (a type this firmware lacks: OFF) */
         e->mfx.type = MFX_OFF;
     varch_single_to_spread(e);

@@ -143,6 +143,21 @@ static uint8_t maq_sounding(const MaqLaneRun *r)
     return 0u;
 }
 
+/* POLY AT (2026-11-03): a pressure lane presses the notes the SEQ sounds on its channels: those sounding at its step
+ * (maq_fire_cc), and each one struck after while it runs (here) */
+static void maq_press(const MaqSeq *q, const uint8_t ch[2], uint8_t note)
+{
+    uint8_t k, j, c;
+    for (k = 0u; k < SEQ_NLANE; k++) {
+        const MaqLaneRun *p = &q->run[k];
+        if (!p->pat_on)
+            continue;
+        for (j = 0u; j < 2u; j++)
+            if ((c = ch[j]) != MAQ_CH_NONE && (c == p->pat_ch[0] || c == p->pat_ch[1]))
+                q->out((uint8_t)(0xA0u | c), note, p->pat_val);
+    }
+}
+
 static void maq_strike(MaqSeq *q, MaqLaneRun *r, uint8_t i)
 {
     uint8_t note = r->notes[i];
@@ -152,11 +167,13 @@ static void maq_strike(MaqSeq *q, MaqLaneRun *r, uint8_t i)
     r->on_ch[1] = r->ch[1];
     maq_send(q, r->ch, 0x90u, note, r->vel);
     r->on[i] = note;
+    maq_press(q, r->ch, note);
 }
 
 static void maq_stop_lane(MaqSeq *q, MaqLaneRun *r)
 {
     maq_release(q, r);
+    r->pat_on = 0u;
     r->due_kind = MAQ_DUE_NONE;
     r->stepped = 0u;
 }
@@ -319,6 +336,21 @@ static void maq_fire_cc(MaqSeq *q, uint8_t l, uint8_t ev, const MaqMods *md)
     switch (ev) {
     case SEQEV_MODWHEEL: maq_send(q, ch, 0xB0u, 1u, v); break;
     case SEQEV_AFTERTOUCH: maq_send(q, ch, 0xD0u, v, 0u); break;
+    case SEQEV_POLY_AT: {                            /* the new pressure, on what the SEQ sounds there now */
+        MaqLaneRun *r = &q->run[l];
+        uint8_t k, i, j, c;
+        r->pat_on = 1u;
+        r->pat_val = v;
+        r->pat_ch[0] = ch[0];
+        r->pat_ch[1] = ch[1];
+        for (k = 0u; k < SEQ_NLANE; k++)
+            for (i = 0u; i < SEQ_NNOTE; i++)
+                if (q->run[k].on[i] != SEQ_NOTE_NULL)
+                    for (j = 0u; j < 2u; j++)
+                        if ((c = q->run[k].on_ch[j]) != MAQ_CH_NONE && (c == ch[0] || c == ch[1]))
+                            q->out((uint8_t)(0xA0u | c), q->run[k].on[i], v);
+        break;
+    }
     case SEQEV_CUSTOMCC1: case SEQEV_CUSTOMCC2:
         cc = ev == SEQEV_CUSTOMCC1 ? q->perf->cc1_num : q->perf->cc2_num;
         if (cc != 0u && cc <= VAL_MAX)               /* 0 = unassigned (GLOBAL, 4.6) */
@@ -338,6 +370,8 @@ static void maq_pass_b(MaqSeq *q, uint8_t l)
     MaqMods md;
     uint8_t ev = maq_event(&q->lanes[l]);
     r->stepped = 0u;
+    if (ev != SEQEV_POLY_AT)
+        r->pat_on = 0u;                              /* (EV: changed: it presses no more) */
     if (ev != SEQEV_NOTE && maq_sounding(r)) {
         maq_release(q, r);                           /* EV: changed under a sounding note: it must not hang */
         r->due_kind = MAQ_DUE_NONE;
@@ -544,6 +578,7 @@ SYNTH_COLD void maq_init(MaqSeq *q, SequencerLane *lanes, const MasterPerformanc
         r->dir = 1;
         r->ticks_left = 1u;
         r->stepped = 0u;
+        r->pat_on = 0u;
         for (i = 0u; i < SEQ_NNOTE; i++) r->on[i] = SEQ_NOTE_NULL;
         r->on_ch[0] = r->on_ch[1] = MAQ_CH_NONE;
         r->due_kind = MAQ_DUE_NONE;

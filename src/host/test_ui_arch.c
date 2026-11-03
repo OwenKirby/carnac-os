@@ -294,11 +294,16 @@ int main(void)
     CHECK(sm.page == UIPAGE_HOME1 && sm.s.active_synth_layer == 0, "SINGL on HOME2 -> HOME1 (%u)", sm.page);
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     ui_sm_enforce(&sm);
-    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_AMP, "GLO cycles AMP -> MFX -> EFFECTS -> MIX -> AMP (%u)", sm.page);
+    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_AMP, "GLO cycles AMP -> EFFECTS -> MIX -> AMP (%u)", sm.page);
+    /* EDIT (2026-11-03): MOD -> MFX -> MOD */
+    press(BTN_EDIT);
+    CHECK(sm.page == UIPAGE_MOD, "EDIT -> MOD (%u)", sm.page);
+    press(BTN_EDIT); press(BTN_EDIT);
+    CHECK(sm.page == UIPAGE_MOD, "EDIT cycles MOD -> MFX -> MOD (%u)", sm.page);
     /* MFX (2026-11-01): TYPE alone at OFF, no knobs; a new type starts at its defaults, shows its own row and knobs */
-    press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_MFX, "GLO -> MFX (%u)", sm.page);
+    press(BTN_EDIT);
+    CHECK(sm.page == UIPAGE_MFX, "EDIT -> MFX (%u)", sm.page);
     {
         UiKnobInfo info;
         MfxParams *m = ui_sm_mfx(&sm, 0);
@@ -321,8 +326,8 @@ int main(void)
         ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
         CHECK(m->type == MFX_OFF, "TYPE -> OFF");
     }
-    press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_EFFECTS, "GLO -> EFFECTS (%u)", sm.page);
+    press(BTN_GLO); press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_EFFECTS, "GLO -> AMP -> EFFECTS (%u)", sm.page);
     CHECK(find_row("DELAY HP") < 0 && find_row("DLY > REV") < 0, "EFFECTS: DELAY HP and the cross-feeds moved to MIX");
     /* MIX (2026-11-02): knob 1 BALANCE in DUAL, DRY/WET in SINGL (one byte); LOOP TONE's thinner half is DELAY HP
      * (fx_tone_sync), beside PING PONG in delay_pingpong */

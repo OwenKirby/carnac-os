@@ -106,6 +106,9 @@ extern LfoRuntimeState global_lfo1_state[NLAYER];
  * (voice->mod_fn[slot].out_q15, or synth_mod_layer_out with no voice) is live even when nothing reads it. Set by the
  * UI; one extra slot a pass. */
 extern int8_t synth_mod_watch;
+/* the MOD SENDS to each layer's DELAY / REVERB SEND, knob units (-127..127): the newest sounding voice's, a tick behind
+ * (synth_runtime.c adds them to AMP's sends; 0 with none) */
+extern int16_t synth_fx_send_mod[NLAYER][2];
 
 /* A slot's output from the layer's voice-less pass (LFO1, no voice sources), Q15 */
 int32_t synth_mod_layer_out(int layer, int slot);

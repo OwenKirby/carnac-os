@@ -1435,9 +1435,22 @@ static SYNTH_COLD void mfx_begin(MfxState *s, const MfxParams *p)
 
 /* the knobs a control step on (the last 1/500 of a step taken at once: the knob comes to rest, and the models'
  * settings are not worked out again) */
-static void mfx_glide(MfxState *s, const MfxParams *p)
+float mfx_mod_off[2][4];
+
+/* a knob plus its MOD SENDS, held to 0..127 */
+static float mfx_knob_mod(const MfxParams *p, const float *off, int j)
 {
-    const float want[7] = {p->knob[0], p->knob[1], p->knob[2], p->knob[3], p->lr, p->row[0], p->row[1]};
+    float v = (float)p->knob[j];
+    if (off[j] == 0.f || (p->type == MFX_PITCH_SHIFT && j == MFX_K_PS_PITCH))
+        return v;
+    v += off[j];
+    return v < 0.f ? 0.f : v > 127.f ? 127.f : v;
+}
+
+static void mfx_glide(MfxState *s, const MfxParams *p, const float *off)
+{
+    const float want[7] = {mfx_knob_mod(p, off, 0), mfx_knob_mod(p, off, 1), mfx_knob_mod(p, off, 2),
+                           mfx_knob_mod(p, off, 3), p->lr, p->row[0], p->row[1]};
     for (int j = 0; j < 7; j++) {
         float e = want[j] - s->kn[j];
         s->kn[j] = e < 0.002f && e > -0.002f ? want[j] : s->kn[j] + e * MFX_KGLIDE;
@@ -1459,7 +1472,7 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
      * operations, against the step's thousands) */
     for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
         uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
-        mfx_glide(s, p);
+        mfx_glide(s, p, mfx_mod_off[layer & 1]);
         if (p->type == MFX_BULLROARER) {        /* (the prototype: whole, here; dry on the FM1) */
 #if MFX_HAS_BULLROARER
             bullroarer(s, s->kn, s->kn[4], l + f0, r + f0, m);

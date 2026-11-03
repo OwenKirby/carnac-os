@@ -542,7 +542,7 @@ static uint32_t page_button(uint8_t page)
     if (page <= UIPAGE_FLTMIX) return 1u << B_SEL;
     if (page <= UIPAGE_ENV3) return 1u << B_ENV;
     if (page <= UIPAGE_LFO3) return 1u << B_LFO;
-    if (page <= UIPAGE_MOD3) return 1u << B_EDIT;
+    if (page <= UIPAGE_MFX) return 1u << B_EDIT;
     if (page <= UIPAGE_MIX) return 1u << B_GLO;
     if (page <= UIPAGE_GLOBAL) return 1u << B_HOME;                   /* HOME's views, then GLOBAL */
     if (page == UIPAGE_ARP) return 1u << B_ARP;

@@ -24,7 +24,7 @@
 #define NFILTER 2u
 #define NENV 3u                      /* ENV1 is hardwired to the amp */
 #define NLFO 3u                      /* LFO1 global, LFO2 / LFO3 per voice */
-#define NMODSLOT 3u                  /* 4.5 lists 4; 2.1's menu row lists 3, and MSRC_MODSLOT1..3 reach only 3 (MOD 4 removed 2026-10-15) */
+#define NMODSLOT 4u                  /* 4.5 lists 4 (MOD 4 removed 2026-10-15, back 2026-11-03: a slot runs only when read) */
 #define SEQ_NLANE 4u
 #define SEQ_NSTEP 16u
 #define ARP_NSTEP 8u                 /* 8.1: keys 14..21, white keys only */
@@ -35,10 +35,16 @@
                                       * patches; a performance is now a whole snapshot, WholePerformance) */
 
 /* -------------------------------------------------- shared value lists --- */
-enum {                               /* mod_source_list (4) */
-    MSRC_NONE, MSRC_VELOCITY, MSRC_KEYBOARD, MSRC_MODWHEEL, MSRC_AFTERTOUCH,
+enum {                               /* mod_source_list (4); 2026-11-03 (v13): RANDOM, POLY AT, MOD4, the per-note sources
+                                      * first, then the controllers. After V1: new sources only at the end */
+    MSRC_NONE, MSRC_VELOCITY, MSRC_KEYBOARD,
+    MSRC_RANDOM,                     /* a value per note, picked at its note-on, -1 .. +1 */
+    MSRC_MODWHEEL, MSRC_AFTERTOUCH,
+    MSRC_POLY_AT,                    /* the note's own pressure (MIDI poly aftertouch, a SEQ POLY AT lane); a voice that
+                                      * has had none reads the channel's AFTERTOUCH */
+    MSRC_CUSTOMCC1, MSRC_CUSTOMCC2,
     MSRC_ENV1, MSRC_ENV2, MSRC_ENV3, MSRC_LFO1, MSRC_LFO2, MSRC_LFO3,
-    MSRC_MODSLOT1, MSRC_MODSLOT2, MSRC_MODSLOT3, MSRC_CUSTOMCC1, MSRC_CUSTOMCC2,
+    MSRC_MODSLOT1, MSRC_MODSLOT2, MSRC_MODSLOT3, MSRC_MODSLOT4,
     MSRC_COUNT
 };
 enum {                               /* function_list (4.5) */
@@ -406,7 +412,7 @@ typedef struct {                     /* FILTER MIXER (DUAL FILTER, STACK, BINAUR
 
 typedef struct {                     /* ENVELOPE1..3 */
     uint8_t attack, decay, sustain, release;   /* knobs 1..4 */
-    uint8_t vel_to_time;             /* (bip) */
+    uint8_t vel_to_attack;           /* VEL > ATTACK (bip; 2026-11-03, was VEL > TIME on every stage): the attack only */
     uint8_t key_to_time;             /* (bip) */
     uint8_t retrig_rate;
     uint8_t retrig_sync;             /* 0 / 1 */
@@ -455,6 +461,35 @@ typedef struct {
                                       * POLARITY (0, 1) */
 } MfxParams;
 
+/* MOD SENDS (2026-11-03): a mod slot sent straight to a destination, on top of whatever the destination's own source
+ * and amount do there (the MOD page sets them). A pool of NMODSEND a patch, at most one a slot and destination; an entry
+ * with dest 0 is free. The send amount works as the destination's own amount would: full (+-64) does what the
+ * destination's amount at full does (a 0..127 amount: twice the send, either sign). */
+#define NMODSEND 12u
+enum {                               /* the destinations (the MOD page's order is UIStateMachine.c MOD_ROWS'). Codes
+                                      * under 32 are bits of the voices' send mask; after V1 new ones only at the end */
+    MDST_NONE, MDST_OSC1_SCAN, MDST_OSC1_PITCH, MDST_OSC2_SCAN, MDST_OSC2_PITCH, MDST_OSC_MIX, MDST_XMOD, MDST_SPREAD,
+    MDST_NOISE_LEVEL, MDST_NOISE_COLOUR, MDST_F1_CUTOFF, MDST_F1_MORPH, MDST_F2_CUTOFF, MDST_F2_MORPH,
+    MDST_BALANCE,                    /* DUAL FILTER's BALANCE, STACK's BLEND A/B (one byte) */
+    MDST_ROUTING, MDST_PHASE, MDST_CUTOFF_LR, MDST_LFO1_SPEED, MDST_LFO2_SPEED, MDST_LFO3_SPEED, MDST_AMP_LEVEL,
+    MDST_PAN,
+    MDST_F1_RES, MDST_F2_RES, MDST_F1_DRIVE, MDST_F2_DRIVE,   /* (2026-11-03, v13) */
+    MDST_GLIDE,                      /* the layer's PORTA TIME (a performance setting), a glide's speed as it goes */
+    MDST_MFX_K1, MDST_MFX_K2, MDST_MFX_K3, MDST_MFX_K4,   /* the layer's MFX knobs 1..4, whatever the type names them (a
+                                                         * list knob, PITCH SHIFT's PITCH, takes none; OFF: none) */
+    MDST_DLY_SEND, MDST_REV_SEND,    /* the layer's AMP DELAY / REVERB SEND (taken from the layer's sum: the newest voice's) */
+    MDST_COUNT
+};
+#define MDST_VOICE_BITS 32u          /* MDST_* under this: a bit in the voices' send mask (SourceCtx.sends) */
+#define MSEND_SLOT_SHIFT 6u
+#define MSEND_DEST(b) ((uint8_t)((b) & 63u))
+#define MSEND_SLOT(b) ((uint8_t)((b) >> MSEND_SLOT_SHIFT))
+typedef struct {
+    uint8_t dest;                    /* MDST_* | the slot (0..3) << MSEND_SLOT_SHIFT; 0: a free entry. (One byte: the CC
+                                      * map's address for a slot's send, slot * 64 + destination) */
+    uint8_t amount;                  /* (bip) */
+} ModSendParams;
+
 #define ENGINE_RESERVED 4u           /* spare patch bytes (v11): stored, 0 until a later feature takes one (so 0 must
                                       * mean that feature's off / default) */
 
@@ -470,12 +505,10 @@ typedef struct {
     AmpParams amp;
     uint8_t arch;                    /* VARCH_*: the voice architecture, HOME View 1 / 2 (5.3) */
     uint8_t name[NAME_LEN];          /* char_map indices (0 = space), not ASCII: RENAME PATCH (6.2.1) */
-    uint8_t analog;                  /* ANALOG 0..127 (LAYER page, dsp/analog.h): 0 = clean. Stored in the patch's
-                                      * last stored byte, which v9 left 0, so a v9 patch reads as 0 (no version bump) */
+    uint8_t analog;                  /* ANALOG 0..127 (LAYER page, dsp/analog.h): 0 = clean */
     uint8_t filter_key_track[NFILTER];   /* FILTER1 / FILTER2 KEY TRACK 0..127 (2026-10-21): the cutoff follows the
                                           * keys about C4, 127 = an octave an octave. Here, not in FilterParams, so no
-                                          * offset moves; stored in the high nibbles of the filter's two MSRC_* bytes,
-                                          * which v9 left 0, so a v9 patch reads as 0 (no version bump) */
+                                          * offset moved */
     /* v10 (2026-10-26), at the end so no offset moves: */
     uint8_t env_vel_level[NENV];     /* ENV1..3 VEL > LEVEL 0..127: how far a soft note lowers the envelope's level
                                       * (0 none; ENV1's replaces the old fixed velocity-to-amp curve) */
@@ -485,15 +518,18 @@ typedef struct {
     /* v11 (2026-11-03): */
     MfxParams mfx;                   /* the layer's MFX (dsp/mfx.c plays engine_state[layer].mfx) */
     uint8_t reserved[ENGINE_RESERVED];
+    /* 2026-11-03, at the end (flash_record.h ENG_W): a v12 patch saved before reads them as free */
+    ModSendParams send[NMODSEND];    /* the MOD SENDS */
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 207u, "EngineState layout");
+PS_STATIC_ASSERT(sizeof(EngineState) == 235u, "EngineState layout");
+PS_STATIC_ASSERT(MDST_COUNT <= 64u && NMODSLOT <= 4u && MDST_MFX_K4 < MDST_VOICE_BITS,
+                 "a send's dest byte: 6 bits of destination, 2 of slot; the voices' destinations in the mask");
 #define ENV1_VEL_LEVEL_V9 111u       /* ENV1 VEL > LEVEL that plays as v9's fixed curve did (-18 dB at velocity 1) */
 /* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 184 is the most that keeps 22
- * patches to a store chunk (preset_store_fm1.c: (4064 - 16) / 184), so the chunks stay where they were. The stored
- * form packs the name 6 bits a character, leaves out OSC1's SYNC and ENV1's INVERT (nothing reads them), packs the
- * LFOs' CLOCK SYNC / KEY RESET into one byte and the envelopes' eight 0 / 1 bytes into another; the filters' KEY TRACK
- * and the LFOs' DEPTH MOD SRC ride in MSRC_* bytes' high nibbles; ANALOG is the last byte. v11 adds the MFX and the
- * reserved bytes: 183 stored with ANALOG. Older patches (v10 and before) are not migrated (before V1 they may go). */
+ * patches to a store chunk (preset_store_fm1.c: (4064 - 16) / 184), so the chunks stay where they were. Since v12
+ * (2026-11-03) every byte is stored at its own bit width (ENG_W): 7 for a value, 5 for a source, 1 for a switch, 6 for
+ * a name character; what that leaves after the last field is room for fields added at the end (see ENG_W). Older
+ * patches (v11 and before) are not migrated (before V1 they may go). */
 #define ENGINE_STORED_SIZE 184u
 #define ATK_LEVEL_DEFAULT 100u
 #define ATK_V8_DEFAULTS {0u, 127u, 0u, 127u, ATKTRK_AUTO, 64u, MSRC_VELOCITY, 64u}   /* atk_filter .. atk_bend_mod_amt */
@@ -658,7 +694,7 @@ typedef struct {
     uint8_t mix[PERF_NMIX];          /* the MIX page (dsp/fx.h fx_live, FX_L_*): BALANCE, LOOP TONE (64, 64: none),
                                       * DLY > REV, REV > DLY (0: none) */
     uint8_t reserved[PERF_RESERVED]; /* spare (the CC map, the SEQ's MIDI channel, ...): 0 until a feature takes one, so
-                                      * 0 must mean that feature's off / default */
+                                      * 0 must mean that feature's off / default (flash_record.h, THE ZERO RULE) */
 } MasterPerformancePreset;
 PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 70u, "MasterPerformancePreset flash layout");
 #define DELAY_PINGPONG(p) ((uint8_t)((p)->delay_pingpong & 1u))
@@ -693,7 +729,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 954u,"WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 1010u,"WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */

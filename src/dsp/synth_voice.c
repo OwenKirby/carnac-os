@@ -17,6 +17,7 @@
 #include "attacks.h"
 #include "ctrl_tables.h"
 #include "tuning.h"
+#include "mfx.h"                     /* mfx_mod_off: the MOD SENDS to the MFX knobs */
 
 LfoRuntimeState global_lfo1_state[NLAYER];
 MidiInterfaceState master_midi;
@@ -68,6 +69,7 @@ typedef struct {
     SynthVoiceNode *voice;       /* NULL for the LFO1 pass */
     const VoiceInput *in;        /* NULL for the LFO1 pass */
     uint32_t lfo_offset;         /* BINAURAL right ear: LFO1..3 read this far ahead (2^32 = a cycle); 0 = the voice itself */
+    uint32_t sends;              /* bit MDST_* (under MDST_VOICE_BITS): some MOD SEND goes there (send_mask) */
 } SourceCtx;
 
 static int32_t resolve_source_any(const SourceCtx *c, int src, int depth);
@@ -88,8 +90,7 @@ static ModFnState layer_mod_fn[NLAYER][NMODSLOT];
 /* Sources that swing both sides of zero. Sample & hold and lag treat these as signals around 0; the unipolar
  * ones are treated as signals around half scale. */
 static int src_is_bipolar(int src) {
-    return src == MSRC_KEYBOARD || src == MSRC_LFO1 || src == MSRC_LFO2 || src == MSRC_LFO3 ||
-           src == MSRC_MODSLOT1 || src == MSRC_MODSLOT2 || src == MSRC_MODSLOT3;
+    return src == MSRC_KEYBOARD || src == MSRC_RANDOM || (src >= MSRC_LFO1 && src <= MSRC_MODSLOT4);
 }
 
 /* ENV2 / ENV3 with INVERT run 0 -> -1 (2026-10-27): the knob is their rest point and they dip below it */
@@ -100,7 +101,7 @@ static int src_is_inverted_env(const EngineState *e, int src) {
 /* A level read from a source for DEPTH MOD: 0..32767. An inverted envelope reads as 1 -> 0 here, so it still opens
  * the depth rather than holding it shut. */
 static int32_t source_level_q15(const EngineState *e, int src, int32_t s) {
-    if (src == MSRC_KEYBOARD) s = (s + 32768) >> 1;                     /* from the keyboard's bottom to its top */
+    if (src == MSRC_KEYBOARD || src == MSRC_RANDOM) s = (s + 32768) >> 1;   /* bottom to top (bipolar) */
     else if (src_is_inverted_env(e, src)) s += 32767;
     return clamp32(s, 0, 32767);
 }
@@ -207,6 +208,9 @@ static int32_t resolve_source_any(const SourceCtx *c, int src, int depth) {
     case MSRC_KEYBOARD:   return in ? (in->note - 60) * 512 : 0;      /* bipolar, C4 = 0 */
     case MSRC_MODWHEEL:   return in ? in->mod_wheel * 258 : 0;
     case MSRC_AFTERTOUCH: return in ? in->aftertouch * 258 : 0;
+    case MSRC_RANDOM:     return v ? v->rand_q15 : 0;                 /* bipolar, a value per note */
+    case MSRC_POLY_AT:                                                 /* the note's own, else the channel's */
+        return v && v->poly_seen ? v->poly_at * 258 : in ? in->aftertouch * 258 : 0;
     /* an envelope at this note's VEL > LEVEL; ENV2 / ENV3 then invert (a soft note dips less) */
     case MSRC_ENV1:       return v ? (v->amp_env.level_q15 * v->env_vel_q15[0]) >> 15 : 0;   /* never inverted */
     case MSRC_ENV2:
@@ -232,22 +236,117 @@ static int32_t resolve_source_any(const SourceCtx *c, int src, int depth) {
     }
     case MSRC_MODSLOT1:
     case MSRC_MODSLOT2:
-    case MSRC_MODSLOT3:   return slot_output(c, src - MSRC_MODSLOT1, depth);
+    case MSRC_MODSLOT3:
+    case MSRC_MODSLOT4:   return slot_output(c, src - MSRC_MODSLOT1, depth);
     case MSRC_CUSTOMCC1:  return in ? in->custom_cc1 * 258 : 0;
     case MSRC_CUSTOMCC2:  return in ? in->custom_cc2 * 258 : 0;
     default:              return 0;                                    /* MSRC_NONE */
     }
 }
 
+/* ------------------------------------------------------------- MOD SENDS --- */
+/* (2026-11-03) A slot sent straight to a destination adds to what the destination's own source and amount do there:
+ * the slot's output times the send amount through the destination's own amount (send_sum, send_cents, send_gain).
+ * Which destinations have a send, as a mask, once a tick: a patch without sends pays one bit test a destination. */
+static __attribute__((noinline)) uint32_t send_mask(const EngineState *e, uint32_t *hi) {
+    uint32_t m = 0, h = 0;
+    for (unsigned i = 0; i < NMODSEND; i++) {
+        unsigned d = MSEND_DEST(e->send[i].dest);
+        if (d < MDST_VOICE_BITS) m |= 1u << d;
+        else if (d < MDST_COUNT) h |= 1u << (d - MDST_VOICE_BITS);
+    }
+    *hi = h;
+    return m & ~1u;
+}
+/* The send helpers stay out of line and out of the hot path (2026-11-03): inlined at each destination they grew
+ * voice_control_tick by 1.2 KB of code a patch without sends never runs, and as the tick and the voice's render take
+ * turns in the FM1's I-cache, BINAURAL measured +8..10 PERF TEST points for it. */
+#define SEND_COLD __attribute__((noinline, cold))
+/* each layer's mask, worked out once a tick (synth_voice_begin_tick) before any voice reads it */
+static uint32_t layer_sends[NLAYER];
+static uint32_t layer_sends_hi[NLAYER];             /* bit (MDST_* - MDST_VOICE_BITS): the layer-wide ones, DLY / REV SEND */
+int16_t synth_fx_send_mod[NLAYER][2];
+
+/* the sends to d, summed, in the units of its own source times its own amount: scale 1 for a bipolar amount (-64..+63),
+ * 2 for a 0..127 one (the send's -64..+63 doubled, either sign) */
+static SEND_COLD int32_t send_sum_any(const SourceCtx *c, unsigned d, int32_t scale) {
+    int32_t s = 0;
+    for (unsigned i = 0; i < NMODSEND; i++) {
+        uint8_t b = c->eng->send[i].dest;
+        if (MSEND_DEST(b) == d && MSEND_SLOT(b) < NMODSLOT)
+            s += slot_output(c, MSEND_SLOT(b), 0) * (bip(c->eng->send[i].amount) * scale);
+    }
+    return s;
+}
+
+/* the pitch sends to d, in cents: each through the PITCH MOD AMOUNT curve at twice the send (a negative send turns
+ * the slot over) */
+static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
+    int32_t cents = 0;
+    for (unsigned i = 0; i < NMODSEND; i++) {
+        uint8_t b = c->eng->send[i].dest;
+        if (MSEND_DEST(b) == d && MSEND_SLOT(b) < NMODSLOT) {
+            int a = bip(c->eng->send[i].amount) * 2, sg = a < 0 ? -1 : 1;
+            cents += sg * pitch_mod_cents(slot_output(c, MSEND_SLOT(b), 0), (uint8_t)clampi(a * sg, 0, 127));
+        }
+    }
+    return cents;
+}
+
+/* the bit test at the destination, the call only for a send (most patches have none: a call a destination a voice
+ * tick is what the FM1's XIP code would pay) */
+#define send_sum(c, d, scale) ((((c)->sends >> (d)) & 1u) ? send_sum_any((c), (d), (scale)) : 0)
+#define send_cents(c, d) ((((c)->sends >> (d)) & 1u) ? send_cents_any((c), (d)) : 0)
+
+/* AMP LEVEL's sends: each a gain as AMP MOD's (amount 0 full level, full the slot alone sets it; a negative send the
+ * slot turned over), multiplied together */
+static SEND_COLD int32_t send_gain(const SourceCtx *c) {
+    int32_t g = -1;                                 /* (none yet: the first is taken as it is, no rounding) */
+    for (unsigned i = 0; i < NMODSEND; i++) {
+        uint8_t b = c->eng->send[i].dest;
+        if (MSEND_DEST(b) == MDST_AMP_LEVEL && MSEND_SLOT(b) < NMODSLOT) {
+            int a = bip(c->eng->send[i].amount) * 2;
+            int32_t d = (int32_t)clampi(a < 0 ? -a : a, 0, 127) * 258, l = slot_output(c, MSEND_SLOT(b), 0);
+            l = clamp32(a < 0 ? 32767 - l : l, 0, 32767);
+            int32_t t = clamp32(32767 - d + ((l * d) >> 15), 0, 32767);
+            g = g < 0 ? t : (g * t) >> 15;
+        }
+    }
+    return g < 0 ? 32767 : g;
+}
+
+/* The layer's MFX plays the layer's sum, so its sends follow one voice: the newest sounding (as the MOD page's portal
+ * does), a tick behind. With none sounding they hold, so a tail rings out as it was; with no MFX send they are 0. */
+static __attribute__((noinline)) void mfx_mod_follow(unsigned l, uint32_t sends, uint32_t hi) {
+    int best = -1;
+    if ((sends & (15u << MDST_MFX_K1)) == 0u)
+        for (int k = 0; k < 4; k++) mfx_mod_off[l][k] = 0.f;
+    if (hi == 0u)
+        synth_fx_send_mod[l][0] = synth_fx_send_mod[l][1] = 0;
+    if ((sends & (15u << MDST_MFX_K1)) == 0u && hi == 0u)
+        return;
+    for (int v = 0; v < POLYPHONY_VOICES; v++)
+        if (!poly_bank[v].silent && poly_bank[v].layer == l &&
+            (best < 0 || poly_bank[v].age_counter < poly_bank[best].age_counter))
+            best = v;
+    if (best < 0)
+        return;
+    if (sends & (15u << MDST_MFX_K1))
+        for (int k = 0; k < 4; k++) mfx_mod_off[l][k] = (float)poly_bank[best].mfx_mod[k];
+    if (hi)              /* (the DELAY / REVERB SEND: the same newest voice, 2026-11-03) */
+        for (int k = 0; k < 2; k++) synth_fx_send_mod[l][k] = poly_bank[best].fx_mod[k];
+}
+
 /* ------------------------------------------------------------------ LFOs --- */
 
 void update_poly_lfo_engines(SynthVoiceNode *voice, const VoiceInput *in) {
     const EngineState *e = &engine_state[voice->layer];
-    SourceCtx c = {e, voice->layer, voice, in, 0};
+    SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1]};
     for (int i = 0; i < 2; i++) {
         const LfoParams *cfg = &e->lfo[i + 1];                      /* LFO2, LFO3 */
         LfoRuntimeState *state = &voice->poly_lfos.engines[i];
-        lfo_advance(cfg, state, resolve_source(&c, cfg->speed_mod_src, 0), in->gate, SYNTH_CTRL_SHIFT,
+        lfo_advance(cfg, state, resolve_source(&c, cfg->speed_mod_src, 0) * bip(cfg->speed_mod_amt) +
+                    send_sum(&c, MDST_LFO2_SPEED + (unsigned)i, 1), in->gate, SYNTH_CTRL_SHIFT,
                     in->frame);                                     /* REL: waits for the key release */
         /* once per tick: the shape also redraws its random values here, so it must not be read twice */
         int32_t raw = compute_morphed_lfo_fixed(state, cfg->shape);
@@ -273,7 +372,7 @@ static int32_t vel_level_q15(uint8_t amt, int velocity) {
  * (unipolar; the keyboard from its bottom to its top). An LFO or a MOD slot reads as none: depth is worked out before
  * the LFOs it would scale. */
 static int32_t lfo_depth_q15(const SourceCtx *c, uint8_t src, uint8_t amt) {
-    if (amt == 0u || src == MSRC_NONE || (src >= MSRC_LFO1 && src <= MSRC_MODSLOT3)) return GAIN_UNITY;
+    if (amt == 0u || src == MSRC_NONE || (src >= MSRC_LFO1 && src <= MSRC_MODSLOT4)) return GAIN_UNITY;
     int32_t s = resolve_source(c, src, 0), d = (int32_t)amt * 258;
     s = clamp32(source_level_q15(c->eng, src, s), 0, GAIN_UNITY);
     return clamp32(GAIN_UNITY - d + ((s * d) >> 15), 0, GAIN_UNITY);
@@ -300,9 +399,9 @@ void update_global_lfo1(uint32_t frame) {
         const EngineState *e = &engine_state[l];
         const LfoParams *cfg = &e->lfo[0];
         LfoRuntimeState *state = &global_lfo1_state[l];
-        SourceCtx c = {e, (int)l, NULL, NULL, 0};
-        lfo_advance(cfg, state, resolve_source(&c, cfg->speed_mod_src, 0), layer_key_held((uint8_t)l), SYNTH_CTRL_SHIFT,
-                    frame);
+        SourceCtx c = {e, (int)l, NULL, NULL, 0, layer_sends[l]};
+        lfo_advance(cfg, state, resolve_source(&c, cfg->speed_mod_src, 0) * bip(cfg->speed_mod_amt) +
+                    send_sum(&c, MDST_LFO1_SPEED, 1), layer_key_held((uint8_t)l), SYNTH_CTRL_SHIFT, frame);
         int32_t raw = compute_morphed_lfo_fixed(state, cfg->shape);
         lfo1_out_q15[l] = (raw * state->envelope_amp_q15) >> 15;
     }
@@ -378,23 +477,28 @@ void synth_voice_begin_tick(uint32_t frame) {
     tuning_root_now = PERF_TUNING_ROOT(&perf_state);
     analog_begin_tick();                            /* ANALOG's warm-up drift, shared by every voice */
     layer_mod_pass++;                                               /* the LFO1 pass is a pass of its own */
+    for (unsigned l = 0; l < NLAYER; l++)
+        layer_sends[l] = send_mask(&engine_state[l], &layer_sends_hi[l]);
     update_global_lfo1(frame);
     for (unsigned l = 0; l < NLAYER; l++) {
-        SourceCtx c = {&engine_state[l], (int)l, NULL, NULL, 0};
+        SourceCtx c = {&engine_state[l], (int)l, NULL, NULL, 0, layer_sends[l]};
         watch_slot(&c);
         refresh_osc_mixer(l);
         glide_knobs(l);
+        mfx_mod_follow(l, c.sends, layer_sends_hi[l]);
     }
     knob_glide_live = 1;
 }
 
 /* ------------------------------------------------------------------ voice --- */
 
-/* ENV time modulation (spec 4.4): velocity and key position, in envelope steps */
+/* ENV time modulation (spec 4.4), in envelope steps: KEY > TIME moves every stage, VEL > ATTACK (2026-11-03, was
+ * VEL > TIME on every stage) the attack only */
 static int time_mod(const EnvParams *p, const VoiceInput *in) {
-    int vel = (bip(p->vel_to_time) * in->velocity) >> 7;             /* about +-64 at full velocity */
-    int key = (bip(p->key_to_time) * (in->note - 60)) >> 6;          /* about +-60 at the keyboard ends */
-    return vel + key;
+    return (bip(p->key_to_time) * (in->note - 60)) >> 6;             /* about +-60 at the keyboard ends */
+}
+static int attack_mod(const EnvParams *p, const VoiceInput *in) {
+    return (bip(p->vel_to_attack) * in->velocity) >> 7;              /* about +-64 at full velocity */
 }
 
 /* Velocity to level, hardwired to the amp as ENV1 is: 127 is unity, a square law down to 4096 (-18 dB) at 1.
@@ -455,30 +559,39 @@ static int cutoff_q8(const SourceCtx *c, int fi, int32_t mod_q8) {   /* FILTER f
 /* a filter's own mod source and amount (spec 4.2), as a Q8 cutoff offset: the amount 0..127, positive only (2026-10-26,
  * was bipolar; twice the steps). Kept in Q8 so the filter interpolates
  * between the table steps and a modulated cutoff does not zipper. */
-static int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f) {
-    return (resolve_source(c, f->mod_src, 0) * (int32_t)f->mod_amt) >> 8;
+static int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f, int fi) {
+    return (resolve_source(c, f->mod_src, 0) * (int32_t)f->mod_amt + send_sum(c, fi ? MDST_F2_CUTOFF : MDST_F1_CUTOFF, 2)) >> 8;
 }
 
 /* A FILTER page's type morph plus its own mod source and amount (spec 4.2, every architecture), the knob's way round
  * (dsp/filter.h). An amount of 0 resolves no source. */
 static int filter_morph(const SourceCtx *c, const FilterParams *f, int fi) {
     int m = (int)glide_q8(knob_glide[c->layer].morph[fi]);              /* Q8 knob units (2026-10-21) */
-    if (f->morph_mod_amt != BIPOLAR_CENTER)
-        m = clampi(m + (int)((resolve_source(c, f->morph_mod_src, 0) * bip(f->morph_mod_amt)) >> 7), 0, 127 << 8);
+    unsigned d = fi ? MDST_F2_MORPH : MDST_F1_MORPH;
+    if (f->morph_mod_amt != BIPOLAR_CENTER || ((c->sends >> d) & 1u))
+        m = clampi(m + (int)((resolve_source(c, f->morph_mod_src, 0) * bip(f->morph_mod_amt) + send_sum(c, d, 1)) >> 7), 0,
+                   127 << 8);
     return m;
 }
 
-/* a resonance plus ANALOG's offset for the voice */
+/* a resonance plus its MOD SENDS (2026-11-03: full moves the knob all the way) and ANALOG's offset for the voice */
 static int res_plus(const SourceCtx *c, int fi, int off) {   /* FILTER fi's glided knob, Q8 knob units */
     int r = (int)glide_q8(knob_glide[c->layer].res[fi]);
-    return off ? clampi(r + (off << 8), 0, 127 << 8) : r;
+    r += (int)(send_sum(c, fi ? MDST_F2_RES : MDST_F1_RES, 2) >> 7);
+    return clampi(r + (off << 8), 0, 127 << 8);
+}
+
+/* a filter's DRIVE plus its MOD SENDS (2026-11-03), knob units */
+static int drive_plus(const SourceCtx *c, const FilterParams *f, int fi) {
+    unsigned d = fi ? MDST_F2_DRIVE : MDST_F1_DRIVE;
+    return ((c->sends >> d) & 1u) ? clampi((int)f->drive + (int)(send_sum_any(c, d, 2) >> 15), 0, 127) : (int)f->drive;
 }
 
 /* One core from a FILTER page, its morph modulated through c (the BINAURAL right ear passes its phase-offset context),
  * res_off ANALOG's resonance offset. */
 static void filter_prepare_one(SvfCore *k, const SourceCtx *c, const FilterParams *f, int fi, int cut_q8, int res_off,
                                int snap) {
-    filter_core_prepare(k, cut_q8, res_plus(c, fi, res_off), filter_morph(c, f, fi), f->drive, f->flavour,
+    filter_core_prepare(k, cut_q8, res_plus(c, fi, res_off), filter_morph(c, f, fi), drive_plus(c, f, fi), f->flavour,
                         SYNTH_CTRL_SHIFT, snap);
 }
 
@@ -492,7 +605,8 @@ static uint32_t analog_freq(uint32_t f_q16, float ratio) {
  * instead of in whole knob steps, then spread continuously across the 8 morph frames. */
 static int scan_morph_q12(const SourceCtx *c, const OscParams *o, int oi, int offset_knob) {   /* OSC oi, glided */
     int32_t scan_q8 = glide_q8(knob_glide[c->layer].scan[oi]) + ((int32_t)offset_knob << 8);
-    scan_q8 += (resolve_source(c, o->scan_mod_src, 0) * o->scan_mod_amt) >> 7;
+    scan_q8 += (resolve_source(c, o->scan_mod_src, 0) * o->scan_mod_amt +
+                send_sum(c, oi ? MDST_OSC2_SCAN : MDST_OSC1_SCAN, 2)) >> 7;
     return scan_q8_to_morph_q12(clampi(scan_q8, 0, 127 << 8));
 }
 
@@ -505,7 +619,7 @@ static void mix_gains(float *g, int32_t l_q15, int32_t r_q15, float dry) {
 
 void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const EngineState *e = &engine_state[voice->layer];
-    SourceCtx c = {e, voice->layer, voice, in, 0};
+    SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1]};
     uint8_t arch = voice->arch;
     voice->mod_pass++;                                              /* this voice's pass: its slots run afresh */
     SPROF_DECL;
@@ -526,12 +640,12 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
 
     /* 1. Envelopes, a tick at a time. ENV2 and ENV3 invert when read as mod sources (see resolve_source). In STACK,
      * ENV2 is also stack B's amp envelope, read uninverted as ENV1 is. */
-    int32_t amp_env_q15 = adsr_advance(&voice->amp_env, &e->env[0], time_mod(&e->env[0], in),
+    int32_t amp_env_q15 = adsr_advance(&voice->amp_env, &e->env[0], time_mod(&e->env[0], in), attack_mod(&e->env[0], in),
                                        voice->release_boost_q15, SYNTH_CTRL_SHIFT, in->frame);
-    int32_t env2_q15 = adsr_advance(&voice->mod_env, &e->env[1], time_mod(&e->env[1], in),
+    int32_t env2_q15 = adsr_advance(&voice->mod_env, &e->env[1], time_mod(&e->env[1], in), attack_mod(&e->env[1], in),
                                     voice->release_boost_q15, SYNTH_CTRL_SHIFT, in->frame);
-    adsr_advance(&voice->aux_env, &e->env[2], time_mod(&e->env[2], in), voice->release_boost_q15, SYNTH_CTRL_SHIFT,
-                 in->frame);
+    adsr_advance(&voice->aux_env, &e->env[2], time_mod(&e->env[2], in), attack_mod(&e->env[2], in),
+                 voice->release_boost_q15, SYNTH_CTRL_SHIFT, in->frame);
     int32_t amp_b_env_q15 = arch == VARCH_STACK ? env2_q15 : 0;
     SPROF_LAP(SPROF_C_ENV);
 
@@ -561,6 +675,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         mod_uni_q15 = clamp32(mod_uni_q15, 0, 32767);
         amp_gain_q15 = clamp32(32767 - depth_q15 + ((mod_uni_q15 * depth_q15) >> 15), 0, 32767);
     }
+    if ((c.sends >> MDST_AMP_LEVEL) & 1u)
+        amp_gain_q15 = a->amp_mod_src == MSRC_NONE ? send_gain(&c) : (amp_gain_q15 * send_gain(&c)) >> 15;
     int32_t level_q15 = (amp_gain_q15 * voice->unison_gain_q15) >> 15;
     if (voice->choke) level_q15 = (level_q15 * voice->choke_q15) >> 15;
     if (analog) level_q15 = (level_q15 * an->level_q15) >> 15;      /* (a little over 32767 is fine: float from here) */
@@ -580,7 +696,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     base_pitch(o1, in, key_cents, &note1, &track1);
     int32_t pitch1_cents = osc_fine_cents(o1->fine) + track1 + base_cents;
     uint32_t freq1_q16 = apply_cents_q16(mtof_q16(note1),
-                                         pitch1_cents + pitch_mod_cents(resolve_source(&c, o1->pitch_mod_src, 0), o1->pitch_mod_amt));
+                                         pitch1_cents + pitch_mod_cents(resolve_source(&c, o1->pitch_mod_src, 0), o1->pitch_mod_amt) +
+                                         send_cents(&c, MDST_OSC1_PITCH));
     uint32_t freq1_set_q16 = freq1_q16;                             /* without ANALOG: STRIKE's attack follows this */
     if (analog) freq1_q16 = analog_freq(freq1_q16, an->pitch1);
     osc_select_wave(&voice->osc1, o1->wavebank);
@@ -591,7 +708,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         int note2, track2;
         base_pitch(o2, in, key_cents, &note2, &track2);
         freq2_q16 = apply_cents_q16(mtof_q16(note2), osc_fine_cents(o2->fine) + track2 + base_cents
-                                    + pitch_mod_cents(resolve_source(&c, o2->pitch_mod_src, 0), o2->pitch_mod_amt));
+                                    + pitch_mod_cents(resolve_source(&c, o2->pitch_mod_src, 0), o2->pitch_mod_amt)
+                                    + send_cents(&c, MDST_OSC2_PITCH));
         if (analog) freq2_q16 = analog_freq(freq2_q16, an->pitch2);
         osc_select_wave(&voice->osc2, o2->wavebank);
         voice->osc2.morph_q12 = scan_morph_q12(&c, o2, 1, 0);
@@ -601,15 +719,18 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const OscMixerParams *mx = &e->oscmix;
     const FilterMixerParams *fm = &e->fltmix;
     int32_t balance_off = 0, xmod_off = 0, spread = 0;
-    int32_t noise_off = (resolve_source(&c, mx->noise_mod_src, 0) * bip(mx->noise_mod_amt)) >> 15, colour_off = 0;
-    if (mx->noise_col_mod_amt != BIPOLAR_CENTER)
-        colour_off = (resolve_source(&c, mx->noise_col_mod_src, 0) * bip(mx->noise_col_mod_amt)) >> 15;
+    int32_t noise_off = (resolve_source(&c, mx->noise_mod_src, 0) * bip(mx->noise_mod_amt) +
+                         send_sum(&c, MDST_NOISE_LEVEL, 1)) >> 15, colour_off = 0;
+    if (mx->noise_col_mod_amt != BIPOLAR_CENTER || ((c.sends >> MDST_NOISE_COLOUR) & 1u))
+        colour_off = (resolve_source(&c, mx->noise_col_mod_src, 0) * bip(mx->noise_col_mod_amt) +
+                      send_sum(&c, MDST_NOISE_COLOUR, 1)) >> 15;
     if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL || arch == VARCH_DUAL_SPREAD)
-        balance_off = (resolve_source(&c, mx->mix_mod_src, 0) * mx->mix_mod_amt) >> 15;
+        balance_off = (resolve_source(&c, mx->mix_mod_src, 0) * mx->mix_mod_amt + send_sum(&c, MDST_OSC_MIX, 2)) >> 15;
     if (varch_uses_osc2(arch))
-        xmod_off = (resolve_source(&c, mx->xmod_mod_src, 0) * mx->xmod_mod_amt) >> 15;
+        xmod_off = (resolve_source(&c, mx->xmod_mod_src, 0) * mx->xmod_mod_amt + send_sum(&c, MDST_XMOD, 2)) >> 15;
     if (arch == VARCH_SPREAD || arch == VARCH_DUAL_SPREAD)
-        spread = clampi(mx->spread + ((resolve_source(&c, mx->spread_mod_src, 0) * mx->spread_mod_amt) >> 15), 0, 127);
+        spread = clampi(mx->spread + ((resolve_source(&c, mx->spread_mod_src, 0) * mx->spread_mod_amt +
+                                       send_sum(&c, MDST_SPREAD, 2)) >> 15), 0, 127);
     osc_mixer_prepare(&voice->mix, &osc_mixer[voice->layer], freq1_q16, freq2_q16,
                       (int)balance_off, (int)xmod_off, (int)noise_off, (int)colour_off);
     osc_prepare(&voice->osc1, freq1_q16, (int)spread);
@@ -622,25 +743,28 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const FilterParams *f1 = &e->filter[0];
     const FilterParams *f2 = &e->filter[1];
     SvfCore *core = voice->synth_filters.core;
-    int32_t f1_mod_q8 = filter_mod_q8(&c, f1) + (analog ? an->cut1_q8 : 0);
+    int32_t f1_mod_q8 = filter_mod_q8(&c, f1, 0) + (analog ? an->cut1_q8 : 0);
     int snap = voice->snap;
 
     /* BINAURAL: the two phase offsets, each knob plus the shared PHASE MOD, wrapping round the cycle */
     int32_t phase_mod = 0;
     if (arch == VARCH_BINAURAL)
-        phase_mod = (resolve_source(&c, fm->bin_phase_mod_src, 0) * bip(fm->bin_phase_mod_amt)) >> 15;
+        phase_mod = (resolve_source(&c, fm->bin_phase_mod_src, 0) * bip(fm->bin_phase_mod_amt) +
+                     send_sum(&c, MDST_PHASE, 1)) >> 15;
 
     switch (arch) {
     case VARCH_DUAL_FILTER:
     case VARCH_FULL: {
         /* FILTER MIXER: balance and routing with their own mod sources (spec 4.2) */
-        int32_t balance_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt)) >> 15;
-        int32_t routing_mod = (resolve_source(&c, fm->routing_mod_src, 0) * bip(fm->routing_mod_amt)) >> 15;
+        int32_t balance_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt) +
+                               send_sum(&c, MDST_BALANCE, 1)) >> 15;
+        int32_t routing_mod = (resolve_source(&c, fm->routing_mod_src, 0) * bip(fm->routing_mod_amt) +
+                               send_sum(&c, MDST_ROUTING, 1)) >> 15;
         dual_filter_prepare(&voice->synth_filters,
                             cutoff_q8(&c, 0, f1_mod_q8), res_plus(&c, 0, an_res1), filter_morph(&c, f1, 0),
-                            f1->drive, f1->flavour,
-                            cutoff_q8(&c, 1, filter_mod_q8(&c, f2) + an_cut2), res_plus(&c, 1, an_res2),
-                            filter_morph(&c, f2, 1), f2->drive, f2->flavour,
+                            drive_plus(&c, f1, 0), f1->flavour,
+                            cutoff_q8(&c, 1, filter_mod_q8(&c, f2, 1) + an_cut2), res_plus(&c, 1, an_res2),
+                            filter_morph(&c, f2, 1), drive_plus(&c, f2, 1), f2->flavour,
                             clampi(fm->routing + (int)routing_mod, 0, 127), clampi(fm->balance + (int)balance_mod, 0, 127),
                             SYNTH_CTRL_SHIFT, snap);
         break;
@@ -649,7 +773,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         /* ENV3 is hardwired to both cutoffs (FILTER MIXER knob 4), on top of each filter's own mod */
         int32_t env3_q8 = (resolve_source(&c, MSRC_ENV3, 0) * bip(fm->env3_cutoff)) >> 7;
         filter_prepare_one(&core[0], &c, f1, 0, cutoff_q8(&c, 0, f1_mod_q8 + env3_q8), an_res1, snap);
-        filter_prepare_one(&core[1], &c, f2, 1, cutoff_q8(&c, 1, filter_mod_q8(&c, f2) + env3_q8 + an_cut2), an_res2,
+        filter_prepare_one(&core[1], &c, f2, 1, cutoff_q8(&c, 1, filter_mod_q8(&c, f2, 1) + env3_q8 + an_cut2), an_res2,
                            snap);
         break;
     }
@@ -660,7 +784,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         co.lfo_offset = (uint32_t)((mx->bin_mod_phase + phase_mod) & 127) << 25;
         cf.lfo_offset = (uint32_t)((fm->bin_mod_phase + phase_mod) & 127) << 25;
         uint32_t freq_r_q16 = apply_cents_q16(mtof_q16(note1), pitch1_cents
-                                              + pitch_mod_cents(resolve_source(&co, o1->pitch_mod_src, 0), o1->pitch_mod_amt));
+                                              + pitch_mod_cents(resolve_source(&co, o1->pitch_mod_src, 0), o1->pitch_mod_amt)
+                                              + send_cents(&co, MDST_OSC1_PITCH));
         if (analog) freq_r_q16 = analog_freq(freq_r_q16, an->pitch2);   /* the right ear drifts on its own */
         freq_r_q16 += (uint32_t)mx->bin_beat * BIN_BEAT_STEP_Q16;
         if (freq_r_q16 > PITCH_MAX_Q16) freq_r_q16 = PITCH_MAX_Q16;
@@ -670,12 +795,12 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
 
         /* CUTOFF L/R plus its own mod source and amount, in knob units, held to the knob's -64..+63 */
         int offset = bip(fm->bin_cutoff_offset);
-        if (fm->bin_cutoff_mod_amt != BIPOLAR_CENTER)
-            offset = clampi(offset + (int)((resolve_source(&c, fm->bin_cutoff_mod_src, 0) * bip(fm->bin_cutoff_mod_amt)) >> 15),
-                            -64, 63);
+        if (fm->bin_cutoff_mod_amt != BIPOLAR_CENTER || ((c.sends >> MDST_CUTOFF_LR) & 1u))
+            offset = clampi(offset + (int)((resolve_source(&c, fm->bin_cutoff_mod_src, 0) * bip(fm->bin_cutoff_mod_amt) +
+                                            send_sum(&c, MDST_CUTOFF_LR, 1)) >> 15), -64, 63);
         int32_t offset_q8 = (int32_t)offset << 7;                   /* up to +-32 cutoff steps per ear */
         filter_prepare_one(&core[0], &c, f1, 0, cutoff_q8(&c, 0, f1_mod_q8 - offset_q8), an_res1, snap);
-        filter_prepare_one(&core[1], &cf, f1, 0, cutoff_q8(&c, 0, filter_mod_q8(&cf, f1) + offset_q8 + an_cut2), an_res2,
+        filter_prepare_one(&core[1], &cf, f1, 0, cutoff_q8(&c, 0, filter_mod_q8(&cf, f1, 0) + offset_q8 + an_cut2), an_res2,
                            snap);
         break;
     }
@@ -746,14 +871,16 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
             voice->drv_s[0][0] = voice->drv_s[0][1] = voice->drv_s[1][0] = voice->drv_s[1][1] = 0.f;
         amp_drive_prepare(&voice->drv, a->drive, a->drive_model);
     }
-    int pan = clampi(in->pan + (int)((resolve_source(&c, a->pan_mod_src, 0) * a->pan_mod_depth) >> 15), 0, 127);
+    int pan = clampi(in->pan + (int)((resolve_source(&c, a->pan_mod_src, 0) * a->pan_mod_depth +
+                                      send_sum(&c, MDST_PAN, 2)) >> 15), 0, 127);
     /* 7. AMP: the layer's routing weight and the mix gain (the delay and reverb sends: synth_runtime.c, from the
      * layer's sum) */
     float route = (float)voice->route_q15 * q15_inv;
     float dry = route * ((float)MIX_HEADROOM_Q15 * q15_inv) * q15_inv;
     if (arch == VARCH_STACK) {
         /* FILTER MIXER: BLEND (knob 1 + its mod) weighs A against B; WIDTH pulls A left and B right of the pan */
-        int32_t blend_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt)) >> 15;
+        int32_t blend_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt) +
+                             send_sum(&c, MDST_BALANCE, 1)) >> 15;
         int32_t gain_b = clampi(fm->balance + (int)blend_mod, 0, 127) * 258, gain_a = 32768 - gain_b;
         int half = fm->stack_width >> 1;
         int32_t al, ar, bl, br;
@@ -776,6 +903,16 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         mix_gains(voice->mix_b, 0, 0, 0.f);              /* no path B (the AMP page's pan reads both) */
     }
     SPROF_LAP(SPROF_C_AMP);
+    if (c.sends & (15u << MDST_MFX_K1)) {             /* MOD SENDS to the MFX knobs: full moves a knob all the way */
+        for (int k = 0; k < 4; k++)
+            voice->mfx_mod[k] = (int16_t)clampi((int)(send_sum(&c, MDST_MFX_K1 + (unsigned)k, 2) >> 15), -127, 127);
+    }
+    if (layer_sends_hi[voice->layer & 1]) {           /* .. and the DELAY / REVERB SEND, the same way */
+        for (int k = 0; k < 2; k++)
+            voice->fx_mod[k] = (int16_t)clampi((int)(send_sum_any(&c, MDST_DLY_SEND + (unsigned)k, 2) >> 15), -127, 127);
+    }
+    voice->glide_mod = (int16_t)((c.sends >> MDST_GLIDE) & 1u ?        /* GLIDE: read by the next glide step */
+                                 clampi((int)(send_sum_any(&c, MDST_GLIDE, 2) >> 15), -127, 127) : 0);
     watch_slot(&c);
 }
 
@@ -1124,6 +1261,12 @@ void voice_render_block(SynthVoiceNode *voice, float *mix, int n) {
 /* Portamento: moves the glide offset toward its target by one control tick's worth of per-sample steps. */
 void voice_glide_advance(SynthVoiceNode *v) {
     int32_t step = v->glide_step_q16 << SYNTH_CTRL_SHIFT;
+    if (v->glide_mod != 0 && v->glide_q16 != 0) {   /* GLIDE's MOD SENDS: the step as PORTA TIME + the send would set it */
+        int32_t pt = perf_state.porta_time[v->layer < NLAYER ? v->layer : 0u], pm = clampi(pt + v->glide_mod, 0, 127);
+        float t = 441.f + (float)(pt * pt) * 13.f, tm = 441.f + (float)(pm * pm) * 13.f;   /* (synth_runtime.c glide_to) */
+        float st = (float)step * (t / tm);
+        step = st > 2147483000.f ? 2147483000 : st < 1.f ? 1 : (int32_t)st;
+    }
     if (v->glide_q16 > 0) {
         v->glide_q16 -= step;
         if (v->glide_q16 < 0) v->glide_q16 = 0;

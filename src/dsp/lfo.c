@@ -11,8 +11,7 @@ static int16_t fast_lfo_rand_fixed(uint32_t *seed) {
  * each whole step is 16 knob units, which is one musical division, and a source below one step does nothing.
  * A free-running LFO takes the mod in single knob units, so a moving source sweeps the rate smoothly. */
 static int32_t lfo_final_rate(const LfoParams *cfg, int32_t speed_mod_q15) {
-    int32_t amount = (int32_t)cfg->speed_mod_amt - (int32_t)BIPOLAR_CENTER;     /* -64..+63 */
-    int32_t offset = (speed_mod_q15 * amount) >> 15;                              /* -64..+63 knob units at full scale */
+    int32_t offset = speed_mod_q15 >> 15;           /* the source times SPEED MOD AMT (-64..+63), plus the MOD SENDS */
     if (cfg->clock_sync) offset = (offset / 16) * 16;                             /* whole rate steps, -4..+3 */
     int32_t final_rate = (int32_t)cfg->rate + offset;
 

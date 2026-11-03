@@ -592,6 +592,7 @@ static void factory_voice(EngineState *e, const EngineState *base, uint32_t s)
         ((uint8_t *)e)[p[0]] = p[1];
     factory_name(e->name, FV_TAB[s].name);
     varch_single_to_spread(e);
+    engine_slot_routes_to_sends(e);   /* (a MOD slot named as a destination's own source: a MOD SEND now) */
 }
 #undef V_
 
