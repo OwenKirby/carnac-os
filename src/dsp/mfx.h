@@ -71,10 +71,16 @@
  * MIX. Rows: ENV MODE (SWOOP: the playing speeds the clock up, ENV past the middle, or slows it, below: what is in
  * the brigade bends in pitch and settles back as the note fades; DUCK: the echo held down while playing and blooming
  * after, below the middle the other way, the echo only on what is played hard), AGE (a darker band, hiss, the clock
- * wandering), WIDTH. */
+ * wandering), WIDTH.
+ *
+ * BRONZE AGE (2026-11-03, the user's: the first distortion, "super gnarly"): a model of the late-80s high-gain metal
+ * pedal (electricdruid.net's MT-2 analysis): a mid hump into the gain stage (x2 .. x252), the op-amp's rails and then
+ * a pair of silicon diodes clipping, two resonances after (105 Hz, 4.9 kHz: the scoop between them), its 3-band EQ
+ * with the sweepable middle. Knobs: DIST, HIGH, MIDDLE, MID FREQ (240 Hz .. 4.7 kHz). Rows: LEVEL, LOW. Each side its
+ * own circuit; the clipping at twice the rate. */
 enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER, MFX_BBD_FLANGER,
-       MFX_PITCH_SHIFT, MFX_BBD_ECHO, MFX_BULLROARER, MFX_COUNT };
-#define MFX_OFFERED (MFX_BBD_ECHO + 1)   /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
+       MFX_PITCH_SHIFT, MFX_BBD_ECHO, MFX_METAL, MFX_BULLROARER, MFX_COUNT };
+#define MFX_OFFERED (MFX_METAL + 1)      /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
 enum { MFX_K_MANUAL, MFX_K_RATE, MFX_K_FEEDBACK, MFX_K_DEPTH };    /* STONE PHASER's knobs */
 enum { MFX_K_WHIRL, MFX_K_REACH, MFX_K_TWIST, MFX_K_DUST };         /* BULLROARER's */
 enum { MFX_K_AGE = 0, MFX_K_SHIMMER = 2 };                          /* ENSEMBLE's (RATE, DEPTH as above) */
@@ -84,6 +90,8 @@ enum { MFX_K_TF_MANUAL, MFX_K_TF_RATE, MFX_K_TF_DEPTH, MFX_K_TF_TAPE };   /* TAP
 enum { MFX_K_BF_CENTER, MFX_K_BF_RATE, MFX_K_BF_DEPTH, MFX_K_BF_FEEDBACK };   /* BBD FLANGER's */
 enum { MFX_K_PS_PITCH, MFX_K_PS_FINE, MFX_K_PS_FEEDBACK, MFX_K_PS_MIX };      /* PITCH SHIFT's (PITCH: 0..24, 12 none) */
 enum { MFX_K_QE_TIME, MFX_K_QE_FEEDBACK, MFX_K_QE_ENV, MFX_K_QE_MIX };    /* BBD ECHO's (ENV: 64 none) */
+enum { MFX_K_MT_DIST, MFX_K_MT_HIGH, MFX_K_MT_MIDDLE, MFX_K_MT_FREQ };    /* BRONZE AGE's (HIGH, MIDDLE: 64 flat) */
+enum { MFX_R_MT_LEVEL, MFX_R_MT_LOW };                                    /* ... its rows (row[]; LOW: 64 flat) */
 enum { MFX_R_AGE, MFX_R_COLOUR, MFX_R_POLARITY = 1, MFX_R_MODE = 0, MFX_R_AGE2 = 1 };   /* further rows (row[]): ENS+PHASER's AGE,
                                                                      * COLOUR; CHORUS's and PITCH SHIFT's AGE; TAPE and
                                                                      * BBD FLANGER's POLARITY (0, 1); BBD FLANGER's MODE;

@@ -468,6 +468,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
     uint32_t cmd = f[3], i;
     const uint8_t *a = f + 4;
     uint32_t na = n - 4u;
+    uint32_t pi = na >= 2u ? a[1] | (na >= 3u ? (uint32_t)a[2] << 7 : 0u) : 0u;   /* (ED_PERFT: a scenario, 14-bit) */
     ed_begin(cmd);
     if (ed_wt_handle(cmd, a, na) || ed_pcm_handle(cmd, a, na)) {
         ed_send();
@@ -530,7 +531,8 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         break;
     }
     case ED_PERFT:                                  /* the PERF TEST: [] start; [3] start, wavetables in RAM;
-                                                     * [1] where it is; [2, i] scenario i */
+                                                     * [1] where it is; [2, i] scenario i (i 7 bits, or two:
+                                                     * low, high; past 127 scenarios, 2026-11-03) */
         if (na == 0u || a[0] == 3u) {
             syn_lock();
             keys_release();                         /* the test restarts every voice: no key may hang on */
@@ -542,8 +544,10 @@ static void ed_handle(const uint8_t *f, uint32_t n)
             ed_b(pt_scenario());
             ed_b(pt_count());
             ed_b(pt_mode());
-        } else if (a[0] == 2u && na >= 2u && a[1] < pt_count()) {
-            const PtResult *r = pt_result(a[1]);    /* 14-bit values as two 7-bit bytes, low first */
+            ed_b((uint32_t)pt_scenario() >> 7);    /* (their high bits: older tools read the first four) */
+            ed_b((uint32_t)pt_count() >> 7);
+        } else if (a[0] == 2u && na >= 2u && pi < pt_count()) {
+            const PtResult *r = pt_result((uint8_t)pi);   /* 14-bit values as two 7-bit bytes, low first */
             ed_b(a[1]);
             ed_b(r->avg_pm);
             ed_b(r->avg_pm >> 7);
@@ -556,7 +560,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
             ed_b(r->ui_max_ms > 127u ? 127u : r->ui_max_ms);
             ed_b(r->voices);
             ed_b(r->over);
-            ed_str(pt_name(a[1]), 20);
+            ed_str(pt_name((uint8_t)pi), 20);
 #if defined(SYNTH_PROF)
         } else if (a[0] == 5u) {                    /* the operation costs: ticks for MB_N of each, 21-bit */
             ed_b(plat_cycles_cpu() ? 1u : 0u);
@@ -569,8 +573,8 @@ static void ed_handle(const uint8_t *f, uint32_t n)
                 ed_b(t >> 14);
             }
 #endif
-        } else if (a[0] == 4u && na >= 2u && a[1] < pt_count()) {
-            const PtResult *r = pt_result(a[1]);    /* the profile: each stage's ticks a sample, 14-bit */
+        } else if (a[0] == 4u && na >= 2u && pi < pt_count()) {
+            const PtResult *r = pt_result((uint8_t)pi);    /* the profile: each stage's ticks a sample, 14-bit */
 #if defined(SYNTH_PROF)
             ed_b(a[1]);
             ed_b(plat_cycles_cpu() ? 1u : 0u);      /* 1: core cycles; 0: TIMER4 ticks (24 MHz) */

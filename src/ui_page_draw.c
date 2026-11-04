@@ -2028,6 +2028,15 @@ static void pu_viz_mfx(const UIStateMachine *sm)
         gc[ng++] = SQC(MID);
         t0 = pw_x(lo);
         t1 = pw_x(hi);
+    } else if (t == MFX_METAL) {                     /* a gale: the gust stands at MID FREQ (faint with MIDDLE cut),
+                                                      * DIST its turbulence, more wind, the eddies */
+        gx[ng] = pw_x((float)m->knob[MFX_K_MT_FREQ] / 127.f);
+        faint[ng] = (uint8_t)(m->knob[MFX_K_MT_MIDDLE] < 48u);
+        gc[ng++] = SQC(THEME);
+        still = 0u;
+        flutter = (int32_t)m->knob[MFX_K_MT_DIST] * 3;
+        nw += (4 * (int32_t)m->knob[MFX_K_MT_DIST]) / 127;
+        eddy = m->knob[MFX_K_MT_DIST];
     }
     if (t0 >= 0) {                                  /* the gusts' path: a worn track on the ground */
         for (x = t0; x <= t1; x++)

@@ -74,15 +74,34 @@ static FILE *wav_open(const char *dir, const char *name, uint32_t len)
 /* Cm9 - Abmaj7 - Fm9 - G7sus, four seconds each */
 static const uint8_t prog[4][5] = {{48, 55, 63, 70, 74}, {44, 51, 60, 67, 72}, {41, 48, 56, 63, 67}, {43, 50, 60, 65, 69}};
 static const uint8_t riff[8] = {36, 36, 48, 36, 39, 36, 46, 43};
+/* BRONZE AGE's scenes (2026-11-03): power chords (root and fifth) chugging in eighths at 120 BPM, and a lead line */
+static const uint8_t chug[16] = {40, 40, 40, 43, 40, 40, 46, 45, 40, 40, 40, 43, 48, 47, 46, 45};
+static const uint8_t lead[8] = {64, 67, 69, 71, 72, 71, 69, 67};
 
-enum { SC_PAD, SC_BASS, SC_NOISE };
+enum { SC_PAD, SC_BASS, SC_NOISE, SC_RIFF, SC_LEAD };
 
-/* one scene: kind, its MFX settings, and MANUAL swept (0: as set) */
+/* the riff and the lead: SPREAD 0, open filter, short decay (the riff) or sustained (the lead) */
+static void riffy(int sustained)
+{
+    EngineState *e = &engine_state[0];
+    live_defaults();
+    perf_state.perf_mode = PERF_SINGL_SYNTH;
+    e->arch = VARCH_SPREAD;
+    e->env[0].attack = 0; e->env[0].decay = sustained ? 90 : 50; e->env[0].sustain = sustained ? 110 : 30;
+    e->env[0].release = sustained ? 50 : 25;
+    e->filter[0].cutoff = 105; e->filter[0].resonance = 10;
+    e->amp.reverb_send = 20; e->amp.delay_send = 0;
+    synth_restart();
+}
+
+/* one scene: kind, its MFX settings, and a knob swept (sweep: the knob's index + 1; 0: as set) */
 static void render(const char *dir, const char *name, int kind, MfxParams m, int sweep)
 {
-    uint32_t len = kind == SC_PAD ? RATE * 19u : kind == SC_BASS ? RATE * 8u : RATE * 12u, frame = 0;
+    uint32_t len = kind == SC_PAD ? RATE * 19u : kind == SC_BASS || kind == SC_RIFF || kind == SC_LEAD ? RATE * 8u
+                                                                                                      : RATE * 12u;
+    uint32_t frame = 0;
     double sum = 0.0, peak = 0.0;
-    if (kind == SC_BASS) bass(); else pad();
+    if (kind == SC_BASS) bass(); else if (kind == SC_RIFF || kind == SC_LEAD) riffy(kind == SC_LEAD); else pad();
     if (kind == SC_NOISE) {                      /* white noise at full level, no filter, no reverb */
         engine_state[0].oscmix.noise_level = 127;
         engine_state[0].osc[0].pitch_mod_amt = 0;
@@ -108,11 +127,23 @@ static void render(const char *dir, const char *name, int kind, MfxParams m, int
             if (k) synth_midi_3(0x80, riff[(k - 1u) & 7u], 0);
             synth_midi_3(0x90, riff[k & 7u], (uint8_t)(k & 1u ? 80 : 115));
         }
+        if (kind == SC_RIFF && frame % (RATE / 4u) < BLOCK && frame < 7u * RATE) {   /* eighths at 120 BPM */
+            uint32_t k = frame / (RATE / 4u);
+            if (k) { synth_midi_3(0x80, chug[(k - 1u) & 15u], 0); synth_midi_3(0x80, chug[(k - 1u) & 15u] + 7, 0); }
+            synth_midi_3(0x90, chug[k & 15u], 110);
+            synth_midi_3(0x90, chug[k & 15u] + 7, 110);
+        }
+        if (kind == SC_LEAD && frame % (RATE * 3u / 4u) < BLOCK && frame < 6u * RATE) {   /* dotted quarters */
+            uint32_t k = frame / (RATE * 3u / 4u);
+            if (k) synth_midi_3(0x80, lead[(k - 1u) & 7u], 0);
+            synth_midi_3(0x90, lead[k & 7u], 105);
+        }
+        if (kind == SC_LEAD && frame >= 6u * RATE && frame < 6u * RATE + BLOCK) synth_midi_3(0x80, lead[7], 0);
         if (kind == SC_NOISE && frame == 0) synth_midi_3(0x90, 60, 100);
         if (kind == SC_NOISE && frame >= 11u * RATE && frame < 11u * RATE + BLOCK) synth_midi_3(0x80, 60, 0);
         if (sweep) {                             /* the pedal: heel to toe and back over 8 s, twice */
             double t = fmod((double)frame / RATE, 8.0) / 8.0;
-            MFX_PARAMS(0).knob[MFX_K_MANUAL] = (uint8_t)(127.0 * (t < 0.5 ? 2.0 * t : 2.0 - 2.0 * t) + 0.5);
+            MFX_PARAMS(0).knob[sweep - 1] = (uint8_t)(127.0 * (t < 0.5 ? 2.0 * t : 2.0 - 2.0 * t) + 0.5);
         }
         (void)seed;
         synth_render_q15(buf, BLOCK);
@@ -154,7 +185,7 @@ static double cost(MfxParams m)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) { fprintf(stderr, "usage: render_mfx_demo OUTDIR\n"); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: render_mfx_demo OUTDIR [m]   (m: BRONZE AGE's scenes alone)\n"); return 2; }
     synth_init();
     {
         extern const uint8_t pcm_image_host0[], pcm_image_host1[];
@@ -165,6 +196,8 @@ int main(int argc, char **argv)
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
         wavetable_area_attach(0, wt_area2_host, wt_area2_host_len);
     }
+    if (argc >= 3)
+        goto bronze;
     const uint8_t slow = rate_knob(0.12), mid = rate_knob(0.5), fast = rate_knob(4.0);
     printf("STONE PHASER (RATE knobs: 0.12 Hz = %u, 0.5 Hz = %u, 4 Hz = %u):\n", slow, mid, fast);
     render(argv[1], "01_pad_dry", SC_PAD, (MfxParams){MFX_OFF, {0}}, 0);
@@ -274,6 +307,24 @@ int main(int argc, char **argv)
         render(argv[1], "96_pad_echo_short_talking", SC_PAD, (MfxParams){MFX_BBD_ECHO, {25, 100, 120, 64}, 60, {0, 20}}, 0);
         printf("  host cost, one layer stereo: BBD ECHO %.1f ns/sample\n",
                cost((MfxParams){MFX_BBD_ECHO, {99, 50, 115, 60}, 40, {0, 30}}));
+    }
+bronze:
+    {   /* BRONZE AGE: knobs DIST / HIGH / MIDDLE / MID FREQ, rows LEVEL / LOW */
+        printf("BRONZE AGE:\n");
+        render(argv[1], "101_riff_dry", SC_RIFF, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "102_riff_bronze_flat", SC_RIFF, (MfxParams){MFX_METAL, {100, 64, 64, 64}, 0, {64, 64}}, 0);
+        render(argv[1], "103_riff_bronze_scooped", SC_RIFF, (MfxParams){MFX_METAL, {120, 76, 20, 50}, 0, {64, 92}}, 0);
+        render(argv[1], "104_riff_bronze_max_mids", SC_RIFF, (MfxParams){MFX_METAL, {127, 60, 110, 72}, 0, {58, 70}}, 0);
+        render(argv[1], "105_riff_bronze_midfreq_swept", SC_RIFF, (MfxParams){MFX_METAL, {120, 64, 120, 64}, 0, {54, 64}},
+               MFX_K_MT_FREQ + 1);
+        render(argv[1], "106_bass_dry", SC_BASS, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "107_bass_bronze_crunch", SC_BASS, (MfxParams){MFX_METAL, {30, 64, 80, 40}, 0, {80, 80}}, 0);
+        render(argv[1], "108_lead_dry", SC_LEAD, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "109_lead_bronze", SC_LEAD, (MfxParams){MFX_METAL, {127, 58, 96, 84}, 0, {60, 64}}, 0);
+        render(argv[1], "110_pad_bronze_chord_mud", SC_PAD, (MfxParams){MFX_METAL, {90, 64, 64, 64}, 0, {60, 64}}, 0);
+        printf("  host cost, one layer stereo: BRONZE AGE %.1f ns/sample\n",
+               cost((MfxParams){MFX_METAL, {100, 64, 64, 64}, 0, {64, 64}}));
+        if (argc >= 3) return 0;
     }
     printf("  host cost, one layer stereo: STONE PHASER %.1f ns/sample\n",
            cost((MfxParams){MFX_STONE_PHASER, {64, mid, 100, 127}, 0}));

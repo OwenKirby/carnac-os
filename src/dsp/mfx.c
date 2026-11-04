@@ -71,6 +71,9 @@ typedef struct { float key[2], rate, f, sa, sb, xlim, ylim, hiss; } TfSet;      
 typedef struct { float key[4], rate, d0, oct, fb; } BfSet;                          /* BBD FLANGER */
 typedef struct { float key[6], ratio[2], fb, gd, gw, hiss; HrSvf f; int32_t mask; } PsSet;   /* PITCH SHIFT */
 typedef struct { float key[6], n[2], fb, gd, gw, amt, hiss, wow, post, drive; HrSvf f; } QeSet;   /* BBD ECHO */
+typedef struct { float gain, gbw, lo[4], mi[4], hi, out; } MtCo;   /* BRONZE AGE: the gain stage's gain and pole, LOW's
+                                                                    * and MIDDLE's bells (a1, a2, a3, m1), HIGH, LEVEL */
+typedef struct { float key[6]; MtCo c; } MtSet;
 
 /* the knobs k[0..n-1] against a set's key: 1 if they differ (and the key takes them) */
 static inline int mfx_moved(float *key, const float *k, int n)
@@ -105,9 +108,14 @@ typedef struct {
         struct { HrSvf f; float fb, gd, gw, hiss, slope[2]; int32_t mask; } ps;
                                              /* PITCH SHIFT: the converters' filter, FEEDBACK, the mix, each side's
                                               * head's pace (1 - ratio), AGE's bits */
+        MtCo mt;                             /* BRONZE AGE */
     } u;
 } MfxStep;
 #define MFX_STEPS (MFX_PASS_MAX / MFX_SUB)
+
+/* BRONZE AGE's circuit on a side: the filters before the gain stage, its pole, the half-band each way, the curve's
+ * input and integral at the sample before, the filters after */
+typedef struct { float hp1, b1, b2, lp7, lp3, hp2, gb, up[6], dn[6], ux, uf, sh, p1[2], p2[2], lo[2], mi[2], hi; } MtZ;
 
 /* a side's own state: what only its own run writes (on cache lines of its own: core 1 may run the right side) */
 typedef struct {
@@ -116,6 +124,7 @@ typedef struct {
                                               * at the full rate */
         float f[256];                        /* the half-rate types' (2026-11-02: floats, no conversion a read; the
                                               * same bytes) */
+        MtZ mt;                              /* BRONZE AGE (no line: its circuit's filters in the same bytes) */
     } line;
     float z[6], b1, x, sh, ctl;              /* STONE PHASER: the chain (the last input, each stage's last output);
                                               * B1's C11 (TPT state); X, the sample before (the loop); the shelf; the
@@ -165,6 +174,7 @@ typedef struct {
     BfSet bf_set;
     PsSet ps_set;
     QeSet qe_set;
+    MtSet mt_set;
     /* BBD ECHO (run whole in the plan: one brigade for both sides, qe_line) */
     float qe_acc, qe_u, qe_f;                /* the tick's input (4 frames summed), the filtered input at the last
                                               * tick, the clock's place between buckets */
@@ -1406,6 +1416,277 @@ SYNTH_COLD float mfx_peek(int layer, int i)
     return -1.f;
 }
 
+/* ---- BRONZE AGE ---- */
+/* The late-80s high-gain metal pedal (mfx.h), from electricdruid.net's analysis of its circuit, stage by stage (volts,
+ * the bus's full scale taken as 1 V peak at the input: a hot line into a guitar pedal):
+ *  - The input's C033 15n / R043 100K, a high-pass at 106 Hz; op-amp 3b, R044 220K / C032 100p (a roll-off from
+ *    7.2 kHz), with a gyrator at ~1 kHz (Q 2.8) in its ground leg: the gain 1 + 22 at the peak (the gyrator's series
+ *    resistance taken as 10K: not given); the 10K / 10K divider, R045 with C031 a low-pass at 340 Hz. Together the mid
+ *    hump the clipping is fed: ~+11 dB at 1 kHz against -9 at 100 Hz and -23 at 5 kHz.
+ *  - C029 33n / R040 100K, a high-pass at 48 Hz; op-amp 3a, the gain 1 + (R051 + VR1) / R041 = 2 .. 252 (VR1 250K,
+ *    an audio taper: DIST), C028 47p across its feedback (a pole at 3.39 MHz / (gain - 1): 13 kHz at the top).
+ *  - The op-amp's own rails (+-4 V on 9 V, rounded from 3.5), then R033 2K2 into two silicon diodes back to back (the
+ *    1SS133, as a 1N4148: Is 2.52 nA, n 1.75): v + 2 R Is sinh(v / n Vt) = the op-amp's out. The two in series are one
+ *    curve of the gain stage's output (the coupling cap between them only blocks DC, and the pair is symmetric),
+ *    worked out once into a table (mt_table) with its integral, and run at twice the rate (a polyphase half-band each
+ *    way, 4 all-passes: -64 dB from 25.6 kHz) through first-order antiderivative anti-aliasing: the gain stage's square
+ *    waves without their aliases folding back.
+ *  - R032 / R031 / C023, the treble down 10 dB (a shelf; its corner taken as 2.5 kHz: not given); the two gyrators,
+ *    105 Hz (Q 14.6 on paper, ~6 with the transistor's gain) and 4.9 kHz (Q 2.2), each +12 dB (taken): the scoop.
+ *  - The EQ: LOW a bell +-20 dB at 105 Hz (Q 1.4), HIGH an RC shelf +-20 dB (4 kHz), MIDDLE +-15 dB (the Wien bridge's
+ *    near-constant Q, 1) swept 240 Hz .. 4.7 kHz (MID FREQ, even in octaves: the reverse-log taper the analysis
+ *    suggests), LEVEL. The EQ's op-amps reach their rails too (+-4 V), with everything boosted. */
+#define MT_VIN (1.f / 32767.f)                   /* bus units into volts */
+#define MT_U 5.f                                 /* the clipping curve's table reaches 5 V: flat past the rails */
+#define MT_N 128
+#define MT_H (MT_U / (float)MT_N)
+#define MT_RIS (2200.f * 2.52e-9f)               /* R033 x Is */
+#define MT_NVT 0.04529f                          /* n Vt (1.752 x 25.85 mV) */
+#define MT_HP1 0.00750202f                       /* 106 Hz (the TPT one-poles: g / (1 + g)) */
+#define MT_PA1 0.97032993f                       /* the 1 kHz gyrator (a TPT state-variable filter, Q 2.8) */
+#define MT_PA2 0.06924146f
+#define MT_PA3 0.00494098f
+#define MT_PRE_B (22.f / 2.8f)                   /* ... its gain at the peak (its band output peaks at Q) */
+#define MT_LP7 0.36159913f                       /* 7.2 kHz */
+#define MT_LP3 0.02365263f                       /* 340 Hz */
+#define MT_HP2 0.00342397f                       /* 48 Hz */
+#define MT_SH 0.15254377f                        /* the post-clipping shelf, 2.5 kHz ... */
+#define MT_SHK 0.31622777f                       /* ... down 10 dB */
+#define MT_P1A1 0.99869906f                      /* the 105 Hz gyrator (Q 6) */
+#define MT_P1A2 0.00747039f
+#define MT_P1A3 0.00005588f
+#define MT_P1B (2.98107f / 6.f)                  /* ... +12 dB */
+#define MT_P2A1 0.77057953f                      /* the 4.9 kHz gyrator (Q 2.2) */
+#define MT_P2A2 0.28034368f
+#define MT_P2A3 0.10199153f
+#define MT_P2B (2.98107f / 2.2f)
+#define MT_G105 0.00748012f                      /* LOW's frequency: tan(pi 105 / fs) */
+#define MT_HI 0.22655884f                        /* HIGH's corner, 4 kHz */
+#define MT_OUT 3600.f                            /* volts back into bus units at LEVEL 64: a little over a typical
+                                                  * layer dry (the riff renders: -20 dBFS rms against -25) */
+#define MT_C0 0.0919947238f                      /* the half-band all-passes (polyphase IIR, hiir's design, 4 */
+#define MT_C1 0.3171081174f                      /* coefficients, transition 0.08) */
+#define MT_C2 0.5844608270f
+#define MT_C3 0.8541800687f
+
+static float mt_g[MT_N + 1] SYNTH_POOL;          /* the clipping curve at 0, MT_H .. MT_U volts in */
+static float mt_f[MT_N + 1] SYNTH_POOL;          /* ... its integral (exact for the curve read linearly between) */
+static uint8_t mt_ready;
+
+/* the curve and its integral, once: the rails, then the diodes solved by halving (start-up code, built for size) */
+static SYNTH_COLD void mt_table(void)
+{
+    float f = 0.f;
+    for (int i = 0; i <= MT_N; i++) {
+        float u = (float)i * MT_H, r = u < 3.5f ? u : u < 4.5f ? u - 0.5f * (u - 3.5f) * (u - 3.5f) : 4.f;
+        float lo = 0.f, hi = r;
+        for (int j = 0; j < 26; j++) {
+            float v = 0.5f * (lo + hi), e = amp_exp2f(v * (1.442695f / MT_NVT));
+            if (v + MT_RIS * (e - 1.f / e) > r) hi = v; else lo = v;
+        }
+        float g = 0.5f * (lo + hi);
+        if (i) f += 0.5f * MT_H * (mt_g[i - 1] + g);
+        mt_g[i] = g;
+        mt_f[i] = f;
+    }
+    mt_ready = 1u;
+}
+
+/* the curve at x, and its integral (even) */
+static inline __attribute__((always_inline)) float mt_curve(float x)
+{
+    float a = x < 0.f ? -x : x, t = a * ((float)MT_N / MT_U), g;
+    if (t >= (float)MT_N) g = mt_g[MT_N];
+    else {
+        int i = (int)t;
+        g = mt_g[i] + (t - (float)i) * (mt_g[i + 1] - mt_g[i]);
+    }
+    return x < 0.f ? -g : g;
+}
+static inline __attribute__((always_inline)) float mt_int(float x)
+{
+    float a = x < 0.f ? -x : x, t = a * ((float)MT_N / MT_U);
+    if (t >= (float)MT_N) return mt_f[MT_N] + mt_g[MT_N] * (a - MT_U);
+    int i = (int)t;
+    float fr = t - (float)i, g0 = mt_g[i];
+    return mt_f[i] + MT_H * fr * (g0 + 0.5f * fr * (mt_g[i + 1] - g0));
+}
+
+/* a bell's coefficients (a TPT state-variable filter: x + m1 band), g = tan(pi f / fs), its Q, the boost in dB */
+static SYNTH_COLD void mt_bell(float *c, float g, float q, float db)
+{
+    float a = amp_exp2f(db * (1.f / 12.0412f)), k = 1.f / (q * a);
+    c[0] = 1.f / (1.f + g * (g + k));
+    c[1] = g * c[0];
+    c[2] = g * c[1];
+    c[3] = k * (a * a - 1.f);
+}
+
+/* its settings from DIST, HIGH, MIDDLE, MID FREQ, LEVEL, LOW */
+static SYNTH_COLD void mt_settings(MtCo *c, const float *kk)
+{
+    float g = 2.f + 250.f * (amp_exp2f(kk[0] * (6.643856f / 127.f)) - 1.f) * (1.f / 99.f);   /* the audio taper */
+    float fc = 3.386e6f / (g - 1.f), p, lv = kk[4] * (1.f / 64.f);
+    c->gain = 0.5f * g;                                            /* (the divider before it) */
+    c->gbw = br_g(fc > 40000.f ? 40000.f : fc);
+    c->hi = amp_exp2f((kk[1] - 64.f) * (20.f / 63.f / 6.0206f)) - 1.f;
+    p = 240.f * amp_exp2f(kk[3] * (4.292f / 127.f)) * (0.5f / MFX_SR);
+    mt_bell(c->mi, br_sin(p) / br_sin(p + 0.25f), 1.f, (kk[2] - 64.f) * (15.f / 63.f));
+    mt_bell(c->lo, MT_G105, 1.4f, (kk[5] - 64.f) * (20.f / 63.f));
+    c->out = MT_OUT * lv * lv;
+}
+
+/* BRONZE AGE's step, for both sides (the plan) */
+static void mt_plan(MfxState *s, MfxStep *step, const float *k, const float *row)
+{
+    MtSet *st = &s->mt_set;
+    const float kk[6] = {k[0], k[1], k[2], k[3], row[MFX_R_MT_LEVEL], row[MFX_R_MT_LOW]};
+    if (mfx_moved(st->key, kk, 6))
+        mt_settings(&st->c, kk);
+    step->u.mt = st->c;
+}
+
+/* BRONZE AGE on a side runs as short passes over a control step (2026-11-03, after the FM1's first measure: +11.5
+ * points a layer as one loop): each pass holds its few states and coefficients in registers (the FM1 has 16, floats
+ * among them; a load costs ~8 cycles), the samples between passes in the step's buffers. The arithmetic is the one
+ * loop's, in the same order (bit-identical). */
+
+/* a TPT state-variable filter's band output (OUT), its state S0, S1 in locals */
+#define MT_BAND(X, A1, A2, A3, S0, S1, OUT) do { \
+        float u3_ = (X) - (S1), u1_ = (A1) * (S0) + (A2) * u3_, u2_ = (S1) + (A2) * (S0) + (A3) * u3_; \
+        (S0) = 2.f * u1_ - (S0); \
+        (S1) = 2.f * u2_ - (S1); \
+        (OUT) = u1_; \
+    } while (0)
+
+/* into the gain stage, y in place (bus units in, the gain stage's output in volts out): the 106 Hz high-pass and the
+ * 1 kHz hump, then the 7.2 kHz and 340 Hz poles, 48 Hz, the gain stage's pole and gain */
+static void mt_pre(MtZ *z, const MtCo *c, float *y, uint32_t m)
+{
+    float hp1 = z->hp1, b1 = z->b1, b2 = z->b2, t, lp, x, bp;
+    for (uint32_t i = 0; i < m; i++) {
+        float v = y[i] * MT_VIN;
+        t = (v - hp1) * MT_HP1; lp = t + hp1; hp1 = lp + t; x = v - lp;
+        MT_BAND(x, MT_PA1, MT_PA2, MT_PA3, b1, b2, bp);
+        y[i] = x + MT_PRE_B * bp;
+    }
+    z->hp1 = hp1; z->b1 = b1; z->b2 = b2;
+    float lp7 = z->lp7, lp3 = z->lp3, hp2 = z->hp2, gb = z->gb;
+    const float gbw = c->gbw, gain = c->gain;
+    for (uint32_t i = 0; i < m; i++) {
+        x = y[i];
+        t = (x - lp7) * MT_LP7; x = t + lp7; lp7 = x + t;
+        t = (x - lp3) * MT_LP3; x = t + lp3; lp3 = x + t;
+        t = (x - hp2) * MT_HP2; lp = t + hp2; hp2 = lp + t; x -= lp;
+        gb += gbw * (x - gb);
+        y[i] = gain * gb;
+    }
+    z->lp7 = lp7; z->lp3 = lp3; z->hp2 = hp2; z->gb = gb;
+}
+
+/* up to twice the rate: the half-band's two paths, u[2i] and u[2i + 1] */
+static void mt_up(MtZ *z, const float *y, float *u, uint32_t m)
+{
+    float s0 = z->up[0], s1 = z->up[1], s2 = z->up[2], s3 = z->up[3], s4 = z->up[4], s5 = z->up[5], o;
+    for (uint32_t i = 0; i < m; i++) {
+        const float x = y[i];
+        o = MT_C0 * (x - s1) + s0; s0 = x;
+        s2 = MT_C2 * (o - s2) + s1; s1 = o;
+        u[2u * i] = s2;
+        o = MT_C1 * (x - s4) + s3; s3 = x;
+        s5 = MT_C3 * (o - s5) + s4; s4 = o;
+        u[2u * i + 1u] = s5;
+    }
+    z->up[0] = s0; z->up[1] = s1; z->up[2] = s2; z->up[3] = s3; z->up[4] = s4; z->up[5] = s5;
+}
+
+/* the curve over n samples at twice the rate, in place, anti-aliased: the integral's slope since the sample before
+ * (the curve itself where they are too close for it; flat past the table, both at its end) */
+static void mt_clip(MtZ *z, float *u, uint32_t n)
+{
+    float xp = z->ux, fp = z->uf;
+    for (uint32_t i = 0; i < n; i++) {
+        const float x = u[i], d = x - xp, f = mt_int(x);
+        float y;
+        if ((x >= MT_U && xp >= MT_U) || (x <= -MT_U && xp <= -MT_U))
+            y = x > 0.f ? mt_g[MT_N] : -mt_g[MT_N];
+        else
+            y = d > 1e-4f || d < -1e-4f ? (f - fp) / d : mt_curve(0.5f * (x + xp));
+        u[i] = y;
+        xp = x;
+        fp = f;
+    }
+    z->ux = xp; z->uf = fp;
+}
+
+/* back down: the half-band's two paths (the later sample through the first) */
+static void mt_down(MtZ *z, const float *u, float *y, uint32_t m)
+{
+    float s0 = z->dn[0], s1 = z->dn[1], s2 = z->dn[2], s3 = z->dn[3], s4 = z->dn[4], s5 = z->dn[5], o;
+    for (uint32_t i = 0; i < m; i++) {
+        const float e0 = u[2u * i], e1 = u[2u * i + 1u];
+        o = MT_C0 * (e1 - s1) + s0; s0 = e1;
+        s2 = MT_C2 * (o - s2) + s1; s1 = o;
+        o = MT_C1 * (e0 - s4) + s3; s3 = e0;
+        s5 = MT_C3 * (o - s5) + s4; s4 = o;
+        y[i] = 0.5f * (s2 + s5);
+    }
+    z->dn[0] = s0; z->dn[1] = s1; z->dn[2] = s2; z->dn[3] = s3; z->dn[4] = s4; z->dn[5] = s5;
+}
+
+/* after, y in place: the treble shelf and the two gyrators; LOW and MIDDLE; HIGH, the rails, LEVEL */
+static void mt_post(MtZ *z, const MtCo *c, float *y, uint32_t m)
+{
+    float sh = z->sh, p10 = z->p1[0], p11 = z->p1[1], p20 = z->p2[0], p21 = z->p2[1], t, lp, x, bp;
+    for (uint32_t i = 0; i < m; i++) {
+        x = y[i];
+        t = (x - sh) * MT_SH; lp = t + sh; sh = lp + t; x = lp + MT_SHK * (x - lp);
+        MT_BAND(x, MT_P1A1, MT_P1A2, MT_P1A3, p10, p11, bp);
+        x += MT_P1B * bp;
+        MT_BAND(x, MT_P2A1, MT_P2A2, MT_P2A3, p20, p21, bp);
+        y[i] = x + MT_P2B * bp;
+    }
+    z->sh = sh; z->p1[0] = p10; z->p1[1] = p11; z->p2[0] = p20; z->p2[1] = p21;
+    float l0 = z->lo[0], l1 = z->lo[1], m0 = z->mi[0], m1 = z->mi[1];
+    const float la1 = c->lo[0], la2 = c->lo[1], la3 = c->lo[2], lg = c->lo[3];
+    const float ma1 = c->mi[0], ma2 = c->mi[1], ma3 = c->mi[2], mg = c->mi[3];
+    for (uint32_t i = 0; i < m; i++) {
+        x = y[i];
+        MT_BAND(x, la1, la2, la3, l0, l1, bp);
+        x += lg * bp;
+        MT_BAND(x, ma1, ma2, ma3, m0, m1, bp);
+        y[i] = x + mg * bp;
+    }
+    z->lo[0] = l0; z->lo[1] = l1; z->mi[0] = m0; z->mi[1] = m1;
+    float hi = z->hi;
+    const float hg = c->hi, out = c->out;
+    for (uint32_t i = 0; i < m; i++) {
+        x = y[i];
+        t = (x - hi) * MT_HI; lp = t + hi; hi = lp + t; x += hg * (x - lp);
+        x = x > 4.f ? 4.f : x < -4.f ? -4.f : x;                     /* the EQ's op-amps at their rails */
+        y[i] = x * out;
+    }
+    z->hi = hi;
+}
+#undef MT_BAND
+
+/* BRONZE AGE on one side (ch) over the planned pass, y in place */
+static void mt_side(MfxState *s, int ch, float *y)
+{
+    MtZ *z = &s->side[ch].line.mt;
+    float u[2u * MFX_SUB];
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MtCo *c = &s->plan[k].u.mt;
+        const uint32_t m = s->plan[k].m;
+        mt_pre(z, c, y, m);
+        mt_up(z, y, u, m);
+        mt_clip(z, u, 2u * m);
+        mt_down(z, u, y, m);
+        mt_post(z, c, y, m);
+        y += m;
+    }
+}
+
 /* the knobs' glide a control step (MFX_SUB frames): ~23 ms, as the patch's own knobs (knob smoothing) */
 #define MFX_KGLIDE 0.0155f
 
@@ -1423,9 +1704,11 @@ static SYNTH_COLD void mfx_begin(MfxState *s, const MfxParams *p)
     s->kn[6] = (float)p->row[1];
     s->ss_ctl = 0.5f;
     s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = s->tf_set.key[0] = -1.f;
-    s->bf_set.key[0] = s->ps_set.key[0] = s->qe_set.key[0] = -1.f;
+    s->bf_set.key[0] = s->ps_set.key[0] = s->qe_set.key[0] = s->mt_set.key[0] = -1.f;
     if (p->type == MFX_BBD_ECHO)                 /* (its brigade, outside the state) */
         memset(qe_line[s == &mfx_st[1]], 0, sizeof qe_line[0]);
+    if (p->type == MFX_METAL && !mt_ready)       /* (its clipping curve: the first time it is chosen) */
+        mt_table();
     s->qe_pk[0] = s->qe_pk[1] = -1.f;
     s->qe_pk[2] = 1.f;
     s->qe_rng = 0x2545F491u;
@@ -1503,6 +1786,8 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
             xi += m >> 1;
         } else if (p->type == MFX_PITCH_SHIFT)
             ps_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
+        else if (p->type == MFX_METAL)
+            mt_plan(s, step, s->kn, s->kn + 5);
         else
             en_plan(s, step, s->kn, s->kn[4], EN_FAST, EN_GAIN);
     }
@@ -1524,6 +1809,8 @@ void mfx_layer_side(int layer, int side, float *y)
         bf_side(s, side & 1, y);
     else if (s->type == MFX_PITCH_SHIFT)
         ps_side(s, side & 1, y);
+    else if (s->type == MFX_METAL)
+        mt_side(s, side & 1, y);
     else
         en_side(s, side & 1, y);
 }

@@ -338,7 +338,7 @@ static const UiRow MOD_ROWS[] = {
  * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]) */
 static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS",
                                                               "TAPE FLANGER", "BBD FLANGER", "PITCH SHIFT",
-                                                              "BBD ECHO"};
+                                                              "BBD ECHO", "BRONZE AGE"};
 static const char *const MFX_BF_MODE_NAMES[MFX_BF_MODES] = {"FLANGER I", "FLANGER II", "FLANGER III", "CHORUS"};
 /* PITCH SHIFT's PITCH (a list knob, 0..24): semitones */
 static const char *const MFX_PS_PITCH_NAMES[25] = {"-12", "-11", "-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2",
@@ -363,6 +363,8 @@ static const UiRow MFX_ROWS[] = {
     {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE2), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(BBD_ECHO)},
     {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL,
      MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS) | MT(BBD_ECHO)},
+    {"LEVEL", (uint8_t)(OFS(MfxParams, row) + MFX_R_MT_LEVEL), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(METAL)},
+    {"LOW", (uint8_t)(OFS(MfxParams, row) + MFX_R_MT_LOW), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, MT(METAL)},
 };
 #undef MT
 
@@ -628,6 +630,8 @@ static const UiKnob MFX_KNOBS[MFX_OFFERED][4] = {
      KMFX(MFX_K_PS_MIX, "MIX")},
     {KMFX(MFX_K_QE_TIME, "TIME"), KMFX(MFX_K_QE_FEEDBACK, "FEEDBACK"),
      UIK("ENV", (uint8_t)(OFS(MfxParams, knob) + MFX_K_QE_ENV), UIKNOB_BIP), KMFX(MFX_K_QE_MIX, "MIX")},
+    {KMFX(MFX_K_MT_DIST, "DIST"), UIK("HIGH", (uint8_t)(OFS(MfxParams, knob) + MFX_K_MT_HIGH), UIKNOB_BIP),
+     UIK("MIDDLE", (uint8_t)(OFS(MfxParams, knob) + MFX_K_MT_MIDDLE), UIKNOB_BIP), KMFX(MFX_K_MT_FREQ, "MID FREQ")},
 };
 #undef KMFX
 /* MIX: knob 1 BALANCE (DUAL / SPLIT) or DRY/WET (SINGL), the same byte (fx_live) */
@@ -978,6 +982,7 @@ static void mfx_type_set(MfxParams *m, uint8_t t)
         {12, 75, 0, 64, 127, 30, 0},      /* PITCH SHIFT: the classic stereo micro-pitch doubling (+-9 cents) */
         {99, 35, 92, 55, 40, 0, 30},      /* BBD ECHO: a 60 ms slap, a few repeats, the clock swooping up on hard
                                            * notes, a little wide, a little worn */
+        {100, 64, 64, 64, 0, 64, 64},     /* BRONZE AGE: much DIST, the EQ flat, LEVEL near the dry's */
     };
     uint8_t i;
     if (t == m->type || t >= MFX_OFFERED)

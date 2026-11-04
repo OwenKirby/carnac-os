@@ -77,11 +77,18 @@ def info():
     return name
 
 
+def where():
+    """the test's state, the scenario running and the count (past 127: their high bits after the mode, 2026-11-03)"""
+    b = ask(ED_PERFT, [1])
+    hi = b[4:6] if len(b) >= 6 else [0, 0]
+    return b[0], b[1] | hi[0] << 7, b[2] | hi[1] << 7
+
+
 def results():
-    st, scen, n = ask(ED_PERFT, [1])[:3]
+    st, scen, n = where()
     rows = []
     for i in range(n):
-        b = ask(ED_PERFT, [2, i])
+        b = ask(ED_PERFT, [2, i & 127, i >> 7])
         w = lambda k: b[k] | b[k + 1] << 7
         rows.append(dict(name=cstr(b, 12), avg=w(1) / 10, peak=w(3) / 10, late=w(5), fps=w(7) / 10,
                          ui_ms=b[9], voices=b[10], cut=bool(b[11])))
@@ -98,7 +105,7 @@ def profile(rows):
     """the profile build's stage table: ticks a sample, raw and less the counter reads; None if not a profile build"""
     out, unit = [], None
     for i, r in enumerate(rows):
-        b = ask(ED_PERFT, [4, i])
+        b = ask(ED_PERFT, [4, i & 127, i >> 7])
         cyc_ok, lap, n = b[1], b[2], b[3]
         if n == 0:
             return None
@@ -185,7 +192,7 @@ def cmd_run(wt_ram=False):
     last = -1
     while True:
         time.sleep(1.0)
-        st, scen, n = ask(ED_PERFT, [1])[:3]
+        st, scen, n = where()
         if scen != last and st == 1:
             print(f"  {scen + 1}/{n}", flush=True)
             last = scen

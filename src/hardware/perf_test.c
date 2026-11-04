@@ -233,6 +233,10 @@ static const PtScen SCEN[] = {
     {"IDLE BBD ECHO", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_BBD_ECHO), UIPAGE_HOME1},
     {"IDLE BBD ECHO x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_BBD_ECHO), UIPAGE_HOME1},
     {"SPREAD H CEL ECHO", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_BBD_ECHO), UIPAGE_HOME1},
+    /* BRONZE AGE (2026-11-03): the clipping at twice the rate, a side a core */
+    {"IDLE BRONZE AGE", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_METAL), UIPAGE_HOME1},
+    {"IDLE BRONZE AGE x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_METAL), UIPAGE_HOME1},
+    {"SPREAD H CEL BRNZ", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_METAL), UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -423,6 +427,7 @@ static void setup(const PtScen *s)
             [MFX_BBD_FLANGER] = {MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {1, 0}},
             [MFX_PITCH_SHIFT] = {MFX_PITCH_SHIFT, {19, 64, 60, 64}, 127, {30, 0}},
             [MFX_BBD_ECHO] = {MFX_BBD_ECHO, {99, 50, 115, 60}, 40, {0, 30}},
+            [MFX_METAL] = {MFX_METAL, {100, 64, 64, 64}, 0, {64, 64}},
         };
         uint32_t t = (s->flags >> 16) & 0xFFu;
         MFX_PARAMS(0) = MP[t > MFX_STONE_PHASER && t < MFX_COUNT ? t : MFX_STONE_PHASER];

@@ -17,6 +17,7 @@
  * 11. The stereo image kept: left-only input leaves the right silent on every type.
  * 13. BBD FLANGER: level per MODE, full FEEDBACK bounded, MODE III crossing; PITCH SHIFT in tune on a sustained
  *     tone (+-15 cents), its levels, bounded.
+ * 15. BRONZE AGE: its level, its aliases at full DIST, MIDDLE, bounded.
  * 12. TAPE FLANGER: its level on pink noise at five settings within 1 dB of TF_POS_DB / TF_NEG_DB, bounded loud; through zero (TAPE 0,
  *     NEGATIVE, the thumb sweeping through the reference): the sound all but vanishes where the decks meet, and not
  *     quite with the tape's wobbles (TAPE 127); POLARITY flipped mid-tone without a click.
@@ -33,6 +34,8 @@
 #define TF_POS_DB 1.5                       /* TAPE FLANGER POSITIVE: the decks' low end adds, as STONE PHASER's */
 #define TF_NEG_DB -2.5                      /* ... NEGATIVE: its low end thinned where the decks meet */
 #define SP_OUT 1.30                         /* mfx.c's */
+#define MT_LEVEL_DB -8.0                    /* BRONZE AGE at LEVEL 64, DIST 127, against a -12 dBFS sine */
+#define MT_LEVEL0_DB -15.0                  /* ... DIST 0 (quieter: the pedal at its least gain, LEVEL makes it up) */
 static int fails;
 
 /* s for a section with its corner at fk Hz: analog, or its prewarped bilinear map (digital) */
@@ -290,13 +293,13 @@ int main(void)
      *    as a quick turn's detents); the output's second difference while it turns stays within 1.5x of the larger of
      *    before and after, settled (unglided, each step steps the output: the zipper) */
     {
-        static const uint8_t T[8] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
-                                     MFX_BBD_FLANGER, MFX_PITCH_SHIFT, MFX_BBD_ECHO};
-        static const char *const TN[8] = {"STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS", "TAPE FLANGER",
-                                          "BBD FLANGER", "PITCH SHIFT", "BBD ECHO"};
+        static const uint8_t T[9] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
+                                     MFX_BBD_FLANGER, MFX_PITCH_SHIFT, MFX_BBD_ECHO, MFX_METAL};
+        static const char *const TN[9] = {"STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS", "TAPE FLANGER",
+                                          "BBD FLANGER", "PITCH SHIFT", "BBD ECHO", "BRONZE AGE"};
         static float l[128], r[128];
-        for (int ti = 0; ti < 8; ti++)
-            for (int kk = 0; kk < (ti == 2 ? 7 : ti == 3 ? 6 : 5); kk++) {   /* (TAPE FLANGER's POLARITY: 12) */   /* the knobs, lr, row[] */
+        for (int ti = 0; ti < 9; ti++)
+            for (int kk = 0; kk < (ti == 2 || ti == 8 ? 7 : ti == 3 ? 6 : 5); kk++) {   /* (TAPE FLANGER's POLARITY: 12) */   /* the knobs, lr, row[] */
                 MfxParams p = {T[ti], {64, 64, 64, 64}, 64, {(uint8_t)(ti == 5 ? 0 : 64), (uint8_t)(ti >= 4 ? 0 : 64)}};
                 if (T[ti] == MFX_PITCH_SHIFT) p.knob[MFX_K_PS_PITCH] = 19;   /* (+7: 0..24) */
                 double ph = 0.0, before = 0.0, after = 0.0, during = 0.0, y1 = 0.0, y2 = 0.0;
@@ -399,10 +402,10 @@ int main(void)
     /* 11. the stereo image kept: every type with sound on the left only leaves the right all but silent (its own hiss,
      *     ducked by the level, at most), at WIDTH 0 and 127 (BBD ECHO not: one brigade, mono, as the pedals) */
     {
-        static const uint8_t T[7] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
-                                     MFX_BBD_FLANGER, MFX_PITCH_SHIFT};
+        static const uint8_t T[8] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
+                                     MFX_BBD_FLANGER, MFX_PITCH_SHIFT, MFX_METAL};
         static float l[128], r[128];
-        for (int ti = 0; ti < 7; ti++)
+        for (int ti = 0; ti < 8; ti++)
             for (int wi = 0; wi < 2; wi++) {
                 mfx_init();
                 MFX_PARAMS(0) = (MfxParams){T[ti], {64, 64, 64, 64}, (uint8_t)(wi ? 127 : 0),
@@ -707,6 +710,90 @@ int main(void)
             double held = 10.0 * log10(e[1][0] / e[0][0]), after = 10.0 * log10(e[1][1] / e[0][1]);
             printf("BBD ECHO DUCK 127: the echo %.1f dB while played, %.1f dB just after (against ENV 64)\n", held, after);
             if (held > -8.0 || after < -4.0) { printf("BBD ECHO: DUCK does not duck and bloom\n"); fails++; }
+        }
+    }
+
+    /* 15. BRONZE AGE (2026-11-03): at LEVEL 64 a 220 Hz sine at -12 dBFS comes out within 3 dB of MT_LEVEL_DB against
+     *     it (DIST 127; MT_LEVEL0_DB at 0); full DIST on a 1.24 kHz sine leaves its aliases (everything off the
+     *     harmonics) 40 dB under the harmonics (the clipping at twice the rate, anti-aliased: ~-50); MIDDLE 127
+     *     against 0 at MID FREQ 64 (~1.1 kHz) moves the 1.1 kHz band of quiet pink noise 15 dB or more; everything
+     *     full on loud noise bounded */
+    {
+        static float l[128], r[128];
+        for (int di = 0; di < 2; di++) {
+            double ph = 0.0, ein = 0.0, eout = 0.0;
+            mfx_init();
+            MFX_PARAMS(0) = (MfxParams){MFX_METAL, {(uint8_t)(di ? 127 : 0), 64, 64, 64}, 0, {64, 64}};
+            for (int b = 0; b < 1000; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(8192.0 * sin(ph)); ph += 2.0 * M_PI * 220.0 / SR; }
+                if (b >= 300) for (int i = 0; i < 128; i++) ein += (double)l[i] * l[i];
+                mfx_layer_block(0, l, r, 128);
+                if (b >= 300) for (int i = 0; i < 128; i++) eout += (double)l[i] * l[i];
+            }
+            double db = 10.0 * log10(eout / ein);
+            printf("BRONZE AGE DIST %d: a -12 dBFS sine comes out %+.1f dB\n", di ? 127 : 0, db);
+            if (fabs(db - (di ? MT_LEVEL_DB : MT_LEVEL0_DB)) > 3.0) { printf("BRONZE AGE level off\n"); fails++; }
+        }
+        {   /* the aliases: a DFT of 4096 frames, the sine on bin 115 */
+            enum { NA = 4096, KA = 115 };
+            static float y[NA];
+            double ph = 0.0, harm = 0.0, alias = 0.0;
+            int got = 0;
+            mfx_init();
+            MFX_PARAMS(0) = (MfxParams){MFX_METAL, {127, 64, 64, 64}, 0, {64, 64}};
+            for (int b = 0; got < NA; b++) {
+                for (int i = 0; i < 128; i++) { l[i] = r[i] = (float)(16000.0 * sin(ph)); ph += 2.0 * M_PI * KA / NA; }
+                mfx_layer_block(0, l, r, 128);
+                if (b >= 400) for (int i = 0; i < 128 && got < NA; i++) y[got++] = l[i];
+            }
+            for (int k = 1; k < NA / 2; k++) {
+                double re = 0.0, im = 0.0;
+                for (int n = 0; n < NA; n++) {
+                    double w = (0.5 - 0.5 * cos(2.0 * M_PI * n / NA)) * y[n], a = 2.0 * M_PI * (double)k * n / NA;
+                    re += w * cos(a); im -= w * sin(a);
+                }
+                int near = k % KA <= 2 || KA - k % KA <= 2;          /* (a harmonic, the window's spread) */
+                *(near ? &harm : &alias) += re * re + im * im;
+            }
+            double db = 10.0 * log10(alias / harm);
+            printf("BRONZE AGE DIST 127: aliases %.1f dB under the harmonics\n", -db);
+            if (db > -40.0) { printf("BRONZE AGE aliases\n"); fails++; }
+        }
+        {   /* MIDDLE: the 1.1 kHz band (a 2-pole band-pass on the output) at MIDDLE 127 and 0, DIST 0 and quiet (the
+             * diodes all but off) */
+            double e[2] = {0.0, 0.0};
+            const double w0 = 2.0 * M_PI * 1100.0 / SR, al = sin(w0) / 2.0;
+            for (int mi = 0; mi < 2; mi++) {
+                double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+                mfx_init();
+                MFX_PARAMS(0) = (MfxParams){MFX_METAL, {0, 64, (uint8_t)(mi ? 127 : 0), 64}, 0, {64, 64}};
+                srand(11);
+                for (int b = 0; b < 1000; b++) {
+                    for (int i = 0; i < 128; i++) l[i] = r[i] = 0.05f * pink();
+                    mfx_layer_block(0, l, r, 128);
+                    for (int i = 0; i < 128; i++) {
+                        double yy = (al * l[i] - al * x2 + 2.0 * cos(w0) * y1 - (1.0 - al) * y2) / (1.0 + al);
+                        x2 = x1; x1 = l[i]; y2 = y1; y1 = yy;
+                        if (b >= 300) e[mi] += yy * yy;
+                    }
+                }
+            }
+            double db = 10.0 * log10(e[1] / e[0]);
+            printf("BRONZE AGE MIDDLE 127 against 0: the 1.1 kHz band %+.1f dB\n", db);
+            if (db < 15.0) { printf("BRONZE AGE MIDDLE does not move the middle\n"); fails++; }
+        }
+        {
+            double peak = 0.0;
+            mfx_init();
+            MFX_PARAMS(0) = (MfxParams){MFX_METAL, {127, 127, 127, 127}, 127, {127, 127}};
+            srand(12);
+            for (int b = 0; b < 3445; b++) {
+                for (int i = 0; i < 128; i++) l[i] = r[i] = 40.f * pink();
+                mfx_layer_block(0, l, r, 128);
+                for (int i = 0; i < 128; i++) if (!(fabs(l[i]) < 1e9)) peak = 1e30; else if (fabs(l[i]) > peak) peak = fabs(l[i]);
+            }
+            printf("BRONZE AGE everything full, loud noise: peak %.0f\n", peak);
+            if (!isfinite(peak) || peak > 400000.0) { printf("BRONZE AGE not bounded\n"); fails++; }
         }
     }
 
