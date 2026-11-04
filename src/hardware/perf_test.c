@@ -66,7 +66,7 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_FX_TUM 16u                 /* the TUMULUS reverb (the still tank, long) and PING PONG */
 #define F_FX_SPR 32u                 /* the SPRING reverb (two dispersive springs) and PING PONG */
 #define F_DLY_BBD 64u                /* the delay as a BBD (DELAY TYPE), with any of the above */
-#define F_ATK_FILT 128u              /* STRIKE: half the attack through FILTER1 (ATTACK TO FILTER 64), its dearer path */
+/* (128u: F_ATK_FILT, STRIKE's, retired 2026-11-04) */
 #define F_HP 256u                    /* both filters' morph at 110 (SH-2: past BP, all five output taps) */
 #define F_PCM 512u                   /* PCM waves (needs the store uploaded): OSC1 CHOIR at SCAN 64 (both loops read),
                                       * OSC2 WOOD CHIMES; with K_RS / K_SEQ OSC1 plays WOOD CHIMES too (the attack
@@ -136,12 +136,6 @@ static const PtScen SCEN[] = {
     {"HEAVY SPRING+PP", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_SPR, UIPAGE_HOME1},
     {"HEAVY CEL+BBD PP", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_CEL | F_DLY_BBD, UIPAGE_HOME1},
     {"SEQ+ARP SPR+BBD", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_SPR | F_DLY_BBD, UIPAGE_HOME1},
-    /* 2026-10-16: STRIKE (SINGLE + an attack sample). Held notes play the attack once at the start; SEQ+ARP restarts it
-     * on every step, its worst case */
-    {"STRIKE", K_HELD, VARCH_STRIKE, FLT_MULTI, 0, UIPAGE_HOME1},
-    {"STRIKE HEAVY", K_HELD, VARCH_STRIKE, FLT_FORMANT, F_HEAVY, UIPAGE_HOME1},
-    {"SEQ+ARP STRIKE", K_SEQ, VARCH_STRIKE, FLT_FORMANT, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
-    {"SEQ+ARP STRK FILT", K_SEQ, VARCH_STRIKE, FLT_FORMANT, F_HEAVY | F_FX_CEL | F_ATK_FILT, UIPAGE_HOME1},
     /* 2026-10-21: SH-2 (the dearest filter, ~1.9x MULTI on the host) at every architecture's cap: the caps must hold */
     {"SINGLE SH2 H", K_HELD, VARCH_SINGLE, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
     {"DUALOSC SH2 H", K_HELD, VARCH_DUAL_OSC, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
@@ -149,7 +143,6 @@ static const PtScen SCEN[] = {
     {"DUALFLT SH2 H", K_HELD, VARCH_DUAL_FILTER, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
     {"STACK SH2 H", K_HELD, VARCH_STACK, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
     {"BINAUR SH2 H", K_HELD, VARCH_BINAURAL, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
-    {"STRIKE SH2 H", K_HELD, VARCH_STRIKE, FLT_SH2, F_HEAVY | F_ATK_FILT, UIPAGE_HOME1},
     {"SPREAD SH2 CEL+PP", K_HELD, VARCH_SPREAD, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
     {"DUALFLT SH2 CEL", K_HELD, VARCH_DUAL_FILTER, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
     {"SEQ+ARP SH2 CEL", K_SEQ, VARCH_SINGLE, FLT_SH2, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
@@ -179,7 +172,6 @@ static const PtScen SCEN[] = {
     {"SINGLE DRV OD", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DRV(DRIVE_OVERDRIVE), UIPAGE_HOME1},
     {"STACK HEAVY TUBE", K_HELD, VARCH_STACK, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
     {"BINAUR HEAVY OD", K_HELD, VARCH_BINAURAL, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_OVERDRIVE), UIPAGE_HOME1},
-    {"STRIKE HEAVY TUBE", K_HELD, VARCH_STRIKE, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
     {"SEQ+ARP HOME TUBE", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_DRV(DRIVE_TUBE), UIPAGE_HOME1},
     /* FULL (2026-10-26): DUAL OSC into DUAL FILTER at its cap (4: 2 voices a core; 6 measured 71..82 %) */
     {"FULL", K_HELD, VARCH_FULL, FLT_MULTI, 0, UIPAGE_HOME1},
@@ -428,10 +420,6 @@ static void setup(const PtScen *s)
     if (s->kind == K_SEQ) {
         patch(&engine_state[1], s);
         seq_slot();
-    }
-    if (s->flags & F_ATK_FILT) {
-        engine_state[0].oscmix.atk_filter = 64;
-        engine_state[1].oscmix.atk_filter = 64;
     }
     MFX_PARAMS(0).type = MFX_PARAMS(1).type = MFX_OFF;
     if (s->flags & (F_MFX | F_MFX2)) {

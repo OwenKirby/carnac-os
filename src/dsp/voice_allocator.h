@@ -18,7 +18,7 @@ PS_STATIC_ASSERT(POLYPHONY_VOICES == VOICE_POOL, "the allocator's pool is Preset
 /* Who struck a voice's note (2026-10-26), lowest rank first: a note-off releases only its own source's notes (the ARP
  * and the SEQ on one pitch no longer cut each other), and a full layer steals from the lowest rank it may (the ARP
  * never takes what the SEQ holds, neither what the keys hold). The keys are the panel and MIDI in. */
-enum { VSRC_ARP, VSRC_SEQ, VSRC_KEYS };
+enum { VSRC_ARP, VSRC_SEQ, VSRC_REC, VSRC_KEYS };   /* the rank a voice is taken by (REC: the REC page's loop, 2026-11-04) */
 
 // FIXED: Explicit structural array mapping to store your per-voice layer properties
 typedef struct {
@@ -79,19 +79,6 @@ typedef struct __attribute__((aligned(64))) {
     float vol, vol_step, vol_b, vol_b_step;
     float mix_a[2], mix_b[2];
     uint8_t noise_at;             // the block's first frame in the render pass: where it reads the shared noise
-    /* STRIKE's attack (dsp/attacks.h): restarted by each new note (synth_runtime.c voice_play), played once at atk_step
-     * (Q16 bytes of the sound per sample, set each tick from OSC1's pitch), mixed after the amp envelope at atk_vol
-     * (ramped by atk_vol_step: velocity, level, amp mod, choke) through mix_a. atk_p NULL: nothing playing. */
-    const uint8_t *atk_p;
-    uint32_t atk_pos, atk_step, atk_end;  // Q16; atk_end: (length - 1) << 16, where the read stops
-    uint8_t atk_sample;           // the sound the note started (its pitch info for the tick)
-    float atk_vol, atk_vol_step;  // the part that skips the filter (and ENV1)
-    float atk_pre, atk_pre_step;  // the part added into FILTER1's input (ATK > FILTER), before ENV1
-    float atk_fade;               // ATK DECAY's fade, 1 at the note's start
-    uint32_t atk_f1;              // OSC1's frequency atk_step was worked out for, and TUNE | TRACK << 8 (atk_tt):
-    uint16_t atk_tt;              //   the step is worked out again only when one of them moves
-    uint32_t atk_base;            // that step before BEND
-    float atk_glide;              // BEND (+ BEND MOD): how much of it is left, 1 at the note's start, gliding to 0
     int32_t choke_q15;            // choke fade: 32767 = untouched, ramps to 0 over CHOKE_TICKS ticks, then silence
     uint8_t choke;                // 1 = fading out: over its layer's voice limit, or the layer's architecture changed
     uint8_t arch;                 // VARCH_* the note was started with: picks the control tick and render function

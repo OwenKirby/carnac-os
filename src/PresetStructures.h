@@ -78,8 +78,9 @@ enum {                               /* voice architecture, per patch: the signa
     VARCH_DUAL_FILTER,               /* OSC1 -> FILTER1 -> FILTER2 (serial .. parallel) */
     VARCH_STACK,                     /* (OSC1 -> FILTER1, amp ENV1) + (OSC2 -> FILTER2, amp ENV2), blended */
     VARCH_BINAURAL,                  /* OSC1 -> FILTER1 once per ear; the right ear is beat-offset, its LFO mod phase-offset */
-    VARCH_STRIKE,                    /* SINGLE + a one-shot attack sample (dsp/attacks.h) at each note start, unfiltered:
-                                      * the LA synth's PCM attack in front of its partial (2026-10-16) */
+    VARCH_STRIKE,                    /* retired 2026-11-04 (was SINGLE + a one-shot attack sample): loads as SPREAD at SPREAD 0
+                                      * (varch_single_to_spread); the code stays taken so FULL / DUAL SPREAD keep theirs. The
+                                      * attack samples live on as PCM waves */
     VARCH_FULL,                      /* OSC1 + OSC2 (cross-mod) -> FILTER1 / FILTER2 (serial .. parallel): DUAL OSC into
                                       * DUAL FILTER (2026-10-26) */
     VARCH_DUAL_SPREAD,               /* OSC1 + OSC2, each as 4 detuned playheads (SPREAD), by OSC MIX, no cross-mod -> FILTER1
@@ -547,7 +548,7 @@ static inline uint8_t varch_of(const EngineState *e)
  * older firmware reads SPREAD as it is, so no record version moves. */
 static inline void varch_single_to_spread(EngineState *e)
 {
-    if (e->arch == VARCH_SINGLE) {
+    if (e->arch == VARCH_SINGLE || e->arch == VARCH_STRIKE) {   /* (STRIKE: its SINGLE path without the attack) */
         e->arch = VARCH_SPREAD;
         e->oscmix.spread = 0;
         e->oscmix.spread_mod_amt = 0;
@@ -583,7 +584,7 @@ static inline uint8_t varch_voice_cap(const EngineState *e)
         7u,                          /* DUAL FILTER (5 -> 7 2026-10-15, measured) */
         6u,                          /* STACK (4 -> 6 2026-10-15, measured) */
         6u,                          /* BINAURAL: FILTER1's settings run twice, once per ear (4 -> 6 2026-10-15) */
-        8u,                          /* STRIKE: SINGLE + an 8-bit sample read (~5 % of a voice on the host; to measure) */
+        8u,                          /* STRIKE (retired: loads as SPREAD) */
         4u,                          /* FULL: DUAL OSC's oscillators + DUAL FILTER's filters (2026-10-26 measured: 4 = 2 a core,
                                       * worst 62 % (SH-2 heavy); 6 = 3 a core 71..82 %, and 5 still puts 3 on a core) */
         4u,                          /* DUAL SPREAD: SPREAD's playheads on both oscillators (2026-10-26: 6 = 3 a core passed held

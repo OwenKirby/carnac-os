@@ -5,7 +5,7 @@
  * at its own rate. New sounds go at the end: a patch stores the sound's number. */
 #include <stdint.h>
 
-#define ATK_COUNT 20u
+#define ATK_COUNT 19u
 #define ATK_UNPITCHED 255u
 
 typedef struct {

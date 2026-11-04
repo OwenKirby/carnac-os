@@ -84,9 +84,6 @@ enum { MIX_L, MIX_R };
  * adds nothing. */
 void voice_render_block(SynthVoiceNode *voice, float *mix, int n);
 
-/* STRIKE: copies the attack decode table into RAM (synth_init, before any voice renders). */
-void voice_attack_init(void);
-
 /* Portamento: steps the voice's glide offset toward its target by one control tick. */
 void voice_glide_advance(SynthVoiceNode *voice);
 

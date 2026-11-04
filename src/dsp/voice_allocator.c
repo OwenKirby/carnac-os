@@ -59,16 +59,6 @@ SYNTH_COLD void voice_allocator_init(void) {
         n->unison_pan = 0;
         n->route_q15 = 32767;
         n->vol = n->vol_step = n->vol_b = n->vol_b_step = 0.f;
-        n->atk_p = NULL;
-        n->atk_pos = n->atk_step = n->atk_end = 0;
-        n->atk_sample = 0;
-        n->atk_vol = n->atk_vol_step = 0.f;
-        n->atk_pre = n->atk_pre_step = 0.f;
-        n->atk_fade = 1.f;
-        n->atk_f1 = 0;
-        n->atk_tt = 0xFFFFu;
-        n->atk_base = 0;
-        n->atk_glide = 0.f;
         for (int k = 0; k < 2; k++) n->mix_a[k] = n->mix_b[k] = 0.f;
         n->choke = 0;
         n->choke_q15 = 32767;

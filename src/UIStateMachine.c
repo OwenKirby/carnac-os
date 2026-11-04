@@ -5,7 +5,6 @@
  * that show it (4.0): rows the focused layer's architecture does not use are hidden, not greyed, so every call
  * below counts and indexes shown rows only. Integer only: no float / double anywhere. */
 #include "UIStateMachine.h"
-#include "dsp/attacks.h"            /* ATK_COUNT and attack_names: STRIKE's ATTACK knob */
 #include "dsp/wavetables.h"          /* NUM_BANKS */
 #include "dsp/pcm_osc.h"             /* the WAVE row: the wave list (banks, PCM waves, attacks) */
 #include "dsp/arp_chords.h"          /* ARP_GENRE_COUNT and arp_genre_names: the GENRE BANK row */
@@ -49,6 +48,7 @@ enum {                               /* how a row reads and writes its value */
                                       * PCM waves, attacks), shows the wave's name */
     RK_DEPTH_SRC,                    /* RK_BYTE holding an LFO's DEPTH MOD SRC: steps over the LFOs and MOD slots */
     RK_ARCH,                         /* RK_ENG holding the architecture: steps in ARCH_ORDER, not enum order */
+    RK_REC_ACT,                      /* the REC page's DOUBLE (offset 0) / CLEAR (1): a turn asks, SAVE does it */
     RK_LINK                          /* RK_BYTE holding a PERF page link (layer_patch, seq_link, arp_link): a turn loads
                                       * the next used slot (ui_sm_perf_link_turn), the link follows once it has loaded */
 };
@@ -61,7 +61,7 @@ enum {                               /* how a row reads and writes its value */
 #define RF_BPM (1u << 6)
 #define RF_SLOT (1u << 7)
 
-enum { ST_NONE, ST_ENGINE, ST_PERF, ST_ARP, ST_LANE, ST_MFX, ST_LIVE };  /* the data block a page's rows index
+enum { ST_NONE, ST_ENGINE, ST_PERF, ST_ARP, ST_LANE, ST_MFX, ST_LIVE, ST_REC };  /* the data block a page's rows index
                                                                           * (ST_MFX: the layer's MfxParams; ST_LIVE:
                                                                           * dsp/fx.h fx_live, the MIX page) */
 
@@ -99,9 +99,9 @@ static const char *const PERF_NAMES[] = {"SINGL", "DUAL", "SPLIT"};
 static const char *const VARCH_NAMES[] = {"SINGLE", "DUAL OSC", "SINGLE", "DUAL FILT", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL SPRD"};
 /* the ARCH row's order (2026-10-27, user); the stored codes stay as they are. SINGLE (hidden) sits where SPREAD does */
 static const uint8_t ARCH_ORDER[] = {VARCH_SPREAD, VARCH_DUAL_OSC, VARCH_DUAL_FILTER, VARCH_DUAL_SPREAD, VARCH_FULL,
-                                     VARCH_STACK, VARCH_BINAURAL, VARCH_STRIKE};
+                                     VARCH_STACK, VARCH_BINAURAL};
 #define ARCH_ORDER_N ((uint8_t)(sizeof ARCH_ORDER / sizeof ARCH_ORDER[0]))
-PS_STATIC_ASSERT(sizeof ARCH_ORDER == VARCH_COUNT - 1u, "every offered VARCH_* once in ARCH_ORDER");
+PS_STATIC_ASSERT(sizeof ARCH_ORDER == VARCH_COUNT - 2u, "every offered VARCH_* once in ARCH_ORDER (SINGLE and STRIKE load as SPREAD)");
 
 static uint8_t arch_pos(uint8_t a)
 {
@@ -132,8 +132,6 @@ static const char *const ARPRATE_NAMES[] = {"1/2", "1/4", "1/4T", "1/8", "1/8T",
                                             "1/64", "1/64T", "1/128"};
 PS_STATIC_ASSERT(sizeof(ARPRATE_NAMES) / sizeof(ARPRATE_NAMES[0]) == ARPRATE_COUNT, "one name per ARPRATE_*");
 static const char *const BOOL_NAMES[] = {"OFF", "ON"};
-static const char *const ATKTRK_NAMES[] = {"AUTO", "FIXED", "TRACK"};
-PS_STATIC_ASSERT(sizeof(ATKTRK_NAMES) / sizeof(ATKTRK_NAMES[0]) == ATKTRK_COUNT, "one name per ATKTRK_*");
 /* 4.5 function_list, as the knob shows it */
 static const char *const MFN_NAMES[] = {"a*b", "a+b", "a-b", "max", "min", "smpleBonA", "QuntzBtoA", "|a-b|", "lag", "diode"};
 PS_STATIC_ASSERT(sizeof(MFN_NAMES) / sizeof(MFN_NAMES[0]) == MFN_COUNT, "one name per MFN_*");
@@ -209,16 +207,6 @@ static const UiRow OSCMIX_ROWS[] = {
     {"SUB OCTAVE", OFS(OscMixerParams, sub_octave), 0, SUBOCT_COUNT - 1, RK_BYTE, 0, SUBOCT_NAMES,
      (uint16_t)(VARCH_ALL & ~VARCH_BIT(VARCH_SINGLE))},
     {"SUB WAVE", OFS(OscMixerParams, sub_waveform), 0, SUBWAVE_COUNT - 1, RK_BYTE, 0, SUBWAVE_NAMES, A_ALL},
-};
-/* ATTACK (STRIKE only, 2026-10-16): the attack sound's settings beyond its knobs, in OscMixerParams; BEND MOD's source
- * last (its amount is knob 4, as OSC1's PITCH MOD SRC / PITCH MOD) */
-static const UiRow ATTACK_ROWS[] = {
-    {"SOUND", OFS(OscMixerParams, atk_sample), 0, ATK_COUNT - 1, RK_BYTE, 0, attack_names, A(STRIKE)},
-    {"START", OFS(OscMixerParams, atk_start), 0, VAL_MAX, RK_BYTE, 0, NULL, A(STRIKE)},
-    {"TUNE", OFS(OscMixerParams, atk_tune), 40, 88, RK_BYTE, RF_BIPOLAR, NULL, A(STRIKE)},          /* -24..+24 */
-    {"VELOCITY", OFS(OscMixerParams, atk_vel), 0, VAL_MAX, RK_BYTE, 0, NULL, A(STRIKE)},
-    {"KEY TRACK", OFS(OscMixerParams, atk_track), 0, ATKTRK_COUNT - 1, RK_BYTE, 0, ATKTRK_NAMES, A(STRIKE)},
-    {"BEND MOD SRC", OFS(OscMixerParams, atk_bend_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(STRIKE)},
 };
 /* FILTER1 / FILTER2 (4.2): DRIVE first (2026-10-21), then the circuit and KEY TRACK; the type morph's own mod source
  * and amount show in every architecture. KEY TRACK lives at the patch's end (EngineState.filter_key_track), so each
@@ -467,6 +455,15 @@ static const UiRow ARP_ROWS[] = {
 };
 /* 7.4: the knob window, then the active lane's footer left to right (2026-10-21; ui_seq_draw.c highlights the field the
  * cursor is on). The Select Encoder walks STEPS a group of 4 at a time, then the footer, then wraps (seq_cursor_move). */
+/* REC (2026-11-04): the loop's footer, as SEQ's: the Select Encoder walks it, the Algorithm Encoder sets it */
+static const char *const KQ_NAMES[KQ_COUNT] = {"OFF", "1/8", "1/16", "1/16T"};
+static const UiRow REC_ROWS[] = {
+    {"TRANSPOSE", OFS(KrecSettings, transpose), 40, 88, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    {"QUANTIZE", OFS(KrecSettings, quantize), 0, KQ_COUNT - 1, RK_BYTE, 0, KQ_NAMES, A_ALL},
+    {"DOUBLE", 0, 0, 1, RK_REC_ACT, 0, NULL, A_ALL},
+    {"CLEAR", 1, 0, 1, RK_REC_ACT, 0, NULL, A_ALL},
+};
+PS_STATIC_ASSERT(sizeof REC_ROWS / sizeof REC_ROWS[0] == UIREC_NROWS, "UIREC_NROWS");
 static const UiRow SEQ_ROWS[] = {
     {"STEPS", 0, 0, UISEQ_STEP0_MAX, RK_SEQ_STEPS, 0, NULL, A_ALL},
     {"PRESCALE", OFS(SequencerLane, prescale), SEQ_PRESCALE_MIN, SEQ_PRESCALE_MAX, RK_BYTE, 0, NULL, A_ALL},
@@ -494,7 +491,6 @@ typedef struct {
 static const UiPage UI_PAGES[] = {
     SYNTH(OSC_ROWS, NROWS(OSC_ROWS) - 1u, osc, 0, OscParams),           /* OSC1: no sync */
     SYNTH(OSC_ROWS, NROWS(OSC_ROWS), osc, 1, OscParams),
-    SYNTH(ATTACK_ROWS, NROWS(ATTACK_ROWS), oscmix, 0, OscMixerParams),
     SYNTH(OSCMIX_ROWS, NROWS(OSCMIX_ROWS), oscmix, 0, OscMixerParams),
     SYNTH(FILTER1_ROWS, NROWS(FILTER1_ROWS), filter, 0, FilterParams),
     SYNTH(FILTER2_ROWS, NROWS(FILTER2_ROWS), filter, 1, FilterParams),
@@ -518,6 +514,7 @@ static const UiPage UI_PAGES[] = {
     {ARP_ROWS, NROWS(ARP_ROWS), ST_ARP, 0, UICTX_ARP},
     {SAVE_COMMIT_ROWS, NROWS(SAVE_COMMIT_ROWS), ST_NONE, 0, UICTX_SAVE},
     {SEQ_ROWS, NROWS(SEQ_ROWS), ST_LANE, 0, UICTX_SEQ},
+    {REC_ROWS, NROWS(REC_ROWS), ST_REC, 0, UICTX_SEQ},
 };
 PS_STATIC_ASSERT(sizeof(UI_PAGES) / sizeof(UI_PAGES[0]) == UIPAGE_COUNT, "one UI_PAGES entry per UIPAGE_*");
 
@@ -558,8 +555,7 @@ static const UiKnob OSC_KNOBS_SCAN[4] = {   /* SINGLE / SPREAD / STRIKE: the sca
     KOSC(scan, "WAVE SCAN", UIKNOB_RAW), KOSC(octave, "OCTAVE", UIKNOB_OCT),
     KOSC(scan_mod_amt, "SCAN AMT", UIKNOB_RAW), KOSC(pitch_mod_amt, "PITCH MOD", UIKNOB_RAW),
 };
-/* OSCMIXER by architecture. SINGLE: the noise colour and level, the sub's octave and level. STRIKE: the attack's level
- * (its sound and shape on the ATTACK page), the noise colour, sub, noise. SPREAD: spread, noise, sub, spread mod. STACK: the cross-mod type and amount, sub, noise. The others: knob 3 the sub, knob 4 the noise,
+/* OSCMIXER by architecture. SINGLE: the noise colour and level, the sub's octave and level. SPREAD: spread, noise, sub, spread mod. STACK: the cross-mod type and amount, sub, noise. The others: knob 3 the sub, knob 4 the noise,
  * knobs 1 / 2 need OSC2 (BINAURAL reuses them for the right ear); with no OSC2 they are greyed. */
 static const UiKnob OSCMIX_KNOBS[VARCH_COUNT][4] = {
     {KMIX(noise_colour, "NOISE COLOUR", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW),
@@ -573,19 +569,11 @@ static const UiKnob OSCMIX_KNOBS[VARCH_COUNT][4] = {
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* STACK */
     {KMIX(bin_mod_phase, "OSC PHASE", UIKNOB_RAW), KMIX(bin_beat, "BEAT HZ", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* BINAURAL */
-    {KMIX(atk_level, "ATK LEVEL", UIKNOB_RAW), KMIX(noise_colour, "NOISE COLOUR", UIKNOB_RAW),
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* STRIKE */
+    {KNONE, KNONE, KNONE, KNONE},                                                                               /* STRIKE (retired) */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* FULL */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(spread, "SPREAD", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* DUAL SPREAD */
-};
-/* ATTACK (STRIKE, 2026-10-17): how soon it fades, how much of it goes into FILTER1, its pitch bend, and how far the
- * BEND MOD SRC row's source moves that bend (knob 4, as OSC1's PITCH MOD). The sound and START are rows; the level
- * is on OSCMIXER, with the other sources' */
-static const UiKnob ATTACK_KNOBS[4] = {
-    KMIX(atk_decay, "DECAY", UIKNOB_RAW), KMIX(atk_filter, "TO FILTER", UIKNOB_RAW),
-    KMIX(atk_bend, "BEND", UIKNOB_BIP), KMIX(atk_bend_mod_amt, "BEND MOD", UIKNOB_BIP),
 };
 static const UiKnob FILTER_KNOBS[4] = {
     KFLT(morph, "TYPE MORPH", UIKNOB_RAW), KFLT(cutoff, "CUTOFF", UIKNOB_RAW),
@@ -673,6 +661,12 @@ static const UiKnob HOME_KNOBS[4] = {
     UIK("CC1", UIPERF_CC1, UIKNOB_PERF), UIK("PORTA TIME", 0, UIKNOB_PORTA),
 };
 /* ZONES: its four rows */
+/* REC (2026-11-04): the play controllers LAYER has (the same bytes: turn one, both move), then the loop's GATE and
+ * DENSITY */
+static const UiKnob REC_KNOBS[4] = {
+    UIK("VELOCITY", UIPERF_VELOCITY, UIKNOB_PERF), UIK("MOD WHEEL", UIPERF_MODWHEEL, UIKNOB_PERF),
+    UIK("GATE", OFS(KrecSettings, gate), UIKNOB_RAW), UIK("DENSITY", OFS(KrecSettings, density), UIKNOB_RAW),
+};
 static const UiKnob ZONES_KNOBS[4] = {
     UIK("SPLIT", PERF(split_note), UIKNOB_NOTE), UIK("FADE", PERF(split_fade), UIKNOB_RAW),
     UIK("VEL SPLIT", PERF(vel_split), UIKNOB_RAW), UIK("VEL FADE", PERF(vel_fade), UIKNOB_RAW),
@@ -856,6 +850,10 @@ static uint8_t *page_block_for(const UIStateMachine *sm, const UiPage *pg, uint8
     case ST_LANE: return (uint8_t *)cur_lane(sm);
     case ST_MFX: return (uint8_t *)ui_sm_mfx(sm, layer) + pg->base;
     case ST_LIVE: return fx_live + pg->base;
+    case ST_REC: {                                   /* (no recorder attached: settings nobody plays) */
+        static KrecSettings none = {64, 0, 64, 127};
+        return sm->rec ? (uint8_t *)&sm->rec->set : (uint8_t *)&none;
+    }
     default: return 0;
     }
 }
@@ -972,7 +970,7 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     case RK_SAVE_ACTION: return sm->save_action;
     case RK_THEME: return sm->theme;
     case RK_INST: return ((const uint8_t *)ui_inst(sm))[r->offset];
-    case RK_RENAME: return 0u;
+    case RK_RENAME: case RK_REC_ACT: return 0u;
     case RK_ENG: case RK_ARCH: return ((const uint8_t *)sm->engine[row_layer(r)])[r->offset];
     case RK_VOICES: return ui_sm_layer_voices(sm, row_layer(r));
     case RK_ARP_LAYER: return ARP_LAYER(sm->arp);
@@ -1051,6 +1049,14 @@ static void row_step(UIStateMachine *sm, const UiRow *r, int16_t delta)
     int16_t n = delta > 0 ? delta : (int16_t)-delta;
     if (r->kind == RK_RENAME || r->kind == RK_VOICES || r->kind == RK_SEQ_STEPS)
         return;
+    if (r->kind == RK_REC_ACT) {              /* DOUBLE / CLEAR: the popup asks (SAVE: yes), unless there is none to do */
+        if (sm->rec != 0 && (r->offset ? sm->rec->state != KREC_EMPTY : krec_can_double(sm->rec))) {
+            sm->rec_ask = (uint8_t)(r->offset + 1u);
+            sm->dialog = UIDLG_CONFIRM;
+            sm->dialog_choice = 0u;
+        }
+        return;
+    }
     sm->sends_full = 0u;
     if (r->kind == RK_WAVE) {                 /* by list position: banks, PCM waves, attacks */
         int32_t p = (int32_t)wave_list_pos((uint8_t)cur) + delta, last = (int32_t)wave_list_count() - 1;
@@ -1119,6 +1125,8 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
         return UIROW_GREYED;
     if (r->kind == RK_VOICES)
         return UIROW_INFO;
+    if (r->kind == RK_REC_ACT && (sm->rec == 0 || (r->offset ? sm->rec->state == KREC_EMPTY : !krec_can_double(sm->rec))))
+        return UIROW_GREYED;         /* DOUBLE at 16 bars (or too many notes), CLEAR with nothing */
     if (r->kind == RK_SEND && !ui_sm_dest_live(sm, sm->s.active_synth_layer, r->offset))
         return UIROW_GREYED;         /* the MFX knobs: dark at OFF and on a list knob */
     if (r->kind == RK_RENAME && ui_sm_rename_name(sm) == NULL)
@@ -1361,6 +1369,15 @@ void ui_sm_save_oct(UIStateMachine *sm, uint8_t up)
 /* 6.2.2 step 6: the second SAVE press registers the popup choice */
 static void confirm_register(UIStateMachine *sm)
 {
+    if (sm->rec_ask) {                            /* the loop's DOUBLE / CLEAR */
+        if (sm->dialog_choice && sm->rec != 0) {
+            if (sm->rec_ask == 1u) krec_double(sm->rec);
+            else krec_clear(sm->rec);
+        }
+        sm->rec_ask = 0u;
+        sm->dialog = UIDLG_NONE;
+        return;
+    }
     if (sm->dialog_choice && sm->save_action == UIACT_SAVE) {
         sm->dialog = UIDLG_WRITING;
         sm->commit_pending = 1u;
@@ -2231,6 +2248,14 @@ void ui_sm_load_done(UIStateMachine *sm, uint8_t ok)
 
 void ui_sm_tick(UIStateMachine *sm, uint16_t ms)
 {
+    if (sm->rec_msg)
+        sm->rec_msg_ms = ms >= sm->rec_msg_ms ? (uint16_t)0u : (uint16_t)(sm->rec_msg_ms - ms);
+    if (sm->rec_msg && !sm->rec_msg_ms)
+        sm->rec_msg = 0u;
+    if (sm->rec != 0) {                              /* MOD WHEEL shows the loop's wheel while it plays one */
+        uint8_t w = krec_wheel_now(sm->rec);
+        if (w != KREC_LANE_NONE) sm->perf_knob[UIPERF_MODWHEEL] = w;
+    }
     if (sm->browse) {
         if (ms >= sm->browse_ms)
             sm->browse = 0u;
@@ -2274,6 +2299,9 @@ void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *
     sm->seq = 0;
     sm->seq_step0 = 0u;
     sm->carp = 0;
+    sm->rec = 0;
+    sm->rec_ask = sm->rec_msg = 0u;
+    sm->rec_msg_ms = 0u;
     sm->arp_knob[0] = ARP_RATE_DEFAULT;
     sm->arp_knob[1] = 0u;
     sm->arp_knob[2] = ARPSTYLE_UP;
@@ -2357,16 +2385,56 @@ void ui_sm_process(UIStateMachine *sm)
 /* PLAY (2026-10-17): on the SEQ page the MAQ alone, on the ARP page the ARP alone, on any other page both: stopped
  * (both), start both; otherwise stop whichever plays. A start plays the ARP pattern as captured (untransposed), unless
  * the chord keys lead the MAQ (arp_keys_lead_maq). */
+/* REC off the SEQ and ARP pages: the loop. A tap: EMPTY opens the REC page, armed; else the cycle (krec_tap). Held:
+ * UNDO. HOME held + REC: the page. */
+static void rec_transport(UIStateMachine *sm, uint8_t arg)
+{
+    Krec *k = sm->rec;
+    if (arg == UITR_REC_PAGE) {
+        krec_arm(k);
+        enter_page(sm, UIPAGE_REC);
+    } else if (arg == UITR_REC_UNDO) {
+        sm->rec_msg = krec_undo(k) ? 1u : 2u;
+        sm->rec_msg_ms = 900u;
+    } else if (k->state == KREC_EMPTY) {
+        krec_arm(k);
+        enter_page(sm, UIPAGE_REC);
+    } else {
+        krec_tap(k, k->frame_now);
+    }
+}
+
+void ui_sm_attach_rec(UIStateMachine *sm, Krec *rec) { sm->rec = rec; }
+
+uint8_t ui_sm_rec_deferred(const UIStateMachine *sm)
+{
+    return (uint8_t)(sm->rec != 0 && sm->dialog == UIDLG_NONE && sm->page != UIPAGE_SEQ && sm->page != UIPAGE_ARP);
+}
+
 static void ui_sm_play(UIStateMachine *sm)
 {
     uint8_t seq = (uint8_t)(sm->seq != 0 && maq_playing(sm->seq)), arp = arp_playing(sm);
+    uint8_t rec = (uint8_t)(sm->rec != 0 && sm->rec->playing), loop = (uint8_t)(sm->rec != 0 && sm->rec->len);
     uint8_t want_seq = seq, want_arp = arp;
+    if (sm->page == UIPAGE_REC) {                 /* the loop alone */
+        if (loop) krec_set_playing(sm->rec, (uint8_t)!rec, sm->rec->frame_now);
+        return;
+    }
+    if (sm->page != UIPAGE_SEQ && sm->page != UIPAGE_ARP && loop) {   /* everything: the loop with the rest */
+        uint8_t on = (uint8_t)!(seq || arp || rec);
+        krec_set_playing(sm->rec, on, sm->rec->frame_now);
+        if (!on && !seq && !arp) return;
+        if (on) { want_seq = want_arp = 1u; goto apply; }
+        want_seq = want_arp = 0u;
+        goto apply;
+    }
     if (sm->page == UIPAGE_SEQ)
         want_seq = (uint8_t)!seq;
     else if (sm->page == UIPAGE_ARP)
         want_arp = (uint8_t)!arp;
     else
         want_seq = want_arp = (uint8_t)!(seq || arp);
+apply:
     if (sm->carp != 0) {
         if (want_arp && !arp && !arp_keys_lead_maq(sm))
             carp_set_transpose(sm->carp, 0);
@@ -2379,7 +2447,9 @@ static void ui_sm_play(UIStateMachine *sm)
 uint8_t ui_sm_play_lit(const UIStateMachine *sm)
 {
     uint8_t seq = (uint8_t)(sm->seq != 0 && maq_playing(sm->seq)), arp = arp_playing(sm);
-    return sm->page == UIPAGE_SEQ ? seq : sm->page == UIPAGE_ARP ? arp : (uint8_t)(seq || arp);
+    uint8_t rec = (uint8_t)(sm->rec != 0 && sm->rec->playing);
+    if (sm->page == UIPAGE_REC) return rec;
+    return sm->page == UIPAGE_SEQ ? seq : sm->page == UIPAGE_ARP ? arp : (uint8_t)(seq || arp || rec);
 }
 
 void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
@@ -2398,11 +2468,15 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         sm->rowpop = 0u;             /* .. and the parameter list */
     if (sm->dialog == UIDLG_WRITING)                 /* nothing interrupts a flash write */
         return;
-    if (type == UIEV_TRANSPORT) {                    /* REC: 7.2 on the SEQ page, 8.1 on the ARP page */
-        if (sm->dialog == UIDLG_NONE && sm->page == UIPAGE_SEQ)
+    if (type == UIEV_TRANSPORT) {                    /* REC: 7.2 on the SEQ page, 8.1 on the ARP page, else the loop */
+        if (sm->dialog != UIDLG_NONE)
+            return;
+        if (arg == UITR_REC && sm->page == UIPAGE_SEQ)
             seq_record_toggle(sm);
-        else if (sm->dialog == UIDLG_NONE && sm->page == UIPAGE_ARP)
+        else if (arg == UITR_REC && sm->page == UIPAGE_ARP)
             arp_record_toggle(sm);
+        else if (sm->rec != 0)
+            rec_transport(sm, (uint8_t)arg);
         return;
     }
     if (sm->dialog == UIDLG_SAVED) {                 /* 6.2.2: any encoder or menu key clears it -> back where SAVE
@@ -2410,6 +2484,10 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         sm->dialog = UIDLG_NONE;
         enter_page(sm, sm->save_from < UIPAGE_COUNT && sm->save_from != UIPAGE_SAVE_COMMIT ? sm->save_from
                                                                                              : (uint8_t)UIPAGE_PERF);
+    } else if (sm->dialog == UIDLG_CONFIRM && sm->rec_ask && type != UIEV_ALGO_ENC &&
+               !(type == UIEV_BUTTON && arg == BTN_SAVE)) {
+        sm->dialog = UIDLG_NONE;                     /* the loop's question: any other control says no */
+        sm->rec_ask = 0u;
     } else if (sm->dialog == UIDLG_CONFIRM) {        /* the popup owns the Algorithm Encoder and SAVE */
         if (type == UIEV_ALGO_ENC)
             sm->dialog_choice = arg > 0 ? 1u : 0u;
@@ -2434,7 +2512,8 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         r = sm->s.current_param_focus != UI_FOCUS_NONE ? vis_row(sm, sm->s.current_param_focus) : NULL;
         if (r != NULL && r->kind != RK_SEQ_STEPS) {   /* (STEPS has no value: no popup either) */
             row_step(sm, r, arg);
-            sm->rowpop = 1u;         /* (2026-10-17) the parameter, large, only while its value turns */
+            sm->rowpop = (uint8_t)(sm->page != UIPAGE_REC);   /* (2026-10-17) the parameter, large, only while its value
+                                                              * turns (REC: its footer shows it) */
             sm->rowpop_ms = UI_ROWPOP_MS;
         }
     } else if (arg == BTN_HOME) {
@@ -2520,7 +2599,6 @@ uint8_t ui_sm_page_visible(const UIStateMachine *sm, uint8_t page, uint8_t layer
     uint8_t a = layer_arch(sm, layer);
     switch (page) {
     case UIPAGE_OSC2: return varch_uses_osc2(a);
-    case UIPAGE_ATTACK: return (uint8_t)(a == VARCH_STRIKE);
     case UIPAGE_FILTER2: return varch_uses_filter2(a);
     case UIPAGE_FLTMIX: return varch_uses_fltmix(a);
     case UIPAGE_HOME1: return (uint8_t)(layer == 0u);              /* one HOME page: the focused layer's */
@@ -2558,7 +2636,6 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
         case UIPAGE_OSC1: case UIPAGE_OSC2:
             k = (VARCH_BIT(a) & A_SCANKNOB) != 0u ? &OSC_KNOBS_SCAN[knob] : &OSC_KNOBS[knob];
             break;
-        case UIPAGE_ATTACK: k = &ATTACK_KNOBS[knob]; break;
         case UIPAGE_OSCMIX: k = &OSCMIX_KNOBS[a][knob]; break;
         case UIPAGE_FILTER1: case UIPAGE_FILTER2: k = &FILTER_KNOBS[knob]; break;
         case UIPAGE_FLTMIX: k = &FLTMIX_KNOBS[a][knob]; break;
@@ -2576,6 +2653,7 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
         case UIPAGE_HOME1: case UIPAGE_HOME2: k = &HOME_KNOBS[knob]; break;
         case UIPAGE_HOME3: k = &ZONES_KNOBS[knob]; break;
         case UIPAGE_ARP: k = &ARP_KNOBS[knob]; break;
+        case UIPAGE_REC: k = &REC_KNOBS[knob]; break;
         case UIPAGE_PERF:     /* (layer 2's patch is frozen under SINGL, as its row is) */
             if (knob != 1u || perf_mode(sm) != PERF_SINGL_SYNTH)
                 k = &SAVE_PRESET_KNOBS[knob];
@@ -2786,6 +2864,7 @@ const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row)
     v = row_get(sm, r);
     if (r->kind == RK_SEQ_TARGET) return ui_sm_seq_target_text(sm, sm->s.active_seq_lane, target_buf);
     if (r->kind == RK_SEND && v == BIPOLAR_CENTER) return "-";   /* no send from the SLOT */
+    if (r->kind == RK_REC_ACT) return ">";
     if (r->kind == RK_FINE) return ui_sm_fine_text(v, num_buf);
     if (r->kind == RK_WAVE) return wave_name(v, num_buf);
     if (r->kind == RK_RENAME) {       /* the name, trailing spaces dropped; "-" when the TARGET has none */

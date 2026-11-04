@@ -87,11 +87,11 @@ int main(void)
     CHECK(ui_sm_row_value(&sm, (uint8_t)vox_row) == varch_voice_cap(&engine_state[0]), "MAX VOICES value");
 
     /* edit ARCH with the encoders: cursor down to it; the list runs SINGLE, DUAL OSC, DUAL FILT, DUAL SPRD, FULL,
-     * STACK, BINAURAL, STRIKE (SINGLE = SPREAD); one step at a time to STACK */
+     * STACK, BINAURAL (SINGLE = SPREAD; STRIKE retired 2026-11-04); one step at a time to STACK */
     sm.s.current_param_focus = (uint8_t)arch_row;
     {
         static const uint8_t order[] = {VARCH_SPREAD, VARCH_DUAL_OSC, VARCH_DUAL_FILTER, VARCH_DUAL_SPREAD, VARCH_FULL,
-                                        VARCH_STACK, VARCH_BINAURAL, VARCH_STRIKE};
+                                        VARCH_STACK, VARCH_BINAURAL};
         ui_sm_handle(&sm, UIEV_ALGO_ENC, -20);
         CHECK(engine_state[0].arch == VARCH_SPREAD && strcmp(ui_sm_row_text(&sm, (uint8_t)arch_row), "SINGLE") == 0,
               "ARCH list starts on SINGLE (SPREAD): %u", engine_state[0].arch);
@@ -100,8 +100,8 @@ int main(void)
             CHECK(engine_state[0].arch == order[i], "ARCH step %u: %u", i, engine_state[0].arch);
         }
         ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
-        CHECK(engine_state[0].arch == VARCH_STRIKE, "ARCH stops at STRIKE: %u", engine_state[0].arch);
-        ui_sm_handle(&sm, UIEV_ALGO_ENC, -2);
+        CHECK(engine_state[0].arch == VARCH_BINAURAL, "ARCH stops at BINAURAL: %u", engine_state[0].arch);
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     }
     CHECK(engine_state[0].arch == VARCH_STACK, "ARCH not STACK: %u", engine_state[0].arch);
     CHECK(ui_sm_row_value(&sm, (uint8_t)vox_row) == 6, "STACK max voices %u", ui_sm_row_value(&sm, (uint8_t)vox_row));
@@ -492,41 +492,6 @@ int main(void)
         sm.page = was;
     }
 
-    /* STRIKE (2026-10-16): FX cycles OSC1 -> ATTACK -> OSCMIX; ATTACK's knobs are DECAY, TO FILTER, BEND, BEND MOD
-     * (2026-10-17), its rows sound, start, tune, velocity, key track, bend mod source; OSCMIX has the attack level;
-     * no other architecture shows ATTACK */
-    {
-        UiKnobInfo i;
-        ui_sm_set_layer_focus(&sm, 0u);                  /* layer 1 (an earlier check may have left layer 2) */
-        engine_state[0].arch = VARCH_STRIKE;
-        ui_sm_enforce(&sm);
-        press(BTN_FX);
-        if (sm.page != UIPAGE_OSC1) press(BTN_FX);
-        while (sm.page != UIPAGE_OSC1) press(BTN_FX);
-        press(BTN_FX); CHECK(sm.page == UIPAGE_ATTACK, "STRIKE: FX 2 is ATTACK, not %u", sm.page);
-        dump("ATTACK STRIKE"); knobs(UIPAGE_ATTACK, "ATTACK STRIKE");
-        CHECK(ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 0, &i) == &engine_state[0].oscmix.atk_decay &&
-              ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 1, &i) == &engine_state[0].oscmix.atk_filter, "ATTACK knobs 1, 2");
-        CHECK(ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 2, &i) == &engine_state[0].oscmix.atk_bend && i.kind == UIKNOB_BIP,
-              "ATTACK knob 3: BEND, bipolar");
-        CHECK(ui_sm_knob(&sm, UIPAGE_ATTACK, 0, 3, &i) == &engine_state[0].oscmix.atk_bend_mod_amt && i.kind == UIKNOB_BIP,
-              "ATTACK knob 4: BEND MOD, bipolar (as OSC1's PITCH MOD)");
-        CHECK(find_row("SOUND") == 0 && find_row("START") == 1 && find_row("TUNE") >= 0 && find_row("VELOCITY") >= 0 &&
-              find_row("KEY TRACK") >= 0 && find_row("BEND MOD SRC") >= 0, "ATTACK rows: SOUND, START first, BEND MOD SRC");
-        press(BTN_FX); CHECK(sm.page == UIPAGE_OSCMIX, "STRIKE: FX 3 is OSCMIX, not %u", sm.page);
-        CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i) == &engine_state[0].oscmix.atk_level &&
-              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == &engine_state[0].oscmix.noise_colour &&
-              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i) == &engine_state[0].oscmix.sub_level &&
-              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i) == &engine_state[0].oscmix.noise_level, "STRIKE OSCMIX knobs");
-        CHECK(find_row("NOISE COLOUR") < 0 && find_row("SUB OCTAVE") >= 0, "STRIKE OSCMIX: colour a knob, octave a row");
-        press(BTN_FX); CHECK(sm.page == UIPAGE_OSC1, "STRIKE: FX wraps to OSC1 (no OSC2), not %u", sm.page);
-        for (uint8_t a = 0; a < VARCH_COUNT; a++) {
-            engine_state[0].arch = a;
-            CHECK(ui_sm_page_visible(&sm, UIPAGE_ATTACK, 0) == (a == VARCH_STRIKE), "ATTACK shown under arch %u", a);
-        }
-        engine_state[0].arch = VARCH_SINGLE;
-        ui_sm_enforce(&sm);
-    }
 
     /* the save page (2026-10-17): SAVE opens it on what the page saves, at the slot it plays from; SAVE stores at once
      * into an empty slot and asks first over a used one; SAVED returns to the page SAVE was pressed on. SAVE held +

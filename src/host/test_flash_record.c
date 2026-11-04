@@ -73,7 +73,7 @@ int main(void)
                 d[i] = (uint8_t)(pass == 0 ? top : pass == 1 ? 0u : (seed >> 16) & top);
             }
             if (e.mfx.type >= MFX_COUNT) e.mfx.type = MFX_COUNT - 1u;   /* (unpack turns an unknown type OFF) */
-            if (e.arch == VARCH_SINGLE) e.arch = VARCH_SPREAD;         /* (SINGLE loads as SPREAD) */
+            if (e.arch == VARCH_SINGLE || e.arch == VARCH_STRIKE) e.arch = VARCH_SPREAD;   /* (both load as SPREAD) */
             frec_pack(FREC_ENGINE, &e, rec);
             CHECK(rec[0] == FREC_VER_ENGINE, "ENGINE: version byte %u", rec[0]);
             memset(&back, 0xA5, sizeof back);

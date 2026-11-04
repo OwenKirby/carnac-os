@@ -14,6 +14,7 @@
 #include "dsp/maq_seq.h"
 #include "dsp/arp_seq.h"
 #include "dsp/mfx.h"
+#include "dsp/krec.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,7 +34,11 @@ enum {                               /* what an ISR posts */
 };
 enum {                               /* the FM1's transport buttons, outside spec 2's 10 section buttons */
     UITR_PLAY,                       /* from any page: SEQ starts / stops the MAQ, ARP the ARP, any other page both */
-    UITR_REC,                        /* 7.2: SEQ page, enter / leave single-step record; ARP page, arm / disarm record */
+    UITR_REC,                        /* 7.2: SEQ page, enter / leave single-step record; ARP page, arm / disarm record;
+                                      * any other page, the REC page's loop (krec_tap; EMPTY: opens the page, armed). The
+                                      * panel sends it on REC's release there (ui_sm_rec_deferred) */
+    UITR_REC_UNDO,                   /* REC held (off SEQ / ARP): the loop's newest pass back */
+    UITR_REC_PAGE,                   /* HOME held + REC: the REC page */
     UITR_COUNT
 };
 /* ui_sm_seq_key mods: the FM1's octave buttons held with a selector key (7.1 loop boundaries) */
@@ -46,7 +51,7 @@ enum {                               /* the FM1's transport buttons, outside spe
 
 /* ------------------------------------------------------------ pages --- */
 enum {
-    UIPAGE_OSC1, UIPAGE_OSC2, UIPAGE_ATTACK, UIPAGE_OSCMIX,       /* FX (ATTACK: STRIKE only, 2026-10-16) */
+    UIPAGE_OSC1, UIPAGE_OSC2, UIPAGE_OSCMIX,                      /* FX (ATTACK went with STRIKE, 2026-11-04) */
     UIPAGE_FILTER1, UIPAGE_FILTER2, UIPAGE_FLTMIX,                /* SEL */
     UIPAGE_ENV1, UIPAGE_ENV2, UIPAGE_ENV3,                        /* ENV */
     UIPAGE_LFO1, UIPAGE_LFO2, UIPAGE_LFO3,                        /* LFO */
@@ -60,6 +65,8 @@ enum {
     UIPAGE_ARP,                                                   /* ARP: 8.2 */
     UIPAGE_SAVE_COMMIT,                                           /* SAVE: 6.2 */
     UIPAGE_SEQ,                                                   /* SEQ: 7.4 footer of the active lane */
+    UIPAGE_REC,                                                   /* REC (2026-11-04): the scratch-pad loop, no section
+                                                                   * button: REC opens it (HOME held + REC with a loop) */
     UIPAGE_COUNT
 };
 #define UI_HOME_NVIEW_MULTI 3u       /* 5.3: DUAL / SPLIT have Views 1..3; View 1 / 2 is shown by layer focus */
@@ -180,6 +187,10 @@ typedef struct {
     void *slot_ctx;
     uint8_t perf_knob[UIPERF_COUNT]; /* 5.1 HOME knobs 1..3 as last sent (velocity, bend 64 = centre, mod wheel) */
     uint8_t mod_slot;                /* the MOD page's SLOT (knob 4), 0..NMODSLOT-1: the slot its knobs and sends edit */
+    Krec *rec;                       /* the REC page's loop (ui_sm_attach_rec); NULL: REC only on SEQ / ARP */
+    uint8_t rec_ask;                 /* the confirm popup asks DOUBLE (1) or CLEAR (2) for the loop; 0: not the loop's */
+    uint8_t rec_msg;                 /* a word over the loop for rec_msg_ms: 1 UNDO, 2 NOTHING TO UNDO, 3 FULL */
+    uint16_t rec_msg_ms;
     uint8_t sends_full;              /* 1: a send turned up found the pool full (the popup says so), until the next turn */
     /* the data the menu rows edit; owned by the caller, must stay valid while the machine runs */
     MasterPerformancePreset *perf;
@@ -371,6 +382,12 @@ const char *ui_sm_dtime_text(uint8_t v, char *buf);  /* DELAY TIME: "1/16T" or "
 /* 8.1 function keys: the black keys among the step keys, by the step key below them (G#4 LATCH .. F#5 ACCENT) */
 enum { ARPFN_LATCH, ARPFN_TIE, ARPFN_CLEAR, ARPFN_COPY, ARPFN_ACCENT, ARPFN_COUNT, ARPFN_NONE = 0xFF };
 
+/* hand the machine the REC page's recorder (dsp/krec.h) */
+void ui_sm_attach_rec(UIStateMachine *sm, Krec *rec);
+/* 1: REC acts on its release here (the loop's: a tap, or held, UNDO); 0: on its press (SEQ, ARP, a popup) */
+uint8_t ui_sm_rec_deferred(const UIStateMachine *sm);
+/* the REC page's rows (TRANSPOSE, QUANTIZE, DOUBLE, CLEAR): the row the cursor is on, UI_FOCUS_NONE for none */
+#define UIREC_NROWS 4u
 /* hand the machine the ARP engine (chord keys sound through it, and set its transposition) */
 void ui_sm_attach_arp(UIStateMachine *sm, CarpSeq *carp);
 

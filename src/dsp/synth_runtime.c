@@ -9,12 +9,13 @@
 #include "lfo.h"
 #include "midi_clock.h"
 #include "preset.h"
-#include "attacks.h"
 #include "amplifier.h"
 #include "fx.h"
 #include "mfx.h"
 #include "maq_seq.h"
 #include "arp_seq.h"
+#include "krec.h"
+#include "hardware/mem_section.h"     /* the recorder's loop in .pool */
 #include "dsp_cold.h"
 
 #define Q15_MAX 32767
@@ -72,6 +73,8 @@ static struct { uint32_t at; uint8_t st, d1, d2; } ext_q[EXT_Q_MAX];
 static uint8_t ext_h, ext_n;
 static MaqSeq maq;                             /* the MAQ 16/4 sequencer (spec 7), clocked from the render below */
 static CarpSeq carp;                           /* the ARP chord pattern (spec 8), on the same clock (its own transport) */
+static Krec krec SYNTH_POOL;                   /* the REC page's loop (2026-11-04), on the same clock */
+static void rt_rec_out(uint8_t status, uint8_t data1, uint8_t data2);
 
 static int32_t clamp_q15_64(int64_t value)
 {
@@ -279,18 +282,6 @@ SYNTH_COLD static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note
     v->snap = 1;
     analog_note_on(&v->analog);                /* ANALOG: this note's own small pitch and speed offsets */
     v->osc1.pcm.trig = v->osc2.pcm.trig = 1;   /* a PCM wave's attack starts at the next tick (pcm_osc.c) */
-    if (arch == VARCH_STRIKE) {                /* the attack starts over with the note (a legato note keeps it) */
-        const AttackInfo *ai = &attack_info[e->oscmix.atk_sample % ATK_COUNT];
-        v->atk_sample = (uint8_t)(e->oscmix.atk_sample % ATK_COUNT);
-        v->atk_p = attack_data + ai->offset;
-        v->atk_pos = ((uint32_t)ai->length * e->oscmix.atk_start / 254u) << 16;   /* ATK START: up to halfway in */
-        v->atk_end = (uint32_t)(ai->length - 1u) << 16;
-        v->atk_fade = 1.f;
-        v->atk_tt = 0xFFFFu;                   /* (the step is worked out on the first tick) */
-        v->atk_glide = (e->oscmix.atk_bend != 64u || e->oscmix.atk_bend_mod_amt != 64u) ? 1.f : 0.f;   /* BEND */
-    } else {
-        v->atk_p = NULL;
-    }
 
     v->age_counter = 0;
     v->release_boost_q15 = boost;
@@ -464,7 +455,6 @@ SYNTH_COLD void synth_init(void)
     lfo_tables_init();                         /* (the LFO shapes' RAM tables, before anything reads one) */
     global_init();
     preset_defaults();
-    voice_attack_init();
     pcm_osc_init();
     synth_restart();
 }
@@ -485,6 +475,7 @@ SYNTH_COLD void synth_restart(void)
     ext_h = ext_n = 0;
     maq_init(&maq, seq_lanes, &perf_state, rt_seq_out);     /* its notes and controllers take the MIDI path */
     carp_init(&carp, &arp_state, &perf_state, rt_arp_out);
+    krec_init(&krec, rt_rec_out);
     sample_clock = AUTO_DECAY_WINDOW;          /* the first note counts as an isolated one */
     limit_env_q8 = (int32_t)LIMIT_CEILING << 8;
     layer_ctrl_left = 0;
@@ -523,6 +514,7 @@ void synth_midi_3(uint8_t status, uint8_t data1, uint8_t data2)
 /* the sequencers' MIDI out, each note tagged with its source (VSRC_*) */
 static void rt_seq_out(uint8_t status, uint8_t data1, uint8_t data2) { midi_in(status, data1, data2, VSRC_SEQ); }
 static void rt_arp_out(uint8_t status, uint8_t data1, uint8_t data2) { midi_in(status, data1, data2, VSRC_ARP); }
+static void rt_rec_out(uint8_t status, uint8_t data1, uint8_t data2) { midi_in(status, data1, data2, VSRC_REC); }
 
 void synth_midi_at(uint32_t delay, uint8_t status, uint8_t data1, uint8_t data2)
 {
@@ -552,6 +544,8 @@ SYNTH_COLD static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2, 
         return;
     }
     if (!channel_routed(channel)) return;          /* not on a layer's channel */
+    if (src == VSRC_KEYS)                          /* the keys (the panel's, MIDI in): the REC page's loop hears them */
+        krec_input(&krec, status, data1, data2, sample_clock);
 
     if (kind == 0x90u && data2 != 0u) {
         int32_t weight[NLAYER];
@@ -763,6 +757,9 @@ static uint8_t seq_frame(uint32_t clock, int late, uint32_t pulses_before)
     maq_set_ext_transpose(&maq, carp_maq_transpose(&carp));   /* 8.4: the MAQ reads it on the next frame */
     maq_set_sync(&maq, carp_running(&carp), carp_origin(&carp));   /* (.. and the ARP's bar, for a start) */
     maq_set_genre(&maq, arp_state.current_genre_bank);       /* (SCALE = GENRE lanes follow it) */
+    krec_set_sync(&krec, (uint8_t)(maq_free_running(&maq) | carp_running(&carp)),   /* (a loop starts on their bar) */
+                  maq_free_running(&maq) ? maq_origin(&maq) : carp_origin(&carp));
+    idle &= krec_frame(&krec, clock);          /* the REC page's loop */
     return idle;
 }
 
@@ -773,9 +770,11 @@ static uint8_t seq_frame(uint32_t clock, int late, uint32_t pulses_before)
 static uint8_t seq_next_due(uint32_t *wake)
 {
     uint32_t a, b;
-    uint8_t ha = maq_next_due(&maq, &a), hb = carp_next_due(&carp, &b);
+    uint32_t c;
+    uint8_t ha = maq_next_due(&maq, &a), hb = carp_next_due(&carp, &b), hc = krec_next_due(&krec, &c);
     *wake = ha && (!hb || (int32_t)(a - b) < 0) ? a : b;
-    return (uint8_t)(ha | hb);
+    if (hc && (!(ha | hb) || (int32_t)(c - *wake) < 0)) *wake = c;
+    return (uint8_t)(ha | hb | hc);
 }
 
 /* Every voice through the frame before `frame`: called before the global work changes what the voices read. */
@@ -1017,6 +1016,7 @@ void synth_render_q15(int32_t *out, uint32_t frames)
         out += 2u * n;
         frames -= n;
     }
+    krec.frame_now = sample_clock;             /* (where the REC page's taps act, between renders) */
 }
 
 #if !defined(FELUCCA_ID)
@@ -1035,6 +1035,8 @@ void synth_levels(int32_t out[4])
 }
 
 CarpSeq *synth_arp(void) { return &carp; }
+Krec *synth_rec(void) { return &krec; }
+uint32_t synth_frame(void) { return sample_clock; }
 
 #if !defined(FELUCCA_ID)
 void synth_web_render(uint32_t frames)
