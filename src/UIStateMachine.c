@@ -338,7 +338,13 @@ static const UiRow MOD_ROWS[] = {
  * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]) */
 static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS",
                                                               "TAPE FLANGER", "BBD FLANGER", "PITCH SHIFT",
-                                                              "BBD ECHO", "BRONZE AGE"};
+                                                              "BBD ECHO", "BRONZE AGE", "PHASE+FLANGE", "WIND HARP",
+                                                              "RINGING STONES"};
+static const char *const MFX_RS_ROOT_NAMES[24] = {"C2", "C#2", "D2", "D#2", "E2", "F2", "F#2", "G2", "G#2", "A2", "A#2",
+                                                  "B2", "C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3", "G#3", "A3",
+                                                  "A#3", "B3"};
+static const char *const MFX_RS_CHORD_NAMES[MFX_RS_CHORDS] = {"FIFTHS", "MINOR", "MAJOR", "SUS4", "MINOR 7", "PHRYGIAN",
+                                                              "OCTAVES"};
 static const char *const MFX_BF_MODE_NAMES[MFX_BF_MODES] = {"FLANGER I", "FLANGER II", "FLANGER III", "CHORUS"};
 /* PITCH SHIFT's PITCH (a list knob, 0..24): semitones */
 static const char *const MFX_PS_PITCH_NAMES[25] = {"-12", "-11", "-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2",
@@ -357,12 +363,18 @@ static const UiRow MFX_ROWS[] = {
      MT(TAPE_FLANGER) | MT(BBD_FLANGER)},
     {"SPREAD", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(PITCH_SHIFT)},
     {"L/R PHASE", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(STONE_PHASER) | MT(TAPE_FLANGER)},
-    {"COLOUR", (uint8_t)(OFS(MfxParams, row) + MFX_R_COLOUR), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(ENS_PHASER)},
+    {"COLOUR", (uint8_t)(OFS(MfxParams, row) + MFX_R_COLOUR), 0, VAL_MAX, RK_BYTE, 0, NULL,
+     MT(ENS_PHASER) | MT(PHASE_FLANGE)},
     {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE), 0, VAL_MAX, RK_BYTE, 0, NULL,
      MT(ENS_PHASER) | MT(CHORUS) | MT(PITCH_SHIFT)},
     {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE2), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(BBD_ECHO)},
+    {"ROOT", (uint8_t)(OFS(MfxParams, row) + MFX_R_RS_ROOT), 0, 23, RK_BYTE, 0, MFX_RS_ROOT_NAMES,
+     MT(WIND_HARP) | MT(RINGING_STONES)},
+    {"CHORD", (uint8_t)(OFS(MfxParams, row) + MFX_R_RS_CHORD), 0, MFX_RS_CHORDS - 1, RK_BYTE, 0, MFX_RS_CHORD_NAMES,
+     MT(WIND_HARP) | MT(RINGING_STONES)},
     {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL,
-     MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS) | MT(BBD_ECHO)},
+     MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS) | MT(BBD_ECHO) | MT(PHASE_FLANGE) | MT(WIND_HARP) |
+     MT(RINGING_STONES)},
     {"LEVEL", (uint8_t)(OFS(MfxParams, row) + MFX_R_MT_LEVEL), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(METAL)},
     {"LOW", (uint8_t)(OFS(MfxParams, row) + MFX_R_MT_LOW), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, MT(METAL)},
 };
@@ -632,6 +644,10 @@ static const UiKnob MFX_KNOBS[MFX_OFFERED][4] = {
      UIK("ENV", (uint8_t)(OFS(MfxParams, knob) + MFX_K_QE_ENV), UIKNOB_BIP), KMFX(MFX_K_QE_MIX, "MIX")},
     {KMFX(MFX_K_MT_DIST, "DIST"), UIK("HIGH", (uint8_t)(OFS(MfxParams, knob) + MFX_K_MT_HIGH), UIKNOB_BIP),
      UIK("MIDDLE", (uint8_t)(OFS(MfxParams, knob) + MFX_K_MT_MIDDLE), UIKNOB_BIP), KMFX(MFX_K_MT_FREQ, "MID FREQ")},
+    {KMFX(MFX_K_PF_PH_RATE, "PHS RATE"), KMFX(MFX_K_PF_FL_RATE, "FLG RATE"), KMFX(MFX_K_PF_CENTER, "CENTER"),
+     KMFX(MFX_K_PF_FEEDBACK, "FEEDBACK")},
+    {KMFX(MFX_K_RS_DECAY, "DECAY"), KMFX(MFX_K_RS_TONE, "TONE"), KMFX(MFX_K_RS_AGE, "AGE"), KMFX(MFX_K_RS_MIX, "MIX")},
+    {KMFX(MFX_K_RS_DECAY, "DECAY"), KMFX(MFX_K_RS_TONE, "TONE"), KMFX(MFX_K_RS_AGE, "AGE"), KMFX(MFX_K_RS_MIX, "MIX")},
 };
 #undef KMFX
 /* MIX: knob 1 BALANCE (DUAL / SPLIT) or DRY/WET (SINGL), the same byte (fx_live) */
@@ -983,6 +999,10 @@ static void mfx_type_set(MfxParams *m, uint8_t t)
         {99, 35, 92, 55, 40, 0, 30},      /* BBD ECHO: a 60 ms slap, a few repeats, the clock swooping up on hard
                                            * notes, a little wide, a little worn */
         {100, 64, 64, 64, 0, 64, 64},     /* BRONZE AGE: much DIST, the EQ flat, LEVEL near the dry's */
+        {35, 25, 50, 70, 64, 0, 60},      /* PHASE+FLANGE: a slow phaser (~0.3 Hz) into a slow resonant jet, some
+                                           * COLOUR, the sides apart */
+        {100, 70, 40, 70, 100, 9, 1},     /* WIND HARP: A minor strings ringing ~8 s, a little worn, wide */
+        {100, 60, 30, 70, 100, 0, 0},     /* RINGING STONES: C fifths, ~8 s, wide */
     };
     uint8_t i;
     if (t == m->type || t >= MFX_OFFERED)

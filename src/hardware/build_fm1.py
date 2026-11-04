@@ -52,6 +52,56 @@ def usb_c(b, gen):
     return out
 
 
+FONT_TEXT = ["src/hardware/synth_main_fm1.c"]     # Carnac's sources that draw in FONT_S (with X0X's app/panel.c)
+
+
+def font_subset(b):
+    """FONT_S cut to the glyphs the firmware can draw (2026-11-04): the X0X screens Carnac keeps (crash, SAFE MODE, the
+    restart note, the calibration) write only string literals and hex numbers, all capitals. The face keeps 32..96
+    (so glyph() folds lower case to upper: last < 'a'); a glyph no literal uses keeps its advance but no bitmap (a
+    blank). X0X's generated felucca_font.h is rewritten in its build dir; its sources stay as they are."""
+    import re
+    texts = [(REPO / f).read_text(errors="replace") for f in FONT_TEXT]
+    texts.append((b.FW / "src" / "app" / "panel.c").read_text(errors="replace"))
+    used = set("0123456789ABCDEF? ")
+    for t in texts:
+        for lit in re.findall(r'"((?:[^"\\\n]|\\.)*)"', t):
+            used |= set(lit.upper())
+    hdr = b.GEN / "felucca_font.h"
+    src = hdr.read_text()
+    arr = lambda name: re.search(r"static const (\w+) FONT_S_%s\[(\d+)\] = \{([^}]*)\};" % name, src)
+    m_data, m_off, m_adv, m_bw = arr("DATA"), arr("OFF"), arr("ADV"), arr("BW")
+    m_font = re.search(r"static const felucca_font_t FONT_S = \{ (\d+), (\d+), (\d+), (\d+), ", src)
+    if not all((m_data, m_off, m_adv, m_bw, m_font)):
+        raise SystemExit("build_fm1: X0X's felucca_font.h changed (FONT_S's arrays not found)")
+    h, first = int(m_font.group(1)), int(m_font.group(3))
+    data = [int(x, 0) for x in m_data.group(3).replace("\n", " ").split(",") if x.strip()]
+    off = [int(x) for x in m_off.group(3).split(",")]
+    adv = [int(x) for x in m_adv.group(3).split(",")]
+    bw = [int(x) for x in m_bw.group(3).split(",")]
+    last = 96
+    n = last - first + 1
+    nd, no, nb = [], [], []
+    for gi in range(n):
+        ch = chr(first + gi)
+        size = h * ((bw[gi] + 1) // 2)
+        if ch in used or ch == "?":
+            no.append(len(nd))
+            nd += data[off[gi]:off[gi] + size]
+            nb.append(bw[gi])
+        else:
+            no.append(0)
+            nb.append(0)
+    out = src
+    for m, name, typ, vals in ((m_data, "DATA", "uint8_t", nd), (m_off, "OFF", "uint16_t", no),
+                               (m_adv, "ADV", "uint8_t", adv[:n]), (m_bw, "BW", "uint8_t", nb)):
+        out = out.replace(m.group(0), "static const %s FONT_S_%s[%d] = {%s};" % (
+            typ, name, len(vals), ", ".join(str(v) for v in vals)))
+    out = out.replace(m_font.group(0), m_font.group(0).replace(", %s, " % m_font.group(4), ", %d, " % last))
+    hdr.write_text(out)
+    print(f"  ok    FONT_S cut to {sum(1 for x in nb if x)} glyphs: {len(data)} -> {len(nd)} B")
+
+
 def overlay(b, gen):
     """write the two unity files into X0X's build dir; returns them"""
     cut = []
@@ -140,14 +190,16 @@ def main():
         if r.returncode:
             sys.stderr.write(r.stdout + r.stderr)
             raise SystemExit("build_fm1: gen_font.py failed")
+        font_subset(b)
 
     def build_app():
         gen = b.OUT / "synth"
         gen.mkdir(parents=True, exist_ok=True)
         main_c, dsp_c = overlay(b, gen)
         inc = [f"-I{(REPO / d).as_posix()}" for d in ("src", "src/dsp", "src/hardware")]
-        flags = [*b.CFLAGS, *b.FPU, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen", *inc,
-                 f'-DFELUCCA_ID="{b.PRODUCT}"']
+        flags = [*b.CFLAGS, "-fdata-sections", *b.FPU, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen", *inc,
+                 f'-DFELUCCA_ID="{b.PRODUCT}"']           # (-fdata-sections, 2026-11-04: unused tables dropped by the
+                                                          # link's --gc-sections, as unused functions were)
         for i, img in enumerate(("pcm_area0.bin", "pcm_area1.bin", "wt_area2.bin", "wt_area3.bin")):
             hcrc = int.from_bytes((REPO / "src" / "dsp" / img).read_bytes()[28:32], "little")
             flags.append(f"-DPCM_WANT_HCRC{i}=0x{hcrc:08x}u")   # the waves this build ships (pcm_store_fm1.c)

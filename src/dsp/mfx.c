@@ -27,12 +27,19 @@
 #include "amplifier.h"                 /* amp_exp2f (no libm on the FM1) */
 #include "hardware/mem_section.h"      /* BBD ECHO's brigades in .pool */
 #include "dsp_cold.h"                  /* SYNTH_COLD: the settings and set-up code, built for size */
+#include "synth_prof.h"                /* the profile build: BRONZE AGE's passes timed */
 
 /* BULLROARER (the prototype, not offered) is left out of the FM1's build: its flash went to BBD ECHO (2026-11-03) */
 #if defined(FELUCCA_ID)
 #define MFX_HAS_BULLROARER 0
 #else
 #define MFX_HAS_BULLROARER 1
+#endif
+
+/* BRONZE AGE left out (-DMFX_HAS_METAL=0, 2026-11-04): a measuring build's flash only (the XIP is full); its type then
+ * runs dry */
+#ifndef MFX_HAS_METAL
+#define MFX_HAS_METAL 1
 #endif
 
 #define MFX_SR 44100.f
@@ -74,6 +81,9 @@ typedef struct { float key[6], n[2], fb, gd, gw, amt, hiss, wow, post, drive; Hr
 typedef struct { float gain, gbw, lo[4], mi[4], hi, out; } MtCo;   /* BRONZE AGE: the gain stage's gain and pole, LOW's
                                                                     * and MIDDLE's bells (a1, a2, a3, m1), HIGH, LEVEL */
 typedef struct { float key[6]; MtCo c; } MtSet;
+typedef struct { float key[7], c, d[2][3], g[2][3], kin[2][3], hz[2][3], t60, tone, hiss, wow, drive, gw, gd, xw;
+                 HrSvf f; float m[2][6][4]; } RsSet;   /* WIND HARP / RINGING STONES: the loop's one-pole, each
+                                                  * side's strings (delay, feedback, input), the stones' modes */
 
 /* the knobs k[0..n-1] against a set's key: 1 if they differ (and the key takes them) */
 static inline int mfx_moved(float *key, const float *k, int n)
@@ -102,20 +112,24 @@ typedef struct {
         struct { float f, sa, sb, xlim, ylim, hiss, pol, dpol; int32_t r0, rd, m0[2], md[2]; } tf;
                                              /* TAPE FLANGER: the decks' settings, the reference's read head and each
                                               * side's second deck's (16.16, start and step a frame) */
-        struct { HrSvf f; float fb, g0, g1, hiss; int32_t d0[2], dd[2]; uint8_t cross; } bf;
+        struct { HrSvf f; float fb, g0, g1, hiss, pc[2], pfb; int32_t d0[2], dd[2]; uint8_t cross; } bf;
                                              /* BBD FLANGER: the boards' filter, FEEDBACK, the delay's gain (with the
-                                              * POLARITY, ramped g0 -> g1), each side's read head; MODE III's crossing */
+                                              * POLARITY, ramped g0 -> g1), each side's read head; MODE III's crossing;
+                                             * PHASE+FLANGE: each side's phaser coefficient, COLOUR */
         struct { HrSvf f; float fb, gd, gw, hiss, slope[2]; int32_t mask; } ps;
                                              /* PITCH SHIFT: the converters' filter, FEEDBACK, the mix, each side's
                                               * head's pace (1 - ratio), AGE's bits */
         MtCo mt;                             /* BRONZE AGE */
+        struct { int32_t d[2][3]; } rs;      /* WIND HARP: each side's strings' read heads (16.16, the clock's
+                                              * wander in them) */
     } u;
 } MfxStep;
 #define MFX_STEPS (MFX_PASS_MAX / MFX_SUB)
 
 /* BRONZE AGE's circuit on a side: the filters before the gain stage, its pole, the half-band each way, the curve's
  * input and integral at the sample before, the filters after */
-typedef struct { float hp1, b1, b2, lp7, lp3, hp2, gb, up[6], dn[6], ux, uf, sh, p1[2], p2[2], lo[2], mi[2], hi; } MtZ;
+typedef struct { float hp1, b1, b2, lp7, lp3, hp2, gb, up[6], dn[6], ux, uf, ug, sh, p1[2], p2[2], lo[2], mi[2], hi; } MtZ;
+typedef struct { float lp[3], ms[6][2], a1, a2, b1, b2, env, prev, hp; } RsZ;   /* the resonators' on a side */
 
 /* a side's own state: what only its own run writes (on cache lines of its own: core 1 may run the right side) */
 typedef struct {
@@ -125,6 +139,9 @@ typedef struct {
         float f[256];                        /* the half-rate types' (2026-11-02: floats, no conversion a read; the
                                               * same bytes) */
         MtZ mt;                              /* BRONZE AGE (no line: its circuit's filters in the same bytes) */
+        RsZ rs;                              /* the resonators: the strings' loop
+                                              * one-poles, the stones' modes, the boards' filters, the level, the
+                                              * last wet (their lines: rs_line) */
     } line;
     float z[6], b1, x, sh, ctl;              /* STONE PHASER: the chain (the last input, each stage's last output);
                                               * B1's C11 (TPT state); X, the sample before (the loop); the shelf; the
@@ -152,6 +169,8 @@ typedef struct {
     float en_fast;                           /* ENSEMBLE: the tremolo oscillator's phase */
     float en_d[3];                           /* ... each line's delay at the last control step, samples */
     float ss_ctl, ss_lfo;                    /* ENS+PHASER: the OTAs' control current (0..1, glided), the LFO's phase */
+    float pf_ctl[2];                         /* PHASE+FLANGE: each side's phaser control (0..1, glided; the LFO:
+                                              * ss_lfo) */
     float br_wow, br_wow_to;                 /* the aging clock's drift, and where it heads */
     uint32_t br_rng, br_wow_n;               /* (its draws; BULLROARER's noise too) */
     uint32_t br_w;                           /* BULLROARER (run whole, on one core): the write place */
@@ -163,7 +182,8 @@ typedef struct {
     uint32_t tf_wow_n[2];
     float bf_d[2];                           /* BBD FLANGER: each side's delay at the last step (half-rate samples) */
     float bf_g;                              /* ... the delay's gain at the last step (POLARITY: ramped) */
-    float bf_in[2][MFX_PASS_MAX / 2u];       /* ... MODE III: both sides' half-rate input, for the crossed delays */
+    float bf_in[2][MFX_PASS_MAX / 2u];       /* ... MODE III: both sides' half-rate input, for the crossed delays
+                                              * (the resonators': WIDTH's crossing) */
     float kn[7];                             /* the knobs and the rows (lr, row[]), glided (0..127): a turn moves no
                                               * setting in steps */
     SpSet sp_set;                            /* each model's settings as last worked out from the knobs (MfxSet) */
@@ -175,6 +195,7 @@ typedef struct {
     PsSet ps_set;
     QeSet qe_set;
     MtSet mt_set;
+    RsSet rs_set;                            /* the resonators' */
     /* BBD ECHO (run whole in the plan: one brigade for both sides, qe_line) */
     float qe_acc, qe_u, qe_f;                /* the tick's input (4 frames summed), the filtered input at the last
                                               * tick, the clock's place between buckets */
@@ -219,7 +240,7 @@ void mfx_init(void)
 #define SP_XB (SP_KIN * SP_KP)
 
 /* STONE PHASER's step, for both sides (the plan): the settings, the gains' ramp, the LFO */
-static void sp_plan(MfxState *s, MfxStep *step, const float *k, float lr)
+static SYNTH_COLD void sp_plan(MfxState *s, MfxStep *step, const float *k, float lr)
 {
     /* RATE: the triangle 0.08 .. 25 Hz, even in octaves (the circuit's 1M pot spans 0.25 .. 25 Hz; slower added for
      * pads). FEEDBACK: the pot, reverse-log (most of its travel where the feedback is heard). */
@@ -543,7 +564,7 @@ static void hr_wow(MfxState *s, float amt)
 /* ENSEMBLE's step, for both sides (the plan): its settings, the control circuit (C1, C2, the inverter's C3), the
  * clocks' wander, each board's read head. fast: the tremolo oscillator, Hz (ENSEMBLE: the unit's EN_FAST; ENS+PHASER:
  * following ENS RATE). out: the output gain */
-static void en_plan(MfxState *s, MfxStep *step, const float *k, float lr, float fast, float out)
+static SYNTH_COLD void en_plan(MfxState *s, MfxStep *step, const float *k, float lr, float fast, float out)
 {
     EnSet *st = &s->en_set;
     const float kk[4] = {k[MFX_K_AGE], k[MFX_K_RATE], k[MFX_K_SHIMMER], k[MFX_K_DEPTH]};
@@ -671,7 +692,7 @@ static void en_side(MfxState *s, int ch, float *y)
 #define SS_OUT 1.41f                             /* output trim: pink noise +2 dB, as STONE PHASER (a pad ~1 dB under dry) */
 
 /* ENS+PHASER's step (the plan): the ensemble's, with its knobs folded, then the phaser's control and COLOUR */
-static void ep_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
+static SYNTH_COLD void ep_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
 {
     float ke[4];
     ke[MFX_K_AGE] = row[MFX_R_AGE];
@@ -719,7 +740,7 @@ static void ep_plan(MfxState *s, MfxStep *step, const float *k, const float *row
 #define CH_OUT 1.0f                              /* the wet's trim (test_mfx: the level) */
 
 /* CHORUS's step, for both sides (the plan) */
-static void ch_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
+static SYNTH_COLD void ch_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
 {
     ChSet *st = &s->ch_set;
     const float kk[5] = {k[MFX_K_CH_RATE], k[MFX_K_CH_DEPTH], k[MFX_K_CH_DELAY], k[MFX_K_CH_MIX], row[MFX_R_AGE]};
@@ -839,7 +860,7 @@ static inline void tf_head(float a, float d, uint32_t m, int32_t *h0, int32_t *d
 }
 
 /* TAPE FLANGER's step, for both sides (the plan): the settings, the thumb, both decks' wobbles, the read heads */
-static void tf_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
+static SYNTH_COLD void tf_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
 {
     TfSet *st = &s->tf_set;
     const float kk[2] = {k[MFX_K_TF_RATE], k[MFX_K_TF_TAPE]};
@@ -997,7 +1018,7 @@ static int bf_mode(const float *row)
 }
 
 /* BBD FLANGER's step, for both sides (the plan) */
-static void bf_plan(MfxState *s, MfxStep *step, const float *k, const float *row)
+static SYNTH_COLD void bf_plan(MfxState *s, MfxStep *step, const float *k, const float *row)
 {
     BfSet *st = &s->bf_set;
     const float kk[4] = {k[MFX_K_BF_CENTER], k[MFX_K_BF_RATE], k[MFX_K_BF_DEPTH], k[MFX_K_BF_FEEDBACK]};
@@ -1088,6 +1109,90 @@ static void bf_side(MfxState *s, int ch, float *y)
     sd->rng = rng;
 }
 
+/* ---- PHASE+FLANGE ---- */
+/* The cheap combo (2026-11-04, the user's: "a cheap phaser into cheap flanger, or vice-versa"): ENS+PHASER's
+ * four-stage OTA phaser and BBD FLANGER's brigade in one half-rate loop a side, so the whole effect lives in the
+ * brigade's band (~10 kHz: the trade that makes it cheap; the dry is not added at the full rate). The phaser comes
+ * first; after the flanger it measured the same to 0.1 dB (two linear filters commute: the order only tells with
+ * something nonlinear between), so there is no ORDER. The flanger is BBD FLANGER's FLANGER II (the sides swept
+ * against each other), its DEPTH held; the phaser sweeps its whole range, the right side WIDTH behind. Knobs: PHASE
+ * RATE, FLANGE RATE, CENTER, FEEDBACK. Rows: COLOUR (the phaser's feedback), WIDTH. */
+#define PF_DEPTH 80.f                            /* the flanger's DEPTH, held */
+#define PF_OUT 1.4f                              /* the output's level: the two sweeps' notches together take ~8 dB
+                                                  * of a held tone in the middle (sines 220 .. 1760 Hz), ~4 made up
+                                                  * (more and everything full runs past the bound: test_mfx) */
+
+/* its step (the plan): BBD FLANGER's, then the phaser's control on each side and COLOUR */
+static SYNTH_COLD void pf_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
+{
+    const float kf[4] = {k[MFX_K_PF_CENTER], k[MFX_K_PF_FL_RATE], PF_DEPTH, k[MFX_K_PF_FEEDBACK]};
+    const float rf[2] = {(float)MFX_BF_FLANGER2, 0.f};
+    bf_plan(s, step, kf, rf);
+    const float rate = 0.04f * amp_exp2f(k[MFX_K_PF_PH_RATE] * (7.966f / 127.f));
+    for (int j = 0; j < 2; j++) {
+        float ph = s->ss_lfo - (j ? lr * (0.5f / 127.f) : 0.f);
+        if (ph < 0.f) ph += 1.f;
+        const float want = ph < 0.5f ? 2.f * ph : 2.f - 2.f * ph;
+        s->pf_ctl[j] += (want - s->pf_ctl[j]) * (0.0155f * (float)step->m / (float)MFX_SUB);
+        const float t = hr_tan(SS_F_LO + (SS_F_HI - SS_F_LO) * s->pf_ctl[j]);
+        step->u.bf.pc[j] = (1.f - t) / (1.f + t);
+    }
+    step->u.bf.pfb = SS_FB * row[MFX_R_COLOUR] * (1.f / 127.f);
+    s->ss_lfo += rate * (float)step->m * (1.f / MFX_SR);
+    if (s->ss_lfo >= 1.f) s->ss_lfo -= 1.f;
+}
+
+/* PHASE+FLANGE on one side (ch), y in place: each pair of frames into one half-rate sample, the phaser and the
+ * flanger, back up all wet */
+static void pf_side(MfxState *s, int ch, float *y)
+{
+    MfxSide *sd = &s->side[ch];
+    float *line = sd->line.f;
+    float a1 = sd->flt[0], a2 = sd->flt[1], b1 = sd->flt[2], b2 = sd->flt[3], env = sd->env, fbv = sd->fbv;
+    float z0 = sd->ss_z[0], z1 = sd->ss_z[1], z2 = sd->ss_z[2], z3 = sd->ss_z[3], z4 = sd->ss_z[4];
+    uint32_t w = sd->w, rng = sd->rng;
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MfxStep *step = &s->plan[k];
+        const uint32_t m = step->m, mp = m >> 1;
+        const HrSvf f = step->u.bf.f;
+        const float fb = step->u.bf.fb, hiss = step->u.bf.hiss, g = step->u.bf.g1, c = step->u.bf.pc[ch];
+        const float pfb = step->u.bf.pfb;
+        float wet[MFX_SUB / 2];
+        int32_t hd = step->u.bf.d0[ch];
+        const int32_t dd = step->u.bf.dd[ch];
+        for (uint32_t i = 0; i < mp; i++) {
+            float x = 0.5f * (y[2u * i] + y[2u * i + 1u]), v, o;
+            float av = x < 0.f ? -x : x;                       /* the hiss rides the level */
+            env += (av > env ? 0.04f : 0.001f) * (av - env);
+#define PF_PHASE(X) do { \
+                v = (X) + pfb * z4;                            /* COLOUR: the chain's end back to its start */ \
+                o = c * (v + z1) - z0; z0 = v; \
+                v = c * (o + z2) - z1; z1 = o; \
+                o = c * (v + z3) - z2; z2 = v; \
+                v = c * (o + z4) - z3; z3 = o; z4 = v; \
+                (X) = 0.5f * ((X) + v); \
+            } while (0)
+            PF_PHASE(x);
+            float a = hr_lp(&f, x + fb * fbv, &a1, &a2);       /* the input and the FEEDBACK into the brigade */
+            line[w] = br_sat(a * BR_SCALE) * BF_UN;
+            hd += dd;
+            HrTap t = hr_at(w, hd);
+            rng = rng * 1664525u + 1013904223u;
+            fbv = hr_lp(&f, hr_read(line, &t) + env * hiss * (float)(int32_t)rng, &b1, &b2);
+#undef PF_PHASE
+            wet[i] = BF_MIX * x + g * fbv;                     /* the direct and the delay */
+            w = (w + 1u) & (HR_LEN - 1u);
+        }
+        hr_up(y, wet, m, &sd->prev, PF_OUT, 0.f);
+        y += m;
+    }
+    sd->flt[0] = a1; sd->flt[1] = a2; sd->flt[2] = b1; sd->flt[3] = b2;
+    sd->env = env; sd->fbv = fbv;
+    sd->ss_z[0] = z0; sd->ss_z[1] = z1; sd->ss_z[2] = z2; sd->ss_z[3] = z3; sd->ss_z[4] = z4;
+    sd->w = w;
+    sd->rng = rng;
+}
+
 /* ---- PITCH SHIFT ---- */
 /* The late-70s digital pitch changer: the input written into a short memory, a read head moving through it at the
  * pitch ratio's pace (its delay grows by 1 - ratio a sample). When it runs out of memory (up: it catches the writer;
@@ -1110,7 +1215,7 @@ static void bf_side(MfxState *s, int ch, float *y)
 #define PS_UN (1.f / (1.5f * 32767.f * BR_SCALE))   /* the line's level back to the bus's (br_sat's slope 1.5) */
 
 /* PITCH SHIFT's step, for both sides (the plan) */
-static void ps_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
+static SYNTH_COLD void ps_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
 {
     PsSet *st = &s->ps_set;
     const float kk[6] = {k[MFX_K_PS_PITCH], k[MFX_K_PS_FINE], k[MFX_K_PS_FEEDBACK], k[MFX_K_PS_MIX], lr, row[MFX_R_AGE]};
@@ -1376,7 +1481,7 @@ SYNTH_COLD float mfx_peek(int layer, int i)
     if (t == MFX_ENS_PHASER && i == 5) return s->ss_ctl;
     if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && i >= 0 && i < 3) return s->en_d[i] * (1.f / EN_DMAX);
     if (t == MFX_CHORUS && i >= 0 && i < 2) return s->side[i].ch_d * (1.f / EN_DMAX);
-    if (t == MFX_BBD_FLANGER && i >= 0 && i < 2) {   /* each side's delay, on CENTER's scale (octaves from its least) */
+    if ((t == MFX_BBD_FLANGER || t == MFX_PHASE_FLANGE) && i >= 0 && i < 2) {   /* each side's delay, on CENTER's scale (octaves from its least) */
         union { float f; uint32_t u; } v = {s->bf_d[i] * (1.f / BF_DMIN)};
         float m = (float)(v.u & 0x7FFFFFu) * (1.f / 8388608.f);           /* log2: the exponent, the mantissa's curve */
         float l2 = (float)((int32_t)(v.u >> 23) - 127) + m * (1.3465f - 0.3465f * m);
@@ -1443,23 +1548,24 @@ SYNTH_COLD float mfx_peek(int layer, int i)
 #define MT_RIS (2200.f * 2.52e-9f)               /* R033 x Is */
 #define MT_NVT 0.04529f                          /* n Vt (1.752 x 25.85 mV) */
 #define MT_HP1 0.00750202f                       /* 106 Hz (the TPT one-poles: g / (1 + g)) */
-#define MT_PA1 0.97032993f                       /* the 1 kHz gyrator (a TPT state-variable filter, Q 2.8) */
-#define MT_PA2 0.06924146f
-#define MT_PA3 0.00494098f
-#define MT_PRE_B (22.f / 2.8f)                   /* ... its gain at the peak (its band output peaks at Q) */
+#define MT_PB0 1.54404004f                       /* the 1 kHz gyrator (Q 2.8, gain 1 + 22 at the peak), a biquad: */
+#define MT_PB2 0.406501775f                      /* the TPT state-variable filter's x + 22/2.8 band as it was (the */
+#define MT_PA1 -1.9307779f                       /* same bilinear transform; b1 = a1), 8 operations instead of 13 */
+#define MT_PA2 0.950541818f                      /* (2026-11-04) */
 #define MT_LP7 0.36159913f                       /* 7.2 kHz */
 #define MT_LP3 0.02365263f                       /* 340 Hz */
 #define MT_HP2 0.00342397f                       /* 48 Hz */
 #define MT_SH 0.15254377f                        /* the post-clipping shelf, 2.5 kHz ... */
 #define MT_SHK 0.31622777f                       /* ... down 10 dB */
-#define MT_P1A1 0.99869906f                      /* the 105 Hz gyrator (Q 6) */
-#define MT_P1A2 0.00747039f
+#define MT_P1A1 0.99869906f                      /* the 105 Hz gyrator (Q 6): kept a TPT state-variable filter (a */
+#define MT_P1A2 0.00747039f                      /* biquad in floats, this low and sharp: noise -58 dB, not -107; and
+                                                  * the bells, swept, stay ones: they glide smoothly) */
 #define MT_P1A3 0.00005588f
 #define MT_P1B (2.98107f / 6.f)                  /* ... +12 dB */
-#define MT_P2A1 0.77057953f                      /* the 4.9 kHz gyrator (Q 2.2) */
-#define MT_P2A2 0.28034368f
-#define MT_P2A3 0.10199153f
-#define MT_P2B (2.98107f / 2.2f)
+#define MT_P2B0 1.37987461f                      /* the 4.9 kHz gyrator (Q 2.2, +12 dB), a biquad as MT_PB0 .. */
+#define MT_P2B2 0.365267497f
+#define MT_P2A1 -1.33717602f
+#define MT_P2A2 0.745142104f
 #define MT_G105 0.00748012f                      /* LOW's frequency: tan(pi 105 / fs) */
 #define MT_HI 0.22655884f                        /* HIGH's corner, 4 kHz */
 #define MT_OUT 3600.f                            /* volts back into bus units at LEVEL 64: a little over a typical
@@ -1469,6 +1575,7 @@ SYNTH_COLD float mfx_peek(int layer, int i)
 #define MT_C2 0.5844608270f
 #define MT_C3 0.8541800687f
 
+#if MFX_HAS_METAL
 static float mt_g[MT_N + 1] SYNTH_POOL;          /* the clipping curve at 0, MT_H .. MT_U volts in */
 static float mt_f[MT_N + 1] SYNTH_POOL;          /* ... its integral (exact for the curve read linearly between) */
 static uint8_t mt_ready;
@@ -1492,25 +1599,22 @@ static SYNTH_COLD void mt_table(void)
     mt_ready = 1u;
 }
 
-/* the curve at x, and its integral (even) */
-static inline __attribute__((always_inline)) float mt_curve(float x)
-{
-    float a = x < 0.f ? -x : x, t = a * ((float)MT_N / MT_U), g;
-    if (t >= (float)MT_N) g = mt_g[MT_N];
-    else {
-        int i = (int)t;
-        g = mt_g[i] + (t - (float)i) * (mt_g[i + 1] - mt_g[i]);
-    }
-    return x < 0.f ? -g : g;
-}
-static inline __attribute__((always_inline)) float mt_int(float x)
+/* the integral at x (even), and the curve there (*g, odd) from the same lookup (flat past the table: the high gain's
+ * usual case, kept a branch of its own: the FM1 measured it the cheaper, 2026-11-04) */
+static inline __attribute__((always_inline)) float mt_int(float x, float *g)
 {
     float a = x < 0.f ? -x : x, t = a * ((float)MT_N / MT_U);
-    if (t >= (float)MT_N) return mt_f[MT_N] + mt_g[MT_N] * (a - MT_U);
+    if (t >= (float)MT_N) {
+        *g = x < 0.f ? -mt_g[MT_N] : mt_g[MT_N];
+        return mt_f[MT_N] + mt_g[MT_N] * (a - MT_U);
+    }
     int i = (int)t;
-    float fr = t - (float)i, g0 = mt_g[i];
-    return mt_f[i] + MT_H * fr * (g0 + 0.5f * fr * (mt_g[i + 1] - g0));
+    float fr = t - (float)i, g0 = mt_g[i], dg = mt_g[i + 1] - g0, gx = g0 + fr * dg;
+    *g = x < 0.f ? -gx : gx;
+    return mt_f[i] + MT_H * fr * (g0 + 0.5f * fr * dg);
 }
+
+#endif
 
 /* a bell's coefficients (a TPT state-variable filter: x + m1 band), g = tan(pi f / fs), its Q, the boost in dB */
 static SYNTH_COLD void mt_bell(float *c, float g, float q, float db)
@@ -1522,6 +1626,7 @@ static SYNTH_COLD void mt_bell(float *c, float g, float q, float db)
     c[3] = k * (a * a - 1.f);
 }
 
+#if MFX_HAS_METAL
 /* its settings from DIST, HIGH, MIDDLE, MID FREQ, LEVEL, LOW */
 static SYNTH_COLD void mt_settings(MtCo *c, const float *kk)
 {
@@ -1537,7 +1642,7 @@ static SYNTH_COLD void mt_settings(MtCo *c, const float *kk)
 }
 
 /* BRONZE AGE's step, for both sides (the plan) */
-static void mt_plan(MfxState *s, MfxStep *step, const float *k, const float *row)
+static SYNTH_COLD void mt_plan(MfxState *s, MfxStep *step, const float *k, const float *row)
 {
     MtSet *st = &s->mt_set;
     const float kk[6] = {k[0], k[1], k[2], k[3], row[MFX_R_MT_LEVEL], row[MFX_R_MT_LOW]};
@@ -1545,6 +1650,8 @@ static void mt_plan(MfxState *s, MfxStep *step, const float *k, const float *row
         mt_settings(&st->c, kk);
     step->u.mt = st->c;
 }
+
+#endif
 
 /* BRONZE AGE on a side runs as short passes over a control step (2026-11-03, after the FM1's first measure: +11.5
  * points a layer as one loop): each pass holds its few states and coefficients in registers (the FM1 has 16, floats
@@ -1558,17 +1665,24 @@ static void mt_plan(MfxState *s, MfxStep *step, const float *k, const float *row
         (S1) = 2.f * u2_ - (S1); \
         (OUT) = u1_; \
     } while (0)
+/* a peak / bell biquad (b1 = a1; transposed direct form II) on X into OUT, its state S0, S1 in locals */
+#define MT_BQ(X, B0, B2, A1, A2, S0, S1, OUT) do { \
+        float x_ = (X), y_ = (B0) * x_ + (S0); \
+        (S0) = (A1) * (x_ - y_) + (S1); \
+        (S1) = (B2) * x_ - (A2) * y_; \
+        (OUT) = y_; \
+    } while (0)
 
+#if MFX_HAS_METAL
 /* into the gain stage, y in place (bus units in, the gain stage's output in volts out): the 106 Hz high-pass and the
  * 1 kHz hump, then the 7.2 kHz and 340 Hz poles, 48 Hz, the gain stage's pole and gain */
 static void mt_pre(MtZ *z, const MtCo *c, float *y, uint32_t m)
 {
-    float hp1 = z->hp1, b1 = z->b1, b2 = z->b2, t, lp, x, bp;
+    float hp1 = z->hp1, b1 = z->b1, b2 = z->b2, t, lp, x;
     for (uint32_t i = 0; i < m; i++) {
         float v = y[i] * MT_VIN;
         t = (v - hp1) * MT_HP1; lp = t + hp1; hp1 = lp + t; x = v - lp;
-        MT_BAND(x, MT_PA1, MT_PA2, MT_PA3, b1, b2, bp);
-        y[i] = x + MT_PRE_B * bp;
+        MT_BQ(x, MT_PB0, MT_PB2, MT_PA1, MT_PA2, b1, b2, y[i]);
     }
     z->hp1 = hp1; z->b1 = b1; z->b2 = b2;
     float lp7 = z->lp7, lp3 = z->lp3, hp2 = z->hp2, gb = z->gb;
@@ -1584,10 +1698,12 @@ static void mt_pre(MtZ *z, const MtCo *c, float *y, uint32_t m)
     z->lp7 = lp7; z->lp3 = lp3; z->hp2 = hp2; z->gb = gb;
 }
 
-/* up to twice the rate: the half-band's two paths, u[2i] and u[2i + 1] */
-static void mt_up(MtZ *z, const float *y, float *u, uint32_t m)
+#endif
+
+/* up to twice the rate: the half-band's two paths, u[2i] and u[2i + 1] (its state st[6]) */
+static void mt_up(float *st, const float *y, float *u, uint32_t m)
 {
-    float s0 = z->up[0], s1 = z->up[1], s2 = z->up[2], s3 = z->up[3], s4 = z->up[4], s5 = z->up[5], o;
+    float s0 = st[0], s1 = st[1], s2 = st[2], s3 = st[3], s4 = st[4], s5 = st[5], o;
     for (uint32_t i = 0; i < m; i++) {
         const float x = y[i];
         o = MT_C0 * (x - s1) + s0; s0 = x;
@@ -1597,32 +1713,37 @@ static void mt_up(MtZ *z, const float *y, float *u, uint32_t m)
         s5 = MT_C3 * (o - s5) + s4; s4 = o;
         u[2u * i + 1u] = s5;
     }
-    z->up[0] = s0; z->up[1] = s1; z->up[2] = s2; z->up[3] = s3; z->up[4] = s4; z->up[5] = s5;
+    st[0] = s0; st[1] = s1; st[2] = s2; st[3] = s3; st[4] = s4; st[5] = s5;
 }
 
+#if MFX_HAS_METAL
 /* the curve over n samples at twice the rate, in place, anti-aliased: the integral's slope since the sample before
- * (the curve itself where they are too close for it; flat past the table, both at its end) */
+ * (where the two are too close for it, the curve's mean at them: the same to second order, with no lookup of its own
+ * (2026-11-04: silence was the dearer case); flat past the table, both at its end) */
 static void mt_clip(MtZ *z, float *u, uint32_t n)
 {
-    float xp = z->ux, fp = z->uf;
+    float xp = z->ux, fp = z->uf, gp = z->ug;
     for (uint32_t i = 0; i < n; i++) {
-        const float x = u[i], d = x - xp, f = mt_int(x);
-        float y;
+        float g, y;
+        const float x = u[i], d = x - xp, f = mt_int(x, &g);
         if ((x >= MT_U && xp >= MT_U) || (x <= -MT_U && xp <= -MT_U))
-            y = x > 0.f ? mt_g[MT_N] : -mt_g[MT_N];
+            y = g;
         else
-            y = d > 1e-4f || d < -1e-4f ? (f - fp) / d : mt_curve(0.5f * (x + xp));
+            y = d > 1e-4f || d < -1e-4f ? (f - fp) / d : 0.5f * (g + gp);
         u[i] = y;
         xp = x;
         fp = f;
+        gp = g;
     }
-    z->ux = xp; z->uf = fp;
+    z->ux = xp; z->uf = fp; z->ug = gp;
 }
 
+#endif
+
 /* back down: the half-band's two paths (the later sample through the first) */
-static void mt_down(MtZ *z, const float *u, float *y, uint32_t m)
+static void mt_down(float *st, const float *u, float *y, uint32_t m)
 {
-    float s0 = z->dn[0], s1 = z->dn[1], s2 = z->dn[2], s3 = z->dn[3], s4 = z->dn[4], s5 = z->dn[5], o;
+    float s0 = st[0], s1 = st[1], s2 = st[2], s3 = st[3], s4 = st[4], s5 = st[5], o;
     for (uint32_t i = 0; i < m; i++) {
         const float e0 = u[2u * i], e1 = u[2u * i + 1u];
         o = MT_C0 * (e1 - s1) + s0; s0 = e1;
@@ -1631,9 +1752,10 @@ static void mt_down(MtZ *z, const float *u, float *y, uint32_t m)
         s5 = MT_C3 * (o - s5) + s4; s4 = o;
         y[i] = 0.5f * (s2 + s5);
     }
-    z->dn[0] = s0; z->dn[1] = s1; z->dn[2] = s2; z->dn[3] = s3; z->dn[4] = s4; z->dn[5] = s5;
+    st[0] = s0; st[1] = s1; st[2] = s2; st[3] = s3; st[4] = s4; st[5] = s5;
 }
 
+#if MFX_HAS_METAL
 /* after, y in place: the treble shelf and the two gyrators; LOW and MIDDLE; HIGH, the rails, LEVEL */
 static void mt_post(MtZ *z, const MtCo *c, float *y, uint32_t m)
 {
@@ -1643,33 +1765,284 @@ static void mt_post(MtZ *z, const MtCo *c, float *y, uint32_t m)
         t = (x - sh) * MT_SH; lp = t + sh; sh = lp + t; x = lp + MT_SHK * (x - lp);
         MT_BAND(x, MT_P1A1, MT_P1A2, MT_P1A3, p10, p11, bp);
         x += MT_P1B * bp;
-        MT_BAND(x, MT_P2A1, MT_P2A2, MT_P2A3, p20, p21, bp);
-        y[i] = x + MT_P2B * bp;
+        MT_BQ(x, MT_P2B0, MT_P2B2, MT_P2A1, MT_P2A2, p20, p21, y[i]);
     }
     z->sh = sh; z->p1[0] = p10; z->p1[1] = p11; z->p2[0] = p20; z->p2[1] = p21;
-    float l0 = z->lo[0], l1 = z->lo[1], m0 = z->mi[0], m1 = z->mi[1];
-    const float la1 = c->lo[0], la2 = c->lo[1], la3 = c->lo[2], lg = c->lo[3];
-    const float ma1 = c->mi[0], ma2 = c->mi[1], ma3 = c->mi[2], mg = c->mi[3];
-    for (uint32_t i = 0; i < m; i++) {
-        x = y[i];
-        MT_BAND(x, la1, la2, la3, l0, l1, bp);
-        x += lg * bp;
-        MT_BAND(x, ma1, ma2, ma3, m0, m1, bp);
-        y[i] = x + mg * bp;
+    if (c->lo[3] != 0.f || c->mi[3] != 0.f) {     /* (LOW and MIDDLE at 64 add nothing: their band unrun, 2026-11-04) */
+        float l0 = z->lo[0], l1 = z->lo[1], m0 = z->mi[0], m1 = z->mi[1];
+        const float la1 = c->lo[0], la2 = c->lo[1], la3 = c->lo[2], lg = c->lo[3];
+        const float ma1 = c->mi[0], ma2 = c->mi[1], ma3 = c->mi[2], mg = c->mi[3];
+        for (uint32_t i = 0; i < m; i++) {
+            x = y[i];
+            MT_BAND(x, la1, la2, la3, l0, l1, bp);
+            x += lg * bp;
+            MT_BAND(x, ma1, ma2, ma3, m0, m1, bp);
+            y[i] = x + mg * bp;
+        }
+        z->lo[0] = l0; z->lo[1] = l1; z->mi[0] = m0; z->mi[1] = m1;
     }
-    z->lo[0] = l0; z->lo[1] = l1; z->mi[0] = m0; z->mi[1] = m1;
     float hi = z->hi;
     const float hg = c->hi, out = c->out;
-    for (uint32_t i = 0; i < m; i++) {
-        x = y[i];
-        t = (x - hi) * MT_HI; lp = t + hi; hi = lp + t; x += hg * (x - lp);
-        x = x > 4.f ? 4.f : x < -4.f ? -4.f : x;                     /* the EQ's op-amps at their rails */
-        y[i] = x * out;
-    }
+    if (hg != 0.f)
+        for (uint32_t i = 0; i < m; i++) {
+            x = y[i];
+            t = (x - hi) * MT_HI; lp = t + hi; hi = lp + t; x += hg * (x - lp);
+            x = x > 4.f ? 4.f : x < -4.f ? -4.f : x;                 /* the EQ's op-amps at their rails */
+            y[i] = x * out;
+        }
+    else                                                            /* (HIGH at 64: the shelf unrun) */
+        for (uint32_t i = 0; i < m; i++) {
+            x = y[i];
+            x = x > 4.f ? 4.f : x < -4.f ? -4.f : x;
+            y[i] = x * out;
+        }
     z->hi = hi;
 }
-#undef MT_BAND
+#endif
 
+/* ---- WIND HARP and RINGING STONES (the resonators) ---- */
+/* Two resonators tuned to a chord (2026-11-04, the user's: ROOT and CHORD rows, both kinds, "as though built from
+ * BBDs"): an imagined late-70s unit made of bucket brigades. Both run at a quarter of the rate (QR_SR, 11.025 kHz:
+ * 2026-11-04, the user's "much cheaper": an early-80s digital unit's band, ~4.5 kHz; at half rate they cost +9 / +11
+ * points a layer),
+ * their input through the boards' anti-alias filter, their resonance soft at the top of the brigades' headroom, the
+ * wet through the reconstruction filter, a hiss riding the level and the clock wandering (AGE: darker, hotter,
+ * hissier, the tuning drifting).
+ *  - WIND HARP: six strings, each a brigade in a loop (a comb: its delay one period, a one-pole in the loop: TONE),
+ *    the strings tuned to ROOT's chord; DECAY their ring. The lines are 16-bit buckets at half rate (a quarter of
+ *    full-rate floats: 6 KiB a layer).
+ *  - RINGING STONES: six struck stones (rock gongs), each a resonant mode at its note and its bar's first overtone
+ *    (x 2.76, ringing shorter); TONE how loud the overtone. No line: TPT band-pass modes.
+ * Each side rings half the chord (notes 1, 3, 5 left; 2, 4, 6 right), excited by its own input and the other side's
+ * by WIDTH (127 the sides apart, 0 both from their sum). Knobs: DECAY, TONE, AGE, MIX; rows: ROOT (C2 .. B3), CHORD,
+ * WIDTH. */
+#define RS_NS 3u                                 /* strings / stones a side */
+#define QR_SR (MFX_SR * 0.25f)
+#define RS_LEN 256u                              /* a string's brigade: C2 at a quarter rate is 168 buckets */
+#define RS_ROOT0 36                              /* ROOT 0: C2 (MIDI) */
+#define RS_OUT 0.46f                             /* the wet's level: played in key a resonance rings well over
+                                                  * noise (the renders: ~+8 dB), so set by the renders (pink noise at
+                                                  * MIX 64 then a few dB under: test_mfx) */
+#define RS_HP 0.01127010f                        /* the strings' input, 40 Hz up (TPT g / (1 + g) at QR_SR): a
+                                                  * comb rings at 0 Hz too, which a string does not */
+#define RS_STONE_OUT 0.28f
+#define RS_ENDLESS 124.f                         /* DECAY from here: endless */
+static const int8_t rs_chord[MFX_RS_CHORDS][6] = {
+    {0, 7, 12, 19, 24, 31},                      /* FIFTHS */
+    {0, 7, 12, 15, 19, 24},                      /* MINOR */
+    {0, 7, 12, 16, 19, 24},                      /* MAJOR */
+    {0, 5, 7, 12, 17, 19},                       /* SUS4 */
+    {0, 7, 10, 12, 15, 19},                      /* MINOR 7 */
+    {0, 1, 7, 12, 13, 19},                       /* PHRYGIAN */
+    {0, 12, 12, 24, 24, 36},                     /* OCTAVES */
+};
+static int16_t rs_line[2][2][RS_NS][RS_LEN] SYNTH_POOL;   /* [layer][side][string] */
+
+/* tan(pi fc / QR_SR) (a parabola sine's ratio, as hr_tan), and a TPT low-pass's coefficients at QR_SR */
+static SYNTH_COLD float qr_tan(float fc)
+{
+    float p = fc * (0.5f / QR_SR);
+    return br_sin(p) / br_sin(p + 0.25f);
+}
+static SYNTH_COLD HrSvf qr_svf(float fc, float k)
+{
+    HrSvf f;
+    float g = qr_tan(fc);
+    f.a1 = 1.f / (1.f + g * (g + k));
+    f.a2 = g * f.a1;
+    f.a3 = g * f.a2;
+    return f;
+}
+
+/* the wet's mq = m / 4 quarter-rate samples back to m frames on one side, y = dry y * gd + the wet, interpolated
+ * straight, * gw (frames past the last four: held) */
+static void qr_up(float *y, const float *w, uint32_t m, float *prev, float gw, float gd)
+{
+    uint32_t k, mq = m >> 2;
+    float p = gw * *prev;
+    for (k = 0; k < mq; k++) {
+        float v = gw * w[k], d = 0.25f * (v - p), *o = y + 4u * k;
+        o[0] = gd * o[0] + p + d;
+        o[1] = gd * o[1] + p + 2.f * d;
+        o[2] = gd * o[2] + v - d;
+        o[3] = gd * o[3] + v;
+        p = v;
+    }
+    for (k = 4u * mq; k < m; k++)
+        y[k] = gd * y[k] + p;
+    *prev = mq ? w[mq - 1u] : *prev;
+}
+
+/* sqrt(x), x >= 0, for the settings (no libm): a guess from the float's bits, three Newton steps */
+static SYNTH_COLD float rs_sqrt(float x)
+{
+    union { float f; uint32_t u; } v = {x};
+    if (x <= 0.f) return 0.f;
+    v.u = (v.u >> 1) + 0x1FC00000u;
+    for (int i = 0; i < 3; i++) v.f = 0.5f * (v.f + x / v.f);
+    return v.f;
+}
+
+/* a chord note's pitch, Hz: ROOT (0..23 from C2) + its offset */
+static SYNTH_COLD float rs_hz(float root, float chord, int j)
+{
+    int r = (int)(root + 0.5f), c = (int)(chord + 0.5f);
+    r = r < 0 ? 0 : r > 23 ? 23 : r;
+    c = c < 0 ? 0 : c >= MFX_RS_CHORDS ? MFX_RS_CHORDS - 1 : c;
+    return 440.f * amp_exp2f((float)(RS_ROOT0 + r + rs_chord[c][j] - 69) * (1.f / 12.f));
+}
+
+/* the settings from DECAY, TONE, AGE, MIX, ROOT, CHORD, WIDTH (stones: their modes, tuned now at the clock's wander) */
+static SYNTH_COLD void rs_settings(RsSet *st, const float *kk, int stones)
+{
+    /* DECAY (2026-11-04, the user's "ring out much longer, more intense"): 0.3 .. 38 s, and from RS_ENDLESS on the
+     * strings sing on (their loop a touch over unity, the brigades' headroom holding them: a drone), the stones ring
+     * a minute */
+    const int endless = kk[0] >= RS_ENDLESS;
+    const float t60 = endless ? 60.f : 0.3f * amp_exp2f(kk[0] * (7.f / 127.f));
+    const float tone = kk[1] * (1.f / 127.f), age = kk[2] * (1.f / 127.f), mix = kk[3] * (1.f / 127.f);
+    const float c = st->c = 0.18f + 0.78f * tone;                    /* the loop's one-pole: dark .. bright */
+    for (int ch = 0; ch < 2; ch++)
+        for (uint32_t i = 0; i < RS_NS; i++) {
+            float f = rs_hz(kk[4], kk[5], ch + 2 * (int)i), d = QR_SR / f - (1.f - c) / c;   /* (its lag) */
+            st->hz[ch][i] = f;
+            st->d[ch][i] = d < 2.f ? 2.f : d > (float)(RS_LEN - 2u) ? (float)(RS_LEN - 2u) : d;
+            /* the loop's one-pole at the string's own pitch, |c / (1 - (1 - c) e^-jw)|, made up in the feedback:
+             * its fundamental rings DECAY's time, its upper partials less (as a string's) */
+            const float cw = br_sin(f * (1.f / QR_SR) + 0.25f), b = 1.f - c;
+            const float lpg = c / rs_sqrt(1.f - 2.f * b * cw + b * b);
+            float g = amp_exp2f(-9.966f * (1.f / f) / t60) / lpg;                  /* 60 dB in DECAY's time */
+            g = endless ? 1.02f / lpg : g > 0.9995f ? 0.9995f : g;
+            st->g[ch][i] = g;
+            float e = 1.f - g * g * lpg * lpg;
+            st->kin[ch][i] = rs_sqrt(rs_sqrt(e < 0.0004f ? 0.0004f : e));   /* (1 - g^2)^1/4: the long rings build,
+                                                                      * louder than the short ones */
+        }
+    st->t60 = t60;
+    st->tone = tone;
+    st->f = qr_svf(4500.f * amp_exp2f(-1.3f * age), 1.f / 0.8f);             /* the boards' band, darker with AGE */
+    st->hiss = (0.0006f + 0.01f * age * age) * (1.f / 2147483648.f);
+    st->wow = 0.0004f + 0.012f * age * age;
+    st->drive = 1.f + 2.f * age;                                     /* (br_sat's slope is 1.5: taken off in the
+                                                                      * side's loop, so the ring keeps its gain) */
+    st->gw = (mix < 0.5f ? 2.f * mix : 1.f) * (stones ? RS_STONE_OUT : RS_OUT);
+    st->gd = mix > 0.5f ? 2.f * (1.f - mix) : 1.f;
+    st->xw = 0.5f + 0.5f * kk[6] * (1.f / 127.f);                           /* WIDTH: the own side's share */
+}
+
+/* a stone's mode coefficients (TPT band-pass at QR_SR) at f Hz ringing t60 s: a1, a2, a3, its gain (its band
+ * output peaks at Q: k for a unit peak, sqrt(k) the ring's energy as the input's); past the band (0.45 QR_SR) the
+ * mode is muted, not folded */
+static SYNTH_COLD void rs_mode(float *c, float f, float t60, float amp)
+{
+    if (f > 0.45f * QR_SR) { f = 0.45f * QR_SR; amp = 0.f; }
+    float g = qr_tan(f), q = MFX_PI * f * t60 * (1.f / 6.908f), k = 1.f / (q < 0.5f ? 0.5f : q);
+    c[0] = 1.f / (1.f + g * (g + k));
+    c[1] = g * c[0];
+    c[2] = g * c[1];
+    c[3] = amp / rs_sqrt(rs_sqrt(q));                    /* a peak of q^3/4 (was sqrt q): the long rings build,
+                                                      * as the strings' */
+}
+
+/* the resonators' step (the plan; built for size, a step's few dozen operations): the settings when the knobs moved, the clock's wander, each string's read head
+ * (16.16) at it; the stones retuned at the pass's first step */
+static SYNTH_COLD void rs_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr, int stones)
+{
+    RsSet *st = &s->rs_set;
+    const float kk[7] = {k[MFX_K_RS_DECAY], k[MFX_K_RS_TONE], k[MFX_K_RS_AGE], k[MFX_K_RS_MIX], row[MFX_R_RS_ROOT],
+                         row[MFX_R_RS_CHORD], lr};
+    if (mfx_moved(st->key, kk, 7))
+        rs_settings(st, kk, stones);
+    hr_wow(s, st->wow);
+    const float wf = 1.f + s->br_wow;
+    if (!stones) {
+        for (int ch = 0; ch < 2; ch++)
+            for (uint32_t i = 0; i < RS_NS; i++)
+                step->u.rs.d[ch][i] = (int32_t)(st->d[ch][i] * wf * HR_Q);
+    } else if (s->nstep == 1u) {
+        for (int ch = 0; ch < 2; ch++)
+            for (uint32_t i = 0; i < RS_NS; i++) {
+                const float f = st->hz[ch][i] / wf;                 /* (a slower clock: lower) */
+                rs_mode(st->m[ch][2u * i], f, st->t60, 1.f);
+                rs_mode(st->m[ch][2u * i + 1u], 2.756f * f, 0.4f * st->t60, 0.1f + 0.9f * st->tone);
+            }
+    }
+}
+
+/* the input a side's resonators hear at QR_SR (four frames' sum, its own by WIDTH, the other side's the rest) */
+static inline float rs_in(const MfxState *s, int ch, uint32_t i)
+{
+    const float xw = s->rs_set.xw;
+    return 0.25f * (xw * s->bf_in[ch][i] + (1.f - xw) * s->bf_in[ch ^ 1][i]);
+}
+
+/* the resonators on one side (ch) over the planned pass, y in place (one copy for both kinds: inlined, each call
+ * site's would cost ~1.6 KB of the flash) */
+static __attribute__((noinline)) void rs_side(MfxState *s, int ch, float *y, int stones)
+{
+    MfxSide *sd = &s->side[ch];
+    RsZ *z = &sd->line.rs;
+    const RsSet *st = &s->rs_set;
+    const HrSvf f = st->f;
+    const float hiss = st->hiss, drive = st->drive, und = 1.f / (32767.f * drive), c = st->c;
+    const float sat_in = drive * (1.f / 1.5f);                        /* (br_sat: slope 1.5 at 0) */
+    float a1 = z->a1, a2 = z->a2, b1 = z->b1, b2 = z->b2, env = z->env;
+    uint32_t w = sd->w, rng = sd->rng, xi = 0;
+    int16_t (*line)[RS_LEN] = rs_line[s == &mfx_st[1]][ch];
+    for (uint32_t k = 0; k < s->nstep; k++) {
+        const MfxStep *step = &s->plan[k];
+        const uint32_t m = step->m, mp = m >> 2;
+        float wet[MFX_SUB / 4];
+        for (uint32_t i = 0; i < mp; i++) {
+            float x = rs_in(s, ch, xi + i) * BR_SCALE, av = x < 0.f ? -x : x, o = 0.f;
+            env += (av > env ? 0.04f : 0.001f) * (av - env);
+            x = hr_lp(&f, x, &a1, &a2);                              /* the boards' anti-alias filter */
+            if (!stones) {
+                float t = (x - z->hp) * RS_HP, lo = t + z->hp;
+                z->hp = lo + t;
+                x -= lo;
+            }
+            if (!stones) {
+                for (uint32_t j = 0; j < RS_NS; j++) {               /* a string: its bucket a period back, the loop's
+                                                                      * one-pole, the feedback, the headroom */
+                    const int32_t d = step->u.rs.d[ch][j];
+                    const uint32_t p = (w - (uint32_t)(d >> 16)) & (RS_LEN - 1u), q = (p - 1u) & (RS_LEN - 1u);
+                    const float fr = (float)(d & 0xFFFF) * (1.f / HR_Q);
+                    float v = (float)line[j][p], u;
+                    v = (v + fr * ((float)line[j][q] - v)) * und;
+                    z->lp[j] += c * (v - z->lp[j]);
+                    o += z->lp[j];
+                    u = br_sat(sat_in * (st->kin[ch][j] * x + st->g[ch][j] * z->lp[j]));
+                    line[j][w] = (int16_t)(u * 32767.f);
+                }
+            } else {
+                for (uint32_t j = 0; j < 2u * RS_NS; j++) {         /* a stone's mode: band-pass, unit peak */
+                    const float *mc = st->m[ch][j];
+                    float s0 = z->ms[j][0], s1 = z->ms[j][1];
+                    float u3 = x - s1, u1 = mc[0] * s0 + mc[1] * u3, u2 = s1 + mc[1] * s0 + mc[2] * u3;
+                    z->ms[j][0] = 2.f * u1 - s0;
+                    z->ms[j][1] = 2.f * u2 - s1;
+                    o += mc[3] * u1;
+                }
+                o = br_sat(sat_in * o) * (1.f / drive);              /* the brigades' headroom */
+            }
+            rng = rng * 1664525u + 1013904223u;
+            wet[i] = hr_lp(&f, o + env * hiss * (float)(int32_t)rng, &b1, &b2) * 65536.f;   /* reconstruction, hiss */
+            w = (w + 1u) & (RS_LEN - 1u);
+        }
+        xi += mp;
+        qr_up(y, wet, m, &z->prev, st->gw, st->gd);
+        y += m;
+    }
+    z->a1 = a1; z->a2 = a2; z->b1 = b1; z->b2 = b2; z->env = env;
+    sd->w = w;
+    sd->rng = rng;
+}
+
+#undef MT_BAND
+#undef MT_BQ
+
+#if MFX_HAS_METAL
 /* BRONZE AGE on one side (ch) over the planned pass, y in place */
 static void mt_side(MfxState *s, int ch, float *y)
 {
@@ -1678,14 +2051,23 @@ static void mt_side(MfxState *s, int ch, float *y)
     for (uint32_t k = 0; k < s->nstep; k++) {
         const MtCo *c = &s->plan[k].u.mt;
         const uint32_t m = s->plan[k].m;
+        SPROF_DECL;
+        SPROF_START();
         mt_pre(z, c, y, m);
-        mt_up(z, y, u, m);
+        SPROF_LAP(SPROF_MT_PRE);
+        mt_up(z->up, y, u, m);
+        SPROF_LAP(SPROF_MT_UP);
         mt_clip(z, u, 2u * m);
-        mt_down(z, u, y, m);
+        SPROF_LAP(SPROF_MT_CLIP);
+        mt_down(z->dn, u, y, m);
+        SPROF_LAP(SPROF_MT_DOWN);
         mt_post(z, c, y, m);
+        SPROF_LAP(SPROF_MT_POST);
         y += m;
     }
 }
+
+#endif
 
 /* the knobs' glide a control step (MFX_SUB frames): ~23 ms, as the patch's own knobs (knob smoothing) */
 #define MFX_KGLIDE 0.0155f
@@ -1702,13 +2084,18 @@ static SYNTH_COLD void mfx_begin(MfxState *s, const MfxParams *p)
     s->kn[4] = (float)p->lr;
     s->kn[5] = (float)p->row[0];
     s->kn[6] = (float)p->row[1];
-    s->ss_ctl = 0.5f;
+    s->ss_ctl = s->pf_ctl[0] = s->pf_ctl[1] = 0.5f;
     s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = s->tf_set.key[0] = -1.f;
     s->bf_set.key[0] = s->ps_set.key[0] = s->qe_set.key[0] = s->mt_set.key[0] = -1.f;
+    s->rs_set.key[0] = -1.f;
+    if (p->type == MFX_WIND_HARP)                /* (its strings, outside the state) */
+        memset(rs_line[s == &mfx_st[1]], 0, sizeof rs_line[0]);
     if (p->type == MFX_BBD_ECHO)                 /* (its brigade, outside the state) */
         memset(qe_line[s == &mfx_st[1]], 0, sizeof qe_line[0]);
+#if MFX_HAS_METAL
     if (p->type == MFX_METAL && !mt_ready)       /* (its clipping curve: the first time it is chosen) */
         mt_table();
+#endif
     s->qe_pk[0] = s->qe_pk[1] = -1.f;
     s->qe_pk[2] = 1.f;
     s->qe_rng = 0x2545F491u;
@@ -1786,8 +2173,22 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
             xi += m >> 1;
         } else if (p->type == MFX_PITCH_SHIFT)
             ps_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
-        else if (p->type == MFX_METAL)
+        else if (p->type == MFX_PHASE_FLANGE)
+            pf_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
+        else if (p->type == MFX_WIND_HARP || p->type == MFX_RINGING_STONES) {
+            rs_plan(s, step, s->kn, s->kn + 5, s->kn[4], p->type == MFX_RINGING_STONES);
+            for (uint32_t i = 0; i < (m >> 2); i++) {        /* both sides' quarter-rate input (WIDTH's crossing) */
+                const float *a = l + f0 + 4u * i, *b = r + f0 + 4u * i;
+                s->bf_in[0][xi + i] = a[0] + a[1] + a[2] + a[3];
+                s->bf_in[1][xi + i] = b[0] + b[1] + b[2] + b[3];
+            }
+            xi += m >> 2;
+        }
+        else if (p->type == MFX_METAL) {
+#if MFX_HAS_METAL
             mt_plan(s, step, s->kn, s->kn + 5);
+#endif
+        }
         else
             en_plan(s, step, s->kn, s->kn[4], EN_FAST, EN_GAIN);
     }
@@ -1809,8 +2210,15 @@ void mfx_layer_side(int layer, int side, float *y)
         bf_side(s, side & 1, y);
     else if (s->type == MFX_PITCH_SHIFT)
         ps_side(s, side & 1, y);
-    else if (s->type == MFX_METAL)
+    else if (s->type == MFX_METAL) {
+#if MFX_HAS_METAL
         mt_side(s, side & 1, y);
+#endif
+    }
+    else if (s->type == MFX_PHASE_FLANGE)
+        pf_side(s, side & 1, y);
+    else if (s->type == MFX_WIND_HARP || s->type == MFX_RINGING_STONES)
+        rs_side(s, side & 1, y, s->type == MFX_RINGING_STONES);
     else
         en_side(s, side & 1, y);
 }

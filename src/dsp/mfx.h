@@ -77,10 +77,20 @@
  * pedal (electricdruid.net's MT-2 analysis): a mid hump into the gain stage (x2 .. x252), the op-amp's rails and then
  * a pair of silicon diodes clipping, two resonances after (105 Hz, 4.9 kHz: the scoop between them), its 3-band EQ
  * with the sweepable middle. Knobs: DIST, HIGH, MIDDLE, MID FREQ (240 Hz .. 4.7 kHz). Rows: LEVEL, LOW. Each side its
- * own circuit; the clipping at twice the rate. */
+ * own circuit; the clipping at twice the rate.
+ *
+ * PHASE+FLANGE (2026-11-04, the cheap combo): ENS+PHASER's four-stage phaser and BBD FLANGER (FLANGER II, DEPTH held)
+ * in one half-rate loop, the phaser first (after it measured the same: linear filters commute). Knobs: PHASE RATE,
+ * FLANGE RATE, CENTER, FEEDBACK. Rows: COLOUR, WIDTH (the right side's phaser sweep behind).
+ *
+ * WIND HARP, RINGING STONES (2026-11-04, the resonators, "as though built from BBDs"): six strings (brigades in loops)
+ * or six struck stones (a mode and its bar's overtone each) tuned to ROOT's CHORD, at the brigades' half rate with
+ * their band, headroom, hiss and wandering clock. Knobs: DECAY, TONE, AGE, MIX. Rows: ROOT (C2 .. B3), CHORD,
+ * WIDTH. Each side rings half the chord. */
 enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER, MFX_BBD_FLANGER,
-       MFX_PITCH_SHIFT, MFX_BBD_ECHO, MFX_METAL, MFX_BULLROARER, MFX_COUNT };
-#define MFX_OFFERED (MFX_METAL + 1)      /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
+       MFX_PITCH_SHIFT, MFX_BBD_ECHO, MFX_METAL, MFX_PHASE_FLANGE, MFX_WIND_HARP, MFX_RINGING_STONES,
+       MFX_BULLROARER, MFX_COUNT };
+#define MFX_OFFERED (MFX_RINGING_STONES + 1)      /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
 enum { MFX_K_MANUAL, MFX_K_RATE, MFX_K_FEEDBACK, MFX_K_DEPTH };    /* STONE PHASER's knobs */
 enum { MFX_K_WHIRL, MFX_K_REACH, MFX_K_TWIST, MFX_K_DUST };         /* BULLROARER's */
 enum { MFX_K_AGE = 0, MFX_K_SHIMMER = 2 };                          /* ENSEMBLE's (RATE, DEPTH as above) */
@@ -92,6 +102,11 @@ enum { MFX_K_PS_PITCH, MFX_K_PS_FINE, MFX_K_PS_FEEDBACK, MFX_K_PS_MIX };      /*
 enum { MFX_K_QE_TIME, MFX_K_QE_FEEDBACK, MFX_K_QE_ENV, MFX_K_QE_MIX };    /* BBD ECHO's (ENV: 64 none) */
 enum { MFX_K_MT_DIST, MFX_K_MT_HIGH, MFX_K_MT_MIDDLE, MFX_K_MT_FREQ };    /* BRONZE AGE's (HIGH, MIDDLE: 64 flat) */
 enum { MFX_R_MT_LEVEL, MFX_R_MT_LOW };                                    /* ... its rows (row[]; LOW: 64 flat) */
+enum { MFX_K_PF_PH_RATE, MFX_K_PF_FL_RATE, MFX_K_PF_CENTER, MFX_K_PF_FEEDBACK };   /* PHASE+FLANGE's */
+enum { MFX_K_RS_DECAY, MFX_K_RS_TONE, MFX_K_RS_AGE, MFX_K_RS_MIX };        /* the resonators' */
+enum { MFX_R_RS_ROOT, MFX_R_RS_CHORD };                                   /* ... their rows (WIDTH: lr) */
+#define MFX_RS_CHORDS 7                                                    /* FIFTHS MINOR MAJOR SUS4 MINOR 7 PHRYGIAN
+                                                                            * OCTAVES */                                     /* the combos' rows (row[]; DEPTH / L/R PHASE: lr) */
 enum { MFX_R_AGE, MFX_R_COLOUR, MFX_R_POLARITY = 1, MFX_R_MODE = 0, MFX_R_AGE2 = 1 };   /* further rows (row[]): ENS+PHASER's AGE,
                                                                      * COLOUR; CHORUS's and PITCH SHIFT's AGE; TAPE and
                                                                      * BBD FLANGER's POLARITY (0, 1); BBD FLANGER's MODE;

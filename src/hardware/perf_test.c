@@ -20,6 +20,7 @@
 #include "dsp/wavetables.h"
 #include "dsp/mfx.h"
 #include "dsp/fx.h"                  /* the MIX page's live mix (F_MIX), kept and restored */
+#include "hardware/mem_section.h"    /* the test's state in .pool (2026-11-04: ~8.6 KB of the 96 KiB RAM) */
 #include "hardware/mem_section.h"
 
 /* PT_WT_RAM (2026-10-15): the banks the scenarios play (OSC1: bank 0, the default; OSC2 of the heavy patches: bank 3)
@@ -79,6 +80,7 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_MIX 0x1000000u             /* the MIX page all engaged (2026-11-02, dsp/fx.h fx_live): BALANCE / DRY-WET off its
                                       * middle (the faders' ramps), LOOP TONE dark (the delay's feedback low-pass), both
                                       * cross-feeds high (the loop) */
+#define F_MFXEQ (1u << 25)           /* BRONZE AGE with its EQ off noon (DIST 120, the scooped render's: every band run) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
 
@@ -240,6 +242,18 @@ static const PtScen SCEN[] = {
     {"IDLE BRONZE AGE", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_METAL), UIPAGE_HOME1},
     {"IDLE BRONZE AGE x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_METAL), UIPAGE_HOME1},
     {"SPREAD H CEL BRNZ", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_METAL), UIPAGE_HOME1},
+    {"SPREAD H CEL BREQ", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_METAL) | F_MFXEQ,
+     UIPAGE_HOME1},
+    /* PHASE+FLANGE (2026-11-04) */
+    {"IDLE PHASE+FLANGE", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_PHASE_FLANGE), UIPAGE_HOME1},
+    {"SPREAD H CEL PHFL", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_PHASE_FLANGE),
+     UIPAGE_HOME1},
+    /* the resonators (2026-11-04) */
+    {"IDLE WIND HARP", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_WIND_HARP), UIPAGE_HOME1},
+    {"SPREAD H CEL HARP", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_WIND_HARP),
+     UIPAGE_HOME1},
+    {"SPREAD H CEL STON", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_RINGING_STONES),
+     UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -254,7 +268,7 @@ static struct {
     ArpState arp;
     MfxParams mfx[2];
     uint8_t live[FX_L_COUNT];        /* the MIX page's (dsp/fx.h fx_live) */
-} pt;
+} pt SYNTH_POOL;                     /* (zeroed at start-up, as .bss) */
 
 /* the audio side's tally (the ISR adds, pt_tick reads and clears under the lock) */
 static volatile struct {
@@ -431,9 +445,16 @@ static void setup(const PtScen *s)
             [MFX_PITCH_SHIFT] = {MFX_PITCH_SHIFT, {19, 64, 60, 64}, 127, {30, 0}},
             [MFX_BBD_ECHO] = {MFX_BBD_ECHO, {99, 50, 115, 60}, 40, {0, 30}},
             [MFX_METAL] = {MFX_METAL, {100, 64, 64, 64}, 0, {64, 64}},
+            [MFX_PHASE_FLANGE] = {MFX_PHASE_FLANGE, {35, 25, 50, 70}, 64, {0, 60}},
+            [MFX_WIND_HARP] = {MFX_WIND_HARP, {90, 70, 40, 50}, 100, {9, 1}},
+            [MFX_RINGING_STONES] = {MFX_RINGING_STONES, {85, 60, 30, 50}, 100, {0, 0}},
         };
         uint32_t t = (s->flags >> 16) & 0xFFu;
         MFX_PARAMS(0) = MP[t > MFX_STONE_PHASER && t < MFX_COUNT ? t : MFX_STONE_PHASER];
+        if (s->flags & F_MFXEQ) {
+            static const MfxParams EQ = {MFX_METAL, {120, 76, 20, 50}, 0, {64, 92}};
+            MFX_PARAMS(0) = EQ;
+        }
         if (s->flags & F_MFX2) {
             MFX_PARAMS(1) = MFX_PARAMS(0);
             perf_state.perf_mode = PERF_DUAL_SYNTH;

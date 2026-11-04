@@ -96,5 +96,5 @@ phys_dsp.c does the same 64-bit divides and links without a runtime library.
 - Host: build and run src/host/test_render_hash.c (bit-identical), test_voice_arch, test_maq_seq, test_arp_seq,
   test_ui_arch, test_flash_record (build lines at the top of each file).
 - Browser: web/emu/build.sh.
-- FM-1 stand-in: `sh src/host/fm1_unity_check.sh` (the unity compile in "How it was checked"; it generates Felucca's
-  headers itself on the first run).
+- FM-1 stand-in: `sh src/host/x0x_unity_check.sh` (X0X's platform + the synth; the Felucca-era
+  fm1_unity_check.sh was removed 2026-11-04).

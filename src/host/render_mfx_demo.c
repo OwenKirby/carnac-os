@@ -78,7 +78,24 @@ static const uint8_t riff[8] = {36, 36, 48, 36, 39, 36, 46, 43};
 static const uint8_t chug[16] = {40, 40, 40, 43, 40, 40, 46, 45, 40, 40, 40, 43, 48, 47, 46, 45};
 static const uint8_t lead[8] = {64, 67, 69, 71, 72, 71, 69, 67};
 
-enum { SC_PAD, SC_BASS, SC_NOISE, SC_RIFF, SC_LEAD };
+enum { SC_PAD, SC_BASS, SC_NOISE, SC_RIFF, SC_LEAD, SC_SCREAM, SC_SOLO, SC_ARP, SC_GLIDE };
+
+/* the high, moving scenes (2026-11-04: first for FLINT's aliasing, by ear; FLINT is gone, the scenes stay). Aliases are not
+ * harmonics of the note: they move against a bend and beat in a high line, so the scenes are high and moving.
+ * SCREAM: a high C held, bent up a tone, vibrato, bent back; GLIDE: a held C5 bent an octave up and down;
+ * SOLO: sixteenths at 150 BPM, a minor pentatonic run in the fifth and sixth octaves; ARP: Am - F - G - Am in
+ * high sixteenths at 140 BPM */
+static const uint8_t solo[32] = {81, 84, 86, 88, 91, 88, 86, 84, 81, 79, 76, 79, 81, 84, 88, 93,
+                                 91, 88, 86, 88, 84, 86, 81, 84, 79, 81, 76, 79, 74, 76, 72, 76};
+static const uint8_t arpn[4][6] = {{69, 72, 76, 81, 84, 88}, {65, 69, 72, 77, 81, 84}, {67, 71, 74, 79, 83, 86},
+                                   {69, 72, 76, 81, 84, 88}};
+
+static void bend_semis(double st)               /* the wheel, at BEND RANGE 12 */
+{
+    int v = 8192 + (int)(st / 12.0 * 8191.0);
+    v = v < 0 ? 0 : v > 16383 ? 16383 : v;
+    synth_midi_3(0xE0, (uint8_t)(v & 127), (uint8_t)(v >> 7));
+}
 
 /* the riff and the lead: SPREAD 0, open filter, short decay (the riff) or sustained (the lead) */
 static void riffy(int sustained)
@@ -101,7 +118,15 @@ static void render(const char *dir, const char *name, int kind, MfxParams m, int
                                                                                                       : RATE * 12u;
     uint32_t frame = 0;
     double sum = 0.0, peak = 0.0;
-    if (kind == SC_BASS) bass(); else if (kind == SC_RIFF || kind == SC_LEAD) riffy(kind == SC_LEAD); else pad();
+    if (kind == SC_BASS) bass(); else if (kind == SC_RIFF || kind >= SC_LEAD) riffy(kind != SC_RIFF); else pad();
+    if (kind >= SC_SCREAM) {
+        perf_state.bend_range = 12;
+        if (kind == SC_SOLO || kind == SC_ARP) {    /* (shorter notes, a touch of decay) */
+            engine_state[0].env[0].decay = 60; engine_state[0].env[0].sustain = 90; engine_state[0].env[0].release = 30;
+        }
+        synth_restart();
+        bend_semis(0.0);
+    }
     if (kind == SC_NOISE) {                      /* white noise at full level, no filter, no reverb */
         engine_state[0].oscmix.noise_level = 127;
         engine_state[0].osc[0].pitch_mod_amt = 0;
@@ -139,6 +164,37 @@ static void render(const char *dir, const char *name, int kind, MfxParams m, int
             synth_midi_3(0x90, lead[k & 7u], 105);
         }
         if (kind == SC_LEAD && frame >= 6u * RATE && frame < 6u * RATE + BLOCK) synth_midi_3(0x80, lead[7], 0);
+        if (kind >= SC_SCREAM) {
+            const double t = (double)frame / RATE;
+            if (kind == SC_SCREAM || kind == SC_GLIDE) {
+                const uint8_t note = kind == SC_SCREAM ? 84 : 72;
+                if (frame == 0) synth_midi_3(0x90, note, 110);
+                if (frame >= 11u * RATE && frame < 11u * RATE + BLOCK) synth_midi_3(0x80, note, 0);
+                double st;
+                if (kind == SC_SCREAM)
+                    st = (t < 2.0 ? 0.0 : t < 3.0 ? 2.0 * (t - 2.0) : 2.0) + (t > 4.0 ? 0.35 * sin(2.0 * M_PI * 5.5 * t) : 0.0)
+                         - (t > 8.0 ? 2.0 * (t - 8.0 < 1.0 ? t - 8.0 : 1.0) : 0.0);
+                else
+                    st = t < 1.0 ? 0.0 : t < 5.0 ? 3.0 * (t - 1.0) : t < 9.0 ? 12.0 - 4.5 * (t - 5.0) : t < 10.0 ? -6.0 + 6.0 * (t - 9.0) : 0.0;
+                bend_semis(st);
+            } else if (frame < 10u * RATE) {
+                const uint32_t step = kind == SC_SOLO ? RATE / 10u : (uint32_t)(RATE * 60u / 140u / 4u);
+                if (frame % step < BLOCK) {
+                    const uint32_t k = frame / step;
+                    uint8_t prev = 0, now;
+                    if (kind == SC_SOLO) { now = solo[k & 31u]; if (k) prev = solo[(k - 1u) & 31u]; }
+                    else {
+                        const uint32_t bar = (k / 16u) & 3u;
+                        static const uint8_t pat[8] = {0, 1, 2, 3, 4, 5, 4, 2};
+                        now = arpn[bar][pat[k & 7u]];
+                        if (k) prev = arpn[((k - 1u) / 16u) & 3u][pat[(k - 1u) & 7u]];
+                    }
+                    if (k) synth_midi_3(0x80, prev, 0);
+                    synth_midi_3(0x90, now, (uint8_t)(k & 3u ? 95 : 118));
+                }
+            } else if (frame < 10u * RATE + BLOCK)
+                for (int nn = 60; nn < 100; nn++) synth_midi_3(0x80, (uint8_t)nn, 0);
+        }
         if (kind == SC_NOISE && frame == 0) synth_midi_3(0x90, 60, 100);
         if (kind == SC_NOISE && frame >= 11u * RATE && frame < 11u * RATE + BLOCK) synth_midi_3(0x80, 60, 0);
         if (sweep) {                             /* the pedal: heel to toe and back over 8 s, twice */
@@ -185,7 +241,10 @@ static double cost(MfxParams m)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) { fprintf(stderr, "usage: render_mfx_demo OUTDIR [m]   (m: BRONZE AGE's scenes alone)\n"); return 2; }
+    if (argc < 2) {
+        fprintf(stderr, "usage: render_mfx_demo OUTDIR [m|r]   (m: BRONZE AGE's scenes alone; r: the resonators')\n");
+        return 2;
+    }
     synth_init();
     {
         extern const uint8_t pcm_image_host0[], pcm_image_host1[];
@@ -196,8 +255,11 @@ int main(int argc, char **argv)
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
         wavetable_area_attach(0, wt_area2_host, wt_area2_host_len);
     }
-    if (argc >= 3)
+    if (argc >= 3) {
+        if (argv[2][0] == 'r') goto resonators;
+        if (argv[2][0] == 'p') goto phase_flange;
         goto bronze;
+    }
     const uint8_t slow = rate_knob(0.12), mid = rate_knob(0.5), fast = rate_knob(4.0);
     printf("STONE PHASER (RATE knobs: 0.12 Hz = %u, 0.5 Hz = %u, 4 Hz = %u):\n", slow, mid, fast);
     render(argv[1], "01_pad_dry", SC_PAD, (MfxParams){MFX_OFF, {0}}, 0);
@@ -324,6 +386,51 @@ bronze:
         render(argv[1], "110_pad_bronze_chord_mud", SC_PAD, (MfxParams){MFX_METAL, {90, 64, 64, 64}, 0, {60, 64}}, 0);
         printf("  host cost, one layer stereo: BRONZE AGE %.1f ns/sample\n",
                cost((MfxParams){MFX_METAL, {100, 64, 64, 64}, 0, {64, 64}}));
+        if (argc >= 3) return 0;
+    }
+phase_flange:
+    {   /* PHASE+FLANGE (2026-11-04): knobs PHASE RATE / FLANGE RATE / CENTER / FEEDBACK, lr WIDTH, row[1] COLOUR */
+        printf("PHASE+FLANGE:\n");
+        render(argv[1], "401_pad_dry", SC_PAD, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "402_pad_phase_flange", SC_PAD, (MfxParams){MFX_PHASE_FLANGE, {35, 25, 50, 70}, 64, {0, 60}}, 0);
+        render(argv[1], "403_pad_phase_flange_fast_phaser", SC_PAD, (MfxParams){MFX_PHASE_FLANGE, {75, 20, 45, 60}, 90, {0, 40}}, 0);
+        render(argv[1], "404_pad_slow_jet_deep", SC_PAD, (MfxParams){MFX_PHASE_FLANGE, {20, 12, 70, 110}, 100, {0, 90}}, 0);
+        render(argv[1], "405_riff_dry", SC_RIFF, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "406_riff_phase_flange", SC_RIFF, (MfxParams){MFX_PHASE_FLANGE, {60, 40, 40, 80}, 64, {0, 50}}, 0);
+        render(argv[1], "407_lead_phase_flange", SC_LEAD, (MfxParams){MFX_PHASE_FLANGE, {50, 30, 55, 90}, 80, {0, 70}}, 0);
+        render(argv[1], "408_noise_phase_flange", SC_NOISE, (MfxParams){MFX_PHASE_FLANGE, {40, 30, 50, 90}, 64, {0, 80}}, 0);
+        printf("  host cost, one layer stereo: PHASE+FLANGE %.1f ns/sample\n",
+               cost((MfxParams){MFX_PHASE_FLANGE, {35, 25, 50, 70}, 64, {0, 60}}));
+        if (argc >= 3) return 0;
+    }
+resonators:
+    {   /* WIND HARP / RINGING STONES (2026-11-04): knobs DECAY / TONE / AGE / MIX, lr WIDTH, rows ROOT (0 = C2) / CHORD
+         * (FIFTHS MINOR MAJOR SUS4 MINOR 7 PHRYGIAN OCTAVES); the pad plays Cm9 - Abmaj7 - Fm9 - G7sus */
+        printf("resonators:\n");
+        render(argv[1], "301_pad_dry", SC_PAD, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "302_pad_harp_c_minor", SC_PAD, (MfxParams){MFX_WIND_HARP, {90, 70, 20, 55}, 100, {0, 1}}, 0);
+        render(argv[1], "303_pad_harp_c_minor_worn", SC_PAD, (MfxParams){MFX_WIND_HARP, {100, 55, 110, 60}, 100, {0, 1}}, 0);
+        render(argv[1], "304_pad_harp_fifths_long_drone", SC_PAD, (MfxParams){MFX_WIND_HARP, {127, 90, 50, 75}, 127, {0, 0}},
+               0);
+        render(argv[1], "315_pad_harp_c_minor_38s", SC_PAD, (MfxParams){MFX_WIND_HARP, {123, 75, 30, 70}, 100, {0, 1}}, 0);
+        render(argv[1], "316_pad_stones_c_minor_long", SC_PAD, (MfxParams){MFX_RINGING_STONES, {120, 70, 30, 70}, 100, {0, 1}},
+               0);
+        render(argv[1], "305_pad_stones_c_fifths", SC_PAD, (MfxParams){MFX_RINGING_STONES, {85, 60, 20, 55}, 100, {0, 0}}, 0);
+        render(argv[1], "306_pad_stones_c_minor7_worn", SC_PAD, (MfxParams){MFX_RINGING_STONES, {100, 90, 110, 60}, 100,
+                                                                             {0, 4}}, 0);
+        render(argv[1], "307_bass_dry", SC_BASS, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "308_bass_harp_c_minor", SC_BASS, (MfxParams){MFX_WIND_HARP, {80, 60, 40, 55}, 90, {0, 1}}, 0);
+        render(argv[1], "309_bass_stones_phrygian", SC_BASS, (MfxParams){MFX_RINGING_STONES, {75, 70, 40, 60}, 90, {0, 5}}, 0);
+        render(argv[1], "310_lead_dry", SC_LEAD, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "311_lead_harp_e_minor", SC_LEAD, (MfxParams){MFX_WIND_HARP, {95, 80, 30, 55}, 110, {4, 1}}, 0);
+        render(argv[1], "312_lead_stones_e_minor", SC_LEAD, (MfxParams){MFX_RINGING_STONES, {95, 80, 30, 55}, 110, {4, 1}}, 0);
+        render(argv[1], "313_solo_harp_a_minor_octaves", SC_SOLO, (MfxParams){MFX_WIND_HARP, {100, 85, 30, 55}, 120,
+                                                                               {9, 6}}, 0);
+        render(argv[1], "314_solo_stones_a_minor", SC_SOLO, (MfxParams){MFX_RINGING_STONES, {100, 85, 30, 55}, 120, {9, 1}},
+               0);
+        printf("  host cost, one layer stereo: WIND HARP %.1f, RINGING STONES %.1f ns/sample\n",
+               cost((MfxParams){MFX_WIND_HARP, {90, 70, 40, 50}, 100, {9, 1}}),
+               cost((MfxParams){MFX_RINGING_STONES, {85, 60, 30, 50}, 100, {0, 0}}));
         if (argc >= 3) return 0;
     }
     printf("  host cost, one layer stereo: STONE PHASER %.1f ns/sample\n",

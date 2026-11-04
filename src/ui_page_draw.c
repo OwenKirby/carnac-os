@@ -1990,6 +1990,15 @@ static void pu_viz_mfx(const UIStateMachine *sm)
         }
         s = 46 - (24 * (int32_t)m->knob[MFX_K_BF_FEEDBACK]) / 127;
         eddy = m->knob[MFX_K_BF_FEEDBACK];
+    } else if (t == MFX_PHASE_FLANGE) {              /* the flanger's gusts (a side each), FEEDBACK's eddies */
+        for (i = 0; i < 2; i++) {
+            float u = mfx_peek(layer, i);
+            gx[ng] = pw_x(u < 0.f ? (float)m->knob[MFX_K_PF_CENTER] / 127.f : u);
+            gc[ng++] = i ? SQC(ACCENT) : SQC(THEME);
+        }
+        s = 46 - (24 * (int32_t)m->knob[MFX_K_PF_FEEDBACK]) / 127;
+        eddy = m->knob[MFX_K_PF_FEEDBACK];
+        flutter = (int32_t)m->row[MFX_R_COLOUR];
     } else if (t == MFX_BBD_ECHO) {                  /* a gust a tap at its echo's distance (the clock's swoop moves
                                                       * them); FEEDBACK's eddies; DUCK: faint while held down */
         float g = mfx_peek(layer, 2);

@@ -154,7 +154,8 @@ int main(int argc, char **argv)
 #if defined(SYNTH_PROF)
     {
         static const char *const ST[SPROF_N] = {"TOTAL", "CTRL", "VOICE", "OSC", "EXTRAS", "FILTER", "AMP", "MIX", "FX", "CLOCK", "SEQ", "LTICK",
-                                                  "c.LFO", "c.ENV", "c.OSC", "c.FILT", "c.AMP"};
+                                                  "c.LFO", "c.ENV", "c.OSC", "c.FILT", "c.AMP",
+                                                  "mt.PRE", "mt.UP", "mt.CLP", "mt.DN", "mt.PST"};
         printf("one counter read: %u ticks (each stage pays one a lap)\n", (unsigned)pt_lap_cost());
         printf("%-18s", "ticks/sample");
         for (int k = 0; k < SPROF_N; k++) printf(" %6s", ST[k]);
