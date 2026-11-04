@@ -8,6 +8,10 @@
  *  3. Both at 127 with the longest settings (FEEDBACK 100, TIME 100): bounded, no louder than XF_TOP (SPRING at its
  *     longest stacks three loops: about -7 dBFS, the loudest).
  *  4. Both pulled back to 0 at 10 s mid-bloom: at 30 s settled.
+ *  5. (2026-11-03) LOOP TONE's wear and the stereo DLY > REV: at tones 0, 24, 100, 127 with PING PONG, 3. bounded and
+ *     4. settled again.
+ *  6. (2026-11-03) the stereo BBD (its two lines, REV > DLY in stereo), PING PONG off and on: 3. bounded and 4. settled
+ *     again.
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware src/dsp/fx.c src/host/test_fx_cross.c -lm -o test_fx_cross */
 #include <math.h>
 #include <stdio.h>
@@ -23,6 +27,7 @@
  * ~-54 dBFS, and the slowed tape's anti-aliasing took it ~2 dB lower while the loops' tails stayed where they were) */
 #define XF_QUIET -50.0
 static int fails;
+static int g_tone = 64, g_pp, g_bbd;                 /* LOOP TONE, PING PONG, the BBD for run() */
 static const char *const TN[REVTYPE_COUNT] = {"SPRING", "TOMB", "MOD", "CELESTIAL", "DOLMEN", "TUMULUS"};
 
 /* the burst (gain g) with the amounts a, b; at `off` s (if > 0) both go to 0. RMS (dBFS) of the wet's left over
@@ -34,6 +39,9 @@ static void run(int type, int fbk, int time, int a, int b, double g, double off,
     memset(&p, 0, sizeof p);
     p.reverb_type = (uint8_t)type; p.reverb_decay = (uint8_t)time; p.reverb_damp = 40;
     p.delay_time = 59; p.delay_feedback = (uint8_t)fbk; p.delay_degrade = 36;
+    fx_live[FX_L_TONE] = (uint8_t)g_tone;            /* (its thinner half DELAY HP's bits, as fx_tone_sync sets them) */
+    p.delay_type = (uint8_t)(g_bbd ? DELAYTYPE_BBD : DELAYTYPE_TAPE);
+    p.delay_pingpong = (uint8_t)(g_pp | (g_tone > 64 ? ((g_tone - 64) * 127 / 63) << 1 : 0));
     fx_cross[FX_X_DLY_REV] = (uint8_t)a;
     fx_cross[FX_X_REV_DLY] = (uint8_t)b;
     fx_init();
@@ -95,6 +103,46 @@ int main(void)
             fails++;
         }
     }
+    /* 5. */
+    static const int tones[4] = {0, 24, 100, 127};
+    g_pp = 1;
+    for (int t = 0; t < REVTYPE_COUNT; t++)
+        for (int k = 0; k < 4; k++) {
+            g_tone = tones[k];
+            run(t, 100, 100, 127, 127, 12.0, 0.0, W2, 2, db, &pk);
+            if (db[1] > XF_TOP || !(pk < 70000.0)) {
+                printf("%s tone %d: the worn loop not held (%.1f dBFS, peak %.0f)\n", TN[t], g_tone, db[1], pk);
+                fails++;
+            }
+            run(t, 80, 90, 0, 0, 1.0, 0.0, W4, 1, floor_db, &pk);
+            run(t, 80, 90, 127, 127, 1.0, 10.0, W4, 1, db, &pk);
+            if (db[0] > floor_db[0] + 3.0 && db[0] > XF_QUIET) {
+                printf("%s tone %d: pulled back to 0, the worn loop holds on (%.1f dBFS, floor %.1f)\n", TN[t], g_tone,
+                       db[0], floor_db[0]);
+                fails++;
+            }
+        }
+    g_tone = 64; g_pp = 0;
+    /* 6. */
+    g_bbd = 1;
+    for (int t = 0; t < REVTYPE_COUNT; t++)
+        for (g_pp = 0; g_pp < 2; g_pp++) {
+            run(t, 100, 100, 127, 127, 12.0, 0.0, W2, 2, db, &pk);
+            if (db[1] > XF_TOP || !(pk < 70000.0)) {
+                printf("%s BBD pp %d: the loop not held (%.1f dBFS, peak %.0f)\n", TN[t], g_pp, db[1], pk);
+                fails++;
+            }
+            run(t, 80, 90, 0, 0, 1.0, 0.0, W4, 1, floor_db, &pk);
+            run(t, 80, 90, 127, 127, 1.0, 10.0, W4, 1, db, &pk);
+            if (db[0] > floor_db[0] + 3.0 && db[0] > XF_QUIET) {
+                printf("%s BBD pp %d: pulled back to 0, the loop holds on (%.1f dBFS, floor %.1f)\n", TN[t], g_pp,
+                       db[0], floor_db[0]);
+                fails++;
+            }
+        }
+    g_bbd = 0; g_pp = 0;
+    printf("worn (LOOP TONE 0, 24, 100, 127, PING PONG): bounded, and settles when pulled back\n");
+    printf("the stereo BBD (PING PONG off, on): bounded, and settles when pulled back\n");
     printf("one way alone settles to its floor; pulled back to 0, the loop does too\n");
     printf(fails ? "%d cross-feed checks failed\n" : "all cross-feed checks passed\n", fails);
     return fails != 0;
