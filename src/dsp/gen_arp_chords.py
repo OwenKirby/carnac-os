@@ -259,10 +259,12 @@ def main():
         for i in range(0, len(names), 6):
             f.write("    " + " ".join('"%s",' % n for n in names[i:i + 6]) + "\n")
         f.write("};\n\n")
-        f.write("const uint8_t arp_chord_iv[ARP_GENRE_COUNT][12][ARP_CHORD_NOTES] = {\n")
+        f.write("/* voices 1..3, 5 bits each (voice 0 is the key: 0); arp_chord_iv() unpacks them */\n")
+        f.write("const uint16_t arp_chord_pk[ARP_GENRE_COUNT][12] = {\n")
         for name, chords in zip(names, table):
+            assert all(c[0] == 0 and max(c[1:]) < 32 for c in chords), name
             f.write("    /* %s */\n    {" % name)
-            parts = ["{%s}" % ",".join(str(v) for v in c) for c in chords]
+            parts = ["0x%04x" % (c[1] | c[2] << 5 | c[3] << 10) for c in chords]
             f.write(",".join(parts[:6]) + ",\n     " + ",".join(parts[6:]) + "},\n")
         f.write("};\n\n")
         f.write("/* each genre's scale for a SEQ NOTE lane on SCALE = GENRE: SEQSCALE_* | root << 4 (root: pitch class) */\n")
@@ -271,7 +273,7 @@ def main():
         for (si, r), name in zip(scales, names):
             f.write("    SEQSCALE_%s | %d << 4,%s/* %s */\n" % (SCALES[si][0], r, " " * (12 - len(SCALES[si][0])), name))
         f.write("};\n")
-    print("arp_chords.c: %d genres x 12 x 4 = %d B" % (len(names), len(names) * 48))
+    print("arp_chords.c: %d genres x 12 x 2 = %d B" % (len(names), len(names) * 24))
     del pcs
 
 

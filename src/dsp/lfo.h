@@ -30,4 +30,7 @@ void lfo_advance(const LfoParams *cfg, LfoRuntimeState *state, int32_t speed_mod
 // KEY RESET: a note-on puts the playhead at its PHASE start (and restarts delay and fade) when the LFO asks for it
 void lfo_key_reset(const LfoParams *cfg, LfoRuntimeState *state);
 
+/* the triangle, saw and square tables, worked out into RAM: once, at start-up (synth_init), before any LFO runs */
+void lfo_tables_init(void);
+
 #endif

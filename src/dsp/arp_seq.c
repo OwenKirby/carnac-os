@@ -55,12 +55,12 @@ uint8_t carp_hold_strum(uint8_t variation, uint8_t *up)
 
 uint8_t carp_chord_notes(uint8_t genre, uint8_t root, uint8_t out[ARP_CHORD_NOTES])
 {
-    const uint8_t *iv;
+    uint8_t iv[ARP_CHORD_NOTES];
     uint8_t i, n = 0u;
     uint16_t v;
     if (genre >= ARP_GENRE_COUNT) genre = 0u;
     if (root > VAL_MAX) root = VAL_MAX;
-    iv = arp_chord_iv[genre][root % 12u];
+    arp_chord_iv(genre, (uint8_t)(root % 12u), iv);
     for (i = 0u; i < ARP_CHORD_NOTES; i++) {         /* ascending in the table, so ascending here */
         v = (uint16_t)(root + iv[i]);
         if (v <= VAL_MAX)

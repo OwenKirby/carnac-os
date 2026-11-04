@@ -461,6 +461,7 @@ static void enforce_voice_limits(void)
 
 SYNTH_COLD void synth_init(void)
 {
+    lfo_tables_init();                         /* (the LFO shapes' RAM tables, before anything reads one) */
     global_init();
     preset_defaults();
     voice_attack_init();

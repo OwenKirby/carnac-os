@@ -109,7 +109,8 @@ int main(void)
     /* ---- the chord bank (8.3): 4 ascending voices on the key, spec rows kept ---- */
     for (g = 0; g < (int)ARP_GENRE_COUNT; g++)
         for (p = 0; p < 12; p++) {
-            const uint8_t *iv = arp_chord_iv[g][p];
+            uint8_t iv[ARP_CHORD_NOTES];
+            arp_chord_iv((uint8_t)g, (uint8_t)p, iv);
             CHECK(iv[0] == 0 && iv[1] > 0 && iv[2] > iv[1] && iv[3] > iv[2] && iv[3] <= 40,
                   "%s pc %d: %u %u %u %u", arp_genre_names[g], p, iv[0], iv[1], iv[2], iv[3]);
         }

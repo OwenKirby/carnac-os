@@ -1,4 +1,5 @@
 #include "tuning.h"
+#include "dsp_cold.h"
 #include "hardware/mem_section.h"
 
 int16_t tuning_user[TUNING_NUSER][TUNING_NKEY] SYNTH_POOL;
@@ -36,7 +37,7 @@ static void tuning_put(int16_t *t, uint8_t key, const uint8_t *f)
     t[key] = tuning_clamp(((int32_t)f[0] - key) * 100 + (int32_t)((frac * 100u + 8192u) >> 14));
 }
 
-int tuning_mts(const uint8_t *p, uint32_t n, uint8_t cur_tuning)
+SYNTH_COLD int tuning_mts(const uint8_t *p, uint32_t n, uint8_t cur_tuning)
 {
     uint32_t i, k, nn, o;
     int slot = -1;

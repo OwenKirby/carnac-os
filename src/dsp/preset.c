@@ -257,7 +257,7 @@ const uint8_t mdst_ofs[MDST_COUNT][3] = {
                       (1u << MDST_F2_MORPH) | (1u << MDST_BALANCE) | (1u << MDST_ROUTING) | (1u << MDST_PHASE) | \
                       (1u << MDST_CUTOFF_LR) | (1u << MDST_LFO1_SPEED) | (1u << MDST_LFO2_SPEED) | (1u << MDST_LFO3_SPEED))
 
-void engine_slot_routes_to_sends(EngineState *e)
+SYNTH_COLD void engine_slot_routes_to_sends(EngineState *e)
 {
     uint8_t *b = (uint8_t *)e;
     unsigned d, i;
