@@ -1520,7 +1520,7 @@ void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in,
 #define XF_WOW_EXC 24.f                                   /* ... +- this (0.55 ms: ~3 cents at the spin's rate; 1.8
                                                            * ms detuned the loop's own resonances and it no longer held) */
 #define XF_WOW_THIN 0.25f                                 /* the thinner side's share of it */
-PS_STATIC_ASSERT(XF_WOW_BASE + XF_WOW_EXC + 2.f < (float)XF_WOW_LEN, "the wander fits its line");
+PS_STATIC_ASSERT((int)XF_WOW_BASE + (int)XF_WOW_EXC + 2 < (int)XF_WOW_LEN, "the wander fits its line");
 enum { XF_CL, XF_CR, XF_CM, XF_CM2, XF_NCH };            /* DLY > REV's left and right; REV > DLY's mono (the BBD:
                                                            * left), the BBD's right */
 typedef struct {
@@ -1529,8 +1529,9 @@ typedef struct {
     float wan, wan_tgt;                                   /* its random drift, -1 .. 1 */
     uint32_t ph, inc;                                     /* its spin */
     uint32_t wp;                                          /* the line's write position */
-    float buf[XF_WOW_LEN];                                /* the line (the band-limited source) */
+    float *buf;                                           /* its line (xf_wow: the band-limited source) */
 } XfCh;
+static float xf_wow[XF_NCH][XF_WOW_LEN] SYNTH_POOL;       /* (4 KB: .pool, as every buffer here) */
 static struct {
     XfCh ch[XF_NCH];
     float g[2];                                           /* each way's gain at the last block's end */
@@ -1549,7 +1550,9 @@ static void xf_init(void)                                 /* (the amounts, fx_li
     memset(&xf, 0, sizeof xf);
     xf.tone_key = -1;
     xf.rng = 0x1F2E3D4Cu;
+    memset(xf_wow, 0, sizeof xf_wow);
     for (int c = 0; c < XF_NCH; c++) {
+        xf.ch[c].buf = xf_wow[c];
         xf.ch[c].inc = inc[c];
         xf.ch[c].ph = (uint32_t)c * 0x55555555u;
     }
