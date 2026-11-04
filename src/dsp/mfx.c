@@ -2127,6 +2127,11 @@ static void mfx_glide(MfxState *s, const MfxParams *p, const float *off)
     }
 }
 
+#if !defined(FELUCCA_ID)
+/* host only (2026-11-04, the 90s prototypes: src/host/mfx90_proto.h): set, it takes any MFX type's place */
+void (*mfx_proto_hook)(int layer, float *l, float *r, uint32_t n);
+#endif
+
 int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
 {
     MfxState *s = &mfx_st[layer & 1];
@@ -2136,6 +2141,12 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
     s->nstep = 0;
     if (p->type == MFX_OFF || p->type >= MFX_COUNT)
         return 0;
+#if !defined(FELUCCA_ID)
+    if (mfx_proto_hook) {
+        mfx_proto_hook(layer, l, r, n > MFX_PASS_MAX ? MFX_PASS_MAX : n);
+        return 0;
+    }
+#endif
     if (n > MFX_PASS_MAX) n = MFX_PASS_MAX;
     uint32_t xi = 0;                            /* (BBD FLANGER MODE III: where the pass's half-rate input is) */
     /* a control step at a time: each model's settings follow the glided knobs (their set-up is a few dozen

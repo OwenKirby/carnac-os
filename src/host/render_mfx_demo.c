@@ -18,6 +18,8 @@
 #include "dsp/mfx.h"
 #include "dsp/pcm_store.h"
 #include "dsp/wavetables.h"
+#include "mfx90_proto.h"                       /* the 90s prototypes (host only: mfx_proto_hook) */
+extern void (*mfx_proto_hook)(int layer, float *l, float *r, uint32_t n);
 
 #define RATE 44100u
 #define BLOCK 32u
@@ -224,15 +226,15 @@ static double cost(MfxParams m)
     static float l[128], r[128];
     double best = 1e30;
     uint32_t seed = 7;
-    for (int rep = 0; rep < 5; rep++) {
+    for (int rep = 0; rep < 3; rep++) {
         mfx_init();
         MFX_PARAMS(0) = m;
         clock_t t0 = clock();
-        for (uint32_t fr = 0; fr < RATE * 10u; fr += 128u) {
+        for (uint32_t fr = 0; fr < RATE * 60u; fr += 128u) {
             for (int i = 0; i < 128; i++) { seed = seed * 1664525u + 1013904223u; l[i] = r[i] = (float)((int32_t)seed >> 17); }
             mfx_layer_block(0, l, r, 128);
         }
-        double ns = (double)(clock() - t0) / CLOCKS_PER_SEC * 1e9 / (RATE * 10.0);
+        double ns = (double)(clock() - t0) / CLOCKS_PER_SEC * 1e9 / (RATE * 60.0);
         if (ns < best) best = ns;
     }
     MFX_PARAMS(0).type = MFX_OFF;
@@ -258,6 +260,7 @@ int main(int argc, char **argv)
     if (argc >= 3) {
         if (argv[2][0] == 'r') goto resonators;
         if (argv[2][0] == 'p') goto phase_flange;
+        if (argv[2][0] == '9') goto nineties;
         goto bronze;
     }
     const uint8_t slow = rate_knob(0.12), mid = rate_knob(0.5), fast = rate_knob(4.0);
@@ -386,6 +389,73 @@ bronze:
         render(argv[1], "110_pad_bronze_chord_mud", SC_PAD, (MfxParams){MFX_METAL, {90, 64, 64, 64}, 0, {60, 64}}, 0);
         printf("  host cost, one layer stereo: BRONZE AGE %.1f ns/sample\n",
                cost((MfxParams){MFX_METAL, {100, 64, 64, 64}, 0, {64, 64}}));
+        if (argc >= 3) return 0;
+    }
+nineties:
+    {   /* the 90s prototypes (2026-11-04, mfx90_proto.h): each through the hook in a layer's MFX place, then the host
+         * costs of each beside the firmware's types (one layer, stereo, noise, best of 5) */
+        static const struct { int kind; float k[4]; int sc; const char *name; } R[] = {
+            {D90_DRIVE, {100, 64, 64, 30}, SC_RIFF, "501_riff_d90_drive"},
+            {D90_DRIVE, {127, 90, 50, 30}, SC_LEAD, "502_lead_d90_drive_hot"},
+            {D90_DRIVE, {110, 70, 50, 30}, SC_SOLO, "503_solo_d90_drive"},
+            {D90_DRIVE, {45, 64, 80, 0}, SC_BASS, "504_bass_d90_drive_crunch"},
+            {D90_ENSEMBLE, {35, 90, 0, 80}, SC_PAD, "511_pad_d90_ensemble"},
+            {D90_ENSEMBLE, {35, 90, 110, 80}, SC_PAD, "512_pad_d90_ensemble_phaser"},
+            {D90_PHASFLANG, {25, 50, 90, 0}, SC_PAD, "521_pad_d90_flanger"},
+            {D90_PHASFLANG, {25, 50, 90, 110}, SC_PAD, "522_pad_d90_phase_flange"},
+            {D90_PHASFLANG, {50, 40, 80, 90}, SC_RIFF, "523_riff_d90_phase_flange"},
+            {D90_PITCH, {19, 64, 0, 60}, SC_LEAD, "531_lead_d90_pitch_fifth"},
+            {D90_PITCH, {12, 76, 0, 64}, SC_PAD, "532_pad_d90_pitch_detune"},
+            {D90_PITCH, {24, 64, 80, 50}, SC_LEAD, "533_lead_d90_pitch_octave_spiral"},
+            {D90_RESONATOR, {100, 70, 70, 0}, SC_PAD, "541_pad_d90_resonator_c"},
+            {D90_RESONATOR, {110, 90, 70, 22}, SC_LEAD, "542_lead_d90_resonator_e"},
+            {D90_REVERB, {90, 60, 60, 0}, SC_LEAD, "551_lead_d90_reverb"},
+            {D90_REVERB, {120, 40, 70, 127}, SC_PAD, "552_pad_d90_reverb_long_12bit"},
+            {D90_REVERB, {70, 80, 50, 127}, SC_RIFF, "553_riff_d90_reverb_12bit"},
+        };
+        printf("90s prototypes:\n");
+        render(argv[1], "500_riff_dry", SC_RIFF, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "510_pad_dry", SC_PAD, (MfxParams){MFX_OFF, {0}}, 0);
+        render(argv[1], "530_lead_dry", SC_LEAD, (MfxParams){MFX_OFF, {0}}, 0);
+        for (unsigned i = 0; i < sizeof R / sizeof R[0]; i++) {
+            d90_begin(0, R[i].kind, R[i].k);
+            mfx_proto_hook = d90_hook;
+            render(argv[1], R[i].name, R[i].sc, (MfxParams){MFX_STONE_PHASER, {64, 64, 64, 64}, 0, {0, 0}}, 0);
+            mfx_proto_hook = 0;
+        }
+        {   /* costs: each prototype (its first setting) through the hook on noise, as cost() does a real type */
+            static float l[128], r[128];
+            static const float K[D90_COUNT][4] = {{100, 64, 64, 30}, {35, 90, 110, 80}, {25, 50, 90, 110},
+                                                  {19, 64, 0, 60}, {100, 70, 70, 0}, {90, 60, 60, 127}};
+            for (int kd = 0; kd < D90_COUNT; kd++) {
+                double best = 1e30;
+                uint32_t seed = 7;
+                for (int rep = 0; rep < 3; rep++) {
+                    d90_begin(0, kd, K[kd]);
+                    clock_t t0 = clock();
+                    for (uint32_t fr = 0; fr < RATE * 60u; fr += 128u) {
+                        for (int i = 0; i < 128; i++) { seed = seed * 1664525u + 1013904223u; l[i] = r[i] = (float)((int32_t)seed >> 17); }
+                        d90_hook(0, l, r, 128);
+                    }
+                    double ns = (double)(clock() - t0) / CLOCKS_PER_SEC * 1e9 / (RATE * 60.0);
+                    if (ns < best) best = ns;
+                }
+                printf("  host cost, one layer stereo: %-14s %5.1f ns/sample\n", D90_NAMES[kd], best);
+            }
+            static const struct { MfxParams p; const char *n; } F[] = {
+                {{MFX_METAL, {100, 64, 64, 64}, 0, {64, 64}}, "BRONZE AGE"},
+                {{MFX_ENS_PHASER, {74, 64, 15, 110}, 100, {30, 40}}, "ENS+PHASER"},
+                {{MFX_PHASE_FLANGE, {35, 25, 50, 70}, 64, {0, 60}}, "PHASE+FLANGE"},
+                {{MFX_TAPE_FLANGER, {40, 40, 64, 40}, 0, {0, 0}}, "TAPE FLANGER"},
+                {{MFX_PITCH_SHIFT, {19, 75, 0, 64}, 127, {30, 0}}, "PITCH SHIFT"},
+                {{MFX_WIND_HARP, {100, 70, 40, 70}, 100, {9, 1}}, "WIND HARP"},
+                {{MFX_RINGING_STONES, {100, 60, 30, 70}, 100, {0, 0}}, "RINGING STONES"},
+                {{MFX_STONE_PHASER, {64, 41, 64, 127}, 0, {0, 0}}, "STONE PHASER"},
+                {{MFX_BBD_FLANGER, {50, 30, 80, 70}, 0, {1, 0}}, "BBD FLANGER"},
+            };
+            for (unsigned i = 0; i < sizeof F / sizeof F[0]; i++)
+                printf("  host cost, one layer stereo: %-14s %5.1f ns/sample (firmware type)\n", F[i].n, cost(F[i].p));
+        }
         if (argc >= 3) return 0;
     }
 phase_flange:
