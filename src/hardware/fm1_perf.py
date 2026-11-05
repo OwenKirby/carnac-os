@@ -97,7 +97,7 @@ def results():
 
 STAGES = ["TOTAL", "CTRL", "VOICE", "OSC", "EXTRAS", "FILTER", "AMP", "MIX", "FX", "CLOCK", "SEQ", "LTICK",
           "c.LFO", "c.ENV", "c.OSC", "c.FILT", "c.AMP",
-          "mt.PRE", "mt.UP", "mt.CLIP", "mt.DOWN", "mt.POST"]   # synth_prof.h (c.*: CTRL split; mt.*: BRONZE AGE, in FX)
+          "mt.PRE", "mt.UP", "mt.CLIP", "mt.DOWN", "mt.POST", "m.GLIDE", "m.PLAN"]   # synth_prof.h (c.*: CTRL split; mt.*: BRONZE AGE, in FX)
 CTRL_LAPS = {"CTRL", "c.LFO", "c.ENV", "c.OSC", "c.FILT", "c.AMP"}           # one lap a voice a control tick
 PER_VOICE = {"VOICE", "OSC", "EXTRAS", "FILTER", "AMP", "MIX"} | CTRL_LAPS   # one lap a voice
 

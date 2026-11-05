@@ -116,6 +116,570 @@ What the host can't settle and has to be measured on a real FM1. Every number in
 
 Written by src/hardware/fm1_perf.py. Pass: avg <= 70 %, peak < 90 %, no late halves. One core, factory patch + the scenario's settings (src/hardware/perf_test.c).
 
+### 2026-11-04 15:59, CARNAC OS PROF (1 core), done
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 23.1 | 23.8 | 0 | 0 | 60.9 | 3 | pass |
+| SINGLE 1V | 35.1 | 36.3 | 0 | 1 | 57.6 | 1 | pass |
+| SINGLE | 89.0 | 90.5 | 0 | 8 | 43.2 | 1 | FAIL |
+| SINGLE HEAVY | 98.3 | 100.0 | 2 | 8 | 24.2 | 24 | FAIL |
+| DUAL OSC | 109.8 | 110.6 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SPREAD | 113.3 | 114.6 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUAL FILTER | 104.0 | 105.7 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| STACK | 127.8 | 129.1 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| BINAURAL | 107.4 | 109.1 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| DUAL OSC HEAVY | 109.1 | 110.6 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SPREAD HEAVY | 123.3 | 124.4 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUAL FLT HEAVY | 109.3 | 110.8 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| STACK HEAVY | 124.4 | 125.6 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| BINAURAL HEAVY | 118.6 | 120.2 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SINGLE LADDER | 89.0 | 90.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| SINGLE MS20 | 84.0 | 85.7 | 0 | 8 | 43.2 | 1 | FAIL |
+| SINGLE SH-2 | 97.6 | 99.5 | 0 | 8 | 41.1 | 12 | FAIL |
+| SINGLE FORMANT | 86.4 | 87.8 | 0 | 8 | 43.2 | 1 | FAIL |
+| DUAL FLT LADDER | 103.9 | 104.7 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP HOME | 111.1 | 113.9 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP AMP | 111.4 | 114.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP SEQ | 110.3 | 113.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP MOD1 | 111.6 | 115.6 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| LADDER FILTER PG | 88.9 | 90.5 | 0 | 8 | 42.9 | 1 | FAIL |
+| HEAVY MOD+PP | 106.8 | 107.5 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| HEAVY CELEST+PP | 108.2 | 109.8 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP CELEST+PP | 120.0 | 123.2 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SINGLE MULTI H | 102.4 | 103.8 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUALOSC MULTI H | 109.9 | 111.2 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SPREAD MULTI H | 125.3 | 126.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUALFLT MULTI H | 114.9 | 116.2 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| STACK MULTI H | 128.0 | 129.5 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| BINAUR MULTI H | 122.2 | 123.4 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SPREAD H CEL+PP | 134.2 | 135.2 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUALOSC H CEL+PP | 118.8 | 120.1 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SPREAD H TUM+PP | 131.8 | 132.9 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP SPRD CEL | 146.3 | 150.1 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| HEAVY SPRING+PP | 104.7 | 106.2 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| HEAVY CEL+BBD PP | 111.1 | 112.9 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP SPR+BBD | 119.4 | 122.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| STRIKE | 89.9 | 91.4 | 0 | 8 | 42.9 | 1 | FAIL |
+| STRIKE HEAVY | 106.6 | 108.1 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP STRIKE | 128.4 | 131.5 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP STRK FILT | 129.7 | 132.6 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SINGLE SH2 H | 111.1 | 112.9 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUALOSC SH2 H | 116.4 | 117.6 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SPREAD SH2 H | 134.5 | 136.1 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUALFLT SH2 H | 131.2 | 132.6 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| STACK SH2 H | 142.1 | 144.1 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| BINAUR SH2 H | 136.8 | 138.4 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| STRIKE SH2 H | 119.4 | 120.8 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SPREAD SH2 CEL+PP | 142.8 | 144.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUALFLT SH2 CEL | 140.2 | 141.7 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP SH2 CEL | 131.2 | 134.6 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUALFLT SH2 HP | 131.3 | 133.0 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| BINAUR SH2 HP | 136.8 | 138.4 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SINGLE PCM | 105.0 | 106.5 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUAL OSC PCM | 119.7 | 121.2 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SPREAD PCM | 146.2 | 148.2 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUAL FILTER PCM | 117.0 | 118.4 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| STACK PCM | 137.1 | 138.3 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| BINAURAL PCM | 128.2 | 129.5 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| DUALOSC MULTI H PCM | 119.5 | 120.6 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| DUALFLT MULTI H PCM | 127.9 | 129.3 | 8 | 7 | – | – | FAIL (cut by the guard) |
+| BINAUR MULTI H PCM | 142.8 | 144.1 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SINGLE RS | 89.1 | 90.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| SINGLE RS PCM | 104.8 | 106.4 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| DUALOSC RS | 109.9 | 111.3 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| DUALOSC RS PCM | 119.5 | 120.5 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP HOME PCM | 125.1 | 128.1 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SINGLE DRV SOFT | 98.1 | 100.3 | 12 | 8 | 32.8 | 24 | FAIL |
+| SINGLE DRV HARD | 98.4 | 100.6 | 14 | 8 | 28.2 | 35 | FAIL |
+| SINGLE DRV FOLD | 98.8 | 101.0 | 38 | 8 | 29.4 | 35 | FAIL |
+| SINGLE DRV TAPE | 101.2 | 102.1 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SINGLE DRV TUBE | 101.0 | 102.7 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SINGLE DRV OD | 101.3 | 102.5 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| STACK HEAVY TUBE | 140.6 | 141.7 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| BINAUR HEAVY OD | 141.4 | 142.7 | 8 | 6 | – | – | FAIL (cut by the guard) |
+| STRIKE HEAVY TUBE | 125.6 | 127.1 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP HOME TUBE | 123.3 | 126.6 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| FULL | 95.3 | 97.0 | 0 | 4 | 42.9 | 12 | FAIL |
+| FULL HEAVY | 94.0 | 95.5 | 0 | 4 | 43.2 | 1 | FAIL |
+| FULL MULTI H | 96.6 | 98.2 | 0 | 4 | 41.1 | 12 | FAIL |
+| FULL SH2 H | 105.7 | 106.4 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| FULL H CEL+PP | 107.1 | 108.3 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| FULL MULTI H PCM | 103.4 | 104.4 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| FULL SH2 H PCM | 112.4 | 113.3 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| FULL SH2 CEL+PP | 115.1 | 116.4 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| DSPRD | 87.5 | 89.1 | 0 | 4 | 42.9 | 1 | FAIL |
+| DSPRD HEAVY | 93.1 | 94.5 | 0 | 4 | 43.2 | 1 | FAIL |
+| DSPRD MULTI H | 93.6 | 95.2 | 0 | 4 | 43.2 | 1 | FAIL |
+| DSPRD SH2 H | 96.9 | 98.8 | 0 | 4 | 40.9 | 12 | FAIL |
+| DSPRD H CEL+PP | 103.9 | 104.4 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| DSPRD MULTI H PCM | 128.8 | 130.0 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| DSPRD SH2 CEL+PP | 107.7 | 108.7 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP DSPRD CEL | 116.0 | 118.7 | 8 | 4 | – | – | FAIL (cut by the guard) |
+| IDLE PHASER | 27.3 | 28.2 | 0 | 0 | 60.0 | 4 | pass |
+| IDLE PHASER x2 | 30.7 | 31.5 | 0 | 0 | 57.6 | 1 | pass |
+| SPREAD PHASER | 119.6 | 122.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SPREAD H CEL PHSR | 141.4 | 143.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP HOME PHSR2 | 121.2 | 123.8 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| IDLE ENSEMBLE | 28.4 | 29.3 | 0 | 0 | 59.6 | 4 | pass |
+| IDLE ENSEMBLE x2 | 32.7 | 33.6 | 0 | 0 | 57.5 | 5 | pass |
+| IDLE ENS+PHSR | 29.5 | 30.4 | 0 | 0 | 59.3 | 4 | pass |
+| IDLE ENS+PHSR x2 | 34.7 | 35.6 | 0 | 0 | 57.6 | 1 | pass |
+| IDLE CHORUS | 28.1 | 28.8 | 0 | 0 | 59.6 | 4 | pass |
+| IDLE CHORUS x2 | 31.9 | 32.7 | 0 | 0 | 58.0 | 4 | pass |
+| SPREAD H CEL ENPH | 145.2 | 147.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP HOME ENPH2 | 126.7 | 129.8 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SPREAD H CEL MIX | 142.6 | 144.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP CEL MIX | 128.8 | 131.7 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| HEAVY SPRING MIX | 113.3 | 115.1 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| HEAVY CEL BBD MIX | 122.2 | 123.3 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| IDLE TAPE FLANGER | 29.8 | 30.6 | 0 | 0 | 58.2 | 4 | pass |
+| IDLE TAPE FLNG x2 | 34.8 | 35.6 | 0 | 0 | 57.2 | 1 | pass |
+| SPREAD H CEL TFLG | 144.9 | 146.2 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SEQ+ARP HOME TFLG2 | 126.5 | 129.7 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| IDLE BBD FLANGER | 28.2 | 28.9 | 0 | 0 | 59.3 | 4 | pass |
+| IDLE BBD FLNG x2 | 32.2 | 33.0 | 0 | 0 | 57.3 | 1 | pass |
+| SPREAD H CEL BBDF | 142.5 | 143.6 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| IDLE PITCH SHIFT | 29.3 | 30.4 | 0 | 0 | 58.9 | 4 | pass |
+| PITCH SHIFT HELD | 97.4 | 99.9 | 0 | 8 | 38.9 | 23 | FAIL |
+| IDLE PITCH SHFT x2 | 34.5 | 35.9 | 0 | 0 | 57.3 | 1 | pass |
+| SPREAD H CEL PSHF | 143.6 | 145.1 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| IDLE BBD ECHO | 26.9 | 27.6 | 0 | 0 | 60.3 | 4 | pass |
+| IDLE BBD ECHO x2 | 30.2 | 31.0 | 0 | 0 | 58.6 | 4 | pass |
+| SPREAD H CEL ECHO | 140.7 | 143.5 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| IDLE BRONZE AGE | 39.1 | 39.7 | 0 | 0 | 57.2 | 1 | pass |
+| IDLE BRONZE AGE x2 | 54.2 | 55.0 | 0 | 0 | 57.2 | 1 | pass |
+| SPREAD H CEL BRNZ | 150.6 | 153.0 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SPREAD H CEL BREQ | 152.8 | 155.4 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| IDLE PHASE+FLANGE | 29.4 | 30.2 | 0 | 0 | 59.0 | 4 | pass |
+| SPREAD H CEL PHFL | 144.3 | 145.5 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| IDLE WIND HARP | 28.4 | 29.2 | 0 | 0 | 59.6 | 4 | pass |
+| SPREAD H CEL HARP | 143.9 | 146.6 | 8 | 8 | – | – | FAIL (cut by the guard) |
+| SPREAD H CEL STON | 145.4 | 147.0 | 8 | 8 | – | – | FAIL (cut by the guard) |
+
+Stage profile (24 MHz ticks a sample; one counter read costs 1, taken off once a lap: per voice per 16-sample block (the voice stages, CTRL and its c.* split); 'other' = TOTAL less the rest: clock, sequencers, loops)
+
+| scenario | voices | TOTAL | CTRL | VOICE | OSC | EXTRAS | FILTER | AMP | MIX | FX | CLOCK | SEQ | LTICK | c.LFO | c.ENV | c.OSC | c.FILT | c.AMP | mt.PRE | mt.UP | mt.CLIP | mt.DOWN | mt.POST | m.GLIDE | m.PLAN | other | per voice (VOICE+CTRL+MIX) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| IDLE | 0 | 123 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 70 | 14 | 4 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 0 |
+| SINGLE 1V | 1 | 187 | 28 | 23 | 5 | 1 | 12 | 2 | 0 | 78 | 14 | 5 | 15 | 5 | 3 | 7 | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 24 | 51 |
+| SINGLE | 8 | 481 | 176 | 162 | 34 | 6 | 94 | 16 | 2 | 78 | 14 | 5 | 16 | 38 | 22 | 48 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 28 | 42 |
+| SINGLE HEAVY | 8 | 531 | 210 | 166 | 34 | 24 | 82 | 16 | 2 | 78 | 16 | 5 | 17 | 38 | 22 | 50 | 72 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 37 | 47 |
+| DUAL OSC | 6 | 593 | 162 | 283 | 0 | 0 | 0 | 0 | 1 | 81 | 15 | 6 | 18 | 30 | 17 | 62 | 31 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 74 |
+| SPREAD | 8 | 613 | 198 | 268 | 140 | 6 | 94 | 16 | 2 | 80 | 15 | 6 | 17 | 38 | 22 | 68 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 58 |
+| DUAL FILTER | 7 | 562 | 192 | 226 | 0 | 0 | 0 | 0 | 1 | 79 | 14 | 6 | 16 | 35 | 20 | 44 | 71 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 28 | 60 |
+| STACK | 6 | 691 | 193 | 351 | 0 | 0 | 0 | 0 | 1 | 81 | 15 | 7 | 17 | 31 | 17 | 61 | 58 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 91 |
+| BINAURAL | 6 | 581 | 195 | 237 | 0 | 0 | 0 | 0 | 1 | 81 | 16 | 6 | 19 | 30 | 17 | 39 | 87 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 72 |
+| DUAL OSC HEAVY | 6 | 590 | 193 | 234 | 0 | 0 | 0 | 0 | 1 | 83 | 17 | 6 | 22 | 31 | 17 | 65 | 58 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 | 71 |
+| SPREAD HEAVY | 8 | 667 | 232 | 274 | 140 | 24 | 82 | 16 | 2 | 81 | 17 | 6 | 19 | 40 | 22 | 68 | 74 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 36 | 64 |
+| DUAL FLT HEAVY | 7 | 591 | 216 | 220 | 0 | 0 | 0 | 0 | 1 | 80 | 16 | 6 | 18 | 34 | 20 | 44 | 94 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 | 62 |
+| STACK HEAVY | 6 | 673 | 218 | 293 | 0 | 0 | 0 | 0 | 1 | 82 | 17 | 6 | 21 | 30 | 17 | 62 | 82 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 85 |
+| BINAURAL HEAVY | 6 | 642 | 230 | 247 | 0 | 0 | 0 | 0 | 1 | 81 | 17 | 6 | 21 | 31 | 17 | 41 | 120 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 39 | 80 |
+| SINGLE LADDER | 8 | 481 | 176 | 160 | 32 | 6 | 94 | 16 | 0 | 78 | 14 | 5 | 16 | 38 | 22 | 48 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 32 | 42 |
+| SINGLE MS20 | 8 | 454 | 168 | 142 | 32 | 6 | 74 | 16 | 2 | 78 | 14 | 5 | 16 | 40 | 22 | 48 | 32 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 29 | 39 |
+| SINGLE SH-2 | 8 | 527 | 170 | 218 | 32 | 6 | 150 | 16 | 0 | 75 | 14 | 5 | 15 | 40 | 20 | 48 | 36 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 30 | 48 |
+| SINGLE FORMANT | 8 | 467 | 172 | 150 | 34 | 8 | 82 | 16 | 2 | 77 | 15 | 5 | 17 | 40 | 22 | 50 | 34 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 29 | 40 |
+| DUAL FLT LADDER | 7 | 561 | 191 | 225 | 0 | 0 | 0 | 0 | 1 | 79 | 15 | 6 | 16 | 34 | 20 | 43 | 72 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 28 | 60 |
+| SEQ+ARP HOME | 8 | 601 | 230 | 172 | 36 | 24 | 84 | 16 | 2 | 85 | 16 | 20 | 20 | 40 | 32 | 52 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 56 | 50 |
+| SEQ+ARP AMP | 8 | 602 | 230 | 172 | 36 | 24 | 82 | 16 | 2 | 85 | 17 | 20 | 21 | 40 | 34 | 52 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 55 | 50 |
+| SEQ+ARP SEQ | 8 | 596 | 228 | 172 | 36 | 24 | 82 | 18 | 2 | 84 | 17 | 19 | 19 | 40 | 32 | 52 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 55 | 50 |
+| SEQ+ARP MOD1 | 8 | 603 | 230 | 172 | 36 | 24 | 84 | 16 | 2 | 84 | 17 | 19 | 24 | 40 | 32 | 50 | 74 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 55 | 50 |
+| LADDER FILTER PG | 8 | 480 | 176 | 162 | 32 | 6 | 94 | 16 | 2 | 78 | 14 | 5 | 16 | 38 | 22 | 48 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 42 |
+| HEAVY MOD+PP | 8 | 577 | 214 | 168 | 34 | 24 | 82 | 16 | 2 | 117 | 16 | 6 | 19 | 40 | 22 | 52 | 72 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 48 |
+| HEAVY CELEST+PP | 8 | 584 | 214 | 168 | 34 | 24 | 82 | 16 | 2 | 124 | 16 | 6 | 19 | 40 | 22 | 52 | 74 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 48 |
+| SEQ+ARP CELEST+PP | 8 | 649 | 232 | 172 | 36 | 24 | 84 | 16 | 2 | 130 | 17 | 21 | 20 | 40 | 32 | 54 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 55 | 51 |
+| SINGLE MULTI H | 8 | 553 | 218 | 178 | 34 | 22 | 94 | 16 | 2 | 81 | 15 | 6 | 17 | 38 | 22 | 50 | 80 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 36 | 50 |
+| DUALOSC MULTI H | 6 | 594 | 192 | 243 | 0 | 0 | 0 | 0 | 1 | 83 | 15 | 6 | 19 | 30 | 17 | 63 | 61 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 73 |
+| SPREAD MULTI H | 8 | 678 | 236 | 284 | 140 | 22 | 94 | 16 | 2 | 82 | 15 | 6 | 17 | 40 | 22 | 68 | 80 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 36 | 65 |
+| DUALFLT MULTI H | 7 | 621 | 226 | 240 | 0 | 0 | 0 | 0 | 1 | 81 | 15 | 6 | 17 | 35 | 20 | 44 | 105 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 67 |
+| STACK MULTI H | 6 | 692 | 224 | 310 | 0 | 0 | 0 | 0 | 1 | 83 | 15 | 7 | 18 | 30 | 17 | 60 | 90 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 | 89 |
+| BINAUR MULTI H | 6 | 661 | 237 | 261 | 0 | 0 | 0 | 0 | 1 | 81 | 17 | 6 | 19 | 30 | 18 | 40 | 129 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 39 | 83 |
+| SPREAD H CEL+PP | 8 | 726 | 240 | 284 | 140 | 22 | 92 | 16 | 2 | 125 | 15 | 7 | 18 | 40 | 22 | 70 | 80 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 66 |
+| DUALOSC H CEL+PP | 6 | 642 | 196 | 241 | 0 | 0 | 0 | 0 | 1 | 128 | 16 | 7 | 19 | 31 | 17 | 64 | 62 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 | 73 |
+| SPREAD H TUM+PP | 8 | 713 | 240 | 284 | 140 | 22 | 92 | 16 | 0 | 114 | 15 | 7 | 17 | 40 | 22 | 70 | 80 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 36 | 66 |
+| SEQ+ARP SPRD CEL | 8 | 792 | 254 | 292 | 144 | 24 | 94 | 18 | 2 | 132 | 16 | 21 | 19 | 40 | 32 | 72 | 82 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 56 | 68 |
+| HEAVY SPRING+PP | 8 | 566 | 214 | 168 | 34 | 24 | 82 | 16 | 0 | 106 | 16 | 6 | 18 | 40 | 22 | 50 | 74 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 38 | 48 |
+| HEAVY CEL+BBD PP | 8 | 601 | 214 | 168 | 34 | 24 | 82 | 16 | 2 | 140 | 16 | 6 | 19 | 40 | 22 | 52 | 74 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 36 | 48 |
+| SEQ+ARP SPR+BBD | 8 | 645 | 230 | 172 | 36 | 24 | 82 | 16 | 2 | 128 | 17 | 19 | 21 | 40 | 32 | 52 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 56 | 50 |
+| STRIKE | 8 | 486 | 180 | 160 | 0 | 0 | 0 | 0 | 2 | 78 | 15 | 6 | 18 | 40 | 22 | 50 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 43 |
+| STRIKE HEAVY | 8 | 576 | 226 | 186 | 0 | 0 | 0 | 0 | 2 | 83 | 17 | 6 | 19 | 40 | 24 | 52 | 76 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 37 | 52 |
+| SEQ+ARP STRIKE | 8 | 694 | 244 | 194 | 0 | 0 | 0 | 0 | 2 | 134 | 18 | 23 | 21 | 40 | 32 | 56 | 78 | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 58 | 55 |
+| SEQ+ARP STRK FILT | 8 | 702 | 244 | 204 | 0 | 0 | 0 | 0 | 2 | 132 | 19 | 22 | 22 | 40 | 32 | 56 | 78 | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 57 | 56 |
+| SINGLE SH2 H | 8 | 601 | 214 | 234 | 34 | 22 | 150 | 16 | 2 | 79 | 15 | 5 | 16 | 40 | 22 | 50 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 36 | 56 |
+| DUALOSC SH2 H | 6 | 629 | 188 | 284 | 0 | 0 | 0 | 0 | 1 | 81 | 15 | 6 | 19 | 31 | 17 | 62 | 57 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 79 |
+| SPREAD SH2 H | 8 | 728 | 234 | 340 | 138 | 22 | 150 | 16 | 2 | 80 | 15 | 6 | 17 | 40 | 22 | 68 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 | 72 |
+| DUALFLT SH2 H | 7 | 710 | 219 | 339 | 0 | 0 | 0 | 0 | 1 | 79 | 15 | 6 | 17 | 35 | 19 | 43 | 99 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 | 80 |
+| STACK SH2 H | 6 | 769 | 216 | 396 | 0 | 0 | 0 | 0 | 1 | 82 | 15 | 6 | 18 | 31 | 17 | 59 | 83 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 102 |
+| BINAUR SH2 H | 6 | 740 | 231 | 348 | 0 | 0 | 0 | 0 | 1 | 80 | 16 | 6 | 19 | 30 | 18 | 40 | 123 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 39 | 97 |
+| STRIKE SH2 H | 8 | 646 | 224 | 262 | 0 | 0 | 0 | 0 | 2 | 82 | 16 | 6 | 19 | 40 | 22 | 50 | 76 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 61 |
+| SPREAD SH2 CEL+PP | 8 | 773 | 232 | 342 | 140 | 22 | 152 | 16 | 0 | 123 | 15 | 6 | 17 | 40 | 22 | 70 | 74 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 38 | 72 |
+| DUALFLT SH2 CEL | 7 | 759 | 222 | 340 | 0 | 0 | 0 | 0 | 1 | 123 | 15 | 6 | 17 | 34 | 20 | 45 | 100 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 80 |
+| SEQ+ARP SH2 CEL | 8 | 709 | 228 | 240 | 36 | 24 | 152 | 16 | 2 | 131 | 16 | 20 | 19 | 40 | 32 | 52 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 53 | 59 |
+| DUALFLT SH2 HP | 7 | 711 | 219 | 343 | 0 | 0 | 0 | 0 | 1 | 78 | 14 | 6 | 16 | 35 | 20 | 43 | 98 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 | 80 |
+| BINAUR SH2 HP | 6 | 740 | 232 | 348 | 0 | 0 | 0 | 0 | 1 | 80 | 16 | 6 | 19 | 30 | 17 | 40 | 124 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 38 | 97 |
+| SINGLE PCM | 8 | 567 | 200 | 214 | 84 | 6 | 94 | 16 | 2 | 82 | 15 | 6 | 18 | 40 | 22 | 70 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 30 | 52 |
+| DUAL OSC PCM | 6 | 647 | 195 | 297 | 0 | 0 | 0 | 0 | 1 | 84 | 15 | 7 | 21 | 32 | 17 | 93 | 32 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 82 |
+| SPREAD PCM | 8 | 792 | 220 | 416 | 284 | 8 | 94 | 16 | 2 | 82 | 17 | 6 | 21 | 40 | 22 | 88 | 42 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 28 | 80 |
+| DUAL FILTER PCM | 7 | 633 | 213 | 270 | 0 | 0 | 0 | 0 | 1 | 81 | 15 | 7 | 19 | 36 | 20 | 62 | 71 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 69 |
+| STACK PCM | 6 | 742 | 223 | 366 | 0 | 0 | 0 | 0 | 1 | 83 | 16 | 7 | 19 | 30 | 18 | 89 | 61 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 98 |
+| BINAURAL PCM | 6 | 694 | 226 | 314 | 0 | 0 | 0 | 0 | 1 | 83 | 16 | 7 | 20 | 30 | 17 | 56 | 101 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 90 |
+| DUALOSC MULTI H PCM | 6 | 646 | 225 | 259 | 0 | 0 | 0 | 0 | 1 | 83 | 15 | 7 | 21 | 31 | 17 | 93 | 63 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 81 |
+| DUALFLT MULTI H PCM | 7 | 692 | 247 | 285 | 0 | 0 | 0 | 0 | 1 | 83 | 15 | 7 | 19 | 36 | 20 | 63 | 106 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 76 |
+| BINAUR MULTI H PCM | 6 | 773 | 268 | 338 | 0 | 0 | 0 | 0 | 1 | 83 | 16 | 7 | 20 | 30 | 17 | 56 | 143 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 40 | 101 |
+| SINGLE RS | 8 | 481 | 176 | 160 | 32 | 6 | 92 | 16 | 2 | 78 | 14 | 5 | 16 | 38 | 22 | 48 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 30 | 42 |
+| SINGLE RS PCM | 8 | 567 | 200 | 216 | 86 | 6 | 94 | 16 | 0 | 82 | 14 | 6 | 19 | 38 | 22 | 70 | 42 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 30 | 52 |
+| DUALOSC RS | 6 | 594 | 163 | 282 | 0 | 0 | 0 | 0 | 1 | 82 | 15 | 6 | 19 | 31 | 17 | 63 | 31 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 74 |
+| DUALOSC RS PCM | 6 | 646 | 197 | 296 | 0 | 0 | 0 | 0 | 1 | 82 | 15 | 6 | 21 | 33 | 18 | 93 | 33 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 28 | 82 |
+| SEQ+ARP HOME PCM | 8 | 676 | 252 | 224 | 86 | 24 | 82 | 16 | 2 | 86 | 17 | 20 | 22 | 40 | 32 | 72 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 53 | 60 |
+| SINGLE DRV SOFT | 8 | 530 | 188 | 192 | 34 | 8 | 94 | 46 | 2 | 80 | 16 | 5 | 18 | 38 | 22 | 50 | 40 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 29 | 48 |
+| SINGLE DRV HARD | 8 | 532 | 188 | 196 | 34 | 8 | 94 | 50 | 2 | 80 | 16 | 5 | 18 | 38 | 22 | 50 | 40 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 48 |
+| SINGLE DRV FOLD | 8 | 534 | 188 | 198 | 34 | 8 | 92 | 52 | 2 | 78 | 16 | 5 | 18 | 38 | 22 | 50 | 42 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 29 | 48 |
+| SINGLE DRV TAPE | 8 | 547 | 190 | 204 | 34 | 8 | 92 | 58 | 2 | 80 | 16 | 6 | 19 | 38 | 22 | 50 | 42 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 30 | 50 |
+| SINGLE DRV TUBE | 8 | 546 | 192 | 202 | 34 | 8 | 92 | 56 | 2 | 80 | 16 | 6 | 19 | 40 | 22 | 50 | 42 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 29 | 50 |
+| SINGLE DRV OD | 8 | 547 | 190 | 204 | 34 | 8 | 94 | 56 | 0 | 82 | 16 | 6 | 19 | 40 | 22 | 50 | 40 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 30 | 49 |
+| STACK HEAVY TUBE | 6 | 761 | 236 | 357 | 0 | 0 | 0 | 0 | 1 | 83 | 19 | 6 | 22 | 30 | 17 | 65 | 83 | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 37 | 99 |
+| BINAUR HEAVY OD | 6 | 766 | 266 | 330 | 0 | 0 | 0 | 0 | 1 | 83 | 18 | 6 | 21 | 30 | 17 | 49 | 125 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 41 | 100 |
+| STRIKE HEAVY TUBE | 8 | 679 | 258 | 252 | 0 | 0 | 0 | 0 | 0 | 84 | 18 | 6 | 22 | 40 | 24 | 60 | 80 | 36 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 39 | 64 |
+| SEQ+ARP HOME TUBE | 8 | 667 | 246 | 216 | 36 | 26 | 84 | 56 | 2 | 87 | 18 | 20 | 22 | 40 | 32 | 54 | 78 | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 56 | 58 |
+| FULL | 4 | 515 | 129 | 242 | 0 | 0 | 0 | 0 | 1 | 80 | 15 | 6 | 16 | 20 | 11 | 42 | 42 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 93 |
+| FULL HEAVY | 4 | 508 | 147 | 204 | 0 | 0 | 0 | 0 | 1 | 81 | 17 | 6 | 19 | 20 | 11 | 44 | 56 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 33 | 88 |
+| FULL MULTI H | 4 | 522 | 154 | 216 | 0 | 0 | 0 | 0 | 1 | 81 | 15 | 6 | 16 | 20 | 11 | 42 | 64 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 33 | 93 |
+| FULL SH2 H | 4 | 571 | 146 | 271 | 0 | 0 | 0 | 0 | 1 | 82 | 15 | 6 | 17 | 20 | 12 | 42 | 57 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 33 | 104 |
+| FULL H CEL+PP | 4 | 578 | 159 | 217 | 0 | 0 | 0 | 0 | 1 | 128 | 16 | 7 | 18 | 20 | 12 | 44 | 66 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 32 | 94 |
+| FULL MULTI H PCM | 4 | 559 | 175 | 225 | 0 | 0 | 0 | 0 | 1 | 84 | 16 | 8 | 17 | 20 | 12 | 64 | 63 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 33 | 100 |
+| FULL SH2 H PCM | 4 | 608 | 168 | 282 | 0 | 0 | 0 | 0 | 1 | 83 | 15 | 7 | 18 | 21 | 11 | 63 | 58 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 | 113 |
+| FULL SH2 CEL+PP | 4 | 622 | 149 | 272 | 0 | 0 | 0 | 0 | 1 | 128 | 16 | 7 | 17 | 20 | 12 | 44 | 58 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 32 | 106 |
+| DSPRD | 4 | 473 | 125 | 204 | 0 | 0 | 0 | 0 | 1 | 80 | 15 | 6 | 16 | 20 | 11 | 59 | 21 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 82 |
+| DSPRD HEAVY | 4 | 503 | 148 | 201 | 0 | 0 | 0 | 0 | 1 | 80 | 16 | 6 | 18 | 20 | 11 | 62 | 40 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 33 | 88 |
+| DSPRD MULTI H | 4 | 505 | 148 | 205 | 0 | 0 | 0 | 0 | 1 | 81 | 15 | 6 | 16 | 20 | 11 | 60 | 42 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 33 | 88 |
+| DSPRD SH2 H | 4 | 524 | 144 | 231 | 0 | 0 | 0 | 0 | 1 | 79 | 15 | 6 | 16 | 20 | 11 | 59 | 39 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 32 | 94 |
+| DSPRD H CEL+PP | 4 | 561 | 152 | 207 | 0 | 0 | 0 | 0 | 1 | 128 | 16 | 7 | 17 | 20 | 12 | 61 | 43 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 33 | 90 |
+| DSPRD MULTI H PCM | 4 | 697 | 172 | 365 | 0 | 0 | 0 | 0 | 1 | 83 | 16 | 7 | 21 | 21 | 12 | 80 | 44 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 32 | 134 |
+| DSPRD SH2 CEL+PP | 4 | 582 | 149 | 234 | 0 | 0 | 0 | 0 | 1 | 126 | 15 | 7 | 17 | 20 | 12 | 62 | 40 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 33 | 96 |
+| SEQ+ARP DSPRD CEL | 4 | 627 | 168 | 211 | 0 | 0 | 0 | 0 | 1 | 133 | 16 | 25 | 20 | 20 | 17 | 67 | 46 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 53 | 95 |
+| IDLE PHASER | 0 | 146 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 92 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 21 | 0 |
+| IDLE PHASER x2 | 0 | 164 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 110 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 21 | 0 |
+| SPREAD PHASER | 8 | 647 | 202 | 268 | 140 | 6 | 94 | 16 | 0 | 107 | 15 | 6 | 18 | 40 | 24 | 68 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 31 | 59 |
+| SPREAD H CEL PHSR | 8 | 766 | 244 | 286 | 140 | 22 | 92 | 16 | 2 | 156 | 15 | 8 | 20 | 40 | 22 | 70 | 82 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 35 | 66 |
+| SEQ+ARP HOME PHSR2 | 8 | 655 | 232 | 174 | 36 | 24 | 84 | 16 | 2 | 132 | 17 | 21 | 22 | 40 | 34 | 52 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 2 | 5 | 55 | 51 |
+| IDLE ENSEMBLE | 0 | 152 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 98 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 21 | 0 |
+| IDLE ENSEMBLE x2 | 0 | 175 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 121 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 9 | 21 | 0 |
+| IDLE ENS+PHSR | 0 | 157 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 103 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 21 | 0 |
+| IDLE ENS+PHSR x2 | 0 | 185 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 131 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 13 | 21 | 0 |
+| IDLE CHORUS | 0 | 150 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 95 | 14 | 5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 23 | 0 |
+| IDLE CHORUS x2 | 0 | 170 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 116 | 14 | 5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 5 | 22 | 0 |
+| SPREAD H CEL ENPH | 8 | 786 | 244 | 286 | 140 | 22 | 94 | 16 | 2 | 174 | 16 | 7 | 19 | 40 | 22 | 72 | 82 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 13 | 38 | 66 |
+| SEQ+ARP HOME ENPH2 | 8 | 685 | 234 | 174 | 36 | 24 | 84 | 16 | 2 | 159 | 17 | 21 | 22 | 40 | 32 | 54 | 78 | 10 | 0 | 0 | 0 | 0 | 0 | 2 | 18 | 56 | 51 |
+| SPREAD H CEL MIX | 8 | 772 | 242 | 284 | 140 | 22 | 92 | 16 | 2 | 167 | 15 | 7 | 18 | 40 | 22 | 70 | 82 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 37 | 66 |
+| SEQ+ARP CEL MIX | 8 | 696 | 232 | 174 | 36 | 26 | 82 | 16 | 2 | 174 | 17 | 21 | 21 | 40 | 34 | 54 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 55 | 51 |
+| HEAVY SPRING MIX | 8 | 613 | 216 | 168 | 34 | 24 | 82 | 16 | 0 | 149 | 16 | 7 | 18 | 40 | 22 | 50 | 74 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 39 | 48 |
+| HEAVY CEL BBD MIX | 8 | 661 | 218 | 168 | 34 | 24 | 82 | 16 | 2 | 194 | 17 | 7 | 20 | 40 | 22 | 52 | 74 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 35 | 48 |
+| IDLE TAPE FLANGER | 0 | 159 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 104 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 5 | 22 | 0 |
+| IDLE TAPE FLNG x2 | 0 | 186 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 131 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 10 | 22 | 0 |
+| SPREAD H CEL TFLG | 8 | 784 | 244 | 288 | 140 | 22 | 94 | 16 | 2 | 171 | 15 | 8 | 19 | 40 | 22 | 70 | 82 | 10 | 0 | 0 | 0 | 0 | 0 | 2 | 10 | 37 | 67 |
+| SEQ+ARP HOME TFLG2 | 8 | 684 | 234 | 174 | 36 | 24 | 84 | 16 | 2 | 156 | 17 | 21 | 22 | 42 | 34 | 54 | 76 | 10 | 0 | 0 | 0 | 0 | 0 | 3 | 14 | 58 | 51 |
+| IDLE BBD FLANGER | 0 | 150 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 96 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 21 | 0 |
+| IDLE BBD FLNG x2 | 0 | 172 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 118 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 8 | 21 | 0 |
+| SPREAD H CEL BBDF | 8 | 772 | 244 | 286 | 140 | 22 | 94 | 16 | 2 | 160 | 15 | 8 | 20 | 40 | 22 | 70 | 82 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 8 | 37 | 66 |
+| IDLE PITCH SHIFT | 0 | 156 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 102 | 14 | 5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 22 | 0 |
+| PITCH SHIFT HELD | 8 | 526 | 180 | 162 | 34 | 6 | 94 | 16 | 2 | 115 | 15 | 6 | 17 | 40 | 22 | 50 | 40 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 29 | 43 |
+| IDLE PITCH SHFT x2 | 0 | 184 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 130 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 4 | 21 | 0 |
+| SPREAD H CEL PSHF | 8 | 777 | 246 | 286 | 140 | 22 | 94 | 16 | 2 | 166 | 15 | 8 | 19 | 40 | 22 | 70 | 84 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 4 | 35 | 67 |
+| IDLE BBD ECHO | 0 | 143 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 90 | 14 | 5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 21 | 0 |
+| IDLE BBD ECHO x2 | 0 | 161 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 108 | 14 | 5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 32 | 21 | 0 |
+| SPREAD H CEL ECHO | 8 | 761 | 242 | 286 | 140 | 24 | 94 | 16 | 2 | 154 | 15 | 7 | 19 | 40 | 22 | 70 | 82 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 21 | 36 | 66 |
+| IDLE BRONZE AGE | 0 | 210 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 156 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 11 | 5 | 33 | 6 | 13 | 0 | 3 | 21 | 0 |
+| IDLE BRONZE AGE x2 | 0 | 292 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 238 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 23 | 12 | 68 | 13 | 28 | 1 | 7 | 21 | 0 |
+| SPREAD H CEL BRNZ | 8 | 815 | 246 | 288 | 140 | 22 | 94 | 18 | 2 | 203 | 15 | 8 | 19 | 40 | 22 | 70 | 84 | 10 | 11 | 5 | 18 | 6 | 14 | 1 | 5 | 34 | 67 |
+| SPREAD H CEL BREQ | 8 | 828 | 246 | 286 | 140 | 22 | 94 | 16 | 2 | 215 | 15 | 8 | 19 | 40 | 22 | 72 | 82 | 10 | 11 | 5 | 17 | 6 | 27 | 1 | 5 | 37 | 67 |
+| IDLE PHASE+FLANGE | 0 | 157 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 102 | 14 | 5 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 22 | 0 |
+| SPREAD H CEL PHFL | 8 | 781 | 246 | 286 | 140 | 22 | 94 | 18 | 2 | 168 | 15 | 8 | 20 | 40 | 22 | 70 | 84 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 12 | 36 | 67 |
+| IDLE WIND HARP | 0 | 151 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 97 | 14 | 5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 22 | 0 |
+| SPREAD H CEL HARP | 8 | 779 | 244 | 288 | 140 | 22 | 94 | 18 | 2 | 167 | 15 | 8 | 19 | 40 | 22 | 70 | 82 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 5 | 36 | 67 |
+| SPREAD H CEL STON | 8 | 787 | 248 | 286 | 140 | 22 | 94 | 16 | 2 | 173 | 16 | 7 | 19 | 40 | 24 | 72 | 84 | 10 | 0 | 0 | 0 | 0 | 0 | 1 | 9 | 36 | 67 |
+
+### 2026-11-04 15:18, CARNAC OS DEV (2 cores), done
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 17.0 | 17.6 | 0 | 0 | 61.6 | 3 | pass |
+| SINGLE 1V | 28.5 | 29.5 | 0 | 1 | 59.6 | 4 | pass |
+| SINGLE | 49.9 | 51.2 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE HEAVY | 54.2 | 55.4 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC | 61.5 | 62.7 | 0 | 6 | 53.2 | 8 | pass |
+| SPREAD | 62.1 | 63.4 | 0 | 8 | 53.2 | 8 | pass |
+| DUAL FILTER | 65.2 | 66.8 | 0 | 7 | 51.5 | 8 | pass |
+| STACK | 74.3 | 75.8 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAURAL | 60.5 | 61.7 | 0 | 6 | 55.9 | 8 | pass |
+| DUAL OSC HEAVY | 59.2 | 60.4 | 0 | 6 | 56.9 | 8 | pass |
+| SPREAD HEAVY | 65.6 | 66.7 | 0 | 8 | 51.9 | 8 | pass |
+| DUAL FLT HEAVY | 66.6 | 67.8 | 0 | 7 | 48.9 | 9 | pass |
+| STACK HEAVY | 68.8 | 70.3 | 0 | 6 | 43.9 | 9 | pass |
+| BINAURAL HEAVY | 66.1 | 67.2 | 0 | 6 | 51.6 | 9 | pass |
+| SINGLE LADDER | 49.9 | 51.0 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE MS20 | 47.2 | 48.3 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE SH-2 | 53.8 | 54.8 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE FORMANT | 47.2 | 48.3 | 0 | 8 | 57.6 | 1 | pass |
+| DUAL FLT LADDER | 65.2 | 66.9 | 0 | 7 | 51.5 | 8 | pass |
+| SEQ+ARP HOME | 64.4 | 68.5 | 0 | 8 | 52.2 | 10 | pass |
+| SEQ+ARP AMP | 64.5 | 68.7 | 0 | 8 | 52.2 | 12 | pass |
+| SEQ+ARP SEQ | 63.9 | 67.7 | 0 | 8 | 12.9 | 127 | pass |
+| SEQ+ARP MOD1 | 64.3 | 69.4 | 0 | 8 | 14.3 | 70 | pass |
+| LADDER FILTER PG | 49.9 | 51.0 | 0 | 8 | 57.6 | 1 | pass |
+| HEAVY MOD+PP | 58.7 | 59.9 | 0 | 8 | 56.9 | 8 | pass |
+| HEAVY CELEST+PP | 58.6 | 59.8 | 0 | 8 | 56.6 | 8 | pass |
+| SEQ+ARP CELEST+PP | 68.7 | 74.0 | 0 | 8 | 45.2 | 10 | pass |
+| SINGLE MULTI H | 57.1 | 58.2 | 0 | 8 | 57.6 | 1 | pass |
+| DUALOSC MULTI H | 62.8 | 64.1 | 0 | 6 | 51.9 | 8 | pass |
+| SPREAD MULTI H | 68.7 | 70.0 | 0 | 8 | 44.2 | 9 | pass |
+| DUALFLT MULTI H | 72.1 | 73.6 | 0 | 7 | 42.9 | 1 | FAIL |
+| STACK MULTI H | 75.7 | 77.2 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAUR MULTI H | 69.1 | 70.4 | 0 | 6 | 42.9 | 1 | pass |
+| SPREAD H CEL+PP | 73.1 | 74.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| DUALOSC H CEL+PP | 67.2 | 68.7 | 0 | 6 | 45.2 | 9 | pass |
+| SPREAD H TUM+PP | 72.9 | 74.4 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP SPRD CEL | 82.9 | 86.9 | 0 | 8 | 42.9 | 12 | FAIL |
+| HEAVY SPRING+PP | 56.8 | 58.0 | 0 | 8 | 57.3 | 7 | pass |
+| HEAVY CEL+BBD PP | 62.1 | 63.4 | 0 | 8 | 52.9 | 8 | pass |
+| SEQ+ARP SPR+BBD | 69.5 | 73.5 | 0 | 8 | 43.6 | 11 | pass |
+| STRIKE | 50.0 | 51.2 | 0 | 8 | 57.6 | 1 | pass |
+| STRIKE HEAVY | 55.0 | 56.1 | 0 | 8 | 57.5 | 1 | pass |
+| SEQ+ARP STRIKE | 75.0 | 79.4 | 0 | 8 | 42.9 | 2 | FAIL |
+| SEQ+ARP STRK FILT | 75.6 | 80.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE SH2 H | 60.8 | 61.9 | 0 | 8 | 55.9 | 8 | pass |
+| DUALOSC SH2 H | 64.2 | 65.5 | 0 | 6 | 51.9 | 8 | pass |
+| SPREAD SH2 H | 72.3 | 73.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| DUALFLT SH2 H | 78.8 | 80.3 | 0 | 7 | 42.9 | 1 | FAIL |
+| STACK SH2 H | 77.8 | 79.2 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAUR SH2 H | 74.9 | 76.4 | 0 | 6 | 42.9 | 1 | FAIL |
+| STRIKE SH2 H | 61.5 | 62.7 | 0 | 8 | 54.6 | 8 | pass |
+| SPREAD SH2 CEL+PP | 76.8 | 78.5 | 0 | 8 | 42.9 | 1 | FAIL |
+| DUALFLT SH2 CEL | 83.3 | 85.0 | 0 | 7 | 42.9 | 1 | FAIL |
+| SEQ+ARP SH2 CEL | 75.4 | 80.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| DUALFLT SH2 HP | 78.7 | 80.1 | 0 | 7 | 42.9 | 1 | FAIL |
+| BINAUR SH2 HP | 74.9 | 76.4 | 0 | 6 | 42.9 | 1 | FAIL |
+| SINGLE PCM | 54.6 | 55.8 | 0 | 8 | 57.3 | 7 | pass |
+| DUAL OSC PCM | 63.0 | 64.2 | 0 | 6 | 51.9 | 8 | pass |
+| SPREAD PCM | 67.9 | 69.3 | 0 | 8 | 47.2 | 9 | pass |
+| DUAL FILTER PCM | 69.8 | 71.4 | 0 | 7 | 42.9 | 1 | pass |
+| STACK PCM | 75.5 | 76.9 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAURAL PCM | 66.5 | 68.0 | 0 | 6 | 48.6 | 9 | pass |
+| DUALOSC MULTI H PCM | 62.3 | 63.5 | 0 | 6 | 52.2 | 8 | pass |
+| DUALFLT MULTI H PCM | 76.6 | 78.0 | 0 | 7 | 42.9 | 1 | FAIL |
+| BINAUR MULTI H PCM | 75.5 | 77.0 | 0 | 6 | 42.9 | 1 | FAIL |
+| SINGLE RS | 50.0 | 51.9 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 57.6 | 59.4 | 0 | 8 | 57.2 | 8 | pass |
+| DUALOSC RS | 61.5 | 63.5 | 0 | 6 | 54.2 | 8 | pass |
+| DUALOSC RS PCM | 66.3 | 68.2 | 0 | 6 | 49.6 | 9 | pass |
+| SEQ+ARP HOME PCM | 72.7 | 76.2 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE DRV SOFT | 54.0 | 55.1 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV HARD | 54.1 | 55.5 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV FOLD | 54.1 | 55.4 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TAPE | 55.0 | 56.2 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TUBE | 54.7 | 56.0 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV OD | 54.8 | 56.0 | 0 | 8 | 57.5 | 1 | pass |
+| STACK HEAVY TUBE | 76.9 | 78.7 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAUR HEAVY OD | 73.3 | 74.9 | 0 | 6 | 42.9 | 1 | FAIL |
+| STRIKE HEAVY TUBE | 61.0 | 62.2 | 0 | 8 | 53.6 | 8 | pass |
+| SEQ+ARP HOME TUBE | 71.2 | 75.1 | 0 | 8 | 43.2 | 10 | FAIL |
+| FULL | 55.2 | 56.4 | 0 | 4 | 57.5 | 7 | pass |
+| FULL HEAVY | 53.0 | 54.2 | 0 | 4 | 57.6 | 1 | pass |
+| FULL MULTI H | 56.8 | 58.1 | 0 | 4 | 57.5 | 7 | pass |
+| FULL SH2 H | 60.0 | 61.1 | 0 | 4 | 56.2 | 8 | pass |
+| FULL H CEL+PP | 61.5 | 62.7 | 0 | 4 | 52.9 | 8 | pass |
+| FULL MULTI H PCM | 57.2 | 58.4 | 0 | 4 | 57.6 | 7 | pass |
+| FULL SH2 H PCM | 60.4 | 61.4 | 0 | 4 | 56.5 | 8 | pass |
+| FULL SH2 CEL+PP | 65.0 | 66.4 | 0 | 4 | 52.2 | 8 | pass |
+| DSPRD | 50.7 | 51.9 | 0 | 4 | 57.6 | 1 | pass |
+| DSPRD HEAVY | 53.6 | 54.9 | 0 | 4 | 57.6 | 1 | pass |
+| DSPRD MULTI H | 55.1 | 56.3 | 0 | 4 | 57.6 | 1 | pass |
+| DSPRD SH2 H | 58.0 | 59.5 | 0 | 4 | 57.2 | 8 | pass |
+| DSPRD H CEL+PP | 60.3 | 61.6 | 0 | 4 | 55.9 | 8 | pass |
+| DSPRD MULTI H PCM | 61.6 | 62.9 | 0 | 4 | 52.6 | 8 | pass |
+| DSPRD SH2 CEL+PP | 63.4 | 64.5 | 0 | 4 | 52.2 | 8 | pass |
+| SEQ+ARP DSPRD CEL | 71.4 | 74.5 | 0 | 4 | 42.9 | 2 | FAIL |
+| IDLE PHASER | 19.5 | 20.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE PHASER x2 | 21.1 | 21.8 | 0 | 0 | 61.6 | 1 | pass |
+| SPREAD PHASER | 65.8 | 66.9 | 0 | 8 | 50.5 | 9 | pass |
+| SPREAD H CEL PHSR | 76.8 | 78.2 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME PHSR2 | 70.1 | 74.1 | 0 | 8 | 43.6 | 10 | FAIL |
+| IDLE ENSEMBLE | 20.5 | 21.3 | 0 | 0 | 61.6 | 1 | pass |
+| IDLE ENSEMBLE x2 | 22.1 | 22.9 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR | 21.2 | 21.9 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR x2 | 23.1 | 23.8 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE CHORUS | 19.8 | 20.5 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE CHORUS x2 | 21.4 | 22.3 | 0 | 0 | 61.3 | 1 | pass |
+| SPREAD H CEL ENPH | 81.3 | 82.7 | 0 | 8 | 43.2 | 1 | FAIL |
+| SEQ+ARP HOME ENPH2 | 73.9 | 77.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| SPREAD H CEL MIX | 81.0 | 82.4 | 0 | 8 | 43.2 | 1 | FAIL |
+| SEQ+ARP CEL MIX | 77.0 | 81.1 | 0 | 8 | 43.2 | 2 | FAIL |
+| HEAVY SPRING MIX | 64.9 | 66.0 | 0 | 8 | 52.2 | 8 | pass |
+| HEAVY CEL BBD MIX | 71.8 | 73.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE TAPE FLANGER | 21.5 | 22.3 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE TAPE FLNG x2 | 23.2 | 24.1 | 0 | 0 | 60.9 | 3 | pass |
+| SPREAD H CEL TFLG | 79.9 | 81.3 | 0 | 8 | 43.2 | 1 | FAIL |
+| SEQ+ARP HOME TFLG2 | 73.4 | 77.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE BBD FLANGER | 20.8 | 21.6 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD FLNG x2 | 22.2 | 23.0 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL BBDF | 79.1 | 80.5 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE PITCH SHIFT | 21.1 | 22.0 | 0 | 0 | 61.3 | 3 | pass |
+| PITCH SHIFT HELD | 55.9 | 57.4 | 0 | 8 | 57.2 | 7 | pass |
+| IDLE PITCH SHFT x2 | 23.5 | 24.6 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL PSHF | 79.3 | 80.9 | 0 | 8 | 43.2 | 1 | FAIL |
+| IDLE BBD ECHO | 20.6 | 21.3 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE BBD ECHO x2 | 20.6 | 21.3 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ECHO | 79.3 | 80.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE BRONZE AGE | 25.1 | 25.9 | 0 | 0 | 60.3 | 4 | pass |
+| IDLE BRONZE AGE x2 | 31.9 | 32.7 | 0 | 0 | 57.6 | 4 | pass |
+| SPREAD H CEL BRNZ | 82.2 | 83.8 | 0 | 8 | 43.2 | 1 | FAIL |
+| SPREAD H CEL BREQ | 83.3 | 85.1 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE PHASE+FLANGE | 21.5 | 22.3 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL PHFL | 80.6 | 81.8 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE WIND HARP | 20.7 | 21.5 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL HARP | 79.8 | 81.1 | 0 | 8 | 42.9 | 1 | FAIL |
+| SPREAD H CEL STON | 80.8 | 81.9 | 0 | 8 | 42.9 | 1 | FAIL |
+
+### 2026-11-04 15:08, CARNAC OS DEV (2 cores), done
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 17.0 | 17.7 | 0 | 0 | 61.6 | 3 | pass |
+| SINGLE 1V | 28.6 | 29.6 | 0 | 1 | 60.0 | 4 | pass |
+| SINGLE | 49.9 | 51.1 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE HEAVY | 54.1 | 55.4 | 0 | 8 | 57.5 | 1 | pass |
+| DUAL OSC | 61.4 | 62.8 | 0 | 6 | 54.5 | 8 | pass |
+| SPREAD | 62.1 | 63.4 | 0 | 8 | 53.2 | 8 | pass |
+| DUAL FILTER | 65.3 | 66.6 | 0 | 7 | 51.9 | 8 | pass |
+| STACK | 74.4 | 75.7 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAURAL | 60.5 | 61.7 | 0 | 6 | 55.9 | 8 | pass |
+| DUAL OSC HEAVY | 59.2 | 60.2 | 0 | 6 | 56.2 | 8 | pass |
+| SPREAD HEAVY | 65.6 | 66.9 | 0 | 8 | 52.2 | 8 | pass |
+| DUAL FLT HEAVY | 66.6 | 67.9 | 0 | 7 | 50.9 | 9 | pass |
+| STACK HEAVY | 68.8 | 70.4 | 0 | 6 | 43.9 | 9 | pass |
+| BINAURAL HEAVY | 66.1 | 67.4 | 0 | 6 | 51.2 | 9 | pass |
+| SINGLE LADDER | 50.0 | 51.1 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE MS20 | 47.2 | 48.2 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE SH-2 | 53.8 | 54.9 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE FORMANT | 47.2 | 48.4 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL FLT LADDER | 65.2 | 66.6 | 0 | 7 | 51.9 | 8 | pass |
+| SEQ+ARP HOME | 64.4 | 68.9 | 0 | 8 | 51.6 | 10 | pass |
+| SEQ+ARP AMP | 64.5 | 68.9 | 0 | 8 | 51.9 | 12 | pass |
+| SEQ+ARP SEQ | 63.9 | 67.3 | 0 | 8 | 12.8 | 127 | pass |
+| SEQ+ARP MOD1 | 64.3 | 69.6 | 0 | 8 | 14.3 | 70 | pass |
+| LADDER FILTER PG | 49.9 | 51.2 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 58.7 | 59.8 | 0 | 8 | 56.2 | 8 | pass |
+| HEAVY CELEST+PP | 58.7 | 59.8 | 0 | 8 | 56.9 | 8 | pass |
+| SEQ+ARP CELEST+PP | 68.7 | 72.8 | 0 | 8 | 44.5 | 10 | pass |
+| SINGLE MULTI H | 57.0 | 58.2 | 0 | 8 | 57.6 | 7 | pass |
+| DUALOSC MULTI H | 62.9 | 64.0 | 0 | 6 | 52.2 | 8 | pass |
+| SPREAD MULTI H | 68.7 | 70.0 | 0 | 8 | 45.2 | 9 | pass |
+| DUALFLT MULTI H | 72.0 | 73.6 | 0 | 7 | 42.9 | 1 | FAIL |
+| STACK MULTI H | 75.6 | 77.1 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAUR MULTI H | 69.1 | 70.4 | 0 | 6 | 42.9 | 1 | pass |
+| SPREAD H CEL+PP | 73.1 | 74.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| DUALOSC H CEL+PP | 67.2 | 68.7 | 0 | 6 | 45.9 | 9 | pass |
+| SPREAD H TUM+PP | 72.9 | 74.5 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP SPRD CEL | 82.9 | 88.0 | 0 | 8 | 42.9 | 12 | FAIL |
+| HEAVY SPRING+PP | 56.9 | 58.1 | 0 | 8 | 57.5 | 7 | pass |
+| HEAVY CEL+BBD PP | 62.1 | 63.3 | 0 | 8 | 52.2 | 8 | pass |
+| SEQ+ARP SPR+BBD | 69.5 | 73.7 | 0 | 8 | 43.9 | 10 | pass |
+| STRIKE | 50.0 | 51.2 | 0 | 8 | 57.6 | 1 | pass |
+| STRIKE HEAVY | 54.9 | 56.1 | 0 | 8 | 57.5 | 7 | pass |
+| SEQ+ARP STRIKE | 75.0 | 78.9 | 0 | 8 | 42.9 | 2 | FAIL |
+| SEQ+ARP STRK FILT | 75.6 | 80.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE SH2 H | 60.8 | 62.0 | 0 | 8 | 55.9 | 8 | pass |
+| DUALOSC SH2 H | 64.3 | 65.3 | 0 | 6 | 51.9 | 8 | pass |
+| SPREAD SH2 H | 72.3 | 73.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| DUALFLT SH2 H | 78.7 | 80.4 | 0 | 7 | 42.9 | 1 | FAIL |
+| STACK SH2 H | 77.8 | 79.2 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAUR SH2 H | 74.9 | 76.5 | 0 | 6 | 42.9 | 1 | FAIL |
+| STRIKE SH2 H | 61.5 | 62.6 | 0 | 8 | 53.9 | 8 | pass |
+| SPREAD SH2 CEL+PP | 76.8 | 78.4 | 0 | 8 | 43.2 | 1 | FAIL |
+| DUALFLT SH2 CEL | 83.3 | 84.9 | 0 | 7 | 42.9 | 1 | FAIL |
+| SEQ+ARP SH2 CEL | 75.3 | 79.5 | 0 | 8 | 43.2 | 2 | FAIL |
+| DUALFLT SH2 HP | 78.8 | 80.3 | 0 | 7 | 42.9 | 1 | FAIL |
+| BINAUR SH2 HP | 75.0 | 76.4 | 0 | 6 | 42.9 | 1 | FAIL |
+| SINGLE PCM | 54.6 | 55.9 | 0 | 8 | 57.3 | 1 | pass |
+| DUAL OSC PCM | 63.0 | 64.2 | 0 | 6 | 51.9 | 8 | pass |
+| SPREAD PCM | 67.9 | 69.4 | 0 | 8 | 46.6 | 9 | pass |
+| DUAL FILTER PCM | 69.8 | 71.5 | 0 | 7 | 43.2 | 9 | pass |
+| STACK PCM | 75.5 | 77.0 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAURAL PCM | 66.6 | 67.9 | 0 | 6 | 49.2 | 9 | pass |
+| DUALOSC MULTI H PCM | 62.3 | 63.6 | 0 | 6 | 51.9 | 8 | pass |
+| DUALFLT MULTI H PCM | 76.6 | 77.9 | 0 | 7 | 42.9 | 1 | FAIL |
+| BINAUR MULTI H PCM | 75.5 | 77.0 | 0 | 6 | 42.9 | 1 | FAIL |
+| SINGLE RS | 50.0 | 51.6 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 57.6 | 59.4 | 0 | 8 | 57.2 | 8 | pass |
+| DUALOSC RS | 61.4 | 63.2 | 0 | 6 | 52.9 | 8 | pass |
+| DUALOSC RS PCM | 66.4 | 68.1 | 0 | 6 | 49.6 | 9 | pass |
+| SEQ+ARP HOME PCM | 72.7 | 76.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE DRV SOFT | 54.0 | 55.2 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV HARD | 54.1 | 55.3 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV FOLD | 54.1 | 55.3 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV TAPE | 55.0 | 56.3 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TUBE | 54.7 | 55.9 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV OD | 54.8 | 55.9 | 0 | 8 | 57.6 | 1 | pass |
+| STACK HEAVY TUBE | 76.8 | 78.7 | 0 | 6 | 42.9 | 1 | FAIL |
+| BINAUR HEAVY OD | 73.4 | 75.0 | 0 | 6 | 42.9 | 1 | FAIL |
+| STRIKE HEAVY TUBE | 61.0 | 62.3 | 0 | 8 | 55.2 | 8 | pass |
+| SEQ+ARP HOME TUBE | 71.1 | 74.7 | 0 | 8 | 43.2 | 10 | FAIL |
+| FULL | 55.1 | 56.3 | 0 | 4 | 57.6 | 7 | pass |
+| FULL HEAVY | 53.1 | 54.3 | 0 | 4 | 57.6 | 1 | pass |
+| FULL MULTI H | 56.9 | 58.1 | 0 | 4 | 57.5 | 1 | pass |
+| FULL SH2 H | 60.0 | 61.2 | 0 | 4 | 55.2 | 8 | pass |
+| FULL H CEL+PP | 61.5 | 62.8 | 0 | 4 | 53.2 | 8 | pass |
+| FULL MULTI H PCM | 57.2 | 58.5 | 0 | 4 | 57.2 | 7 | pass |
+| FULL SH2 H PCM | 60.3 | 61.5 | 0 | 4 | 55.6 | 8 | pass |
+| FULL SH2 CEL+PP | 64.9 | 66.3 | 0 | 4 | 51.9 | 8 | pass |
+| DSPRD | 50.7 | 52.1 | 0 | 4 | 57.6 | 1 | pass |
+| DSPRD HEAVY | 53.7 | 54.9 | 0 | 4 | 57.6 | 1 | pass |
+| DSPRD MULTI H | 55.1 | 56.3 | 0 | 4 | 57.6 | 1 | pass |
+| DSPRD SH2 H | 58.0 | 59.2 | 0 | 4 | 57.6 | 8 | pass |
+| DSPRD H CEL+PP | 60.3 | 61.4 | 0 | 4 | 54.9 | 8 | pass |
+| DSPRD MULTI H PCM | 61.6 | 62.7 | 0 | 4 | 52.6 | 8 | pass |
+| DSPRD SH2 CEL+PP | 63.3 | 64.7 | 0 | 4 | 52.2 | 8 | pass |
+| SEQ+ARP DSPRD CEL | 71.4 | 75.4 | 0 | 4 | 43.2 | 10 | FAIL |
+| IDLE PHASER | 19.6 | 20.3 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE PHASER x2 | 21.2 | 21.9 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD PHASER | 66.6 | 67.8 | 0 | 8 | 49.2 | 9 | pass |
+| SPREAD H CEL PHSR | 77.7 | 79.2 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME PHSR2 | 71.0 | 75.9 | 0 | 8 | 43.2 | 10 | FAIL |
+| IDLE ENSEMBLE | 20.4 | 21.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENSEMBLE x2 | 22.1 | 22.9 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR | 21.1 | 21.9 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR x2 | 23.1 | 23.8 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE CHORUS | 19.7 | 20.6 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS x2 | 21.4 | 22.3 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL ENPH | 81.3 | 82.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME ENPH2 | 73.9 | 78.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| SPREAD H CEL MIX | 81.0 | 82.7 | 0 | 8 | 43.2 | 1 | FAIL |
+| SEQ+ARP CEL MIX | 77.0 | 81.4 | 0 | 8 | 42.9 | 2 | FAIL |
+| HEAVY SPRING MIX | 64.8 | 65.9 | 0 | 8 | 51.9 | 8 | pass |
+| HEAVY CEL BBD MIX | 71.8 | 73.4 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE TAPE FLANGER | 21.5 | 22.3 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE TAPE FLNG x2 | 23.3 | 24.1 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL TFLG | 79.9 | 81.3 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME TFLG2 | 73.4 | 78.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE BBD FLANGER | 20.8 | 21.6 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD FLNG x2 | 22.2 | 23.0 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL BBDF | 79.1 | 80.5 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE PITCH SHIFT | 21.1 | 22.0 | 0 | 0 | 61.6 | 3 | pass |
+| PITCH SHIFT HELD | 55.9 | 57.6 | 0 | 8 | 57.6 | 7 | pass |
+| IDLE PITCH SHFT x2 | 23.5 | 24.6 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL PSHF | 79.3 | 81.0 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE BBD ECHO | 20.6 | 21.3 | 0 | 0 | 61.6 | 1 | pass |
+| IDLE BBD ECHO x2 | 20.6 | 21.3 | 0 | 0 | 61.6 | 1 | pass |
+| SPREAD H CEL ECHO | 79.3 | 80.8 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE BRONZE AGE | 25.1 | 26.0 | 0 | 0 | 60.0 | 1 | pass |
+| IDLE BRONZE AGE x2 | 31.8 | 32.9 | 0 | 0 | 58.0 | 4 | pass |
+| SPREAD H CEL BRNZ | 82.2 | 83.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| SPREAD H CEL BREQ | 83.3 | 84.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE PHASE+FLANGE | 21.5 | 22.3 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL PHFL | 80.6 | 81.8 | 0 | 8 | 42.9 | 1 | FAIL |
+| IDLE WIND HARP | 20.7 | 21.6 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL HARP | 79.8 | 81.1 | 0 | 8 | 42.9 | 1 | FAIL |
+| SPREAD H CEL STON | 80.7 | 82.0 | 0 | 8 | 42.9 | 1 | FAIL |
+
 ### 2026-11-04 14:08, CARNAC OS PROF (1 core), done
 
 | scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |

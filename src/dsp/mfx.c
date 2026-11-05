@@ -82,8 +82,9 @@ typedef struct { float gain, gbw, lo[4], mi[4], hi, out; } MtCo;   /* BRONZE AGE
                                                                     * and MIDDLE's bells (a1, a2, a3, m1), HIGH, LEVEL */
 typedef struct { float key[6]; MtCo c; } MtSet;
 typedef struct { float key[7], c, d[2][3], g[2][3], kin[2][3], hz[2][3], t60, tone, hiss, wow, drive, gw, gd, xw;
-                 HrSvf f; float m[2][6][4]; } RsSet;   /* WIND HARP / RINGING STONES: the loop's one-pole, each
-                                                  * side's strings (delay, feedback, input), the stones' modes */
+                 HrSvf f; float m[2][6][4], mb[2][6][3]; } RsSet;   /* WIND HARP / RINGING STONES: the loop's one-pole, each
+                                                  * side's strings (delay, feedback, input), the stones' modes as
+                                                 * run, and at a still clock (mb: x = pi f / QR_SR, g, k) */
 
 /* the knobs k[0..n-1] against a set's key: 1 if they differ (and the key takes them) */
 static inline int mfx_moved(float *key, const float *k, int n)
@@ -171,6 +172,7 @@ typedef struct {
     float ss_ctl, ss_lfo;                    /* ENS+PHASER: the OTAs' control current (0..1, glided), the LFO's phase */
     float pf_ctl[2];                         /* PHASE+FLANGE: each side's phaser control (0..1, glided; the LFO:
                                               * ss_lfo) */
+    float pf_key, pf_rate;                   /* ... PHASE RATE as last worked out, and its rate (Hz) */
     float br_wow, br_wow_to;                 /* the aging clock's drift, and where it heads */
     uint32_t br_rng, br_wow_n;               /* (its draws; BULLROARER's noise too) */
     uint32_t br_w;                           /* BULLROARER (run whole, on one core): the write place */
@@ -1128,13 +1130,20 @@ static SYNTH_COLD void pf_plan(MfxState *s, MfxStep *step, const float *k, const
     const float kf[4] = {k[MFX_K_PF_CENTER], k[MFX_K_PF_FL_RATE], PF_DEPTH, k[MFX_K_PF_FEEDBACK]};
     const float rf[2] = {(float)MFX_BF_FLANGER2, 0.f};
     bf_plan(s, step, kf, rf);
-    const float rate = 0.04f * amp_exp2f(k[MFX_K_PF_PH_RATE] * (7.966f / 127.f));
+    if (k[MFX_K_PF_PH_RATE] != s->pf_key) {    /* (the plan's diet, 2026-11-04: worked out when it moves) */
+        s->pf_key = k[MFX_K_PF_PH_RATE];
+        s->pf_rate = 0.04f * amp_exp2f(s->pf_key * (7.966f / 127.f));
+    }
+    const float rate = s->pf_rate;
     for (int j = 0; j < 2; j++) {
         float ph = s->ss_lfo - (j ? lr * (0.5f / 127.f) : 0.f);
         if (ph < 0.f) ph += 1.f;
         const float want = ph < 0.5f ? 2.f * ph : 2.f - 2.f * ph;
         s->pf_ctl[j] += (want - s->pf_ctl[j]) * (0.0155f * (float)step->m / (float)MFX_SUB);
-        const float t = hr_tan(SS_F_LO + (SS_F_HI - SS_F_LO) * s->pf_ctl[j]);
+        /* tan(pi f / HR_SR) by its series to x^7 (x <= 0.43 at 3 kHz: within 0.05 %; two parabola sines and a
+         * divide a step before) */
+        const float x = (SS_F_LO + (SS_F_HI - SS_F_LO) * s->pf_ctl[j]) * (MFX_PI / HR_SR), x2 = x * x;
+        const float t = x * (1.f + x2 * (1.f / 3.f + x2 * (2.f / 15.f + x2 * (17.f / 315.f))));
         step->u.bf.pc[j] = (1.f - t) / (1.f + t);
     }
     step->u.bf.pfb = SS_FB * row[MFX_R_COLOUR] * (1.f / 127.f);
@@ -1893,6 +1902,8 @@ static SYNTH_COLD float rs_hz(float root, float chord, int j)
 }
 
 /* the settings from DECAY, TONE, AGE, MIX, ROOT, CHORD, WIDTH (stones: their modes, tuned now at the clock's wander) */
+static SYNTH_COLD void rs_mode(float *c, float *b, float f, float t60, float amp);
+
 static SYNTH_COLD void rs_settings(RsSet *st, const float *kk, int stones)
 {
     /* DECAY (2026-11-04, the user's "ring out much longer, more intense"): 0.3 .. 38 s, and from RS_ENDLESS on the
@@ -1928,15 +1939,25 @@ static SYNTH_COLD void rs_settings(RsSet *st, const float *kk, int stones)
     st->gw = (mix < 0.5f ? 2.f * mix : 1.f) * (stones ? RS_STONE_OUT : RS_OUT);
     st->gd = mix > 0.5f ? 2.f * (1.f - mix) : 1.f;
     st->xw = 0.5f + 0.5f * kk[6] * (1.f / 127.f);                           /* WIDTH: the own side's share */
+    if (stones)                                  /* the stones' modes at a still clock (the wander: rs_plan) */
+        for (int ch = 0; ch < 2; ch++)
+            for (uint32_t i = 0; i < RS_NS; i++) {
+                rs_mode(st->m[ch][2u * i], st->mb[ch][2u * i], st->hz[ch][i], st->t60, 1.f);
+                rs_mode(st->m[ch][2u * i + 1u], st->mb[ch][2u * i + 1u], 2.756f * st->hz[ch][i], 0.4f * st->t60,
+                        0.1f + 0.9f * st->tone);
+            }
 }
 
 /* a stone's mode coefficients (TPT band-pass at QR_SR) at f Hz ringing t60 s: a1, a2, a3, its gain (its band
  * output peaks at Q: k for a unit peak, sqrt(k) the ring's energy as the input's); past the band (0.45 QR_SR) the
  * mode is muted, not folded */
-static SYNTH_COLD void rs_mode(float *c, float f, float t60, float amp)
+static SYNTH_COLD void rs_mode(float *c, float *b, float f, float t60, float amp)
 {
     if (f > 0.45f * QR_SR) { f = 0.45f * QR_SR; amp = 0.f; }
     float g = qr_tan(f), q = MFX_PI * f * t60 * (1.f / 6.908f), k = 1.f / (q < 0.5f ? 0.5f : q);
+    b[0] = MFX_PI * f * (1.f / QR_SR);
+    b[1] = g;
+    b[2] = k;
     c[0] = 1.f / (1.f + g * (g + k));
     c[1] = g * c[0];
     c[2] = g * c[1];
@@ -1960,11 +1981,18 @@ static SYNTH_COLD void rs_plan(MfxState *s, MfxStep *step, const float *k, const
             for (uint32_t i = 0; i < RS_NS; i++)
                 step->u.rs.d[ch][i] = (int32_t)(st->d[ch][i] * wf * HR_Q);
     } else if (s->nstep == 1u) {
+        /* the clock's wander on each mode (a slower clock: lower), to first order from the still clock's
+         * (2026-11-04, the plan's diet: tan's slope, (1 + g^2) dx, for the full retune; the wander is ~1 %, the
+         * error ~1e-4 of it); Q and the gain held */
+        const float dx = 1.f / wf - 1.f;
         for (int ch = 0; ch < 2; ch++)
-            for (uint32_t i = 0; i < RS_NS; i++) {
-                const float f = st->hz[ch][i] / wf;                 /* (a slower clock: lower) */
-                rs_mode(st->m[ch][2u * i], f, st->t60, 1.f);
-                rs_mode(st->m[ch][2u * i + 1u], 2.756f * f, 0.4f * st->t60, 0.1f + 0.9f * st->tone);
+            for (uint32_t j = 0; j < 2u * RS_NS; j++) {
+                const float *b = st->mb[ch][j];
+                float *c = st->m[ch][j];
+                const float g = b[1] + (1.f + b[1] * b[1]) * b[0] * dx;
+                c[0] = 1.f / (1.f + g * (g + b[2]));
+                c[1] = g * c[0];
+                c[2] = g * c[1];
             }
     }
 }
@@ -2087,7 +2115,7 @@ static SYNTH_COLD void mfx_begin(MfxState *s, const MfxParams *p)
     s->ss_ctl = s->pf_ctl[0] = s->pf_ctl[1] = 0.5f;
     s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = s->tf_set.key[0] = -1.f;
     s->bf_set.key[0] = s->ps_set.key[0] = s->qe_set.key[0] = s->mt_set.key[0] = -1.f;
-    s->rs_set.key[0] = -1.f;
+    s->rs_set.key[0] = s->pf_key = -1.f;
     if (p->type == MFX_WIND_HARP)                /* (its strings, outside the state) */
         memset(rs_line[s == &mfx_st[1]], 0, sizeof rs_line[0]);
     if (p->type == MFX_BBD_ECHO)                 /* (its brigade, outside the state) */
@@ -2149,11 +2177,15 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
 #endif
     if (n > MFX_PASS_MAX) n = MFX_PASS_MAX;
     uint32_t xi = 0;                            /* (BBD FLANGER MODE III: where the pass's half-rate input is) */
+    SPROF_DECL;                                 /* (PROFILE, temporary: the glide and the plans timed) */
+    SPROF_START();
     /* a control step at a time: each model's settings follow the glided knobs (their set-up is a few dozen
      * operations, against the step's thousands) */
     for (uint32_t f0 = 0; f0 < n; f0 += MFX_SUB) {
         uint32_t m = n - f0 < MFX_SUB ? n - f0 : MFX_SUB;
+        SPROF_LAP(SPROF_MFXPL);
         mfx_glide(s, p, mfx_mod_off[layer & 1]);
+        SPROF_LAP(SPROF_MFXGL);
         if (p->type == MFX_BULLROARER) {        /* (the prototype: whole, here; dry on the FM1) */
 #if MFX_HAS_BULLROARER
             bullroarer(s, s->kn, s->kn[4], l + f0, r + f0, m);
@@ -2203,6 +2235,7 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
         else
             en_plan(s, step, s->kn, s->kn[4], EN_FAST, EN_GAIN);
     }
+    SPROF_LAP(SPROF_MFXPL);
     return s->nstep != 0;
 }
 
