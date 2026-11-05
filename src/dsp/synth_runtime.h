@@ -36,3 +36,7 @@ void synth_levels(int32_t out[4]);
 void synth_fx_one_core(int on);
 /* the ARP engine the render clocks: the ARP page's chord keys, transposition and playhead go through here */
 CarpSeq *synth_arp(void);
+/* the REC page's recorder the render clocks (dsp/krec.h), and the frame the render stands on (for its UI calls) */
+#include "krec.h"
+Krec *synth_rec(void);
+uint32_t synth_frame(void);

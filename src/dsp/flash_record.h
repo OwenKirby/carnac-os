@@ -108,7 +108,7 @@ static inline uint8_t frec_stored_version(const uint8_t *rec) { return rec[0]; }
 #define EW_OSC EW_V, EW_V, EW_V, EW_V, 8u /* WAVE: a wave code, PCM waves from 64 */, EW_SRC, EW_V, EW_SRC, EW_V, EW_SW
 #define EW_OSCMIX EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_V, EW_SRC, 3u /* XMOD_* */, EW_V, EW_SRC, EW_V,                   \
                   2u /* SUBOCT_* */, 3u /* SUBWAVE_* */, EW_V, EW_V, EW_SRC, EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_V,          \
-                  6u /* ATK_COUNT 20 */, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, 2u /* ATKTRK_* */, EW_V, EW_SRC, EW_V
+                  6u /* ATK_COUNT 19 */, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, 2u /* ATKTRK_* */, EW_V, EW_SRC, EW_V
 #define EW_FILTER EW_V, EW_V, EW_V, EW_V, 3u /* FLT_* */, EW_SRC, EW_SRC, EW_V, EW_V
 #define EW_FLTMIX EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_SRC, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_SRC, EW_V
 #define EW_ENV EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_SW, EW_SW, EW_V, EW_SW

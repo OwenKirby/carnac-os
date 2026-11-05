@@ -14,7 +14,6 @@
 #include "midi_io.h"
 #include "wavetables.h"
 #include "preset.h"
-#include "attacks.h"
 #include "ctrl_tables.h"
 #include "tuning.h"
 #include "mfx.h"                     /* mfx_mod_off: the MOD SENDS to the MFX knobs */
@@ -698,7 +697,6 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     uint32_t freq1_q16 = apply_cents_q16(mtof_q16(note1),
                                          pitch1_cents + pitch_mod_cents(resolve_source(&c, o1->pitch_mod_src, 0), o1->pitch_mod_amt) +
                                          send_cents(&c, MDST_OSC1_PITCH));
-    uint32_t freq1_set_q16 = freq1_q16;                             /* without ANALOG: STRIKE's attack follows this */
     if (analog) freq1_q16 = analog_freq(freq1_q16, an->pitch1);
     osc_select_wave(&voice->osc1, o1->wavebank);
     voice->osc1.morph_q12 = scan_morph_q12(&c, o1, 0, 0);
@@ -816,55 +814,6 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const float tick_inv = 1.f / (float)SYNTH_CTRL_PERIOD, q15_inv = 1.f / 32768.f;
     voice->vol_step = ((float)vol_q15 * q15_inv - voice->vol) * tick_inv;
     voice->vol_b_step = ((float)vol_b_q15 * q15_inv - voice->vol_b) * tick_inv;
-    /* STRIKE's attack. ATK TRACK: AUTO follows OSC1's pitch (bend, glide, pitch mod and all) for a pitched sound and
-     * plays an unpitched one at its own rate; FIXED never follows; TRACK always does (an unpitched sound as if its root
-     * were C4). TUNE transposes either way. ATK DECAY fades it (127: off). ATK > FILTER splits it: the part that skips
-     * the filter has the amp's level (amp mod, unison, choke, velocity by ATK VEL) without ENV1, so a slow pad attack
-     * never swallows it; the part into FILTER1 is ATK LEVEL alone, the voice's own level and ENV1 applying after the
-     * filter. A new note starts both at their levels, no ramp up. */
-    if (arch == VARCH_STRIKE && voice->atk_p) {
-        uint16_t tt = (uint16_t)(mx->atk_tune | (uint16_t)mx->atk_track << 8);
-        if (freq1_set_q16 != voice->atk_f1 || tt != voice->atk_tt) {    /* (2026-10-16: PERF TEST, not every tick) */
-            const AttackInfo *ai = &attack_info[voice->atk_sample];
-            float step = (float)apply_cents_q16(ai->rate_q16, clampi(bip(mx->atk_tune), -24, 24) * 100);
-            uint8_t trk = mx->atk_track;
-            if (trk == ATKTRK_TRACK || (trk != ATKTRK_FIXED && ai->root != ATK_UNPITCHED))
-                step *= (float)freq1_set_q16 / (float)mtof_q16(ai->root != ATK_UNPITCHED ? ai->root : 60);
-            voice->atk_base = step > 8.f * 65536.f ? 8u << 16 : (step < 1.f ? 1u : (uint32_t)step);   /* <= 3 octaves up */
-            voice->atk_step = voice->atk_base;
-            voice->atk_f1 = freq1_set_q16;
-            voice->atk_tt = tt;
-        }
-        if (voice->atk_glide != 0.f) {                  /* BEND: off pitch at the note's start, gliding back, tau ~40 ms */
-            int32_t steps_q15 = bip(mx->atk_bend) << 15;     /* half a semitone a step; BEND MOD's source adds to it */
-            if (mx->atk_bend_mod_amt != BIPOLAR_CENTER)
-                steps_q15 += resolve_source(&c, mx->atk_bend_mod_src, 0) * bip(mx->atk_bend_mod_amt);
-            uint32_t b = apply_cents_q16(voice->atk_base, (int32_t)((float)steps_q15 * (50.f / 32768.f) * voice->atk_glide));
-            voice->atk_step = b > (8u << 16) ? 8u << 16 : (b < 1u ? 1u : b);
-            voice->atk_glide *= 0.991f;                 /* exp(-16 / (44100 * 0.04)) a tick */
-            if (voice->atk_glide < (1.f / 8192.f)) {    /* under half a cent even from 64 steps off */
-                voice->atk_glide = 0.f;
-                voice->atk_step = voice->atk_base;
-            }
-        }
-        if (mx->atk_decay < 127u) {                     /* a time constant of 2 .. ~1000 ticks (0.7 ms .. 0.36 s; 64: 94 ms) */
-            float t = 2.f + (float)mx->atk_decay * (float)mx->atk_decay * (1.f / 16.f);
-            voice->atk_fade -= voice->atk_fade / t;
-        }
-        int32_t vel_q15 = velocity_gain_q15(in->velocity);
-        if (mx->atk_vel < 127u)                         /* 127: the voice's velocity as it is */
-            vel_q15 = 32767 - (((32767 - vel_q15) * ((int32_t)mx->atk_vel * 258)) >> 15);   /* 258 / 32768 ~ 1 / 127 */
-        int32_t lev_q15 = (((amp_gain_q15 * vel_q15) >> 15) * voice->unison_gain_q15) >> 15;
-        if (voice->choke) lev_q15 = (lev_q15 * voice->choke_q15) >> 15;
-        float lvl = (float)mx->atk_level * (1.f / 127.f) * voice->atk_fade, f = (float)mx->atk_filter * (1.f / 127.f);
-        float post = (float)lev_q15 * q15_inv * lvl * (1.f - f), pre = lvl * f;
-        if (snap) {
-            voice->atk_vol = post;
-            voice->atk_pre = pre;
-        }
-        voice->atk_vol_step = (post - voice->atk_vol) * tick_inv;
-        voice->atk_pre_step = (pre - voice->atk_pre) * tick_inv;
-    }
     voice->drive = a->drive;
     if (a->drive) {
         if (a->drive_model != voice->drv.model)   /* each model reads its state its own way: a new one starts clean */
@@ -1110,117 +1059,6 @@ static void render_binaural(SynthVoiceNode *v, float *mix, int n) {
     finish_pair_block(v, fl, fr, 0, mix, n);
 }
 
-/* STRIKE's attack, in the voice's last loop: the mu-law byte pair under the read position, interpolated, at the
- * attack's own level, added to the amped (and driven) voice before the four gains (pan, routing, sends), so the mix is
- * written once a sample. The samples left in the attack are counted once a block, not tested every sample.
- * 2026-10-16: the first version, its own pass over the mix, cost 4.8 % in PERF TEST SEQ+ARP STRIKE (70.6 %, budget
- * 70): on the FM1 the cost is instructions (XIP, ~7 cycles each), not the loads (fetching the pair only on a new byte
- * changed nothing). The decode table is read from a RAM copy (attack_mulaw sits in flash). */
-static float atk_dec[256];
-void voice_attack_init(void) {
-    for (int i = 0; i < 256; i++) atk_dec[i] = attack_mulaw[i];
-}
-
-static void finish_strike_block(SynthVoiceNode *voice, float *y, float *mix, int n) {
-    uint32_t pos = voice->atk_pos, step = voice->atk_step, end = voice->atk_end;
-    int na = 0;
-    if (voice->atk_p && pos < end)
-        na = (int)((end - pos + step - 1u) / step);           /* step >= 1 (the tick's) */
-    if (na > n) na = n;
-    if (na > 0) {
-        const uint8_t *p = voice->atk_p;
-        float vol = voice->vol, vstep = voice->vol_step, av = voice->atk_vol, astep = voice->atk_vol_step, end = 0.f;
-        const float g0 = voice->mix_a[MIX_L], g1 = voice->mix_a[MIX_R];
-        if (voice->drive) {
-            end = level_drive(voice, 0, y, na, vol, vstep);
-            vol = 1.f;
-            vstep = 0.f;
-        }
-        for (int i = 0; i < na; i++, mix += MIX_N) {
-            float s = y[i] * vol;
-            vol += vstep;
-            uint32_t k = pos >> 16;
-            float a = atk_dec[p[k]], b = atk_dec[p[k + 1u]];
-            s += (a + (b - a) * (float)(pos & 0xFFFFu) * (1.f / 65536.f)) * av;
-            pos += step;
-            av += astep;
-            mix[MIX_L] += s * g0;
-            mix[MIX_R] += s * g1;
-        }
-        voice->vol = voice->drive ? end : vol;
-        voice->atk_pos = pos;
-        voice->atk_vol = av;
-        y += na;
-    }
-    if (voice->atk_p && pos >= end)
-        voice->atk_p = NULL;
-    if (na < n)
-        finish_mono_block(voice, y, mix, n - na);             /* the voice alone, after the attack */
-}
-
-/* ATK > FILTER above 0: the attack is read once, into att, as the oscillator's sum becomes the filter's input (the part
- * into the filter added there); the last loop adds the part that skips the filter from att. */
-static void render_strike_split(SynthVoiceNode *v, const int32_t *o, float *mix, int n) {
-    float x[VB], att[VB];
-    uint32_t pos = v->atk_pos, step = v->atk_step, end = v->atk_end;
-    int na = 0;
-    if (pos < end)
-        na = (int)((end - pos + step - 1u) / step);
-    if (na > n) na = n;
-    const uint8_t *p = v->atk_p;
-    float pre = v->atk_pre, pstep = v->atk_pre_step;
-    for (int i = 0; i < na; i++) {
-        uint32_t k = pos >> 16;
-        float a = atk_dec[p[k]], b = atk_dec[p[k + 1u]];
-        float s = a + (b - a) * (float)(pos & 0xFFFFu) * (1.f / 65536.f);
-        att[i] = s;
-        x[i] = (float)clamp_q15(o[i]) + s * pre;
-        pos += step;
-        pre += pstep;
-    }
-    for (int i = na; i < n; i++) x[i] = (float)clamp_q15(o[i]);
-    v->atk_pos = pos;
-    v->atk_pre = pre;
-    if (pos >= end)
-        v->atk_p = NULL;
-    filter_core_render_block(&v->synth_filters.core[0], x, x, n);
-    float vol = v->vol, vstep = v->vol_step, av = v->atk_vol, astep = v->atk_vol_step, vend = 0.f;
-    const float g0 = v->mix_a[MIX_L], g1 = v->mix_a[MIX_R];
-    if (v->drive) {
-        vend = level_drive(v, 0, x, na, vol, vstep);
-        vol = 1.f;
-        vstep = 0.f;
-    }
-    for (int i = 0; i < na; i++, mix += MIX_N) {
-        float s = x[i] * vol;
-        vol += vstep;
-        s += att[i] * av;
-        av += astep;
-        mix[MIX_L] += s * g0;
-        mix[MIX_R] += s * g1;
-    }
-    v->vol = v->drive ? vend : vol;
-    v->atk_vol = av;
-    if (na < n)
-        finish_mono_block(v, x + na, mix, n - na);
-}
-
-/* STRIKE: SINGLE's path, its last loop carrying the attack while it lasts; ATK > FILTER above 0 reads the attack
- * before the filter (render_strike_split) */
-static void render_strike(SynthVoiceNode *v, float *mix, int n) {
-    int32_t o[VB];
-    float x[VB];
-    osc_render_block(&v->osc1, o, n);
-    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
-    if (v->atk_p && (v->atk_pre != 0.f || v->atk_pre_step != 0.f)) {
-        render_strike_split(v, o, mix, n);
-        return;
-    }
-    q15_to_float(o, x, n);
-    filter_core_render_block(&v->synth_filters.core[0], x, x, n);
-    finish_strike_block(v, x, mix, n);
-}
-
 /* the render function of each architecture, VARCH_* order: chosen once per block by the voice's arch, so each inner
  * path carries only what that architecture uses */
 static void (*const render_arch[VARCH_COUNT])(SynthVoiceNode *, float *, int) = {
@@ -1230,7 +1068,7 @@ static void (*const render_arch[VARCH_COUNT])(SynthVoiceNode *, float *, int) = 
     render_dual_filter,  /* DUAL FILTER */
     render_stack,        /* STACK */
     render_binaural,     /* BINAURAL */
-    render_strike,       /* STRIKE */
+    render_single,       /* STRIKE (retired 2026-11-04: loads as SPREAD; never reached) */
     render_full,         /* FULL */
     render_dual_spread,  /* DUAL SPREAD */
 };

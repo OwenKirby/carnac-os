@@ -45,6 +45,9 @@ build ui_rows_fit $DSP src/host/test_ui_rows_fit.c && run ui_rows_fit "$OUT/ui_r
 build midi_clock $DSP src/host/test_midi_clock.c && run midi_clock "$OUT/midi_clock.exe"
 build maq_seq $DSP src/UIStateMachine.c src/host/test_maq_seq.c && run maq_seq "$OUT/maq_seq.exe"
 build arp_seq $DSP src/UIStateMachine.c src/host/test_arp_seq.c && run arp_seq "$OUT/arp_seq.exe"
+build krec src/dsp/krec.c src/host/test_krec.c && run krec "$OUT/krec.exe"
+build rec_screen $DSP src/UIStateMachine.c src/host/render_rec_screen.c && mkdir -p "$OUT/rec" \
+    && run rec_screen "$OUT/rec_screen.exe" "$OUT/rec"
 build seq_idle $DSP src/host/test_seq_idle.c && build seq_idle_ref -DSYNTH_SEQ_NO_IDLE $DSP src/host/test_seq_idle.c \
     && "$OUT/seq_idle_ref.exe" >"$OUT/seq_idle_ref.txt" \
     && run seq_idle sh -c "'$OUT/seq_idle.exe' | diff - '$OUT/seq_idle_ref.txt' && echo 'MAQ / ARP idle fast paths: bit-exact'"

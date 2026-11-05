@@ -413,7 +413,8 @@ def conch(rng):
 
 
 # (name on screen, group, recipe, root MIDI note or None for unpitched). New attacks go at the end: patches
-# store the attack's number.
+# store the attack's number. (2026-11-04: ANTLER RASP left the list, 4.5 KB of flash for the REC page; its recipe
+# antler_rasp stays above, unused.)
 ATTACK_DEFS = [
     ("BONE CHIFF", "Breath", bone_chiff, 72),
     ("REED CHIFF", "Breath", reed_chiff, 67),
@@ -426,7 +427,6 @@ ATTACK_DEFS = [
     ("WOOD BLOCK", "Wood & Bone", wood_block, 76),
     ("LOG DRUM", "Wood & Bone", log_drum, 55),
     ("BONE CLACK", "Wood & Bone", bone_clack, None),
-    ("ANTLER RASP", "Wood & Bone", antler_rasp, None),
     ("FRAME DRUM", "Hide & Fire", frame_drum, 45),
     ("SEED RATTLE", "Hide & Fire", seed_rattle, None),
     ("CRACKLE", "Hide & Fire", hearth_crackle, None),

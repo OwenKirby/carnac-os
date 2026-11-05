@@ -68,10 +68,10 @@
  * Reads only: the UI registers, the patches and performance, the voices, the clock. Integer only. */
 
 #include <stddef.h>                          /* offsetof (the MOD page's destination table) */
-#include "dsp/attacks.h"                     /* STRIKE: the attack outline on the OSCMIXER page */
 #include "dsp/pcm_osc.h"                     /* a PCM wave's name and picture on the OSC / OSCMIXER pages */
 #include "dsp/mfx.h"                         /* the MFX page: the effect's sweep as it moves (mfx_peek) */
 #include "dsp/fx.h"                          /* the MIX page: the live mix (fx_live) and the loop's level */
+static void rec_draw(UIStateMachine *sm, uint32_t force);   /* the REC page (ui_rec_draw.c, at the end) */
 /* ----------------------------------------------------------- colours --- */
 #define PUC_STONE SQ_STONE[sq_pal]                 /* an unlit stone (ui_seq_draw.c) */
 #define PUC_HL SQ_PAL_LANE[sq_pal][SQC_BG]          /* the noisy ground's base: white text sits on it */
@@ -385,9 +385,9 @@ static int32_t pu_voice_pan(const SynthVoiceNode *n)
 
 /* ------------------------------------------------------------- pages --- */
 static const char *const PU_TITLE[UIPAGE_COUNT] = {
-    "OSC 1", "OSC 2", "ATTACK", "OSC MIX", "FILTER 1", "FILTER 2", "FLT MIX", "ENV 1", "ENV 2", "ENV 3", "LFO 1", "LFO 2", "LFO 3",
+    "OSC 1", "OSC 2", "OSC MIX", "FILTER 1", "FILTER 2", "FLT MIX", "ENV 1", "ENV 2", "ENV 3", "LFO 1", "LFO 2", "LFO 3",
     "MOD", "MFX", "AMP", "EFFECTS", "MIX", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "ARP", "SAVE",
-    "SEQ",
+    "SEQ", "REC",
 };
 /* the first page and size of each section (UIStateMachine.c SECTION_FIRST / SECTION_COUNT, by page) */
 static void pu_section(uint8_t page, uint8_t *first, uint8_t *n)
@@ -413,8 +413,8 @@ static uint8_t pu_page_pal(const UIStateMachine *sm)
 /* ------------------------------------------------------------ header --- */
 /* each page's name in the header's list of its section's pages */
 static const char *const PU_TAB[UIPAGE_COUNT] = {
-    "OSC1", "OSC2", "ATTACK", "OSCMIX", "FLT1", "FLT2", "FLTMIX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3",
-    "MOD", "MFX", "AMP", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ",
+    "OSC1", "OSC2", "OSCMIX", "FLT1", "FLT2", "FLTMIX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3",
+    "MOD", "MFX", "AMP", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ", "REC",
 };
 #define PU_TAB_GAP 8                 /* between two pages' names */
 
@@ -918,42 +918,6 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
 }
 
 /* ------------------------------------------------------------- attack --- */
-/* STRIKE's attack across the width, dim at its full length, bright as it plays: from START, at LEVEL, faded by DECAY
- * (the engine's 1/(2 + d^2/16) a tick, exp(-ticks / T) here through pu_exp2). A mu-law byte's magnitude is its loudness
- * on a log scale: the outline reads as the sound's envelope. */
-static int64_t pu_exp2(int32_t l);                 /* below (the filter plot's) */
-static void pu_viz_attack(const UIStateMachine *sm)
-{
-    const OscMixerParams *m = &sm->engine[sm->s.active_synth_layer]->oscmix;
-    const AttackInfo *ai = &attack_info[m->atk_sample % ATK_COUNT];
-    const uint8_t *p = attack_data + ai->offset;
-    uint32_t start = (uint32_t)ai->length * m->atk_start / 254u, i, end;
-    int32_t x, t16 = 2 * 16 + m->atk_decay * m->atk_decay; /* 16 T, T = 2 + d^2 / 16 ticks */
-    for (x = 0; x < PV_W; x++) {
-        int32_t peak = 0, sign = x & 1 ? -1 : 1;
-        i = (uint32_t)x * ai->length / PV_W;
-        end = (uint32_t)(x + 1) * ai->length / PV_W;
-        for (; i < end; i++) {
-            int32_t q = (int8_t)p[i];
-            if (q < 0) q = -q;
-            if (q > peak) peak = q;
-        }
-        pu_ys2[x] = sign * peak * 258;
-        if ((uint32_t)x * ai->length / PV_W < start) {
-            pu_ys[x] = 0;
-            continue;
-        }
-        int32_t v = peak * 258 * m->atk_level / 127;
-        if (m->atk_decay < 127u) {                       /* ticks since START: bytes / rate, 16 samples a tick */
-            int64_t ticks = ((int64_t)((uint32_t)x * ai->length / PV_W - start) << 16) / (int64_t)ai->rate_q16 / 16;
-            int32_t l = (int32_t)(-(ticks * 16 * 5909) / t16); /* -ticks / T in octaves, Q12 (5909 = 4096 log2 e) */
-            v = l < -6 * 4096 ? 0 : (int32_t)((v * pu_exp2(l)) >> 12);
-        }
-        pu_ys[x] = sign * v;
-    }
-    pu_trace(pu_ys, pu_ys2, 36, 24, SQC(THEME));
-}
-
 /* ------------------------------------------------------------- filter --- */
 /* log2 of v >= 1, Q8 (a linear mantissa with its parabolic correction: within 0.01 octave) */
 static int32_t pu_log2(uint64_t v)
@@ -3039,7 +3003,6 @@ static void pu_draw_viz(UIStateMachine *sm)
     cv_begin(240, PU_VIZ_H, SQC(BG));
     switch (page) {
     case UIPAGE_OSC1: case UIPAGE_OSC2: pu_viz_osc(sm, (uint8_t)(page - UIPAGE_OSC1)); break;
-    case UIPAGE_ATTACK: pu_viz_attack(sm); break;
     case UIPAGE_OSCMIX: pu_viz_oscmix(sm); break;
     case UIPAGE_FILTER1: case UIPAGE_FILTER2: pu_viz_filter(sm, (uint8_t)(page - UIPAGE_FILTER1)); break;
     case UIPAGE_FLTMIX: pu_viz_fltmix(sm); break;
@@ -3234,7 +3197,9 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
             pu_draw_hold(sm);
         return;
     }
-    if (sm->page == UIPAGE_SEQ)
+    if (sm->page == UIPAGE_REC)
+        rec_draw(sm, force);
+    else if (sm->page == UIPAGE_SEQ)
         seq_draw(sm, q, force);
     else if (sm->page == UIPAGE_ARP)
         arp_draw(sm, q, a, force);
@@ -3244,3 +3209,5 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
     if (held)
         pu_draw_hold(sm);
 }
+
+#include "ui_rec_draw.c"                     /* the REC page (2026-11-04): its own screen, as SEQ's */

@@ -221,6 +221,7 @@ static void boot(void)
     ui_sm_init(&sm, &perf_state, &engine_state[0], &engine_state[1], seq_lanes, &arp_state);
     ui_sm_attach_seq(&sm, synth_seq());
     ui_sm_attach_arp(&sm, synth_arp());
+    ui_sm_attach_rec(&sm, synth_rec());
     ui_sm_attach_store(&sm, syn_slot_query, 0);
     ui_sm_attach_instrument(&sm, &instrument);
     seq_palette_set(SQPAL_ORANGE);
@@ -272,6 +273,7 @@ static void run_ms(void)
         last_frame = fm1_ms;
         ui_sm_tick(&sm, (uint16_t)(ms > 1000u ? 1000u : ms));
         bend_spring();
+        rec_hold();
         ui_screen_draw(&sm, synth_seq(), synth_arp(), force);
         force = 0;
         panel_leds();

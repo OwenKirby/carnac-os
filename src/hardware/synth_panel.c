@@ -324,6 +324,10 @@ static uint8_t oct_held[2], oct_used[2];            /* OCT- / OCT+ down, and use
 static uint8_t home_held, home_chord;               /* HOME down; an OCT pressed since (a layer chord, not a page) */
 static uint32_t home_ms;                            /* when HOME went down */
 static uint8_t save_held, save_chord;               /* the same for SAVE: an OCT since = COPY / PASTE, not a save */
+static uint8_t rec_held, rec_done;                  /* REC down where it acts on release (the loop's); held long
+                                                     * enough it was UNDO (rec_hold), so its release does nothing */
+static uint32_t rec_ms;
+#define REC_HOLD_MS 600u                            /* REC held this long: the loop's newest pass back */
 static uint32_t save_ms;
 #define HOME_HINT_MS 200u                           /* HOME held this long: the OCT LEDs show the layer chord */
 static uint32_t knob_last_ms[4];
@@ -420,6 +424,16 @@ static void knob_turn(uint32_t k, int32_t d)
     ui_sm_knob_written(&sm, sm.page, (uint8_t)k);
 }
 
+/* REC held REC_HOLD_MS where it acts on release: UNDO, once (its release then does nothing). Once per UI frame, inside
+ * the lock. */
+static void rec_hold(void)
+{
+    if (rec_held && !rec_done && fm1_ms - rec_ms >= REC_HOLD_MS) {
+        rec_done = 1;
+        ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC_UNDO);
+    }
+}
+
 /* PITCH BEND is spring-loaded, as a wheel is: BEND_SPRING_WAIT_MS after its last detent it glides back to centre, a
  * third of the way each UI frame (~0.2 s from full throw), sent as MIDI as the knob sends it. Once per UI frame,
  * inside the lock. */
@@ -475,7 +489,14 @@ static uint32_t panel_input(void)
                 ui_sm_handle(&sm, UIEV_BUTTON, (int8_t)SECTION[i]);
             else if (i == B_PLAY)
                 ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
-            else if (i == B_REC)
+            else if (i == B_REC && home_held) {     /* HOME held + REC: the REC page */
+                home_chord = 1;
+                ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC_PAGE);
+            } else if (i == B_REC && ui_sm_rec_deferred(&sm)) {   /* the loop's REC: a tap acts on release */
+                rec_held = 1;
+                rec_done = 0;
+                rec_ms = fm1_ms;
+            } else if (i == B_REC)
                 ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
             else {                                  /* OCT- / OCT+: off the SEQ page they act at once */
                 uint32_t w = i == B_OCTUP;
@@ -497,6 +518,11 @@ static uint32_t panel_input(void)
             if (sm.commit_pending)
                 syn_commit();
         }
+    }
+    if (((up >> B_REC) & 1u) && rec_held) {        /* a tap (not held into UNDO) */
+        rec_held = 0;
+        if (!rec_done)
+            ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
     }
     if (((up >> B_HOME) & 1u) && home_held) {
         home_held = 0;
@@ -547,6 +573,7 @@ static uint32_t page_button(uint8_t page)
     if (page <= UIPAGE_GLOBAL) return 1u << B_HOME;                   /* HOME's views, then GLOBAL */
     if (page == UIPAGE_ARP) return 1u << B_ARP;
     if (page == UIPAGE_SEQ) return 1u << B_SEQ;
+    if (page == UIPAGE_REC) return 0u;                                 /* (REC's own LED shows the loop) */
     return 1u << B_SAVE;
 }
 
@@ -561,7 +588,10 @@ static uint32_t beat_lit(uint32_t origin)
 static void panel_leds(void)
 {
     UiKeyLeds kl;
-    uint32_t b = page_button(sm.page), rec = maq_recording(synth_seq()) || sm.arp_rec;
+    const Krec *kr = synth_rec();
+    uint32_t b = page_button(sm.page), rec = maq_recording(synth_seq()) || sm.arp_rec ||
+                 kr->state == KREC_REC || kr->state == KREC_ODUB ||
+                 (kr->state == KREC_ARMED && ((fm1_ms / 125u) & 1u));   /* the loop: recording lit, armed flashing */
     uint8_t mods = (uint8_t)((oct_held[0] ? UISEQ_MOD_OCT_DOWN : 0u) | (oct_held[1] ? UISEQ_MOD_OCT_UP : 0u));
     if (ui_sm_play_lit(&sm) || rec)
         b |= 1u << B_PLAY;

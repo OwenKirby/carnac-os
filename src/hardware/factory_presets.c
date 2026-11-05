@@ -1,6 +1,6 @@
-/* The factory bank "SAMHAIN" (2026-10-27): 32 patches (slots 0..31) showing off the Foundations bank (the SH-2's own
+/* The factory bank "SAMHAIN" (2026-10-27): 26 patches (slots 0..25) showing off the Foundations bank (the SH-2's own
  * VCO shapes) through the SH-2 and MS-20 filters: dub basses, leads, mystical and pagan pads and bells, percussion;
- * with 9 whole performances, each with its sequence and arp pattern (slots 0..8 of those banks; the rest stay empty).
+ * with 8 whole performances, each with its sequence and arp pattern (slots 0..7 of those banks; the rest stay empty).
  * Performance 0, CAIRN SPIRIT (the pad on the arp over a pulsing bass), is the one the FM1 plays at power-on
  * (syn_boot_perf). The bank replaced "RITES OF STONE"
  * (2026-10-21, in git history; NEWGRANGE DAWN kept as patch 16). A unity-build
@@ -19,8 +19,8 @@
 #include <stddef.h>                 /* offsetof: the patches' settings are byte offsets into EngineState */
 #define FP_OCT(k) ((uint8_t)((k) == 0 ? 64 : 18 * ((k) + 3) + 9))
 #define FP_BIP(v) ((uint8_t)((v) + 64))
-#define FP_N 32u                         /* SAMHAIN's patches, slots 0..31 */
-#define FP_NPERF 9u                      /* its performances (and their sequences and arps), slots 0..8 */
+#define FP_N 26u                         /* SAMHAIN's patches, slots 0..25 (its six STRIKE patches went with STRIKE, 2026-11-04) */
+#define FP_NPERF 8u                      /* its performances (and their sequences and arps), slots 0..7 */
 
 static void factory_name(uint8_t *dst, const char *s)
 {
@@ -59,8 +59,6 @@ static void factory_name(uint8_t *dst, const char *s)
     V_(mod[i].amount, FP_BIP(amt))
 #define V_AMP(drv, model, ds, rs) V_(amp.drive, drv), V_(amp.drive_model, DRIVE_##model), V_(amp.delay_send, ds), \
     V_(amp.reverb_send, rs)
-#define V_ATK(smp, lvl, flt, dec) V_(oscmix.atk_sample, smp), V_(oscmix.atk_level, lvl), V_(oscmix.atk_filter, flt), \
-    V_(oscmix.atk_decay, dec)
 #define V_KT(i, kt) V_(filter_key_track[i], kt)
 /* a delayed vibrato on LFO2, blooming after each note starts */
 #define V_VIB(rt, dl) V_LFO(1, L_SINE, rt), V_(lfo[1].delay, dl), V_(lfo[1].fade, FP_BIP(40)), V_(lfo[1].key_reset, 1)
@@ -73,7 +71,7 @@ enum { W_WOOD = 64, W_RAIN, W_LORE, W_MOONSONG, W_CHOIR, W_HORNS, W_CHOIRWOOD, W
 enum { F_TRI = 0, F_SAW = 18, F_SQUARE = 36, F_P35 = 54, F_P20 = 73, F_P10 = 91, F_PMIN = 109, F_SAWSQ = 127 };
 /* attacks.h's sounds, by number (attack_names) */
 enum { A_BONE_CHIFF, A_REED_CHIFF, A_HORN_BLAT, A_FLINT, A_STONE_KNOCK, A_MENHIR_THUD, A_LITHOPHONE, A_PEBBLES,
-       A_WOOD_BLOCK, A_LOG_DRUM, A_BONE_CLACK, A_ANTLER_RASP, A_FRAME_DRUM, A_SEED_RATTLE, A_CRACKLE, A_CAVE_CLAP,
+       A_WOOD_BLOCK, A_LOG_DRUM, A_BONE_CLACK, A_FRAME_DRUM, A_SEED_RATTLE, A_CRACKLE, A_CAVE_CLAP,
        A_BOW_PLUCK, A_MOUTH_BOW, A_POT_DRUM, A_CONCH };
 #define W_ATK(a) (32 + (a))
 enum { L_SINE = 0, L_TRI = 21, L_SAW = 43, L_SQUARE = 64, L_STEP = 85, L_SLEW = 106 };
@@ -234,21 +232,7 @@ static const uint8_t FV_GHOST[] = {
     V_AMP(0, SOFT, 40, 90), V_(analog, 50),
     V_END};
 
-/* ---- 12 PUCA PIPE: the shape-shifter's pipe. STRIKE: the REED CHIFF over a Foundations SQUARE an octave up (a hollow
- * reed), a breath of noise, an MS-20 low-pass, a delayed vibrato. WHEEL: more breath. */
-static const uint8_t FV_PUCA[] = {
-    V_(arch, VARCH_STRIKE),
-    V_OSC(0, W_FOUND, F_SQUARE, 1), V_(osc[0].pitch_mod_src, MSRC_LFO2), V_(osc[0].pitch_mod_amt, 9),
-    V_ATK(A_REED_CHIFF, 70, 40, 100),
-    V_(oscmix.noise_level, 10), V_(oscmix.noise_colour, 40), V_(oscmix.noise_mod_src, MSRC_MODWHEEL),
-    V_(oscmix.noise_mod_amt, FP_BIP(24)),
-    V_FLT(0, MS20, 20, 0, 86, 30, 14), V_KT(0, 64),
-    V_ENV(0, 24, 80, 110, 50), V_ENV(1, 20, 60, 70, 50),
-    V_VIB(88, 60),
-    V_AMP(0, SOFT, 30, 54), V_(analog, 24),
-    V_END};
-
-/* ---- 13 WILD HUNT: the host riding the storm. UNISON STACK of Foundations SAWs through a driven SH-2 with a bite of
+/* ---- 12 WILD HUNT: the host riding the storm. UNISON STACK of Foundations SAWs through a driven SH-2 with a bite of
  * ENV2, TUBE. WHEEL: the filter opens (ENV2 + wheel). */
 static const uint8_t FV_HUNT[] = {
     V_(arch, VARCH_SINGLE),
@@ -259,21 +243,7 @@ static const uint8_t FV_HUNT[] = {
     V_AMP(22, TUBE, 30, 40), V_(analog, 30),
     V_END};
 
-/* ---- 14 BONE WHISTLE: a whistle cut from a swan's wing bone. STRIKE: the BONE CHIFF over Foundations PULSE MIN an
- * octave up through a resonant SH-2 BAND-PASS that follows the keys fully; a delayed vibrato. WHEEL: band-pass ->
- * high-pass (airier). */
-static const uint8_t FV_WHISTLE[] = {
-    V_(arch, VARCH_STRIKE),
-    V_OSC(0, W_FOUND, F_PMIN, 1), V_(osc[0].pitch_mod_src, MSRC_LFO2), V_(osc[0].pitch_mod_amt, 9),
-    V_ATK(A_BONE_CHIFF, 90, 40, 100),
-    V_FLT(0, SH2, 0, 64, 92, 70, 10), V_KT(0, 100),
-    V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(40)),
-    V_ENV(0, 20, 80, 110, 60), V_ENV(1, 20, 70, 80, 60),
-    V_VIB(90, 56),
-    V_AMP(0, SOFT, 34, 60), V_(analog, 24),
-    V_END};
-
-/* ---- 15 SPIRIT SIREN: the dub siren. Foundations SQUARE through an SH-2; hold a note and push the WHEEL: LFO2 sweeps
+/* ---- 13 SPIRIT SIREN: the dub siren. Foundations SQUARE through an SH-2; hold a note and push the WHEEL: LFO2 sweeps
  * the pitch up and down (MODSLOT1 = LFO2 x wheel), wider and wider. Made for the delay. */
 static const uint8_t FV_SIREN[] = {
     V_(arch, VARCH_SINGLE),
@@ -287,7 +257,7 @@ static const uint8_t FV_SIREN[] = {
 
 /* ===================================== mystical, arcane, pagan: pads, keys, bells ===================================== */
 
-/* ---- 16 NEWGRANGE DAWN: the winter-solstice sunrise creeping down the passage of Newgrange (kept from RITES OF
+/* ---- 14 NEWGRANGE DAWN: the winter-solstice sunrise creeping down the passage of Newgrange (kept from RITES OF
  * STONE). STACK: A, a Moonstone FM bell whose strike darkens as it rings; B, the PCM CHOIR swelling in behind it, its
  * vowel drifting on LFO3; ENV3 opens both filters over three seconds; LFO3 walks each voice through the stereo field.
  * WHEEL: vibrato, and the choir's filter opens. */
@@ -308,7 +278,7 @@ static const uint8_t FV_NEWGRANGE[] = {
     V_AMP(0, SOFT, 34, 80), V_(analog, 28),
     V_END};
 
-/* ---- 17 THIN VEIL: the night the veil is thinnest. DUAL SPREAD: Foundations SAW and PULSE 35 % 4 cents apart, each
+/* ---- 15 THIN VEIL: the night the veil is thinnest. DUAL SPREAD: Foundations SAW and PULSE 35 % 4 cents apart, each
  * as four drifting playheads, LFO1 moving the saw's shape; a soft MS-20 low-pass swelling with ENV2. WHEEL: the
  * MS-20 morphs toward band-pass (the pad turns to voices). */
 static const uint8_t FV_VEIL[] = {
@@ -323,7 +293,7 @@ static const uint8_t FV_VEIL[] = {
     V_AMP(0, SOFT, 30, 80), V_(analog, 40),
     V_END};
 
-/* ---- 18 CRYPT ORGAN: an organ nobody built, under the hill. DUAL OSC: Foundations SQUAREs at 8' and 4', an MS-20
+/* ---- 16 CRYPT ORGAN: an organ nobody built, under the hill. DUAL OSC: Foundations SQUAREs at 8' and 4', an MS-20
  * low-pass, TUBE, the pan turning on LFO3 like a slow rotor. WHEEL: the 4' comes forward. */
 static const uint8_t FV_CRYPT[] = {
     V_(arch, VARCH_DUAL_OSC),
@@ -336,7 +306,7 @@ static const uint8_t FV_CRYPT[] = {
     V_AMP(10, TUBE, 20, 70), V_(analog, 30),
     V_END};
 
-/* ---- 19 CORPSE CANDLE: the light that walks to the house of the dying. DUAL OSC: a Foundations TRIANGLE RING-
+/* ---- 17 CORPSE CANDLE: the light that walks to the house of the dying. DUAL OSC: a Foundations TRIANGLE RING-
  * modulated by a Moonstone bell a tritone and an octave up, the ring fading as ENV3 falls: an iron toll settling to a
  * pale tone. WHEEL: more ring. */
 static const uint8_t FV_CANDLE[] = {
@@ -351,7 +321,7 @@ static const uint8_t FV_CANDLE[] = {
     V_AMP(0, SOFT, 40, 80), V_(analog, 16),
     V_END};
 
-/* ---- 20 ALL SOULS: the choir of the dead on the eve of November. SPREAD over the PCM CHOIR, the playheads wide, LFO1
+/* ---- 18 ALL SOULS: the choir of the dead on the eve of November. SPREAD over the PCM CHOIR, the playheads wide, LFO1
  * drifting the vowel, a warm SH-2 with a little drive. WHEEL: the choir opens (SCAN ooh -> aah). */
 static const uint8_t FV_SOULS[] = {
     V_(arch, VARCH_SPREAD),
@@ -365,7 +335,7 @@ static const uint8_t FV_SOULS[] = {
     V_AMP(0, SOFT, 24, 90), V_(analog, 30),
     V_END};
 
-/* ---- 21 OTHERWORLD: Tir na nOg glimpsed. STACK: A, the PCM MOONSONG hum; B, Foundations PULSE 10 % an octave up and
+/* ---- 19 OTHERWORLD: Tir na nOg glimpsed. STACK: A, the PCM MOONSONG hum; B, Foundations PULSE 10 % an octave up and
  * 4 cents flat through an MS-20 band-pass that LFO2 moves, swelling in later; spread wide. WHEEL: the overtone halo
  * rises over the hum (A's SCAN). */
 static const uint8_t FV_OTHERWORLD[] = {
@@ -381,7 +351,7 @@ static const uint8_t FV_OTHERWORLD[] = {
     V_AMP(0, SOFT, 30, 90), V_(analog, 30),
     V_END};
 
-/* ---- 22 CAIRN SPIRIT: the spirits in the cairn on Samhain night. SPREAD over the PCM CAIRN SPIRIT (dark "oh" choir
+/* ---- 20 CAIRN SPIRIT: the spirits in the cairn on Samhain night. SPREAD over the PCM CAIRN SPIRIT (dark "oh" choir
  * and breathy flutes over a stone drone; toward 127 the bright "aah" with its halo and bell shimmer), LFO1 drifting it
  * between the two over ten seconds, the playheads wide, a warm SH-2. WHEEL: the choir opens to the shimmer. */
 static const uint8_t FV_SPIRIT[] = {
@@ -396,7 +366,7 @@ static const uint8_t FV_SPIRIT[] = {
     V_AMP(0, SOFT, 30, 84), V_(analog, 24),
     V_END};
 
-/* ---- 23 RUNE PLUCK: a stave cut into yew. Foundations PULSE 10 % plucked through a resonant SH-2 that snaps open on
+/* ---- 21 RUNE PLUCK: a stave cut into yew. Foundations PULSE 10 % plucked through a resonant SH-2 that snaps open on
  * ENV2; higher notes shorter. WHEEL: the pluck opens (ENV2 + wheel). */
 static const uint8_t FV_RUNE[] = {
     V_(arch, VARCH_SINGLE),
@@ -410,7 +380,7 @@ static const uint8_t FV_RUNE[] = {
 
 /* ============================================ percussion ============================================ */
 
-/* ---- 24 CAIRN KICK: a stone dropped into the chamber. Foundations TRIANGLE two octaves down, its pitch falling two
+/* ---- 22 CAIRN KICK: a stone dropped into the chamber. Foundations TRIANGLE two octaves down, its pitch falling two
  * octaves in a blink (ENV3), a driven SH-2, TUBE. WHEEL: the filter opens (a harder beater). */
 static const uint8_t FV_KICK[] = {
     V_(arch, VARCH_SINGLE),
@@ -420,47 +390,7 @@ static const uint8_t FV_KICK[] = {
     V_AMP(30, TUBE, 6, 6),
     V_END};
 
-/* ---- 25 BONE SNARE: a shoulder blade struck. STRIKE: the BONE CLACK over a Foundations TRIANGLE dropping into the
- * note and white noise, an MS-20 band-pass, HARD clip. WHEEL: the noise darkens (white -> brown). */
-static const uint8_t FV_SNARE[] = {
-    V_(arch, VARCH_STRIKE),
-    V_OSC(0, W_FOUND, F_TRI, 0), V_(osc[0].pitch_mod_src, MSRC_ENV3), V_(osc[0].pitch_mod_amt, 40),
-    V_ATK(A_BONE_CLACK, 90, 0, 90),
-    V_(oscmix.noise_level, 90), V_(oscmix.noise_colour, 10), V_(oscmix.noise_col_mod_src, MSRC_MODWHEEL),
-    V_(oscmix.noise_col_mod_amt, FP_BIP(40)),
-    V_FLT(0, MS20, 40, 64, 90, 40, 0),
-    V_ENV(0, 0, 56, 0, 52), V_ENV(2, 0, 30, 0, 30),
-    V_AMP(20, HARD, 30, 40),
-    V_END};
-
-/* ---- 26 BODHRAN: the frame drum at the bonfire. STRIKE: the FRAME DRUM, tracked to the keys, over a Foundations
- * TRIANGLE body that drops into the note, an MS-20 low-pass following the keys; higher notes shorter. WHEEL: the
- * skin is bent (the attack slides in from below). */
-static const uint8_t FV_BODHRAN[] = {
-    V_(arch, VARCH_STRIKE),
-    V_OSC(0, W_FOUND, F_TRI, -1), V_(osc[0].pitch_mod_src, MSRC_ENV3), V_(osc[0].pitch_mod_amt, 30),
-    V_ATK(A_FRAME_DRUM, 76, 60, 110), V_(oscmix.atk_track, ATKTRK_TRACK),
-    V_(oscmix.atk_bend_mod_src, MSRC_MODWHEEL), V_(oscmix.atk_bend_mod_amt, FP_BIP(-16)),
-    V_FLT(0, MS20, 40, 0, 66, 40, 20), V_KT(0, 80),
-    V_ENV(0, 0, 66, 0, 60), V_(env[0].key_to_time, FP_BIP(-20)), V_ENV(1, 0, 46, 0, 40), V_ENV(2, 0, 36, 0, 36),
-    V_(amp.pan_mod_depth, 30),
-    V_AMP(0, TAPE, 20, 30),
-    V_END};
-
-/* ---- 27 SEED RATTLE: the gourd shaken over the fire. STRIKE: the SEED RATTLE over the PEBBLES attack as a one-shot
- * wave, with white noise, through an MS-20 high-pass; short. WHEEL: the high-pass lowers (a fuller shake). */
-static const uint8_t FV_RATTLE[] = {
-    V_(arch, VARCH_STRIKE),
-    V_OSC(0, W_ATK(A_PEBBLES), 0, 0),
-    V_ATK(A_SEED_RATTLE, 90, 0, 100),
-    V_(oscmix.noise_level, 70), V_(oscmix.noise_colour, 0),
-    V_FLT(0, MS20, 20, 127, 96, 30, 20), V_(filter[0].mod_src, MSRC_MODWHEEL), V_KT(0, 60),
-    V_ENV(0, 0, 50, 0, 46),
-    V_(amp.pan_mod_depth, 40),
-    V_AMP(0, SOFT, 30, 30),
-    V_END};
-
-/* ---- 28 HENGE STAB: the skank. DUAL OSC: a Foundations SAW and a SQUARE an octave up, a short, driven MS-20
+/* ---- 23 HENGE STAB: the skank. DUAL OSC: a Foundations SAW and a SQUARE an octave up, a short, driven MS-20
  * band-pass, TUBE, with most of it sent to the delay; the DUB OFFERING arp plays it in chords. WHEEL: band-pass ->
  * high-pass (the stab thins for the echoes). */
 static const uint8_t FV_STAB[] = {
@@ -473,19 +403,7 @@ static const uint8_t FV_STAB[] = {
     V_AMP(24, TUBE, 70, 40), V_(analog, 20),
     V_END};
 
-/* ---- 29 LITHIC CHIME: a stone that sings when struck. STRIKE: the LITHOPHONE over the PCM SINGING STONE, a soft
- * SH-2; higher notes ring shorter. WHEEL: the stone is struck harder (SCAN soft -> hard). */
-static const uint8_t FV_CHIME[] = {
-    V_(arch, VARCH_STRIKE),
-    V_OSC(0, W_SINGSTONE, 30, 0), V_(osc[0].scan_mod_src, MSRC_MODWHEEL), V_(osc[0].scan_mod_amt, 80),
-    V_ATK(A_LITHOPHONE, 80, 30, 100),
-    V_FLT(0, SH2, 0, 0, 92, 20, 0), V_KT(0, 80),
-    V_ENV(0, 0, 78, 0, 78), V_(env[0].key_to_time, FP_BIP(-20)),
-    V_(amp.pan_mod_depth, 30),
-    V_AMP(0, SOFT, 40, 60),
-    V_END};
-
-/* ---- 30 ANTLER CLAV: an antler tine struck on a sinew string. Foundations PULSE MIN through a driven MS-20
+/* ---- 24 ANTLER CLAV: an antler tine struck on a sinew string. Foundations PULSE MIN through a driven MS-20
  * band-pass snapping with ENV2, HARD clip: a funky, woody clav. WHEEL: band-pass -> low-pass (rounder). */
 static const uint8_t FV_CLAV[] = {
     V_(arch, VARCH_SINGLE),
@@ -496,7 +414,7 @@ static const uint8_t FV_CLAV[] = {
     V_AMP(10, HARD, 40, 40), V_(analog, 20),
     V_END};
 
-/* ---- 31 SPIRIT ZAP: the dub laser, a spirit passing. Foundations SQUARE an octave up, its pitch falling two and a
+/* ---- 25 SPIRIT ZAP: the dub laser, a spirit passing. Foundations SQUARE an octave up, its pitch falling two and a
  * half octaves (ENV3), through an SH-2 ringing on its resonance; mostly delay. WHEEL: low-pass -> band-pass. */
 static const uint8_t FV_ZAP[] = {
     V_(arch, VARCH_SINGLE),
@@ -533,9 +451,7 @@ static const FactoryVoice FV_TAB[FP_N] = {
  FV_ROW("BANSHEE",        FV_BANSHEE,    MONO_LEGATO, FV_GLIDE(CONST_TIME, 40), 0,  TUMULUS,  110, 60, 30, 71, 46, BBD,  FV_PP(1, 20), 36, 0),
  FV_ROW("HAG SYNC",       FV_HAGSYNC,    MONO_LEGATO, FV_GLIDE(CONST_TIME, 20), 0,  DOLMEN,    80, 60, 10, 62, 40, TAPE, FV_PP(1, 20), 40, 0),
  FV_ROW("GHOST LIGHT",    FV_GHOST,      MONO_LEGATO, FV_GLIDE(CONST_TIME, 60), 0,  CELESTIAL,120, 50, 40, 79, 50, TAPE, FV_PP(1, 16), 50, 0),
- FV_ROW("PUCA PIPE",      FV_PUCA,       MONO_LEGATO, FV_GLIDE(CONST_TIME, 20), 0,  DOLMEN,    90, 60, 10, 71, 40, TAPE, FV_PP(0, 16), 40, 0),
  FV_ROW("WILD HUNT",      FV_HUNT,       UNISON_STACK,FV_GLIDE(CONST_TIME, 16), 44, TUMULUS,  100, 60, 20, 46, 40, TAPE, FV_PP(1, 24), 36, 0),
- FV_ROW("BONE WHISTLE",   FV_WHISTLE,    MONO_LEGATO, FV_GLIDE(CONST_TIME, 24), 0,  TOMB,      90, 60, 10, 71, 40, TAPE, FV_PP(0, 16), 40, 0),
  FV_ROW("SPIRIT SIREN",   FV_SIREN,      MONO_RETRIG, 0,                        0,  SPRING,    80, 50,  4, 75, 76, TAPE, FV_PP(1, 30), 60, 0),
  FV_ROW("NEWGRANGE DAWN", FV_NEWGRANGE,  POLY_REUSE,  0,                        0,  CELESTIAL,112, 60, 24, 80, 48, TAPE, FV_PP(1, 0),  30, 0),
  FV_ROW("THIN VEIL",      FV_VEIL,       POLY_REUSE,  0,                        0,  TUMULUS,  118, 70, 30, 87, 40, TAPE, FV_PP(1, 16), 50, 0),
@@ -546,11 +462,7 @@ static const FactoryVoice FV_TAB[FP_N] = {
  FV_ROW("CAIRN SPIRIT",   FV_SPIRIT,     POLY_REUSE,  0,                        0,  TUMULUS,  120, 70, 30, 79, 60, TAPE, FV_PP(1, 24), 60, 0),
  FV_ROW("RUNE PLUCK",     FV_RUNE,       POLY_REUSE,  0,                        0,  MOD,      100, 50, 15, 68, 56, TAPE, FV_PP(1, 24), 50, 0),
  FV_ROW("CAIRN KICK",     FV_KICK,       POLY_RESET,  0,                        0,  TOMB,      40, 70,  0, 55, 30, TAPE, FV_PP(0, 30), 36, 0),
- FV_ROW("BONE SNARE",     FV_SNARE,      POLY_RESET,  0,                        0,  SPRING,    60, 50,  4, 55, 50, TAPE, FV_PP(1, 30), 50, 0),
- FV_ROW("BODHRAN",        FV_BODHRAN,    POLY_RESET,  0,                        0,  DOLMEN,    70, 60,  4, 55, 40, TAPE, FV_PP(1, 24), 50, 0),
- FV_ROW("SEED RATTLE",    FV_RATTLE,     POLY_RESET,  0,                        0,  TOMB,      50, 50,  4, 55, 40, BBD,  FV_PP(1, 24), 36, 0),
  FV_ROW("HENGE STAB",     FV_STAB,       POLY_RESET,  0,                        0,  SPRING,    80, 50,  4, 79, 70, TAPE, FV_PP(1, 30), 60, 0),
- FV_ROW("LITHIC CHIME",   FV_CHIME,      POLY_RESET,  0,                        0,  CELESTIAL,108, 40, 20, 71, 50, TAPE, FV_PP(1, 16), 36, 0),
  FV_ROW("ANTLER CLAV",    FV_CLAV,       POLY_REUSE,  0,                        0,  SPRING,    60, 50,  4, 55, 40, TAPE, FV_PP(1, 24), 40, 0),
  FV_ROW("SPIRIT ZAP",     FV_ZAP,        POLY_RESET,  0,                        0,  SPRING,    70, 50,  4, 71, 80, TAPE, FV_PP(1, 30), 60, 0),
 };
@@ -565,20 +477,19 @@ typedef struct {
 #define FP_ROW(name, patch, pm, l2) {name, patch, PERF_##pm, l2, patch}
 #define FP_ROWFX(name, patch, pm, l2, fx) {name, patch, PERF_##pm, l2, fx}
 static const FactoryPerf FP_TAB[FP_NPERF] = {
- FP_ROWFX("CAIRN SPIRIT", 4, DUAL_SYNTH, 22, 22),   /* PLAY: the arp holds wide CAIRN SPIRIT chords, Am add9 - Fmaj9 -
+ FP_ROWFX("CAIRN SPIRIT", 4, DUAL_SYNTH, 20, 20),   /* PLAY: the arp holds wide CAIRN SPIRIT chords, Am add9 - Fmaj9 -
                                                  * C add9 - G sus4, a bar each (layer 2, with its reverb and tape
                                                  * echo); CROM PULSE pulses eighths under them on the sequence,
                                                  * following each chord's root, its cutoff swept by a lane */
- FP_ROW("SAMHAIN",       4, SPLIT_SYNTH, 22),   /* CROM PULSE under C4, CAIRN SPIRIT from C4; PLAY: a Berlin-school
+ FP_ROW("SAMHAIN",  4, SPLIT_SYNTH, 20),   /* CROM PULSE under C4, CAIRN SPIRIT from C4; PLAY: a Berlin-school
                                                  * sequence on CROM PULSE, its cutoff swept by a lane */
- FP_ROW("SIDHE DOOR",   23, SINGL_SYNTH, 24),   /* RUNE PLUCK arpeggiating a minor-ninth progression into the echoes */
- FP_ROW("WILD HUNT",    13, SINGL_SYNTH, 14),   /* the galloping Phrygian line */
- FP_ROW("BOG SQUELCH",   2, SINGL_SYNTH,  3),   /* the acid line, Phrygian, sliding */
- FP_ROW("CAIRN RITE",   26, SINGL_SYNTH, 27),   /* the BODHRAN pattern, pitch as the drum */
- FP_ROW("DUB OFFERING",  0, DUAL_SYNTH,  28),   /* the arp skanks HENGE STAB chords on the off-beats (layer 2), a dub
+ FP_ROW("SIDHE DOOR", 21, SINGL_SYNTH, 22),   /* RUNE PLUCK arpeggiating a minor-ninth progression into the echoes */
+ FP_ROW("WILD HUNT", 12, SINGL_SYNTH, 13),   /* the galloping Phrygian line */
+ FP_ROW("BOG SQUELCH",  2, SINGL_SYNTH,  3),   /* the acid line, Phrygian, sliding */
+ FP_ROW("DUB OFFERING",  0, DUAL_SYNTH, 23),   /* the arp skanks HENGE STAB chords on the off-beats (layer 2), a dub
                                                  * bass on DUB BARROW follows the chords, the echoes near feedback */
- FP_ROW("ALL SOULS",    20, SINGL_SYNTH, 21),   /* the choir in slow block chords */
- FP_ROW("WILL O WISP",   8, SINGL_SYNTH,  9),   /* a harmonic-minor melody that leads you off the path */
+ FP_ROW("ALL SOULS", 18, SINGL_SYNTH, 19),   /* the choir in slow block chords */
+ FP_ROW("WILL O WISP",  8, SINGL_SYNTH,  9),   /* a harmonic-minor melody that leads you off the path */
 };
 #undef FP_ROW
 #undef FP_ROWFX
@@ -652,7 +563,6 @@ static const FactoryArp FA_TAB[FP_NPERF] = {
  FA_ARP(MIN,    1_4, DNUP,   2,  96, 0, FA_8(FA_E3, FA_F2, FA_D3, FA_E3),  "qqqqqqqq", FA_NOACC, 128),    /* WILD HUNT */
  FA_ARP(OCT,    1_4, UP,     0,  64, 0, FA_R(FA_A2, FA_A2, FA_A2, FA_A2, FA_BB2, FA_BB2, FA_G2, FA_G2),
         "qqqqqqqq", "10001000", 124),                                                                    /* BOG SQUELCH */
- FA_ARP(5TH,    1_8, RANDOM, 1,  64, 0, FA_8(FA_C3, FA_F2, FA_G2, FA_C3),  "qqqqqqqq", FA_NOACC, 104),    /* CAIRN RITE */
  FA_ARP(MIN,    1_2, BLOCK,  0,  40, 1, FA_8(FA_D3, FA_G2, FA_D3, FA_A2),  "jjjjjjjj", FA_NOACC, 72),     /* DUB OFFERING:
                                                                                  * 05B _ o _ o, the off-beat skank */
  FA_ARP(CINE_6, 1_2, BLOCK,  0, 127, 1, FA_P(FA_D3, FA_BB2, FA_F2, FA_A2), "aaaaaaaa", FA_NOACC, 66),     /* ALL SOULS */
@@ -671,8 +581,6 @@ static const FactorySeq FS_TAB[FP_NPERF] = {
         GATE, "5353535353535353", DYNAMICS, "9575957595759575", MODWHEEL, "0011223344556677"),          /* WILD HUNT */
  FS_SEQ(45, "0-c0.3-10a.0c7-5", 6, FORWARD, PHRYGIAN, 9,
         GATE, "3363336333633363", DYNAMICS, "9595559595559559", RATCHET, "0000000300000000"),            /* BOG SQUELCH */
- FS_SEQ(36, "0..70.c.0.7.0cc7", 6, FORWARD, OFF, 0,
-        GATE, "2222222222222222", DYNAMICS, "9575957595759575", RATCHET, "0000000300000060"),            /* CAIRN RITE */
  FS_UNDER("0-.70-.70-.70-a7"),                                                                            /* DUB OFFERING */
  FS_UNDER(FS_BASS),                                                                                       /* ALL SOULS */
  FS_SEQ(62, "0-3-7-8---7-b-c-", 12, FORWARD, HARM_MINOR, 2,
@@ -829,4 +737,4 @@ static void factory_install(void)
         syn_used[UISAVE_WHOLE_PERF][s >> 3] |= (uint8_t)(1u << (s & 7u));
     }
 }
-PS_STATIC_ASSERT(FP_N == BANK_SLOTS && FP_NPERF <= BANK_SLOTS, "a factory patch for every slot, performances fit");
+PS_STATIC_ASSERT(FP_N <= BANK_SLOTS && FP_NPERF <= BANK_SLOTS, "the factory patches and performances fit");

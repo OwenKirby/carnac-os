@@ -50,7 +50,13 @@
 #include "dsp/tuning.h"             /* MTS SysEx into GLOBAL's USER tunings (ed_service) */
 #include "UIStateMachine.h"
 #include "hardware/mem_section.h"     /* SYNTH_POOL */
+#if defined(SYNTH_NO_SPLASH)               /* TEST builds only (build_fm1.py -D SYNTH_NO_SPLASH=1): a black start-up
+                                           * screen, ~3.4 KB of flash lent to a feature being measured. Never a release */
+static const char *sp_notice[2];
+static void carnac_splash(const char *version, uint32_t theme) { (void)version; (void)theme; lcd_fill(0, 0, 240, 240, 0); }
+#else
 #include "carnac_splash.c"               /* the start-up screen: after ui_seq_draw.c's runes, which the unity puts first */
+#endif
 
 /* X0X's platform pieces that are not its app: the user-slot header layout (plat_slot), the panel map and its
  * calibration (OCT- + OCT+ held at power-on), plat.h over the HAL */
@@ -849,6 +855,7 @@ static void fm1_main(void)
     ui_sm_init(&sm, &perf_state, &engine_state[0], &engine_state[1], seq_lanes, &arp_state);
     ui_sm_attach_seq(&sm, synth_seq());
     ui_sm_attach_arp(&sm, synth_arp());
+    ui_sm_attach_rec(&sm, synth_rec());
     ui_sm_attach_store(&sm, syn_slot_query, 0);
     ui_sm_attach_instrument(&sm, &instrument);
     seq_palette_set(SQPAL_ORANGE);
@@ -973,6 +980,7 @@ static void fm1_main(void)
             syn_lock();
             ui_sm_tick(&sm, (uint16_t)(ms > 1000u ? 1000u : ms));   /* the popups' timeouts */
             bend_spring();
+            rec_hold();
             syn_unlock();
             {
                 uint32_t t0 = fm1_ticks();
