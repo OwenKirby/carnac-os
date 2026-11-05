@@ -2385,8 +2385,8 @@ void ui_sm_process(UIStateMachine *sm)
 /* PLAY (2026-10-17): on the SEQ page the MAQ alone, on the ARP page the ARP alone, on any other page both: stopped
  * (both), start both; otherwise stop whichever plays. A start plays the ARP pattern as captured (untransposed), unless
  * the chord keys lead the MAQ (arp_keys_lead_maq). */
-/* REC off the SEQ and ARP pages: the loop. A tap: EMPTY opens the REC page, armed; else the cycle (krec_tap). Held:
- * UNDO. HOME held + REC: the page. */
+/* REC off the SEQ and ARP pages: the loop. A tap: off the REC page, the REC page (armed when empty); on it, the cycle
+ * (krec_tap). Held: UNDO, on any of those pages. HOME held + REC: the page. */
 static void rec_transport(UIStateMachine *sm, uint8_t arg)
 {
     Krec *k = sm->rec;
@@ -2396,8 +2396,8 @@ static void rec_transport(UIStateMachine *sm, uint8_t arg)
     } else if (arg == UITR_REC_UNDO) {
         sm->rec_msg = krec_undo(k) ? 1u : 2u;
         sm->rec_msg_ms = 900u;
-    } else if (k->state == KREC_EMPTY) {
-        krec_arm(k);
+    } else if (sm->page != UIPAGE_REC) {             /* off the page, a tap goes to it (user, 2026-11-04) */
+        krec_arm(k);                                 /* (armed when empty; the cycle is the page's own) */
         enter_page(sm, UIPAGE_REC);
     } else {
         krec_tap(k, k->frame_now);

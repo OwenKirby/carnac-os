@@ -187,6 +187,19 @@ int main(int argc, char **argv)
     ui_sm_tick(&sm, 1000);
     play_frames(20, "after the UNDO word, 20 frames");
 
+    /* (user, 2026-11-04) REC from another page with a loop: back to the REC page, the loop as it was */
+    {
+        uint8_t st = k->state, pl = k->playing;
+        ui_sm_goto(&sm, UIPAGE_HOME1);
+        ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
+        if (sm.page != UIPAGE_REC || k->state != st || k->playing != pl) {
+            printf("FAIL: REC from HOME: page %u state %u (was %u)\n", sm.page, k->state, st);
+            fails = 1;
+        }
+        ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);    /* on the page: the cycle */
+        if (k->state == st) { printf("FAIL: REC on the page did not act\n"); fails = 1; }
+    }
+
     if (fails) { printf("render_rec_screen: FAILED\n"); return 1; }
     printf("render_rec_screen: OK\n");
     return 0;
