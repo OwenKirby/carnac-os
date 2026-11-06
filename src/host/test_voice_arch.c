@@ -49,6 +49,21 @@ static Stats render(uint32_t frames)
     return s;
 }
 
+/* power in f +- 15 Hz of x (n samples, Hann window), a sum of DFT bins 3 Hz apart */
+static double band_power(const int32_t *x, int n, double f)
+{
+    double p = 0;
+    for (double fb = f - 15; fb <= f + 15.01; fb += 3) {
+        double re = 0, im = 0, w = 2 * M_PI * fb / 44100;
+        for (int i = 0; i < n; i++) {
+            double h = 0.5 - 0.5 * cos(2 * M_PI * i / n);
+            re += h * x[i] * cos(w * i); im -= h * x[i] * sin(w * i);
+        }
+        p += re * re + im * im;
+    }
+    return p;
+}
+
 static int sounding(int layer)
 {
     int c = 0;
@@ -412,8 +427,9 @@ int main(void)
     render(2048);
     CHECK(sounding(0) == 6, "UNISON on STACK stacked %d, want 6", sounding(0));
 
-    /* 7. the noise colour morph makes sound and stays in range at its three colours and between them */
-    static const uint8_t colours[] = {NOISE_WHITE, 32, NOISE_PINK, 96, NOISE_BROWN};
+    /* 7. the noise colour morph makes sound and stays in range at its five colours and between them */
+    static const uint8_t colours[] = {NOISE_WHITE, 8, NOISE_PINK, 24, NOISE_BROWN, 44, NOISE_RING, 68, NOISE_BAND, 104,
+                                      NOISE_AIR};
     for (unsigned ci = 0; ci < sizeof colours; ci++) {
         uint8_t col = colours[ci];
         synth_init();
@@ -429,6 +445,50 @@ int main(void)
         Stats s = render(44100);
         printf("noise colour %u: rms %.0f peak %d\n", col, s.rms_l, s.peak);
         CHECK(s.rms_l > 500, "noise colour %u silent", col);
+    }
+
+    /* 7b. the resonance rings on OSC1's pitch in every architecture and render path (2026-11-05, 2026-11-06): the
+     * noise alone (the render with it minus the same render without) at AIR has all but nothing between the harmonics
+     * (1.5 x the note) and more than BROWN at the note; HARMONIC at its third stop moves the band to 3 x the note */
+    {
+        static const struct { uint8_t arch, bank; const char *name; } wa[] = {
+            {VARCH_SINGLE, 0, "SINGLE"}, {VARCH_SPREAD, 0, "SPREAD"}, {VARCH_DUAL_OSC, 0, "DUAL OSC VCO"},
+            {VARCH_DUAL_OSC, 3, "DUAL OSC bank"}, {VARCH_DUAL_FILTER, 0, "DUAL FILTER"},
+            {VARCH_STACK, 0, "STACK"}, {VARCH_BINAURAL, 0, "BINAURAL"}, {VARCH_FULL, 3, "FULL bank"},
+            {VARCH_DUAL_SPREAD, 0, "DUAL SPREAD"}};
+        static int32_t cap[2][16384];
+        const double f0 = 261.63;
+        for (unsigned a = 0; a < sizeof wa / sizeof wa[0]; a++) {
+            double on[3], off[3], h3 = 0;
+            for (int k = 0; k < 3; k++) {             /* BROWN, AIR, AIR on HARMONIC 3 */
+                for (int lv = 0; lv < 2; lv++) {
+                    synth_init();
+                    base_patch(&engine_state[0], wa[a].arch);
+                    for (int fi = 0; fi < 2; fi++) { engine_state[0].filter[fi].mod_amt = 0; engine_state[0].filter[fi].cutoff = 127; }
+                    engine_state[0].osc[0].wavebank = engine_state[0].osc[1].wavebank = wa[a].bank;
+                    engine_state[0].oscmix.noise_level = lv ? 0 : 127;
+                    engine_state[0].oscmix.noise_colour = k ? NOISE_AIR : NOISE_BROWN;
+                    engine_state[0].noise_harmonic = k == 2 ? 38 : 0;   /* 38: on the third stop's plateau */
+                    synth_midi_3(0x90, 60, 100);
+                    render(8192);
+                    for (int n = 0; n < 16384; n += 64) {
+                        synth_render_q15(buf, 64);
+                        for (int i = 0; i < 64; i++) cap[lv][n + i] = buf[2 * i];
+                    }
+                }
+                for (int i = 0; i < 16384; i++) cap[0][i] -= cap[1][i];
+                on[k] = band_power(cap[0], 16384, f0);
+                off[k] = band_power(cap[0], 16384, 1.5 * f0);
+                if (k == 2) h3 = band_power(cap[0], 16384, 3 * f0);
+            }
+            printf("resonance %-13s: AIR/BROWN between harmonics %.1f dB, at the note %+.1f dB; HARMONIC 3 at 3x %+.1f dB "
+                   "over the note\n", wa[a].name, 10 * log10(off[1] / off[0]), 10 * log10(on[1] / on[0]),
+                   10 * log10(h3 / on[2]));
+            CHECK(off[1] < 0.1 * off[0], "%s: AIR noise not at the note (between harmonics %.1f dB)", wa[a].name,
+                  10 * log10(off[1] / off[0]));
+            CHECK(on[1] > on[0], "%s: AIR has no band at the note", wa[a].name);
+            CHECK(h3 > 100 * on[2], "%s: HARMONIC 3 did not move the band to 3 x the note", wa[a].name);
+        }
     }
 
     /* 8. the new mod routes, driven by the mod wheel: the filter type morph (every architecture), the noise colour,

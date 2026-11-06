@@ -417,6 +417,11 @@ static const char *const PU_TAB[UIPAGE_COUNT] = {
     "MOD", "MFX", "AMP", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ", "REC",
 };
 #define PU_TAB_GAP 8                 /* between two pages' names */
+/* OSC2's place is the NOISE page while the layer has one oscillator (2026-11-06) */
+static const char *pu_tab(const UIStateMachine *sm, uint8_t p)
+{
+    return ui_sm_noise_page(sm, p, sm->s.active_synth_layer) ? "NOISE" : PU_TAB[p];
+}
 
 /* the section's pages at the right, ending at xr ("OSC1  OSC2  OSCMIX"): this one lit and underlined, the others dim,
  * hidden ones left out. Returns where the list starts */
@@ -427,14 +432,14 @@ static int32_t pu_head_tabs(const UIStateMachine *sm, int32_t xr, int32_t y)
     pu_section(page, &first, &n);
     for (i = 0; i < n; i++)
         if (ui_sm_page_visible(sm, (uint8_t)(first + i), sm->s.active_synth_layer))
-            w += (w ? PU_TAB_GAP : 0) + sq_rune_w(PU_TAB[first + i], 0);
+            w += (w ? PU_TAB_GAP : 0) + sq_rune_w(pu_tab(sm, (uint8_t)(first + i)), 0);
     x = xr - w;
     xr = x;
     for (i = 0; i < n; i++) {
         uint8_t p = (uint8_t)(first + i);
         if (!ui_sm_page_visible(sm, p, sm->s.active_synth_layer))
             continue;
-        k = sq_rune(x, y, PU_TAB[p], p == page ? SQC(TEXT) : SQC(DIM), 0);
+        k = sq_rune(x, y, pu_tab(sm, p), p == page ? SQC(TEXT) : SQC(DIM), 0);
         if (p == page)
             cv_rect(x, y + SQ_RUNE_H + 2, k - x, 1, SQC(THEME));
         x = k + 1 + PU_TAB_GAP;
@@ -877,6 +882,71 @@ static void pu_viz_osc(const UIStateMachine *sm, uint8_t osc)
     }
 }
 
+/* the resonance's ratio (1..8) as it sounds: the layer's newest voice's, or the knob's with no voice */
+static float pu_noise_ratio(const UIStateMachine *sm)
+{
+    int32_t v = pu_voice(sm->s.active_synth_layer);
+    if (v >= 0 && poly_bank[v].mix.wh_ratio > 0.f)
+        return poly_bank[v].mix.wh_ratio;
+    return osc_mixer_harm_ratio((float)sm->engine[sm->s.active_synth_layer]->noise_harmonic);
+}
+
+static uint32_t pn_t;                                /* the mist's clock: a step a frame while the layer sounds */
+
+/* NOISE (2026-11-06, the user's pick of three previz): the resonance as a standing wave of mist over the eight
+ * overtone stones, in a drifting fog. The fog is the noise (fine and sparse for white, coarser banks toward brown,
+ * thinning as the resonance takes over); past brown the wave condenses out of it, a loose cloud at RING, a crisp
+ * line at AIR, with as many crests as the harmonic and a height that breathes with the voice's own noise band. The
+ * stone it stands on is lit. Integer hashes and the 64-step sine only: no sinf, no table. */
+static void pu_viz_noise(const UIStateMachine *sm)
+{
+    uint8_t layer = sm->s.active_synth_layer;
+    const EngineState *e = sm->engine[layer];
+    int32_t c = e->oscmix.noise_colour, lv = e->oscmix.noise_level, v = pu_voice(layer), x, y, k, near;
+    int32_t res = c > 32 ? (c - 32) * 256 / 95 : 0;            /* the resonance, 0..256 */
+    int32_t coarse = c < 16 ? 1 : 2, drift = (int32_t)(pn_t / 2u), amp = 13 * 256, spread;
+    uint32_t dens = (uint32_t)(lv + 20) * (uint32_t)(256 - res / 2) / 148u;   /* the fog: level, thinned by the song */
+    float r = pu_noise_ratio(sm);
+    static const char *const NAME[5] = {"WHITE", "PINK", "BROWN", "RING", "AIR"};
+    sq_text(PV_X0, CAP_IN(S, 13), &AF_S, NAME[c < 16 ? 0 : c < 32 ? 1 : c < 56 ? 2 : c < 80 ? 3 : 4], SQC(MID));
+    for (x = 0; x < PV_W; x++) {                    /* the fog: banks 12 x 6 drifting right, thick near the ground */
+        int32_t edge = x < 40 ? 90 + x * 4 : x > PV_W - 41 ? 90 + (PV_W - 1 - x) * 4 : 256;
+        for (y = 16; y < PV_GROUND - 1; y++) {
+            uint32_t bank = pu_hash((x + drift) / 12, y / 6) >> 24;                    /* 0..255 */
+            int32_t low = (y - 16) * (y - 16) * 256 / ((PV_GROUND - 17) * (PV_GROUND - 17));
+            uint32_t pr = (bank > 50u ? bank - 50u : 0u) * (uint32_t)(60 + low) / 256u * (uint32_t)edge / 256u;
+            uint32_t g = pu_hash((x / coarse) * 7 + (int32_t)pn_t * 13, y / coarse) >> 24;
+            if (g < pr * dens / 256u)
+                cv_pset(PV_X0 + x, y, g * 5u < pr * dens / 256u ? SQC(DIM) : PUC_STONE);
+        }
+    }
+    if (res > 0) {                                   /* the standing wave of mist */
+        if (v >= 0) {                                /* its height: the voice's band, as it wavers */
+            int32_t n = poly_bank[v].mix.nz_cur[0] >> 4;
+            n = n < 0 ? -n : n;
+            amp = (13 * 256 * (192 + (n > 9500 ? 9500 : n) * 64 / 9500)) / 256;
+        }
+        spread = 256 + (256 - res) * 9;              /* Q8 px: ~10 at brown, 1 at AIR */
+        for (x = 0; x < PV_W; x++) {
+            uint32_t a = (uint32_t)((float)x * r * (65536.f / (float)PV_W)) - pn_t * 600u;   /* cycles, Q16 */
+            int32_t sw = PU_SIN[(a >> 10) & 63] * PU_SIN[(x * 32 / PV_W) & 63];                /* x the arch */
+            int32_t wy = 30 * 256 - (int32_t)(((int64_t)sw * amp) >> 16), y0 = (wy >> 8) - 30, y1 = (wy >> 8) + 30;
+            for (y = y0 < 16 ? 16 : y0; y < (y1 > PV_GROUND - 2 ? PV_GROUND - 2 : y1); y++) {
+                int32_t d = (y * 256 - wy) * 256 / spread, dd = (int32_t)(((int64_t)d * d) >> 8);   /* (d / spread)^2, Q8 */
+                int32_t pr = dd < 256 ? 256 - dd / 2 : dd < 1024 ? (1024 - dd) * (300 - res) / 1800 : 0;   /* (the halo thins as it rings) */
+                uint32_t g = pu_hash(x * 3 + (int32_t)pn_t * 7, y) >> 24;
+                if ((int32_t)g < pr * (90 + res * 166 / 256) / 256)
+                    cv_pset(PV_X0 + x, y, dd < 64 ? (res > 150 ? SQC(THEME) : SQC(MID)) : dd < 330 ? SQC(MID) : SQC(DIM));
+            }
+        }
+    }
+    near = (int32_t)(r + 0.5f) - 1;
+    for (k = 0; k < 8; k++) {
+        x = PV_X0 + 4 + k * (PV_W - 12) / 7;
+        pu_menhir(x - 3, PV_GROUND, 6, k == near ? 10 : 7, k == near && res > 0 ? SQC(THEME) : PUC_STONE);
+    }
+}
+
 /* the scan's place between the frames, on the ground */
 static int32_t pu_track_osc(const UIStateMachine *sm, uint8_t osc)
 {
@@ -893,6 +963,7 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
     uint8_t arch = varch_of(e), spread = (uint8_t)(arch == VARCH_SPREAD && m->spread);
     int32_t voice, morph1 = pu_osc_morph(sm, 0, &voice), morph2 = pu_osc_morph(sm, 1, &voice);
     int32_t w1 = 127, w2 = 0, ws = m->sub_level, wn = m->noise_level, x, brown = 0, col = m->noise_colour;
+    int32_t bc = col < (int32_t)NOISE_BROWN ? col * 2 : 127, wh = col > (int32_t)NOISE_BROWN ? (col - 64) * 2 : 0;
     int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2;
     uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;
     uint32_t seed = 0x1234567u, sstep = 0xFFFFFFFFu / PV_W, step = sstep * (uint32_t)ncyc;
@@ -906,10 +977,12 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
         else if (m->sub_waveform == SUBWAVE_CURRENT) sub = wave_preview(wave1, morph1, sph);
         else sub = PU_SIN[sph >> 26] * 128;
         s += ws * sub;
-        seed = seed * 1664525u + 1013904223u;        /* the noise: white, browned by the colour (a leaky sum) */
-        n = (int32_t)(seed >> 17) - 16384;
+        seed = seed * 1664525u + 1013904223u;        /* the noise: white, browned by the colour (a leaky sum), */
+        n = (int32_t)(seed >> 17) - 16384;           /* past brown ringing OSC1's sine (the whistles) */
         brown += (n - brown / 8) / 4;
-        s += wn * ((n * (127 - col) + (brown / 2) * col) / 127);
+        n = (n * (127 - bc) + (brown / 2) * bc) / 127;
+        if (wh) n = n * ((127 - wh) * 256 + wh * PU_SIN[ph >> 26]) / (127 * 256);
+        s += wn * n;
         pu_ys[x] = s / 127;
         if (spread)                                  /* the detuned playheads: OSC1 stretched, dim behind */
             pu_ys2[x] = w1 * wave_preview(wave1, morph1, ph + (uint32_t)m->spread * (uint32_t)x * (step >> 9)) / 127;
@@ -2901,7 +2974,7 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
     tt[0] = '\0';
     if (pu_layer_page(sm->page))                     /* "L1  FILTER 1" */
         pu_cat(tt, sm->s.active_synth_layer ? "L2  " : "L1  ");
-    pu_cat(tt + pu_strlen(tt), PU_TITLE[sm->page]);
+    pu_cat(tt + pu_strlen(tt), ui_sm_noise_page(sm, sm->page, sm->s.active_synth_layer) ? "NOISE" : PU_TITLE[sm->page]);
     pu_arc_at(place, &mx, &my);
     gap = nv > 1 ? 200 / (nv - 1) : 0;
     if (gap > 26) gap = 26;
@@ -2958,6 +3031,11 @@ static uint32_t pu_viz_live(UIStateMachine *sm, uint32_t h)
 {
     uint8_t page = sm->page;
     int32_t voice;
+    if (ui_sm_noise_page(sm, page, sm->s.active_synth_layer)) {   /* the mist drifts while the layer sounds */
+        if (pu_voice(sm->s.active_synth_layer) >= 0)
+            h = sq_mix(h, ++pn_t);
+        return sq_mix(h, (uint32_t)(pu_noise_ratio(sm) * 64.f));
+    }
     switch (page) {
     case UIPAGE_OSC1: case UIPAGE_OSC2:
         return sq_mix(h, (uint32_t)pu_osc_morph(sm, (uint8_t)(page - UIPAGE_OSC1), &voice) >> 6);
@@ -3002,7 +3080,10 @@ static void pu_draw_viz(UIStateMachine *sm)
     }
     cv_begin(240, PU_VIZ_H, SQC(BG));
     switch (page) {
-    case UIPAGE_OSC1: case UIPAGE_OSC2: pu_viz_osc(sm, (uint8_t)(page - UIPAGE_OSC1)); break;
+    case UIPAGE_OSC1: case UIPAGE_OSC2:
+        if (ui_sm_noise_page(sm, page, sm->s.active_synth_layer)) pu_viz_noise(sm);
+        else pu_viz_osc(sm, (uint8_t)(page - UIPAGE_OSC1));
+        break;
     case UIPAGE_OSCMIX: pu_viz_oscmix(sm); break;
     case UIPAGE_FILTER1: case UIPAGE_FILTER2: pu_viz_filter(sm, (uint8_t)(page - UIPAGE_FILTER1)); break;
     case UIPAGE_FLTMIX: pu_viz_fltmix(sm); break;
@@ -3025,7 +3106,7 @@ static void pu_draw_viz(UIStateMachine *sm)
 static int32_t pu_track_x(const UIStateMachine *sm)
 {
     uint8_t page = sm->page;
-    if (page == UIPAGE_OSC1 || page == UIPAGE_OSC2)
+    if (page == UIPAGE_OSC1 || (page == UIPAGE_OSC2 && !ui_sm_noise_page(sm, page, sm->s.active_synth_layer)))
         return pu_track_osc(sm, (uint8_t)(page - UIPAGE_OSC1));
     if (page >= UIPAGE_ENV1 && page <= UIPAGE_ENV3)
         return pu_track_env(sm, (uint8_t)(page - UIPAGE_ENV1));

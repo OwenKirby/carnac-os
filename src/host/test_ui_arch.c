@@ -151,50 +151,64 @@ int main(void)
     CHECK(ui_sm_row_text(&sm, (uint8_t)find_row("MORPH MOD AMT")) != NULL, "MORPH MOD AMT is bipolar text");
     engine_state[0].filter_key_track[0] = 33u; engine_state[0].filter_key_track[1] = 99u;
     CHECK(find_row("KEY TRACK") == 2 && ui_sm_row_value(&sm, 2) == 33u, "FILTER1 KEY TRACK: the third row, its own byte");
+    press(BTN_FX); press(BTN_FX);                     /* 2026-11-06: one oscillator, so OSC2's place is NOISE */
+    CHECK(sm.page == UIPAGE_OSC2 && ui_sm_noise_page(&sm, sm.page, 0), "FX 2 under SINGLE: the NOISE page: %u", sm.page);
+    dump("NOISE SINGLE"); knobs(UIPAGE_OSC2, "NOISE SINGLE");
+    CHECK(find_row("COL MOD SRC") == 0 && find_row("HARM MOD SRC") == 1 && find_row("HARM MOD AMT") == 2 &&
+          find_row("NOISE MOD SRC") == 3 && find_row("NOISE MOD AMT") == 4 && find_row("SCAN MOD SRC") < 0, "NOISE rows");
+    {
+        UiKnobInfo i;
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSC2, 0, 0, &i) == &engine_state[0].oscmix.noise_colour && strcmp(i.label, "COLOUR") == 0 &&
+              ui_sm_knob(&sm, UIPAGE_OSC2, 0, 1, &i) == &engine_state[0].noise_harmonic && strcmp(i.label, "HARMONIC") == 0 &&
+              ui_sm_knob(&sm, UIPAGE_OSC2, 0, 2, &i) == &engine_state[0].oscmix.noise_level && strcmp(i.label, "NOISE") == 0 &&
+              ui_sm_knob(&sm, UIPAGE_OSC2, 0, 3, &i) == &engine_state[0].oscmix.noise_col_mod_amt, "NOISE knobs");
+        engine_state[0].harm_mod_amt = 90u;
+        CHECK(ui_sm_row_value(&sm, 2) == 90u, "NOISE HARM MOD AMT: the patch's byte at its end");
+        engine_state[0].harm_mod_amt = BIPOLAR_CENTER;
+    }
+    press(BTN_FX);
+    CHECK(sm.page == UIPAGE_OSCMIX, "FX 3 under SINGLE: OSCMIX: %u", sm.page);
+    press(BTN_FX);
+    CHECK(sm.page == UIPAGE_OSC1, "FX from OSCMIX back to OSC1, not FILTER1: %u", sm.page);
     press(BTN_FX); press(BTN_FX);
-    CHECK(sm.page == UIPAGE_OSCMIX, "FX skips OSC2 under SINGLE: %u", sm.page);
     dump("OSCMIX SINGLE"); knobs(UIPAGE_OSCMIX, "OSCMIX SINGLE");
     CHECK(find_row("NOISE COLOUR") < 0 && find_row("SUB OCTAVE") < 0 && find_row("XMOD TYPE") < 0 &&
-          find_row("COL MOD SRC") >= 0 && find_row("COL MOD AMT") >= 0 && find_row("SUB WAVE") >= 0,
-          "SINGLE OSCMIX rows (colour and sub octave are knobs; the colour mod rows)");
+          find_row("COL MOD SRC") < 0 && find_row("HARMONIC") < 0 && find_row("SUB WAVE") >= 0,
+          "SINGLE OSCMIX rows (the noise on its page, sub octave a knob)");
     {
         UiKnobInfo i;
         const char *t;
-        uint8_t *p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i);
-        CHECK(p == &engine_state[0].oscmix.noise_colour && strcmp(i.label, "NOISE COLOUR") == 0, "SINGLE knob 1 = NOISE COLOUR");
-        p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i);
-        CHECK(p == &engine_state[0].oscmix.noise_level && strcmp(i.label, "NOISE") == 0, "SINGLE knob 2 = NOISE");
-        p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i);
+        uint8_t *p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i);
         engine_state[0].oscmix.sub_octave = SUBOCT_DOWN2;
-        t = ui_sm_knob_text(&sm, UIPAGE_OSCMIX, 0, 2);
+        t = ui_sm_knob_text(&sm, UIPAGE_OSCMIX, 0, 3);
         CHECK(p == &engine_state[0].oscmix.sub_octave && i.kind == UIKNOB_LIST && i.n_enum == SUBOCT_COUNT &&
-              t != NULL && strcmp(t, "-2 OCT") == 0, "SINGLE knob 3 = SUB OCTAVE list (%s)", t ? t : "NULL");
+              t != NULL && strcmp(t, "-2 OCT") == 0, "SINGLE knob 4 = SUB OCTAVE list (%s)", t ? t : "NULL");
         engine_state[0].oscmix.sub_octave = SUBOCT_DOWN1;
-        p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i);
-        CHECK(p == &engine_state[0].oscmix.sub_level && strcmp(i.label, "SUB LEVEL") == 0, "SINGLE knob 4 = SUB LEVEL");
-        CHECK(ui_sm_knob_text(&sm, UIPAGE_OSCMIX, 0, 3) == NULL, "a plain knob has no list text");
+        p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i);
+        CHECK(p == &engine_state[0].oscmix.sub_level && strcmp(i.label, "SUB LEVEL") == 0, "SINGLE knob 3 = SUB LEVEL");
+        CHECK(ui_sm_knob_text(&sm, UIPAGE_OSCMIX, 0, 2) == NULL, "a plain knob has no list text");
         p = ui_sm_knob(&sm, UIPAGE_FLTMIX, 0, 0, &i);
         CHECK(p == NULL, "hidden page knob has no byte");
     }
 
-    /* SPREAD: spread, noise, sub, spread mod on the knobs; the spread source stays a row */
+    /* SPREAD: spread, sub octave, sub, spread mod on the knobs (the noise on its page); the spread source a row */
     engine_state[0].arch = VARCH_SPREAD;
     ui_sm_enforce(&sm);
     dump("OSCMIX SPREAD"); knobs(UIPAGE_OSCMIX, "OSCMIX SPREAD");
     {
         UiKnobInfo i;
         CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i) == &engine_state[0].oscmix.spread &&
-              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == &engine_state[0].oscmix.noise_level &&
+              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == &engine_state[0].oscmix.sub_octave &&
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i) == &engine_state[0].oscmix.sub_level &&
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i) == &engine_state[0].oscmix.spread_mod_amt, "SPREAD knobs");
         CHECK(find_row("NOISE LEVEL") < 0 && find_row("SPREAD MOD AMT") < 0 && find_row("SPR MOD SRC") >= 0 &&
-              find_row("NOISE COLOUR") >= 0 && find_row("SUB OCTAVE") >= 0, "SPREAD rows");
+              find_row("NOISE COLOUR") < 0 && find_row("NOISE MOD SRC") < 0 && find_row("SUB OCTAVE") < 0, "SPREAD rows");
     }
 
-    /* BINAURAL: OSC2 and FILTER2 hidden, FILTER MIXER shown with its phase knobs */
+    /* BINAURAL: OSC2's place the NOISE page, FILTER2 hidden, FILTER MIXER shown with its phase knobs */
     engine_state[0].arch = VARCH_BINAURAL;
     ui_sm_enforce(&sm);
-    CHECK(!ui_sm_page_visible(&sm, UIPAGE_OSC2, 0) && !ui_sm_page_visible(&sm, UIPAGE_FILTER2, 0) &&
+    CHECK(ui_sm_noise_page(&sm, UIPAGE_OSC2, 0) && !ui_sm_page_visible(&sm, UIPAGE_FILTER2, 0) &&
           ui_sm_page_visible(&sm, UIPAGE_FLTMIX, 0), "BINAURAL pages");
     knobs(UIPAGE_OSCMIX, "OSCMIX BINAURAL");
     press(BTN_SEL); press(BTN_SEL);
