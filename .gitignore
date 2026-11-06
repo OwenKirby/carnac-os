@@ -22,3 +22,11 @@ tui_after.txt
 # Python bytecode
 __pycache__/
 *.pyc
+
+# PCM source material and its analysis (2026-11-06): the recordings are not committed (size; the JD-800 one is not
+# ours to publish), nor data derived from them; the prototype host images are generated (proto_pcm/*_image.py)
+docs/PCM waves/
+proto_pcm/**/*.npy
+proto_pcm/**/*.png
+proto_pcm/atkfit/_unused/
+src/host/pcm_image_*.c

@@ -413,6 +413,31 @@ static __attribute__((noinline)) int32_t an_one(const WavetableOsc *o, uint32_t 
     }
 }
 
+/* audio-rate FM through zero (2026-11-05; it stopped at 10 Hz): a frequency below 0 turns the phase backwards at its
+ * size. Spread 0, as osc_process_skulpt_spread_fixed is called for FM. */
+int16_t osc_process_fm_tz(WavetableOsc *osc, int32_t frequency_q16) {
+    if (frequency_q16 >= 0)
+        return osc_process_skulpt_spread_fixed(osc, (uint32_t)frequency_q16, 0);
+    uint32_t f = (uint32_t)-frequency_q16;
+    osc->center_phase -= 2u * phase_step(f);   /* (it steps forward by one before it reads: back one, net) */
+    return osc_process_skulpt_spread_fixed(osc, f, 0);
+}
+
+/* the VCO at cycle phase ph, band-limited for a step of `step`: SUB CURRENT (oscmixer.c) reads OSC1's shape this way,
+ * an octave or two down (since 2026-11-05: it read Foundations' frames, which bank 0 no longer needs) */
+int32_t osc_vco_at(const WavetableOsc *o, uint32_t ph, uint32_t step) { return an_one(o, ph, step); }
+
+/* the VCO's shape at scan morph_q12 for the panel's pictures (pcm_osc.c wave_preview), no edge fixes; the last scan
+ * asked is kept, so a redraw at the same scan works nothing out again */
+SYNTH_COLD int32_t osc_vco_preview(int morph_q12, uint32_t ph) {
+    static WavetableOsc pv;
+    if (pv.an.key != morph_q12 + 1 || !an_ready) {
+        pv.morph_q12 = morph_q12;
+        an_shape(&pv);
+    }
+    return an_one(&pv, ph, 0u);
+}
+
 /* SPREAD's mix, sample by sample: the live playheads' mean, crossfaded from the undetuned one at low spread */
 static __attribute__((noinline)) int32_t an_spread_sample(WavetableOsc *o) {
     int32_t mix = 0;

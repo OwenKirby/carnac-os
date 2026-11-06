@@ -1,9 +1,10 @@
 /* Host test of the oscillators' PCM waves (2026-10-21: src/dsp/pcm_osc.c) with the store images gen_pcm_waves.py makes
  * attached as the FM1 attaches its flash:
- *   1 the wave list: banks, the store's waves, the attacks; position <-> code round trips; names
+ *   1 the wave list: banks, then the store's waves (no attack-waves since 2026-11-05); position <-> code round trips;
+ *     names
  *   2 the block render and the one-sample render (DUAL OSC's path) give the same samples, through attacks, SCAN moves
  *     and the attack's end, for every wave
- *   3 every PCM wave and an attack-wave sound in every architecture, finite, with nothing stuck after the release
+ *   3 every PCM wave sounds in every architecture, finite, with nothing stuck after the release
  *   4 a store wave whose area is gone plays bank 0 (the synth still sounds)
  *   5 the host cost of 8 voices on a PCM wave against the same on a bank (the FM1's own figure: PERF TEST)
  *   test_pcm_osc [wav dir]      also writes engine renders of each wave to <wav dir> (the real voice: filter, envelopes)
@@ -20,10 +21,10 @@
 #include "dsp/pcm_osc.h"
 #include "dsp/oscillators.h"
 #include "dsp/wavetables.h"
-#include "dsp/attacks.h"
+#include "dsp/oscmixer.h"
 
-extern const uint8_t pcm_image_host0[], pcm_image_host1[];
-extern const uint32_t pcm_image_host_len0, pcm_image_host_len1;
+extern const uint8_t pcm_image_host0[], pcm_image_host1[], pcm_image_host2[];
+extern const uint32_t pcm_image_host_len0, pcm_image_host_len1, pcm_image_host_len2;
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
@@ -32,6 +33,7 @@ static void attach(void)
 {
     CHECK(pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0) > 0, "area 0 attaches");
     CHECK(pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1) > 0, "area 1 attaches");
+    CHECK(pcm_store_attach(PCM_AREA_ST2, pcm_image_host2, pcm_image_host_len2) > 0, "area 3 attaches");
 }
 
 static uint8_t code_of(const char *name)
@@ -45,6 +47,9 @@ static uint8_t code_of(const char *name)
 
 #define RATE 44100u
 static int32_t buf[2 * 128];
+static int32_t hist[RATE / 4];              /* render's left channel while hist_on (section 6) */
+static uint32_t hist_n;
+static int hist_on;
 
 /* frames of the engine; returns the peak and sum of squares, and whether every sample was finite and in range */
 static double render(uint32_t frames, int32_t *peak, FILE *wav)
@@ -57,6 +62,7 @@ static double render(uint32_t frames, int32_t *peak, FILE *wav)
             int32_t v = buf[i] < 0 ? -buf[i] : buf[i];
             if (v > *peak) *peak = v;
             e += (double)buf[i] * buf[i];
+            if (hist_on && !(i & 1) && hist_n < RATE / 4) hist[hist_n++] = buf[i];
             if (wav) {
                 int32_t s = buf[i] > 32767 ? 32767 : buf[i] < -32768 ? -32768 : buf[i];
                 fputc(s & 255, wav); fputc((s >> 8) & 255, wav);
@@ -167,17 +173,16 @@ int main(int argc, char **argv)
 
     /* 1 the list */
     uint32_t nw = pcm_wave_count();
-    CHECK(nw >= 7, "the store holds the waves (%u)", (unsigned)nw);
-    CHECK(wave_list_count() == NUM_BANKS + nw + ATK_COUNT, "list: %u = banks + waves + attacks",
-          (unsigned)wave_list_count());
+    CHECK(nw == 14, "the store holds the 14 waves (%u)", (unsigned)nw);
+    CHECK(wave_list_count() == NUM_BANKS + nw, "list: %u = banks + waves", (unsigned)wave_list_count());
     for (uint32_t p = 0; p < wave_list_count(); p++)
         CHECK(wave_list_pos(wave_list_code(p)) == p, "list position %u round-trips", (unsigned)p);
-    CHECK(wave_list_code(NUM_BANKS) == WAVE_PCM_FIRST && wave_list_code(NUM_BANKS + nw) == WAVE_ATK_FIRST,
-          "PCM waves after the banks, then the attacks");
-    CHECK(!strcmp(wave_name(WAVE_PCM_FIRST, nb), "WOOD CHIMES") && !strcmp(wave_name(WAVE_ATK_FIRST, nb), "BONE CHIFF"),
-          "names: %s, %s", wave_name(WAVE_PCM_FIRST, nb), wave_name(WAVE_ATK_FIRST, nb));
-    CHECK(wave_kind(5) == 0 && wave_kind(WAVE_ATK_FIRST + ATK_COUNT) == -1 && wave_kind((uint8_t)(WAVE_PCM_FIRST + nw)) == -1,
-          "kinds: a bank, past the attacks, past the waves");
+    CHECK(wave_list_code(NUM_BANKS) == WAVE_PCM_FIRST, "PCM waves after the banks");
+    CHECK(!strcmp(wave_name(WAVE_PCM_FIRST, nb), "CHOIR") &&
+          !strcmp(wave_name((uint8_t)(WAVE_PCM_FIRST + nw - 1u), nb), "WOOD BLOCK"),
+          "names: %s .. %s", wave_name(WAVE_PCM_FIRST, nb), wave_name((uint8_t)(WAVE_PCM_FIRST + nw - 1u), nb));
+    CHECK(wave_kind(5) == 0 && wave_kind(WAVE_ATK_FIRST) == -1 && wave_kind((uint8_t)(WAVE_PCM_FIRST + nw)) == -1,
+          "kinds: a bank, no attack-waves, past the waves");
 
     /* 2 block = one sample */
     for (uint32_t w = 0; w < nw; w++) {
@@ -186,13 +191,11 @@ int main(int argc, char **argv)
         same_paths((uint8_t)(WAVE_PCM_FIRST + w), wave_name((uint8_t)(WAVE_PCM_FIRST + w), nb), 110);
         spread_detunes((uint8_t)(WAVE_PCM_FIRST + w), wave_name((uint8_t)(WAVE_PCM_FIRST + w), nb));
     }
-    same_paths(WAVE_ATK_FIRST + 2, "HORN BLAT (an attack-wave)", 0);
-    same_paths(WAVE_ATK_FIRST + 2, "HORN BLAT (an attack-wave)", 80);
 
     /* 3 every wave in every architecture */
     for (uint8_t arch = 0; arch < VARCH_COUNT; arch++) {
-        for (uint32_t w = 0; w <= nw; w++) {
-            uint8_t code = w < nw ? (uint8_t)(WAVE_PCM_FIRST + w) : (uint8_t)(WAVE_ATK_FIRST + 6);   /* + LITHOPHONE */
+        for (uint32_t w = 0; w < nw; w++) {
+            uint8_t code = (uint8_t)(WAVE_PCM_FIRST + w);
             int32_t peak = 0, tail_peak = 0;
             patch(arch, code, 64);
             for (int k = 0; k < 3; k++) synth_midi_3(0x90, (uint8_t)(48 + 7 * k), 100);
@@ -220,13 +223,13 @@ int main(int argc, char **argv)
         attach();
     }
 
-    /* 5 cost: 8 voices on a bank, then on CHOIR at SCAN 64 (two loops read), then WOOD CHIMES struck again and again */
+    /* 5 cost: 8 voices on a bank, then on CHOIR at SCAN 64 (two loops read), then BELL struck again and again */
     {
-        const char *what[3] = {"bank 0", "CHOIR, SCAN 64", "WOOD CHIMES re-struck"};
+        const char *what[3] = {"bank 0", "CHOIR, SCAN 64", "BELL re-struck"};
         double ns[3];
         for (int t = 0; t < 3; t++) {
             int32_t peak = 0;
-            patch(VARCH_SINGLE, t == 0 ? 0 : code_of(t == 1 ? "CHOIR" : "WOOD CHIMES"), 64);
+            patch(VARCH_SINGLE, t == 0 ? 0 : code_of(t == 1 ? "CHOIR" : "BELL"), 64);
             for (int k = 0; k < 8; k++) synth_midi_3(0x90, (uint8_t)(48 + 3 * k), 100);
             clock_t c0 = clock();
             for (int r = 0; r < 40; r++) {
@@ -240,19 +243,49 @@ int main(int argc, char **argv)
                what[2], ns[2]);
     }
 
+    /* 6 cross-mod on a PCM wave (2026-11-05): PM moves it (it was ignored), FM through zero stays finite */
+    {
+        static int16_t ref[RATE / 4];
+        for (int xt = 0; xt < 2; xt++) {          /* PM, then FM deep enough to cross zero */
+            double d = 0, e0 = 0;
+            for (int pass = 0; pass < 2; pass++) {
+                int32_t peak = 0;
+                patch(VARCH_DUAL_OSC, 2, 64);
+                engine_state[0].osc[1].wavebank = code_of("CHOIR");
+                engine_state[0].oscmix.balance = 127;
+                engine_state[0].oscmix.xmod_type = (uint8_t)(xt ? OSCMIX_XMOD_FM : OSCMIX_XMOD_PM);
+                engine_state[0].oscmix.xmod_amt = (uint8_t)(pass ? 127 : 0);
+                synth_restart();
+                synth_midi_3(0x90, 48, 100);
+                hist_n = 0;
+                hist_on = 1;
+                render(RATE / 4, &peak, NULL);
+                hist_on = 0;
+                for (uint32_t i = 0; i < RATE / 4; i++) {
+                    int16_t s = (int16_t)(hist[i] / 2);
+                    if (!pass) { ref[i] = s; e0 += (double)s * s; }
+                    else d += (double)(s - ref[i]) * (s - ref[i]);
+                }
+                synth_midi_3(0x80, 48, 0);
+                render(RATE * 2, &peak, NULL);
+                if (pass) CHECK(peak <= 32768 * 4, "%s on CHOIR: peak %d", xt ? "FM" : "PM", peak);
+            }
+            CHECK(e0 > 1e6 && d > 0.05 * e0, "%s on a PCM wave changes it (%.3f of its energy)", xt ? "FM" : "PM",
+                  d / (e0 + 1));
+        }
+    }
+
     /* renders to listen to: the real voice */
     if (dir) {
         static const struct { const char *name; uint8_t arch; uint8_t scan; const uint8_t notes[4]; uint8_t a, r; } R[] = {
-            {"WOOD CHIMES", VARCH_SINGLE, 30, {55, 60, 67, 0}, 0, 70},
-            {"RAINSTICK", VARCH_SINGLE, 64, {60, 0, 0, 0}, 0, 70},
-            {"LORE", VARCH_SINGLE, 64, {52, 59, 64, 67}, 40, 80},
-            {"MOONSONG", VARCH_SINGLE, 64, {45, 52, 57, 61}, 60, 85},
+            {"STR ENS", VARCH_SINGLE, 64, {48, 55, 60, 64}, 60, 85},
             {"CHOIR", VARCH_SINGLE, 64, {45, 52, 57, 60}, 50, 75},
-            {"HORNS", VARCH_SINGLE, 64, {41, 48, 53, 57}, 10, 60},
-            {"CHOIR+WOOD", VARCH_SINGLE, 64, {48, 55, 60, 63}, 50, 80},
-            {"SINGING STN", VARCH_SINGLE, 64, {45, 52, 57, 0}, 10, 80},
             {"PAN FLUTE", VARCH_SINGLE, 64, {72, 79, 0, 0}, 5, 40},
-            {"CAIRN SPIRIT", VARCH_SINGLE, 64, {45, 52, 57, 64}, 50, 85},
+            {"HORNS", VARCH_SINGLE, 64, {41, 48, 53, 57}, 10, 60},
+            {"SINGING STN", VARCH_SINGLE, 64, {45, 52, 57, 0}, 10, 80},
+            {"LORE", VARCH_SINGLE, 64, {52, 59, 64, 67}, 40, 80},
+            {"RAINSTICK", VARCH_SINGLE, 64, {60, 0, 0, 0}, 0, 70},
+            {"SPIRIT VOX", VARCH_SINGLE, 64, {45, 52, 57, 64}, 50, 85},
         };
         for (uint32_t i = 0; i < sizeof R / sizeof R[0]; i++) {
             FILE *f = wav_open(dir, R[i].name);
@@ -268,12 +301,12 @@ int main(int argc, char **argv)
             render(RATE * 2, &peak, f);
             wav_close(f);
         }
-        /* Universe: DUAL OSC, CHOIR on OSC1 and WOOD CHIMES on OSC2 */
-        FILE *f = wav_open(dir, "DUALOSC CHOIR + WOOD CHIMES");
+        /* Universe: DUAL OSC, CHOIR on OSC1 and LORE on OSC2 */
+        FILE *f = wav_open(dir, "DUALOSC CHOIR + LORE");
         if (f) {
             int32_t peak = 0;
             patch(VARCH_DUAL_OSC, code_of("CHOIR"), 64);
-            engine_state[0].osc[1].wavebank = code_of("WOOD CHIMES");
+            engine_state[0].osc[1].wavebank = code_of("LORE");
             engine_state[0].oscmix.xmod_amt = 0;
             engine_state[0].env[0].attack = 50; engine_state[0].env[0].release = 80;
             engine_state[0].amp.reverb_send = 70;

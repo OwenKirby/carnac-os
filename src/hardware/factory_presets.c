@@ -10,8 +10,9 @@
  * are shared, performance-level), its tempo, its sequence and its arp pattern, so loading a PERF brings the whole
  * piece; loading only the PATCH keeps the current effects.
  *
- * Wavebanks: 0 Foundations 1 Hearth 2 Barrow 3 Trilithon 4 Ley Line 5 Solstice 6 Moonstone 7 Star Chart
- *            8 Druid Chant 9 Overtone Rite 10 Votive Choir 11 Bone Flute 12 Erosion 13 Frost Shatter 14 Dust;
+ * Wavebanks: 0 the VCO (shown as Foundations) 1 Ley Line 2 Moonstone 3 Star Chart 4 Overtone Halo 5 Passage Tomb
+ *            6 Aurora 7 Frost Shatter 8 Dust (2026-11-05: the banks the VCO plays as well and the vocal / flute
+ *            banks retired, three new);
  *            32.. the attacks as one-shot waves, 64.. the PCM waves (dsp/pcm_osc.h)
  * Knob units: time 0..127 (32 = 34 ms, 64 = 0.37 s, 80 = 1.1 s, 96 = 3 s, 112 = 8 s), cutoff ~13.4 knob steps an octave
  * (85 = 1.6 kHz), LFO rate 0.05 Hz * 800^(k/127), LFO shape 0 sine 21 tri 43 saw 64 square 85 step 106 slew.
@@ -62,11 +63,11 @@ static void factory_name(uint8_t *dst, const char *s)
 #define V_KT(i, kt) V_(filter_key_track[i], kt)
 /* a delayed vibrato on LFO2, blooming after each note starts */
 #define V_VIB(rt, dl) V_LFO(1, L_SINE, rt), V_(lfo[1].delay, dl), V_(lfo[1].fade, FP_BIP(40)), V_(lfo[1].key_reset, 1)
-/* the waves (dsp/pcm_osc.h): banks 0..14, the attacks as one-shots from 32, the PCM store's waves from 64
- * (gen_pcm_waves.py WAVES order) */
-enum { W_FOUND, W_HEARTH, W_BARROW, W_TRILITHON, W_LEY, W_SOLSTICE, W_MOONSTONE, W_STARS, W_DRUID, W_OVERTONE,
-       W_VOTIVE, W_BONEFLUTE, W_EROSION, W_FROST, W_DUST };
-enum { W_WOOD = 64, W_RAIN, W_LORE, W_MOONSONG, W_CHOIR, W_HORNS, W_CHOIRWOOD, W_SINGSTONE, W_PANFLUTE, W_SPIRIT };
+/* the waves (dsp/pcm_osc.h): banks 0..8 (bank 0 the VCO), the PCM store's waves from 64 (2026-11-05: the definitive
+ * list, proto_pcm/atkfit/definitive_fw.py ORDER; the firmware's one-shot attacks are gone) */
+enum { W_FOUND, W_LEY, W_MOONSTONE, W_STARS, W_HALO, W_TOMB, W_AURORA, W_FROST, W_DUST };
+enum { W_CHOIR = 64, W_SPIRITVOX, W_PANFLUTE, W_HORNS, W_STRENS, W_HOARFROST, W_SINGSTONE, W_LORE, W_BELL,
+       W_ROCKGONG, W_RAINSTICK, W_MENHIR, W_LOGDRUM, W_WOODBLOCK };   /* the rebuilt PCM bank (2026-11-06) */
 /* Foundations' frames by SCAN (gen_foundations.py): the SH-2's VCO shapes */
 enum { F_TRI = 0, F_SAW = 18, F_SQUARE = 36, F_P35 = 54, F_P20 = 73, F_P10 = 91, F_PMIN = 109, F_SAWSQ = 127 };
 /* attacks.h's sounds, by number (attack_names) */
@@ -335,12 +336,12 @@ static const uint8_t FV_SOULS[] = {
     V_AMP(0, SOFT, 24, 90), V_(analog, 30),
     V_END};
 
-/* ---- 19 OTHERWORLD: Tir na nOg glimpsed. STACK: A, the PCM MOONSONG hum; B, Foundations PULSE 10 % an octave up and
+/* ---- 19 OTHERWORLD: Tir na nOg glimpsed. STACK: A, the PCM STR ENS strings (SOLSTICE until 2026-11-06); B, Foundations PULSE 10 % an octave up and
  * 4 cents flat through an MS-20 band-pass that LFO2 moves, swelling in later; spread wide. WHEEL: the overtone halo
  * rises over the hum (A's SCAN). */
 static const uint8_t FV_OTHERWORLD[] = {
     V_(arch, VARCH_STACK),
-    V_OSC(0, W_MOONSONG, 30, 0), V_(osc[0].scan_mod_src, MSRC_MODWHEEL), V_(osc[0].scan_mod_amt, 90),
+    V_OSC(0, W_STRENS, 30, 0), V_(osc[0].scan_mod_src, MSRC_MODWHEEL), V_(osc[0].scan_mod_amt, 90),
     V_OSC(1, W_FOUND, F_P10, 1), V_(osc[1].fine, 59 /* -4 c */),
     V_FLT(0, MULTI, 0, 36, 90, 10, 0),
     V_FLT(1, MS20, 10, 64, 80, 50, 0), V_(filter[1].morph_mod_src, MSRC_LFO2), V_(filter[1].morph_mod_amt, FP_BIP(20)),
@@ -351,14 +352,17 @@ static const uint8_t FV_OTHERWORLD[] = {
     V_AMP(0, SOFT, 30, 90), V_(analog, 30),
     V_END};
 
-/* ---- 20 CAIRN SPIRIT: the spirits in the cairn on Samhain night. SPREAD over the PCM CAIRN SPIRIT (dark "oh" choir
- * and breathy flutes over a stone drone; toward 127 the bright "aah" with its halo and bell shimmer), LFO1 drifting it
- * between the two over ten seconds, the playheads wide, a warm SH-2. WHEEL: the choir opens to the shimmer. */
+/* ---- 20 CAIRN SPIRIT: the spirits in the cairn on Samhain night. Since 2026-11-06 (the PCM CAIRN SPIRIT left the
+ * bank) built from its ingredients, STACK: A, the PCM SPIRIT VOX (dark angel choir; toward 127 the bright fantasy vox)
+ * through a warm SH-2, LFO1 drifting it over ten seconds; B, the PCM PAN FLUTE (hollow, a little breath) 4 cents sharp
+ * through an open MULTI low-pass, under it. WHEEL: the voices open. */
 static const uint8_t FV_SPIRIT[] = {
-    V_(arch, VARCH_SPREAD),
-    V_OSC(0, W_SPIRIT, 24, 0), V_(osc[0].scan_mod_src, MSRC_MODSLOT1), V_(osc[0].scan_mod_amt, 90),
-    V_(oscmix.spread, 70),
+    V_(arch, VARCH_STACK),
+    V_OSC(0, W_SPIRITVOX, 24, 0), V_(osc[0].scan_mod_src, MSRC_MODSLOT1), V_(osc[0].scan_mod_amt, 90),
+    V_OSC(1, W_PANFLUTE, 40, 0), V_(osc[1].fine, 69 /* +4 c */),
     V_FLT(0, SH2, 20, 0, 92, 20, 0), V_KT(0, 50),
+    V_FLT(1, MULTI, 0, 0, 96, 10, 0),
+    V_(fltmix.balance, 50), V_(fltmix.stack_width, 90),
     V_ENV(0, 72, 96, 116, 98),
     V_LFO(0, L_SINE, 12),
     V_SLOT(0, LFO1, ADD, MODWHEEL, 30),

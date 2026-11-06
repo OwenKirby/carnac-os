@@ -28,9 +28,11 @@
 
 #define PCM_MAGIC 0x57505243u               /* "CRPW" */
 #define PCM_VERSION 2u
-#define PCM_AREAS 3u
-#define PCM_FLASH_AREAS 2u                  /* areas 0, 1: in the store flash, uploaded */
+#define PCM_AREAS 4u                        /* (a reference's area is 2 bits: no more) */
+#define PCM_FLASH_AREAS 2u                  /* areas 0, 1: in the store flash, uploaded as areas 0, 1 */
 #define PCM_AREA_FW 2u                      /* in the firmware (pcm_area_fw.c) */
+#define PCM_AREA_ST2 3u                     /* (2026-11-05) the store flash's third area, uploaded as area 2: it held
+                                             * wavetable frames (Foundations and three of Dust) until then */
 #define PCM_NAME_LEN 12u                    /* NUL-padded; a full 12 has no NUL */
 #define PCM_MAX_ENTRIES 63u                 /* in one area (a reference's index is 6 bits, 63 is NONE's) */
 #define PCM_HDR_SIZE 32u
@@ -39,6 +41,11 @@
 #define PCM_REF(area, i) ((uint8_t)(((area) << 6) | (i)))
 
 enum { PCM_LOOP = 1, PCM_ONESHOT = 2, PCM_WAVE = 3 };   /* PcmEntry.kind */
+/* PcmEntry.u.w.flags. HANDOFF (2026-11-05 prototype): the wave is whole notes, JD-800 style: each attack is the
+ * note's opening and ends exactly where its loop begins (loop index 0). At a note the loops are placed so they reach
+ * index 0 as the attack ends and stay silent under it; the attack nearer SCAN plays alone, then the loops take over
+ * with no fade. A voice still sounding when retriggered keeps the old way (the attack over the loops), so no click. */
+#define PCM_WF_HANDOFF 0x01u
 
 typedef struct {
     uint32_t magic;                         /* PCM_MAGIC */
@@ -68,8 +75,12 @@ typedef struct {
             uint8_t atk_level, rsv;         /* the attack's level, 0..127 (127: as stored) */
             uint16_t b_rate_q12;            /* B's speed against A's own, 4096 = its rate (1024..16384) */
             uint16_t b_off_q16;             /* where B starts in its loop when A starts at 0, a fraction */
-            uint16_t rsv2;                  /* 0 */
-            uint32_t rsv3[2];               /* 0 */
+            uint8_t atk_ref_b;              /* PCM_WF_HANDOFF: the attack that opens loop B (PCM_REF_NONE: A's
+                                             * serves both); else 0 */
+            uint8_t flags;                  /* PCM_WF_*; 0 */
+            uint8_t tail_a, tail_b;         /* PCM_WF_HANDOFF (prototype 2026-11-05): after the attack, loop A / B keeps
+                                             * decaying at this many dB/s (0: holds, the amp envelope alone); else 0 */
+            uint8_t rsv2[6];                /* 0 */
         } w;
     } u;
 } PcmEntry;

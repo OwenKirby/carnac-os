@@ -48,10 +48,11 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "usage: render_factory_perfs OUTDIR\n"); return 2; }
     synth_init();
     {   /* the PCM waves, as uploaded to a unit (the bank plays them) */
-        extern const uint8_t pcm_image_host0[], pcm_image_host1[];
-        extern const uint32_t pcm_image_host_len0, pcm_image_host_len1;
+        extern const uint8_t pcm_image_host0[], pcm_image_host1[], pcm_image_host2[];
+        extern const uint32_t pcm_image_host_len0, pcm_image_host_len1, pcm_image_host_len2;
         pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0);
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
+        pcm_store_attach(PCM_AREA_ST2, pcm_image_host2, pcm_image_host_len2);
     }
     {   /* wavetable bank 0, Foundations, as uploaded to a unit (without it bank 0 plays the fallback sine) */
         extern const uint8_t wt_area2_host[];

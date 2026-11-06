@@ -301,6 +301,48 @@ def votive_choir(t, seed):
     return voiced(vowel_path("female", "uoa", t), seed, breath=0.06 + 0.3 * t ** 2, detune=0.02 + 0.03 * t)
 
 
+# Overtone Halo (2026-11-05, in place of Ritual Voices, which the user did not take to): the overtone series made
+# magical, for new-age pads. A soft, warm drone (the low harmonics, falling steeply) and above it one singing overtone,
+# a narrow whistle, climbing the series through a major chord: harmonics 4, 5, 6, 8, 10, 12, 16, 20 (C E G C E G C
+# E over C). Around the whistle a faint halo an octave up; from frame 6 a glassy shimmer of high harmonics comes in
+# (the even ones 18..32, soft), so the top of the sweep is bright and airy. One phase set for every frame, so a SCAN
+# between two frames is two overtones sounding at once, as a singer gliding between them.
+HALO_STEPS = [4, 5, 6, 8, 10, 12, 16, 20]
+
+
+def overtone_halo(t, seed):
+    f = frame_index(t)
+    h = HALO_STEPS[f]
+    drone = np.where(K <= 6, KSAFE ** -2.2, 0.0) * (1.0 - 0.25 * t) * (K >= 1)
+    whistle = 0.9 * np.exp(-((K - h) / 0.35) ** 2) + 0.18 * np.exp(-((K - h) / 1.4) ** 2)
+    halo = 0.22 * np.exp(-((K - 2 * h) / 0.5) ** 2)
+    shimmer = max(0.0, (f - 4) / 3) * 0.10 * ((K >= 18) & (K <= 32) & (KI % 2 == 0)) * (24.0 / KSAFE)
+    return tonal(drone + whistle + halo + shimmer, schroeder())
+
+
+def passage_tomb(t, seed):
+    """A bright tone sounded in a passage tomb (2026-11-05): three resonances of the stone passage, high and close
+    together, slide down and spread as the passage opens into the chamber, and the chamber's low boom swells under
+    them. Several moving peaks at once: no oscillator through one filter draws this."""
+    src = np.where(KI > 0, KSAFE ** -0.5, 0.0)
+    peaks = [(28 - 22 * t, 0.10), (40 - 26 * t, 0.10), (55 - 25 * t, 0.12)]
+    res = 0.03 + sum(np.exp(-0.5 * (np.log2(KSAFE / c) / w) ** 2) for c, w in peaks)
+    boom = 2.0 * t * np.exp(-0.5 * (np.log2(KSAFE / 2.0) / 0.25) ** 2)
+    return tonal(src * (res + boom) * (KI > 0), schroeder())
+
+
+def aurora(t, seed):
+    """Curtains of northern light (2026-11-05): a bright spectrum rippled in log-frequency, a frozen phaser of many
+    notches, the ripples tightening (1.5 to 6 an octave) and drifting frame by frame; from frame 4 a sparkle of high
+    harmonics glints in."""
+    rng = np.random.default_rng(seed)
+    base = np.where(KI > 0, KSAFE ** -0.7, 0.0) * (KI <= 120)
+    dens = 1.5 + 4.5 * t
+    ripple = 0.5 + 0.5 * np.cos(2 * np.pi * dens * np.log2(KSAFE) + 2 * np.pi * 0.7 * t)
+    sparkle = (t > 0.4) * (t - 0.4) * 0.6 * ((rng.uniform(size=H + 1) > 0.8) & (KI >= 24) & (KI <= 96))
+    return tonal(base * (0.08 + ripple ** 2) + sparkle * KSAFE ** -0.3, schroeder())
+
+
 def bone_flute(t, seed):
     """A neolithic bone flute brought to life. Frame 1 is mostly breath across the hole with the tone just catching;
     the tone firms up to a clean, nearly pure flute by frame 4, then the player overblows: the octave takes over and
@@ -388,22 +430,32 @@ def frost_shatter(t, seed):
 
 
 def dust(t, seed):
-    """The monolith returns to the earth. Frame 1 is a solid, warm tone (1/k^1.5, sine phase). Frame by frame its
-    harmonics are jittered and their phases scattered, the tone thins and a dusty noise rises in its place, until
-    frame 8 is only drifting dust: shaped noise with one slow gust per cycle, its peaks worn down by a soft
-    saturator. Every random draw is fixed per bank."""
+    """The monolith returns to the earth, the hard way (2026-11-05: made more extreme at the user's ask). Frame 1 is a
+    warm tone already gritty (8 bits); frame by frame its harmonics scatter, noise takes over sooner, grains of grit
+    crackle through the cycle (sparse impulses, more each frame), the cycle is held in ever longer steps (1 to 16
+    samples, an early sampler run down) and crushed to fewer bits (8 down to 3), and a saturator drives harder, until
+    frame 8 is a few crushed terraces of static. Every random draw is fixed per bank, so frames morph, not reshuffle."""
     rng = np.random.default_rng(seed)
     scatter = rng.uniform(-np.pi, np.pi, H + 1)
     jitter = rng.uniform(0.0, 2.0, H + 1)
     noise = noise_spec(rng, np.ones(H + 1))
+    order = rng.permutation(N)
+    signs = rng.choice([-1.0, 1.0], N)
     tone = np.where((KI > 0) & (KI <= 40), KSAFE ** -1.5, 0.0) * (1.0 + t * (jitter - 1.0))
     tone = from_spectrum(tone * np.exp(1j * (SINE_PHASE + t * scatter)))
-    centre = 6.0 + 30.0 * t
-    noise = from_spectrum(noise * KSAFE ** -0.5 * (0.15 + np.exp(-0.5 * ((K - centre) / (0.8 * centre)) ** 2)))
-    m = t ** 2                                      # how much has turned to dust: equal power, so the level holds
+    noise = from_spectrum(noise * KSAFE ** -0.3)
+    m = min(1.0, 1.3 * t)                           # how much has turned to dust: equal power, so the level holds
     x = np.sqrt(1.0 - m) * tone / np.std(tone) + np.sqrt(m) * noise / np.std(noise)
+    grains = np.zeros(N)
+    count = int(round(2 + 46 * t))
+    grains[order[:count]] = signs[:count]           # the grit: the same places, more of them each frame
+    x = x + 2.5 * t * grains * np.std(x) * 4.0
+    hold = int(round(1 + 15 * t ** 2))              # held steps: the cycle at a fraction of the rate
+    x = np.repeat(x[::hold], hold)[:N]
     gust = 1.0 + 0.6 * t * np.cos(2.0 * np.pi * np.arange(N) / N)
-    return aliased(2.0 * np.tanh(0.5 * x * gust))   # grains: the noise's tall peaks worn down
+    x = np.tanh((0.5 + 1.5 * t) * x / np.std(x) * gust)
+    q = 2.0 ** (8.0 - 5.0 * t - 1.0)                # bits: 8 down to 3
+    return aliased(np.round(x / np.abs(x).max() * q) / q)
 
 
 def hearth(t, seed):
@@ -426,6 +478,8 @@ BANK_DEFS = [
     ("Erosion", erosion), ("Frost Shatter", frost_shatter), ("Dust", dust),
     ("Hearth", hearth),                     # new banks go at the end: saved patches keep their bank numbers
     ("Hollow Reeds", hollow_reeds),
+    ("Overtone Halo", overtone_halo),       # (Ritual Voices was tried here first, never shipped)
+    ("Passage Tomb", passage_tomb), ("Aurora", aurora),
 ]
 assert all(len(name) <= 20 for name, _ in BANK_DEFS)
 
@@ -433,9 +487,16 @@ assert all(len(name) <= 20 for name, _ in BANK_DEFS)
 # an image of another list. 2026-10-27: Menhir retired (its sine -> soft saw is Foundations / Solstice / Hearth
 # ground; 16 KB of app flash back), Hollow Reeds moved into its slot so every other bank keeps its number. Later the
 # same day Hollow Reeds retired too (the PCM PAN FLUTE plays its part; its 16 KB went to the firmware's PCM area,
-# gen_pcm_waves.py), and Hearth, the last bank, moved into slot 1.
-IMAGE_BANKS = ["Hearth", "Barrow", "Trilithon", "Ley Line", "Solstice", "Moonstone", "Star Chart", "Druid Chant",
-               "Overtone Rite", "Votive Choir", "Bone Flute", "Erosion", "Frost Shatter", "Dust"]
+# gen_pcm_waves.py), and Hearth, the last bank, moved into slot 1. 2026-11-05 (the bang-for-buck review): Bone Flute
+# retired (the PCM PAN FLUTE); Druid Chant, Overtone Rite and Votive Choir retired too (their frames near-copies; the
+# PCM CHOIR and MOONSONG carry voices now), Overtone Halo (new) in slot 8: 48 KB of app flash back for the PCM waves;
+# the banks after them move down.
+# Later 2026-11-05: banks the VCO (bank 0) plays as well, a shape through one low-pass, retired: Hearth (a filtered
+# saw), Barrow (triangle to square), Trilithon (pulse widths), Solstice (a resonant sweep) and Erosion (a saw, its
+# crushed frames now in Dust). A bank must do what the VCO cannot.
+# Then two new ones the VCO cannot play: Passage Tomb (moving resonances) and Aurora (a log-frequency ripple).
+IMAGE_BANKS = ["Ley Line", "Moonstone", "Star Chart", "Overtone Halo", "Passage Tomb", "Aurora", "Frost Shatter",
+               "Dust"]
 assert set(IMAGE_BANKS) <= {name for name, _ in BANK_DEFS} and len(set(IMAGE_BANKS)) == len(IMAGE_BANKS)
 
 # Banks ahead of the image, each its own image in the store flash (wavetables.h WT_BANK_*), uploaded over USB-MIDI:

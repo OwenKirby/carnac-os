@@ -4,11 +4,11 @@
 #include <stdint.h>
 
 /* The banks (gen_wavetables.py; wavetables.c checks the counts): bank 0, Foundations, is an image of its own in the
- * store flash (WT_BANK_*, uploaded); banks 1..16 are the image linked into the firmware (since 2026-10-26: they were
+ * store flash (WT_BANK_*, uploaded); banks 1..8 are the image linked into the firmware (since 2026-10-26: they were
  * 0..15). */
-#define NUM_BANKS 15
+#define NUM_BANKS 9
 #define WT_BANK_FIRST_IMAGE 1           /* the linked image's first bank */
-#define NUM_IMAGE_BANKS 14              /* = len(IMAGE_BANKS) in gen_wavetables.py */
+#define NUM_IMAGE_BANKS 8              /* = len(IMAGE_BANKS) in gen_wavetables.py */
 #define NUM_MORPH_STEPS 8
 #define WAVE_SAMPLES 512                /* level 0: one full cycle of a frame */
 
@@ -52,7 +52,7 @@ _Static_assert(sizeof(wt_store_hdr_t) == 32, "wavetable store header layout");
 #define WT_IMAGE_MAX 0x48000u
 _Static_assert(WT_STORE_IMAGE_LEN <= WT_IMAGE_MAX, "the wavetable banks outgrow WT_IMAGE_MAX");
 
-/* The image's last WT_SPILL_FRAMES frames (bank 14, Dust, frames 3..8) are not linked into the FM1's app (2026-11-03:
+/* The image's last WT_SPILL_FRAMES frames (bank 8, Dust, frames 3..8) are not linked into the FM1's app (2026-11-03:
  * the app flash was full; build_fm1 defines WT_IMAGE_SPILLED): they sit in the store flash's wavetable areas with
  * bank 0, below. Host and browser builds link the whole image. */
 #define WT_SPILL_FRAMES 6u

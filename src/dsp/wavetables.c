@@ -2,28 +2,22 @@
  * The bank data is not here: it is the store image (wavetables_image.bin, wavetable_attach.c). */
 #include "wavetables.h"
 
-_Static_assert(NUM_BANKS == 15 && NUM_IMAGE_BANKS == 14 && WT_BANK_FIRST_IMAGE == 1,
+_Static_assert(NUM_BANKS == 9 && NUM_IMAGE_BANKS == 8 && WT_BANK_FIRST_IMAGE == 1,
                "wavetables.h bank counts != gen_wavetables.py STORE_BANKS + BANK_DEFS");
 
 const uint16_t wavetable_level_start[WT_LEVELS] = {0, 512, 768, 896, 960, 992, 1008};
 
-const uint32_t wavetable_set_id = 0x8604AA58u;   /* CRC-32 of the image's names, one per line */
+const uint32_t wavetable_set_id = 0x074D235Eu;   /* CRC-32 of the image's names, one per line */
 const uint32_t wavetable_store_bank_id = 0x8D17A993u;   /* CRC-32 of bank 0's name */
 
 const char *const wavetable_bank_names[NUM_BANKS] = {
     "Foundations",
-    "Hearth",
-    "Barrow",
-    "Trilithon",
     "Ley Line",
-    "Solstice",
     "Moonstone",
     "Star Chart",
-    "Druid Chant",
-    "Overtone Rite",
-    "Votive Choir",
-    "Bone Flute",
-    "Erosion",
+    "Overtone Halo",
+    "Passage Tomb",
+    "Aurora",
     "Frost Shatter",
     "Dust",
 };

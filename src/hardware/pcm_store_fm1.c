@@ -8,13 +8,11 @@
  *                                has its old objects there, which read as no image)
  *   1  0xCE000..0xDBFFF  56 KiB  the preset store's tail: its chunks 23 and 24 (free since 2026-10-17, PS_NCHUNK 23
  *                                now) and the 40 KiB after them, up to X0X's panel calibration (OBJ_PANEL, 0xDC000)
- *   2  0xBC000..0xC1FFF  24 KiB  not PCM: a wavetable area (wavetables.h wt_area_hdr_t): bank 0 (Foundations, since
- *                                2026-10-26) and, since 2026-11-03, three frames the app has no room for; in the
- *                                preset store's free chunks 14..16; the same commands upload it
- *   3  0xDE000..0xDFFFF   8 KiB  not PCM: the other wavetable area (2026-11-03): three more of those frames, in X0X's
- *                                motion object (OBJ_MOTION), which nothing of Carnac's writes (X0X's own firmware
- *                                would: then the area reads as no image, WAVES OUT OF DATE, until the next sync)
- * Left alone: OBJ_PANEL 0xDC000 (the panel calibration), 0xE0000.. (the update loader's staging).
+ *   2  0xBC000..0xC1FFF  24 KiB  the preset store's free chunks 14..16; PCM since 2026-11-05 (the store's area
+ *                                PCM_AREA_ST2, 3: its area 2 is the firmware's own). Until then a wavetable area:
+ *                                Foundations (retired: the VCO plays bank 0) and three frames of Dust (back in the app)
+ * Left alone: OBJ_PANEL 0xDC000 (the panel calibration), 0xE0000.. (the update loader's staging), 0xDE000..0xDFFFF
+ * (X0X's motion object: a wavetable area from 2026-11-03 to 11-05, unused since; an old image there is never read).
  *
  * The editor's commands (SysEx F0 7D 46 4C cmd args F7, as the old wavetable upload; src/hardware/pcm_store_upload.py):
  *   100 PCM_BEGIN [area]                 the area is detached and its first sector erased: it reads empty from now on
@@ -38,14 +36,12 @@
 #endif
 #define PCM_SECTOR 4096u
 enum { ED_PCM_BEGIN = 100, ED_PCM_WRITE, ED_PCM_END, ED_PCM_INFO, ED_PCM_ID };
-#define PCM_WT_AREA PCM_FLASH_AREAS                 /* the first wavetable area (2): wavetable_area_* slot 0 */
-#define PCM_ALL_AREAS (PCM_FLASH_AREAS + WT_AREAS)
-#define PCM_IS_WT(a) ((a) >= PCM_WT_AREA)
+#define PCM_ALL_AREAS 3u                            /* the uploaded areas 0, 1, 2 */
+static uint32_t pcm_st(uint32_t a) { return a < PCM_FLASH_AREAS ? a : PCM_AREA_ST2; }   /* uploaded -> the store's */
 static const struct { uint32_t base, size; } PCM_AREA[PCM_ALL_AREAS] = {
     {0x97000u, 0x9000u},
     {0xCE000u, 0xE000u},
     {0xBC000u, 0x6000u},
-    {0xDE000u, 0x2000u},
 };
 #ifdef PS_NCHUNK                                    /* (the firmware: the preset store comes first; not in the host test) */
 PS_STATIC_ASSERT(0x97000u + 0x9000u <= PS_BASE, "area 0 ends below the preset store");
@@ -53,7 +49,6 @@ PS_STATIC_ASSERT(PS_BASE + PS_NCHUNK * 2u * PS_SECTOR <= 0xCE000u, "area 1 start
 PS_STATIC_ASSERT(0xBC000u == PS_BASE + 14u * 2u * PS_SECTOR && 0xBC000u + 0x6000u == PS_BASE + 17u * 2u * PS_SECTOR &&
                  PS_FIRST_PERF + PS_N_PERF <= 14u && PS_FIRST_PATCH >= 17u, "area 2 is the store's free chunks 14..16");
 #endif
-_Static_assert(WT_AREAS == 2u && 0xDE000u + 0x2000u <= 0xE0000u, "area 3 ends below the update loader's staging");
 _Static_assert(0xCE000u + 0xE000u <= 0xDC000u, "area 1 ends below X0X's panel calibration (OBJ_PANEL)");
 
 static struct {
@@ -64,17 +59,16 @@ static struct {
 static uint8_t pcm_buf[256] __attribute__((aligned(4)));   /* a write's bytes, in RAM for the flash driver */
 
 /* The header CRCs (hcrc) of the images this build ships beside it (src/dsp/pcm_area0.bin, pcm_area1.bin,
- * wt_area2.bin, wt_area3.bin), from build_fm1.py; 0: not known (host builds), that area is only checked for an image */
+ * pcm_area2.bin), from build_fm1.py; 0: not known (host builds), that area is only checked for an image */
 #ifndef PCM_WANT_HCRC0
 #define PCM_WANT_HCRC0 0u
 #define PCM_WANT_HCRC1 0u
 #define PCM_WANT_HCRC2 0u
-#define PCM_WANT_HCRC3 0u
 #endif
-static const uint32_t pcm_want_hcrc[PCM_ALL_AREAS] = {PCM_WANT_HCRC0, PCM_WANT_HCRC1, PCM_WANT_HCRC2, PCM_WANT_HCRC3};
+static const uint32_t pcm_want_hcrc[PCM_ALL_AREAS] = {PCM_WANT_HCRC0, PCM_WANT_HCRC1, PCM_WANT_HCRC2};
 static uint32_t pcm_used(uint32_t a)                /* the area's attached image's bytes (0: none) */
 {
-    return PCM_IS_WT(a) ? wavetable_area_used(a - PCM_WT_AREA) : pcm_area_used(a);
+    return pcm_area_used(pcm_st(a));
 }
 
 enum { PCM_WAVES_OK, PCM_WAVES_MISSING, PCM_WAVES_STALE };
@@ -83,7 +77,7 @@ static uint8_t pcm_waves_state;                     /* at power-on: a firmware i
 
 static int pcm_held(uint32_t area, uint32_t *hcrc)  /* area's image is attached: 1 and its hcrc, else 0 */
 {
-    const uint8_t *h = PCM_XIP(PCM_AREA[area].base) + 28;   /* hcrc: last in both headers */
+    const uint8_t *h = PCM_XIP(PCM_AREA[area].base) + 28;   /* hcrc: last in the header */
     if (!pcm_used(area)) {
         *hcrc = 0;
         return 0;
@@ -94,10 +88,7 @@ static int pcm_held(uint32_t area, uint32_t *hcrc)  /* area's image is attached:
 
 static void pcm_area_attach(uint32_t a)
 {
-    if (PCM_IS_WT(a))
-        wavetable_area_attach(a - PCM_WT_AREA, PCM_XIP(PCM_AREA[a].base), PCM_AREA[a].size);
-    else
-        pcm_store_attach(a, PCM_XIP(PCM_AREA[a].base), PCM_AREA[a].size);
+    pcm_store_attach(pcm_st(a), PCM_XIP(PCM_AREA[a].base), PCM_AREA[a].size);
 }
 
 static void pcm_boot(void)                          /* after ps_load: attach whatever the areas hold */
@@ -115,11 +106,10 @@ static void pcm_boot(void)                          /* after ps_load: attach wha
     }
 }
 
-/* area a's image: its entries (or frames) when it holds, else < 0 (pcm_store_check's reasons) */
+/* area a's image: its entries when it holds, else < 0 (pcm_store_check's reasons) */
 static int pcm_area_check(uint32_t a)
 {
-    const uint8_t *img = PCM_XIP(PCM_AREA[a].base);
-    return PCM_IS_WT(a) ? wavetable_area_check(img, PCM_AREA[a].size) : pcm_store_check(a, img, PCM_AREA[a].size);
+    return pcm_store_check(pcm_st(a), PCM_XIP(PCM_AREA[a].base), PCM_AREA[a].size);
 }
 
 /* 7-bit packed bytes (groups of up to 7, each after their top bits) -> out; their count, or -1 when over max */
@@ -145,10 +135,7 @@ static uint32_t pcm_begin(uint32_t area)
         return 1;
     pcm_up.on = 0;
     syn_lock();
-    if (PCM_IS_WT(area))                            /* nothing may read the area while it changes */
-        wavetable_area_detach(area - PCM_WT_AREA);
-    else
-        pcm_store_detach(area);
+    pcm_store_detach(pcm_st(area));                 /* nothing may read the area while it changes */
     syn_unlock();
     if (!flash_ok || st_erase(PCM_AREA[area].base))
         return 2;
@@ -222,7 +209,7 @@ static int ed_pcm_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
     uint32_t rc, w, i, area, first, n, used;
     switch (cmd) {
     case ED_PCM_BEGIN:
-        area = na ? a[0] : PCM_FLASH_AREAS;
+        area = na ? a[0] : PCM_ALL_AREAS;
         rc = pcm_begin(area);
         ed_b(area);
         ed_b(rc);
@@ -259,17 +246,14 @@ static int ed_pcm_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
             return 1;
         }
         used = pcm_used(area);
-        n = PCM_IS_WT(area) ? (used ? (uint32_t)PCM_XIP(PCM_AREA[area].base)[6] : 0u) : pcm_area_count(area);
+        n = pcm_area_count(pcm_st(area));
         ed_b(n);
         ed_b(PCM_AREA[area].size / 1024u);
         ed_b((PCM_AREA[area].size / 1024u) >> 7);
         ed_b(used);
         ed_b(used >> 7);
         ed_b(used >> 14);
-        if (PCM_IS_WT(area)) {                      /* (a wavetable area: its frames' count, no names) */
-            return 1;
-        }
-        for (w = 0, i = 0; i < area; i++)
+        for (w = 0, i = 0; i < pcm_st(area); i++)
             w += pcm_area_count(i);                 /* the area's first entry in the whole list */
         for (i = first; i < n && i < first + 16u; i++) {
             const PcmEntry *e = pcm_entry(w + i, NULL);

@@ -89,6 +89,12 @@ int16_t osc_render(WavetableOsc *osc);
 /* n samples of osc_render into out (int16 values), the same ones in the same order: the undetuned playhead with its
  * reads held in registers across the block; SPREAD's detuned playheads sample by sample. */
 void osc_render_block(WavetableOsc *osc, int32_t *out, int n);
+/* FM's per-sample render (OSC2), through zero: a negative frequency (Q16 Hz) runs the phase backwards */
+int16_t osc_process_fm_tz(WavetableOsc *osc, int32_t frequency_q16);
+/* the VCO (bank 0) at cycle phase ph, band-limited for `step`, in OSC1's current shape: SUB CURRENT's read */
+int32_t osc_vco_at(const WavetableOsc *o, uint32_t ph, uint32_t step);
+/* the VCO's shape at a scan, for the panel's pictures (no edge fixes) */
+int32_t osc_vco_preview(int morph_q12, uint32_t ph);
 uint32_t mtof_q16(int note_number);
 
 /* Starts every playhead (the undetuned one and SPREAD's four) at one 32-bit cycle phase. */

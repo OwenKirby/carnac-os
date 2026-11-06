@@ -3,10 +3,9 @@
  * an upload through the editor commands attaches and survives a reboot; the waves read back byte for byte; a cut-off
  * upload, a damaged byte, writes out of order or past the area, and images with a bad entry leave the area empty; an
  * upload never writes outside its area; the WAVE entries list in order and their references find their samples (format
- * version 2); then the .syx pcm_store_upload.py makes from gen_pcm_waves.py's area 1 image replays. Areas 2 and 3, the
- * wavetable areas (2026-11-03, wavetables.h wt_area_hdr_t: area 2 bank 0, Foundations, and three frames of the last
- * bank; area 3 three more): they upload, attach and survive a reboot; anything else there leaves their frames where
- * they were (bank 0 on the sine, the others on the linked image); the other banks and the PCM areas never move.
+ * version 2); then the .syx pcm_store_upload.py makes from an area 1 image replays. Area 2 (2026-11-05: PCM, the
+ * store's area 3, where the wavetable frames were from 2026-10-26): it uploads, attaches as PCM_AREA_ST2 and survives
+ * a reboot; an image made for another area, or damaged, is refused.
  *   python src/dsp/gen_pcm_waves.py --images-only
  *   python src/hardware/pcm_store_upload.py syx src/dsp/pcm_area1.bin demo.syx --area 1
  *   gcc -O1 -Wall -Wextra -Isrc -Isrc/dsp -Isrc/hardware src/host/test_pcm_store.c src/dsp/pcm_store.c \
@@ -149,52 +148,10 @@ static const uint8_t *l2d(const PcmEntry *e, uint32_t a)
 static void reboot(void)
 {
     for (uint32_t a = 0; a < PCM_AREAS; a++) pcm_store_detach(a);
-    for (uint32_t s = 0; s < WT_AREAS; s++) wavetable_area_detach(s);
     pcm_boot();
 }
 
-/* ---- areas 2 and 3: wavetable frames */
-extern const uint8_t wavetable_image_host[WT_STORE_IMAGE_LEN];
-extern const uint8_t wt_area2_host[], wt_area3_host[];
-extern const uint32_t wt_area2_host_len, wt_area3_host_len;
-#define SPILL0 (NUM_BANKS * NUM_MORPH_STEPS - WT_SPILL_FRAMES)   /* the first spilled frame's place */
-static const int16_t *linked(uint32_t f)             /* the linked image's frame f (f >= 8) */
-{
-    return (const int16_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF) +
-           (f - WT_BANK_FIRST_IMAGE * NUM_MORPH_STEPS) * WT_FRAME_SAMPLES;
-}
-static int bank0_sine(void)
-{
-    for (int f = 0; f < NUM_MORPH_STEPS; f++)
-        if (wavetable_frame(0, f, 0) != wavetable_sine) return 0;
-    return 1;
-}
-static const int16_t *in_area(uint32_t base, uint32_t i)   /* frame i of the area image at base */
-{
-    return (const int16_t *)(const void *)(nor + base + WT_AREA_HDR_SIZE) + i * WT_FRAME_SAMPLES;
-}
-static int bank0_in_flash(void)
-{
-    for (uint32_t f = 0; f < NUM_MORPH_STEPS; f++)
-        if (wavetable_frames[f] != in_area(0xBC000u, f)) return 0;
-    return 1;
-}
-static int spill_in_flash(int area2, int area3)       /* the spilled frames: in their area, or on the linked image */
-{
-    for (uint32_t k = 0; k < WT_SPILL_FRAMES; k++) {
-        uint32_t f = SPILL0 + k;
-        int a3 = k >= 3u;
-        const int16_t *want = (a3 ? area3 : area2) ? in_area(a3 ? 0xDE000u : 0xBC000u, a3 ? k - 3u : 8u + k) : linked(f);
-        if (wavetable_frames[f] != want) return 0;
-    }
-    return 1;
-}
-static int image_banks_linked(void)
-{
-    for (uint32_t f = WT_BANK_FIRST_IMAGE * NUM_MORPH_STEPS; f < SPILL0; f++)
-        if (wavetable_frames[f] != linked(f)) return 0;
-    return 1;
-}
+/* ---- area 2 (2026-11-05): PCM, the store's area 3 (PCM_AREA_ST2), where Foundations' frames were */
 /* PCM_ID: area a -> held (or -1 when the command is not handled); id_hcrc: the hcrc of that reply */
 static int id_of(uint32_t a)
 {
@@ -209,74 +166,46 @@ static uint32_t id_hcrc(void)
     for (uint32_t i = 0; i < 5u; i++) w |= (uint32_t)reply[2 + i] << (7u * i);
     return w;
 }
-static void put(const uint8_t *src, uint32_t n) { memcpy(img, src, n); img_len = n; }
-static void bank_tests(void)
+static void area2_tests(void)
 {
     uint32_t i;
     memset(nor, 0xFF, sizeof nor);
     reboot();
-    CHECK(bank0_sine() && !wavetable_area_used(0) && !wavetable_area_used(1) && image_banks_linked() &&
-          spill_in_flash(0, 0), "erased areas 2 and 3: bank 0 plays the sine, the rest the linked image");
+    CHECK(!pcm_area_used(PCM_AREA_ST2) && id_of(2) == 0, "erased area 2: nothing held");
     for (i = 0; i < 0x6000u; i++) nor[0xBC000u + i] = (uint8_t)(i * 13u + 1u);   /* old preset chunks */
-    for (i = 0; i < 0x2000u; i++) nor[0xDE000u + i] = (uint8_t)(i * 7u + 3u);    /* X0X's motion object */
     reboot();
-    CHECK(bank0_sine() && spill_in_flash(0, 0), "foreign data in areas 2 and 3: nothing moves");
-
-    put(wt_area2_host, wt_area2_host_len);
-    CHECK(img_len == WT_AREA_HDR_SIZE + 11u * WT_FRAME_SAMPLES * 2u, "area 2's image is 11 frames (%u B)",
-          (unsigned)img_len);
-    for (int at = 0; at <= 88; at += at < 3 ? 1 : at < 80 ? 11 : 4) {  /* cut off up to the header (program 89) */
+    CHECK(!pcm_area_used(PCM_AREA_ST2), "foreign data in area 2: nothing held");
+    make(6, PCM_AREA_ST2);
+    for (int at = 0; at <= 20; at += 4) {           /* cut off part way */
         cut = 0; progs_left = at;
         upload(2);
         cut = 0; progs_left = -1;
         reboot();
-        CHECK(bank0_sine() && spill_in_flash(0, 0), "area 2 upload cut after %d programs: nothing moves", at);
+        CHECK(!pcm_area_used(PCM_AREA_ST2), "area 2 upload cut after %d programs: nothing held", at);
     }
-    CHECK(upload(2) == 0 && reply[1] == 11u, "area 2 uploads (rc 0, 11 frames)");
-    CHECK(bank0_in_flash() && spill_in_flash(1, 0) && wavetable_area_used(0) == wt_area2_host_len &&
-          image_banks_linked(), "bank 0 and three spilled frames read area 2; the other banks stay linked");
-    CHECK(!memcmp(nor + 0xBC000u, wt_area2_host, wt_area2_host_len), "area 2 holds the image");
-    put(wt_area3_host, wt_area3_host_len);
-    CHECK(upload(3) == 0 && reply[1] == 3u && spill_in_flash(1, 1), "area 3 uploads (rc 0, 3 frames)");
-    CHECK(!memcmp(nor + 0xDE000u, wt_area3_host, wt_area3_host_len), "area 3 holds the image");
+    CHECK(upload(2) == 0 && reply[1] == 6u, "area 2 uploads (rc 0, 6 entries)");
+    CHECK(pcm_area_count(PCM_AREA_ST2) == 6 && pcm_area_used(PCM_AREA_ST2) == img_len &&
+          !memcmp(nor + 0xBC000u, img, img_len), "area 2 holds the image as the store's area 3");
+    CHECK(pcm_wave_count() == 2 && pcm_sample(PCM_REF(PCM_AREA_ST2, 1), PCM_LOOP, NULL), "its waves and samples list");
+    CHECK(id_of(2) == 1 && id_hcrc() == ((const PcmHdr *)(const void *)img)->hcrc, "PCM_ID area 2: the image's hcrc");
     reboot();
-    CHECK(bank0_in_flash() && spill_in_flash(1, 1) && image_banks_linked(), "both survive a reboot");
+    CHECK(pcm_area_count(PCM_AREA_ST2) == 6, "area 2 survives a reboot");
     reply_n = 0;
     args[0] = 2; args[1] = 0;
-    CHECK(ed_pcm_handle(ED_PCM_INFO, args, 2) && reply[0] == 4u && reply[1] == 2u && reply[2] == 11u,
-          "PCM_INFO area 2: 4 areas, 11 frames");
-
-    CHECK(id_of(2) == 1 && id_hcrc() == ((const wt_area_hdr_t *)(const void *)wt_area2_host)->hcrc,
-          "PCM_ID area 2: held, the image's hcrc");
-    CHECK(id_of(3) == 1 && id_hcrc() == ((const wt_area_hdr_t *)(const void *)wt_area3_host)->hcrc,
-          "PCM_ID area 3: held, the image's hcrc");
-    CHECK(id_of(4) == 0 && reply_n == 7u, "PCM_ID area 4: not held");
-
-    nor[0xBC000u + wt_area2_host_len - 1u] ^= 0x01u;
+    CHECK(ed_pcm_handle(ED_PCM_INFO, args, 2) && reply[0] == 3u && reply[1] == 2u && reply[2] == 6u,
+          "PCM_INFO area 2: 3 areas, 6 entries");
+    memset(img, 0, sizeof img);
+    make(6, PCM_AREA_ST2);
+    img_len = 0x6001u;
+    CHECK(upload(2) == 4, "an image past area 2's 24 KiB: rc 4");
+    make(6, PCM_AREA_ST2);
+    CHECK(upload(2) == 0, "area 2 again");
+    nor[0xBC000u + img_len - 1u] ^= 0x01u;
     reboot();
-    CHECK(bank0_sine() && spill_in_flash(0, 1), "a flipped data bit in area 2: its frames go back (CRC)");
-    CHECK(id_of(2) == 0 && id_hcrc() == 0, "PCM_ID area 2 after the refused image: not held");
-
+    CHECK(!pcm_area_used(PCM_AREA_ST2) && id_of(2) == 0, "a flipped data bit in area 2: refused (CRC)");
     make(4, 1);
-    CHECK(upload(2) == 5 && reply[1] == 8u + 1u && bank0_sine(), "a PCM image in area 2: refused, the sine");
-    put(wt_area2_host, wt_area2_host_len);
-    ((wt_area_hdr_t *)(void *)img)->tag ^= 1u;
-    ((wt_area_hdr_t *)(void *)img)->hcrc = wavetable_crc32(0, img, WT_AREA_HDR_SIZE - 4u);
-    CHECK(upload(2) == 5 && reply[1] == 8u + 3u && bank0_sine(), "an image of another bank set: refused (reason 3)");
-    put(wt_area2_host, wt_area2_host_len);
-    CHECK(upload(2) == 0 && bank0_in_flash() && spill_in_flash(1, 1), "area 2 again");
-    put(wt_area2_host, wt_area2_host_len);
-    CHECK(upload(3) == 4 && spill_in_flash(1, 0), "area 2's image into area 3: too big (rc 4), area 3 left empty");
-    put(wt_area3_host, wt_area3_host_len);
-    CHECK(upload(3) == 0 && spill_in_flash(1, 1), "area 3 again");
-
-    make(4, 1);
-    CHECK(upload(1) == 0 && pcm_area_count(1) == 4 && bank0_in_flash(), "a PCM upload to area 1 leaves bank 0");
-    CHECK(id_of(1) == 1 && id_hcrc() == ((const PcmHdr *)(const void *)img)->hcrc, "PCM_ID area 1: the PCM image's hcrc");
-    reboot();
-    CHECK(pcm_area_count(1) == 4 && bank0_in_flash() && spill_in_flash(1, 1) && image_banks_linked(),
-          "all after a reboot");
-    CHECK(begin(4) == 1, "no area 4: rc 1");
+    CHECK(upload(1) == 0 && pcm_area_count(1) == 4 && !pcm_area_used(PCM_AREA_ST2), "area 1 leaves area 2 alone");
+    CHECK(begin(3) == 1 && id_of(3) == 0 && reply_n == 7u, "no area 3 to upload since 2026-11-05: rc 1, not held");
 }
 
 /* every entry of img is entry first + i, with the same entry and samples (a LOOP's guard byte too) */
@@ -372,7 +301,7 @@ int main(int argc, char **argv)
         CHECK(pcm_sample(w->u.w.atk_ref, PCM_ONESHOT, &d) == pcm_entry(3, NULL), "area 1's wave: its attack");
         CHECK(!pcm_sample(w->u.w.atk_ref, PCM_LOOP, &d) && !d, "a reference of the wrong kind: none");
         CHECK(!pcm_sample(PCM_REF(1, 9), PCM_LOOP, NULL) && !pcm_sample(PCM_REF(PCM_AREA_FW, 62), PCM_LOOP, NULL) &&
-              !pcm_sample(PCM_REF(PCM_AREAS, 0), PCM_LOOP, NULL),
+              !pcm_sample(PCM_REF(PCM_AREA_ST2, 62), PCM_LOOP, NULL),
               "a reference past the entries or the areas: none");
     }
 
@@ -442,7 +371,7 @@ int main(int argc, char **argv)
         CHECK(pcm_area_count(1) == 0, "%s: area 1 empty after a reboot", bad[i]);
     }
 
-    bank_tests();
+    area2_tests();
 
     /* the tool's own upload */
     if (argc > 2) {
