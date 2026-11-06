@@ -141,6 +141,22 @@ def strings_ens(rng, T=0.35, L=0.50, xf=0.20):
     return [whole("STR ENS", 0, a, T, L, xf, False), whole("STR ENS", 1, b, T, L, xf, False)]
 
 
+
+def str_solstice(ns, real_b=False):
+    """STR ENS after SOLSTICE (user, 2026-11-06: the ensemble wasn't warm and lush enough, its loop too short: "look
+    back at SOLSTICE"). A WARM: SOLSTICE's warm pad as liked (seed 777: six detuned string players with body formants,
+    a soft 'oh' choir under them, a root swell), a 1.0 s loop on its own grid. B: SOLSTICE's same players bowed
+    harder (real_b False), or the real section (String Ens + String Pad, the old STR ENS A) on a 0.9 s loop (real_b)."""
+    def fn(rng):
+        a, b = ns["solstice_strings"](np.random.default_rng(777))
+        if not real_b:
+            return [a, b]
+        T, L, xf = 0.40, 0.90, 0.20
+        ens = layer("reviewed/String Ens.wav", 0, 60, shift=-3)        # rooted on SOLSTICE's A3
+        pad = layer("reviewed/String Pad.wav", 0, 60, skip=0.3, shift=-3)
+        return [a, whole("STR ENS", 1, mix([(ens, 0, None), (pad, -5, fade_in(0.0, 0.2))], T + L + 0.2), T, L, xf, False)]
+    return fn
+
 def tilt(y, db_per_oct, f0):
     """zero-phase tilt of db_per_oct per octave above f0"""
     X = np.fft.rfft(y); f = np.fft.rfftfreq(len(y), 1 / SR)
@@ -414,14 +430,14 @@ def bell_fit(r):
 
 
 BATCHES["fit"] = [   # the whole bank, lean (2026-11-06): the user's picks at fitted lengths and rates
-    ("CHOIR", lambda r: sampled.classic_choir(r, T=0.30, L=0.65, xf=0.20), 48, CH(48), SUST, (11025, 13000)),
+    ("CHOIR", lambda r: sampled.classic_choir(r, T=0.30, L=0.65, xf=0.20), 48, CH(48), SUST, (7000, 13000)),   # A ooh: -34 dB over 3.15 kHz (2026-11-06)
     ("SPIRIT VOX", lambda r: sampled.spirit_vox(r, T=0.35, L=0.65, xf=0.20), 48, CH(48), SUST, (11025, 13000)),
     ("HOARFROST", lambda r: sampled.hoarfrost(r, T=0.30, L=0.65, xf=0.20), 60, CH(60), SUST, (12000, 13000)),
     ("PAN FLUTE", lambda r: pan1(r, T=0.25, L=0.55, xf=0.18), 60, [60, 64, 67, 72], SUST, (11025, 13000)),
-    ("STR ENS", strings_ens, 60, CH(60), SUST, (11025, 13000)),         # was STR DRONE (user, 2026-11-06: 90s ensemble)
+    ("STR ENS", "SOL", None, None, None, (8000, 10000) if os.environ.get("STRV", "1") == "1" else (8000, 12000)),   # SOLSTICE strings (user, 2026-11-06); was strings_ens
     ("BELL", lambda r: bell_fit(r), 60, [60, 67, 72, 76], DEC, (13000, 13000)),
     ("RAINSTICK", lambda r: rainstick(r, T=0.25, LA=0.40, LB=0.45, xf=0.10), 60, [60, 60, 62, 60], DEC, (12000, 12000)),   # B 12 kHz: 0.7 KB for the fit
-    ("HORNS", "SYN", None, None, None, (8000, 13000)),
+    ("HORNS", "SYN", None, None, None, (6000, 13000)),     # A soft: 6 kHz (2026-11-06)
     ("SINGING STN", "SING4", None, None, None, (11025, 11025)),
     # CAIRN SPIRIT dropped (user, 2026-11-06, budget): rebuild it as a factory perf, SPIRIT VOX + PAN FLUTE in DUAL
     ("LORE", lambda r: chimes(r, T=0.25, L=0.60), 60, [60, 67, 72], SUST, (11025, 12000)),
@@ -445,6 +461,9 @@ def bank_list(L_def=(), batch=None, ns=None):
         RATES[name] = rates
         if fn == "SYN":
             out.append(syn[name])
+        elif fn == "SOL":
+            e = syn["SOLSTICE"]
+            out.append((name, str_solstice(ns, os.environ.get("STRV", "1") == "2")) + tuple(e[2:4]) + (None,) + tuple(e[5:]))
         elif fn == "SING4":
             e = syn["SINGING STN"]
             out.append((name,) + (singing_stone4(ns),) + tuple(e[2:]))
