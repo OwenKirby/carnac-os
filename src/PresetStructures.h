@@ -66,10 +66,15 @@ enum { FLT_SH2, FLT_MULTI, FLT_MS20, FLT_FORMANT, FLT_COUNT };  /* filter circui
         * 2026-10-21 (FREC_VER_ENGINE 9): the SH-2 replaced the SVF (0; old SVF patches load as MULTI, engine_filters_from_v8)
         * and MS-20 LOW (2) / HIGH (3) became one MS-20; FORMANT moved from 4 to 3 */
 PS_STATIC_ASSERT(FLT_MULTI == 1, "filter_feedback_q12 (dsp/filter.h) tests flavour 1 for MULTI");
-/* OSCMIXER noise colour, a morph 0..127: white at 0, pink at 64, brown at 127, crossfaded in between */
+/* OSCMIXER noise colour, a morph 0..127, neighbours crossfaded (2026-11-06): white 0, pink 16, brown 32, then the
+ * resonance, a sine on an overtone of OSC1 (HARMONIC) ringing in the noise: brown ringing it 56, the voice's own band
+ * ~30 Hz wide ringing it 80, the band narrowing to ~4 Hz at 127 (almost a tone, slowly wavering) */
 #define NOISE_WHITE 0u
-#define NOISE_PINK 64u
-#define NOISE_BROWN 127u
+#define NOISE_PINK 16u
+#define NOISE_BROWN 32u
+#define NOISE_RING 56u
+#define NOISE_BAND 80u
+#define NOISE_AIR 127u
 enum {                               /* voice architecture, per patch: the signal path every voice runs (4.0) */
     VARCH_SINGLE,                    /* OSC1 -> FILTER1. Not offered since 2026-10-26: loads as SPREAD at SPREAD 0, the same path
                                       * (varch_single_to_spread) */
@@ -345,7 +350,7 @@ typedef struct {                     /* OSCMIXER; which knob a field sits on dep
     uint8_t sub_waveform;            /* SUBWAVE_* */
     uint8_t noise_level;             /* knob 4 (knob 2 SINGLE / SPREAD), every architecture */
     /* noise generator (4.1) */
-    uint8_t noise_colour;            /* morph: NOISE_WHITE 0 .. NOISE_PINK 64 .. NOISE_BROWN 127, knob 1 SINGLE */
+    uint8_t noise_colour;            /* morph: WHITE 0 .. PINK 16 .. BROWN 32 .. the resonance .. AIR 127 (NOISE_*) */
     uint8_t noise_mod_src;           /* MSRC_* (default MODWHEEL): moves the noise level */
     uint8_t noise_mod_amt;           /* (bip) */
     /* BINAURAL: how the right ear's oscillator differs from the left's */
@@ -491,7 +496,7 @@ typedef struct {
     uint8_t amount;                  /* (bip) */
 } ModSendParams;
 
-#define ENGINE_RESERVED 4u           /* spare patch bytes (v11): stored, 0 until a later feature takes one (so 0 must
+#define ENGINE_RESERVED 1u           /* spare patch bytes (v11): stored, 0 until a later feature takes one (so 0 must
                                       * mean that feature's off / default) */
 
 /* one layer's patch: what PATCH_PRESET saves and LAYER n PATCH MEM LINK loads */
@@ -518,6 +523,10 @@ typedef struct {
                                       * sets the depth (as AMP MOD) */
     /* v11 (2026-11-03): */
     MfxParams mfx;                   /* the layer's MFX (dsp/mfx.c plays engine_state[layer].mfx) */
+    /* 2026-11-06: three of the four reserved bytes (nothing moved; 0 is each one's old behaviour) */
+    uint8_t noise_harmonic;          /* HARMONIC 0..127: the noise resonance on overtone 1..8 of OSC1, a stop on each */
+    uint8_t harm_mod_src;            /* MSRC_*: moves HARMONIC (fine, so a slow LFO glides between the stops) */
+    uint8_t harm_mod_amt;            /* (bip) */
     uint8_t reserved[ENGINE_RESERVED];
     /* 2026-11-03, at the end (flash_record.h ENG_W): a v12 patch saved before reads them as free */
     ModSendParams send[NMODSEND];    /* the MOD SENDS */

@@ -419,7 +419,9 @@ static void refresh_osc_mixer(int l) {
     x->sub_waveform = clampi(m->sub_waveform, 0, SUBWAVE_COUNT - 1);
     x->noise_level = m->noise_level;
     x->noise_colour = clampi(m->noise_colour, 0, 127);
+    x->noise_harmonic = clampi(engine_state[l].noise_harmonic, 0, 127);
 }
+PS_STATIC_ASSERT(SYNTH_CTRL_SHIFT == 4u, "oscmixer.c's noise band steps once a 16-sample tick (NZ_TICK_HZ, nz_d)");
 
 /* Knob smoothing (2026-10-21). The knobs are encoders a step at a time, and a cutoff step is 89 cents: turned slowly,
  * a filter sweep stepped audibly. CUTOFF, RESONANCE and MORPH of both filters and both oscillators' SCAN glide to the
@@ -729,9 +731,12 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     if (arch == VARCH_SPREAD || arch == VARCH_DUAL_SPREAD)
         spread = clampi(mx->spread + ((resolve_source(&c, mx->spread_mod_src, 0) * mx->spread_mod_amt +
                                        send_sum(&c, MDST_SPREAD, 2)) >> 15), 0, 127);
+    int32_t harm_off_q8 = e->harm_mod_amt != BIPOLAR_CENTER ?   /* HARMONIC's mod, fine: 1/256 of a knob step */
+                          (resolve_source(&c, e->harm_mod_src, 0) * bip(e->harm_mod_amt)) >> 7 : 0;
     osc_mixer_prepare(&voice->mix, &osc_mixer[voice->layer], freq1_q16, freq2_q16,
-                      (int)balance_off, (int)xmod_off, (int)noise_off, (int)colour_off);
+                      (int)balance_off, (int)xmod_off, (int)noise_off, (int)colour_off, (int)harm_off_q8);
     osc_prepare(&voice->osc1, freq1_q16, (int)spread);
+    osc_mixer_whistle_step(&voice->mix, voice->osc1.center_step);   /* the resonance: HARMONIC x OSC1's pitch */
     if (varch_uses_osc2(arch))
         osc_prepare(&voice->osc2, freq2_q16, arch == VARCH_DUAL_SPREAD ? (int)spread : 0);
     SPROF_LAP(SPROF_C_OSC);
@@ -1049,8 +1054,9 @@ static void render_binaural(SynthVoiceNode *v, float *mix, int n) {
         l[i] += sub[i];
         r[i] += sub[i];
     }
-    osc_mixer_noise_block(&v->mix, 0, v->noise_at, l, n);
+    osc_mixer_noise_block(&v->mix, 0, v->noise_at, l, n);   /* each ear its own band, one resonance phase for both */
     osc_mixer_noise_block(&v->mix, 1, v->noise_at, r, n);
+    osc_mixer_whistle_advance(&v->mix, n);
     q15_to_float(l, fl, n);
     q15_to_float(r, fr, n);
     filter_core_render_block(&v->synth_filters.core[0], fl, fl, n);

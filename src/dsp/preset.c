@@ -63,6 +63,9 @@ void engine_defaults(EngineState *e)
     e->oscmix.bin_scan_offset = BIPOLAR_CENTER;
     e->oscmix.noise_col_mod_src = MSRC_MODWHEEL;
     e->oscmix.noise_col_mod_amt = BIPOLAR_CENTER;
+    e->noise_harmonic = 0;               /* the resonance on the note itself */
+    e->harm_mod_src = MSRC_MODWHEEL;
+    e->harm_mod_amt = BIPOLAR_CENTER;
     e->oscmix.atk_sample = 0;            /* STRIKE: BONE CHIFF */
     e->oscmix.atk_level = ATK_LEVEL_DEFAULT;
     e->oscmix.atk_tune = BIPOLAR_CENTER;

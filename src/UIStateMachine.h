@@ -441,6 +441,8 @@ uint8_t ui_sm_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8_t mo
  * are skipped by their section button; landing on one (an architecture or focus change) moves to the section's
  * first page. OSC2: DUAL OSC / STACK. FILTER2: DUAL FILTER / STACK. FILTER MIXER: DUAL FILTER / STACK / BINAURAL. */
 uint8_t ui_sm_page_visible(const UIStateMachine *sm, uint8_t page, uint8_t layer);
+/* 1 when OSC2's place shows the NOISE page (the layer has one oscillator, 2026-11-06) */
+uint8_t ui_sm_noise_page(const UIStateMachine *sm, uint8_t page, uint8_t layer);
 /* the voices a layer may sound now (PresetStructures.h layer_voice_limit): the HOME page's MAX VOICES */
 uint8_t ui_sm_layer_voices(const UIStateMachine *sm, uint8_t layer);
 const char *ui_sm_arch_name(uint8_t arch);                         /* "SINGLE" .. "BINAURAL" */

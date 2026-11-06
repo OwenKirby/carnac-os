@@ -188,9 +188,11 @@ static const UiRow OSC_ROWS[] = {
 };
 /* OSCMIXER (4.1): a parameter on one of the architecture's knobs (OSCMIX_KNOBS) has no row there. Balance and
  * cross-mod need OSC2 (STACK has XMOD TYPE on knob 1), SPREAD has its source row (spread and its amount are knobs),
- * BINAURAL adds the right ear's scan offset. The noise generator and the sub show everywhere; SINGLE has the noise
- * colour and the sub octave on knobs. */
-#define A_NOT_SINGLE ((uint16_t)(VARCH_ALL & ~(VARCH_BIT(VARCH_SINGLE) | VARCH_BIT(VARCH_STRIKE))))   /* NOISE COLOUR: a knob in both */
+ * BINAURAL adds the right ear's scan offset. The noise shows here only with two oscillators: with one it has the NOISE
+ * page (2026-11-06, in OSC2's place), and SUB OCTAVE takes the noise's knob. */
+#define A_OSC2 ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL) | A(DUAL_SPREAD)))   /* the architectures with OSC2 */
+/* HARMONIC and its mod live at the patch's end (EngineState.noise_harmonic): an offset from the OSCMIXER block */
+#define HOFS(m) ((uint8_t)(offsetof(EngineState, m) - offsetof(EngineState, oscmix)))
 static const UiRow OSCMIX_ROWS[] = {
     {"MIX MOD SRC", OFS(OscMixerParams, mix_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_OSC) | A(FULL) | A(DUAL_SPREAD)},
     {"MIX MOD AMT", OFS(OscMixerParams, mix_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(FULL) | A(DUAL_SPREAD)},
@@ -198,15 +200,26 @@ static const UiRow OSCMIX_ROWS[] = {
     {"XMOD TYPE", OFS(OscMixerParams, xmod_type), 0, XMOD_COUNT - 1, RK_BYTE, 0, XMOD_NAMES, A(DUAL_OSC) | A(FULL)},
     {"XMOD MOD AMT", OFS(OscMixerParams, xmod_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(STACK) | A(FULL)},
     {"SPR MOD SRC", OFS(OscMixerParams, spread_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(SPREAD) | A(DUAL_SPREAD)},
-    {"NOISE COLOUR", OFS(OscMixerParams, noise_colour), 0, VAL_MAX, RK_BYTE, 0, NULL, A_NOT_SINGLE},
+    {"NOISE COLOUR", OFS(OscMixerParams, noise_colour), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},
+    {"COL MOD SRC", OFS(OscMixerParams, noise_col_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_OSC2},
+    {"COL MOD AMT", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
+    {"HARMONIC", HOFS(noise_harmonic), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},
+    {"HARM MOD SRC", HOFS(harm_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_OSC2},
+    {"HARM MOD AMT", HOFS(harm_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
+    {"NOISE MOD SRC", OFS(OscMixerParams, noise_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_OSC2},
+    {"NOISE MOD AMT", OFS(OscMixerParams, noise_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
+    {"R SCAN OFFSET", OFS(OscMixerParams, bin_scan_offset), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A(BINAURAL)},
+    {"SUB OCTAVE", OFS(OscMixerParams, sub_octave), 0, SUBOCT_COUNT - 1, RK_BYTE, 0, SUBOCT_NAMES, A_OSC2},
+    {"SUB WAVE", OFS(OscMixerParams, sub_waveform), 0, SUBWAVE_COUNT - 1, RK_BYTE, 0, SUBWAVE_NAMES, A_ALL},
+};
+/* NOISE (2026-11-06): with one oscillator, in OSC2's place. COLOUR, HARMONIC, the level and COL MOD AMT on the
+ * knobs; the sources and the other two amounts here. Its block is the OSCMIXER's (NOISE_PAGE_DEF). */
+static const UiRow NOISE_ROWS[] = {
     {"COL MOD SRC", OFS(OscMixerParams, noise_col_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"COL MOD AMT", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    {"HARM MOD SRC", HOFS(harm_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
+    {"HARM MOD AMT", HOFS(harm_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
     {"NOISE MOD SRC", OFS(OscMixerParams, noise_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"NOISE MOD AMT", OFS(OscMixerParams, noise_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
-    {"R SCAN OFFSET", OFS(OscMixerParams, bin_scan_offset), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A(BINAURAL)},
-    {"SUB OCTAVE", OFS(OscMixerParams, sub_octave), 0, SUBOCT_COUNT - 1, RK_BYTE, 0, SUBOCT_NAMES,
-     (uint16_t)(VARCH_ALL & ~VARCH_BIT(VARCH_SINGLE))},
-    {"SUB WAVE", OFS(OscMixerParams, sub_waveform), 0, SUBWAVE_COUNT - 1, RK_BYTE, 0, SUBWAVE_NAMES, A_ALL},
 };
 /* FILTER1 / FILTER2 (4.2): DRIVE first (2026-10-21), then the circuit and KEY TRACK; the type morph's own mod source
  * and amount show in every architecture. KEY TRACK lives at the patch's end (EngineState.filter_key_track), so each
@@ -524,7 +537,7 @@ static const uint8_t SECTION_FIRST[BTN_COUNT] = {
     UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ
 };
 static const uint8_t SECTION_COUNT[BTN_COUNT] = {
-    3, 3, 3, 3, 2, 3, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* FX: OSC1, OSC2, OSCMIX (ATTACK went with STRIKE: it was 4,
+    3, 3, 3, 3, 2, 3, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* FX: OSC1, OSC2 / NOISE, OSCMIX (ATTACK went with STRIKE: it was 4,
                                                            * and the 4th press landed on FILTER1, 2026-11-05). EDIT:
                                                            * MOD, MFX. GLO: AMP, FX, MIX (2026-11-03). HOME: LAYER,
                                                            * ZONES, the browser, GLOBAL */
@@ -533,6 +546,8 @@ static const uint8_t SECTION_COUNT[BTN_COUNT] = {
 PS_STATIC_ASSERT(UIPAGE_OSC1 + 3 == UIPAGE_FILTER1 && UIPAGE_FILTER1 + 3 == UIPAGE_ENV1 &&
                  UIPAGE_ENV1 + 3 == UIPAGE_LFO1 && UIPAGE_LFO1 + 3 == UIPAGE_MOD && UIPAGE_MOD + 2 == UIPAGE_AMP &&
                  UIPAGE_AMP + 3 == UIPAGE_HOME1, "SECTION_COUNT: a section's presses stay inside its own pages");
+/* the NOISE page: OSC2's place with one oscillator, the OSCMIXER's block */
+static const UiPage NOISE_PAGE_DEF = SYNTH(NOISE_ROWS, NROWS(NOISE_ROWS), oscmix, 0, OscMixerParams);
 
 /* -------------------------------------------------------- knob table --- */
 /* 2.2: the four knobs of each page. offset is in the page's data block (as the rows' offsets are), except HOME's
@@ -561,25 +576,32 @@ static const UiKnob OSC_KNOBS_SCAN[4] = {   /* SINGLE / SPREAD / STRIKE: the sca
     KOSC(scan, "WAVE SCAN", UIKNOB_RAW), KOSC(octave, "OCTAVE", UIKNOB_OCT),
     KOSC(scan_mod_amt, "SCAN AMT", UIKNOB_RAW), KOSC(pitch_mod_amt, "PITCH MOD", UIKNOB_RAW),
 };
-/* OSCMIXER by architecture. SINGLE: the noise colour and level, the sub's octave and level. SPREAD: spread, noise, sub, spread mod. STACK: the cross-mod type and amount, sub, noise. The others: knob 3 the sub, knob 4 the noise,
- * knobs 1 / 2 need OSC2 (BINAURAL reuses them for the right ear); with no OSC2 they are greyed. */
+/* OSCMIXER by architecture. With one oscillator the noise has its own page, so SUB OCTAVE has the noise's knob:
+ * SPREAD: spread, sub octave, sub, spread mod; DUAL FILTER / BINAURAL: knob 3 the sub, knob 4 its octave. STACK: the
+ * cross-mod type and amount, sub, noise. The others: knob 3 the sub, knob 4 the noise; knobs 1 / 2 need OSC2 (BINAURAL
+ * reuses them for the right ear); with no OSC2 they are greyed. */
 static const UiKnob OSCMIX_KNOBS[VARCH_COUNT][4] = {
-    {KMIX(noise_colour, "NOISE COLOUR", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW),
-     KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT), KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW)},    /* SINGLE */
+    {KNONE, KNONE, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT)},
+                                                                                                                /* SINGLE */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* DUAL OSC */
-    {KMIX(spread, "SPREAD", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW),
+    {KMIX(spread, "SPREAD", UIKNOB_RAW), KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(spread_mod_amt, "SPREAD MOD", UIKNOB_RAW)},                /* SPREAD */
-    {KNONE, KNONE, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},           /* DUAL FILTER */
+    {KNONE, KNONE, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT)},
+                                                                                                                /* DUAL FILTER */
     {KMIXL(xmod_type, "XMOD TYPE", XMOD_NAMES, XMOD_COUNT), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* STACK */
     {KMIX(bin_mod_phase, "OSC PHASE", UIKNOB_RAW), KMIX(bin_beat, "BEAT HZ", UIKNOB_RAW),
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* BINAURAL */
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT)},  /* BINAURAL */
     {KNONE, KNONE, KNONE, KNONE},                                                                               /* STRIKE (retired) */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* FULL */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(spread, "SPREAD", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* DUAL SPREAD */
+};
+static const UiKnob NOISE_KNOBS[4] = {     /* the NOISE page (2026-11-06) */
+    KMIX(noise_colour, "COLOUR", UIKNOB_RAW), UIK("HARMONIC", HOFS(noise_harmonic), UIKNOB_RAW),
+    KMIX(noise_level, "NOISE", UIKNOB_RAW), KMIX(noise_col_mod_amt, "COL MOD", UIKNOB_BIP),
 };
 static const UiKnob FILTER_KNOBS[4] = {
     KFLT(morph, "TYPE MORPH", UIKNOB_RAW), KFLT(cutoff, "CUTOFF", UIKNOB_RAW),
@@ -727,14 +749,25 @@ uint8_t ui_sm_key_channel(const UIStateMachine *sm)
     return (uint8_t)(sm->perf->midi_ch[l] & 0x0Fu);
 }
 
-static const UiPage *ui_cur_page(const UIStateMachine *sm) { return &UI_PAGES[sm->page]; }
-
 static SequencerLane *cur_lane(const UIStateMachine *sm) { return &sm->lanes[sm->s.active_seq_lane]; }
 
 static uint8_t layer_arch(const UIStateMachine *sm, uint8_t layer)
 {
     return varch_of(sm->engine[layer < NLAYER ? layer : 0u]);
 }
+
+uint8_t ui_sm_noise_page(const UIStateMachine *sm, uint8_t page, uint8_t layer)
+{
+    return (uint8_t)(page == UIPAGE_OSC2 && !varch_uses_osc2(layer_arch(sm, layer)));
+}
+
+/* a page's rows and block: OSC2's place is the NOISE page while the layer has one oscillator */
+static const UiPage *page_def(const UIStateMachine *sm, uint8_t page, uint8_t layer)
+{
+    return ui_sm_noise_page(sm, page, layer) ? &NOISE_PAGE_DEF : &UI_PAGES[page];
+}
+
+static const UiPage *ui_cur_page(const UIStateMachine *sm) { return page_def(sm, sm->page, sm->s.active_synth_layer); }
 
 /* a row shows when the page is not a sound design page, or the focused layer's architecture uses it (a MOD page:
  * every destination the architecture has) */
@@ -2604,7 +2637,7 @@ uint8_t ui_sm_page_visible(const UIStateMachine *sm, uint8_t page, uint8_t layer
 {
     uint8_t a = layer_arch(sm, layer);
     switch (page) {
-    case UIPAGE_OSC2: return varch_uses_osc2(a);
+    case UIPAGE_OSC2: (void)a; return 1u;                         /* OSC2, or NOISE with one oscillator */
     case UIPAGE_FILTER2: return varch_uses_filter2(a);
     case UIPAGE_FLTMIX: return varch_uses_fltmix(a);
     case UIPAGE_HOME1: return (uint8_t)(layer == 0u);              /* one HOME page: the focused layer's */
@@ -2640,7 +2673,8 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     if (knob < 4u && page < UIPAGE_COUNT && ui_sm_page_visible(sm, page, layer)) {
         switch (page) {
         case UIPAGE_OSC1: case UIPAGE_OSC2:
-            k = (VARCH_BIT(a) & A_SCANKNOB) != 0u ? &OSC_KNOBS_SCAN[knob] : &OSC_KNOBS[knob];
+            k = page == UIPAGE_OSC2 && !varch_uses_osc2(a) ? &NOISE_KNOBS[knob] :
+                (VARCH_BIT(a) & A_SCANKNOB) != 0u ? &OSC_KNOBS_SCAN[knob] : &OSC_KNOBS[knob];
             break;
         case UIPAGE_OSCMIX: k = &OSCMIX_KNOBS[a][knob]; break;
         case UIPAGE_FILTER1: case UIPAGE_FILTER2: k = &FILTER_KNOBS[knob]; break;
@@ -2718,7 +2752,7 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     else if (page == UIPAGE_MOD)
         block = (uint8_t *)&sm->engine[layer]->mod[sm->mod_slot < NMODSLOT ? sm->mod_slot : 0u];
     else
-        block = page_block_for(sm, &UI_PAGES[page], layer);
+        block = page_block_for(sm, page_def(sm, page, layer), layer);
     return block ? block + k->offset : 0;
 }
 

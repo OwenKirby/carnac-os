@@ -20,8 +20,9 @@ typedef struct {
     int sub_level;     /* 0..127 sub-oscillator level (knob 3) */
     int sub_shift;     /* octaves below OSC1: 1 (-1 oct) or 2 (-2 octaves) */
     int sub_waveform;  /* SUBWAVE_*: sine (bank 0 frame 0), square, or OSC1's current bank and morph frame */
-    int noise_level;   /* 0..127 noise generator level (knob 4; knob 2 in SINGLE and SPREAD) */
-    int noise_colour;  /* 0..127 colour morph: white 0, pink 64, brown 127 (NOISE_*) */
+    int noise_level;   /* 0..127 noise generator level */
+    int noise_colour;  /* 0..127 colour: white 0, pink 16, brown 32, then the resonance to 127 (NOISE_*) */
+    int noise_harmonic;   /* 0..127 HARMONIC: the whistle on overtone 1..8 of OSC1, stops on each (NOISE page) */
 } OscillatorMixer;
 
 /* The noise generator, shared (2026-10-25): one per ear for the whole synth, as on the Juno or the Prophet, not one per
@@ -29,7 +30,11 @@ typedef struct {
  * colours at its own frames (at = the voice's first frame in the pass) and blends them by its own colour morph and
  * level, so the colour and level modulation stay per voice. Ear 1 is BINAURAL's right ear, so the ears decorrelate.
  * The per-voice generators cost ~1.2 points a voice on the FM1 (NEWGRANGE DAWN, noise 8, 6 voices: 7 points).
- * b0..b2 the pink filter's poles, b3 the brown integrator, and the white-noise LCG. */
+ * b0..b2 the pink filter's poles, b3 the brown integrator, and the white-noise LCG.
+ *
+ * The resonance (2026-11-06): past brown the noise rings a sine on an overtone of OSC1 (HARMONIC), and the band around
+ * it narrows from ~30 Hz to ~4 Hz as COLOUR rises. That band is so slow that each voice makes its own at the control
+ * tick, joined sample to sample by a straight line: every note of a chord wavers on its own, for an add a sample. */
 #define NOISE_PASS_FRAMES 128u
 typedef struct {
     int32_t b0, b1, b2, b3;
@@ -59,17 +64,35 @@ typedef struct {
     uint8_t xmod_type;                      /* OSCMIX_XMOD_* */
     uint8_t sub_waveform;                   /* SUBWAVE_* */
     uint8_t sub_level;                      /* the sub's mip level */
-    uint8_t noise_seg;                      /* colour morph segment: 0 white -> pink, 1 pink -> brown */
-    uint16_t noise_t_q8;                    /* .. and the position in it, 0..256 (256 only at brown) */
+    uint8_t noise_seg;                      /* colour segment: 0 white -> pink, 1 pink -> brown, 2 brown -> brown
+                                             * ringing the sine, 3 -> the voice's band ringing it, 4 the band narrowing */
+    uint16_t noise_t_q8;                    /* .. and the position in it, 0..256 */
+    /* the resonance (2026-11-06), the voice's own: */
+    uint32_t wh_phase, wh_step;             /* the sine's phase, and its step: HARMONIC x OSC1's (osc_mixer_whistle_step) */
+    float wh_ratio;                         /* HARMONIC as a ratio 1..8, gliding ~20 ms to where the knob sets it */
+    float nz_a[2], nz_b[2];                 /* the band, each ear: its two one-poles, run at the control tick */
+    int32_t nz_cur[2], nz_d[2];             /* .. its value x16 now, and its step a sample toward the tick's new value */
+    float nz_g, nz_gain;                    /* .. the poles' coefficient, and the gain that holds its level as it narrows */
+    uint32_t nz_seed;                       /* .. its white noise (seeded by voice, osc_mixer_voice_init) */
+    int16_t nz_col;                         /* the COLOUR nz_g / nz_gain are for, + 1 (0: none yet) */
 } OscMixVoice;
+
+/* a voice's own noise and whistle at start-up, seeded by its index (deterministic, whichever core renders it) */
+void osc_mixer_voice_init(OscMixVoice *mv, unsigned voice);
 
 /* Control rate: one voice's mixer settings from the layer's knobs and the voice's pitch. The oscillators' own steps
  * are osc_prepare's job (the voice decides each one's spread).
  *   freq1_q16 / freq2_q16 : each oscillator's own pitch, Hz in 16.16 (the sub follows freq1)
  *   balance_offset, xmod_offset, noise_offset, colour_offset : modulation offsets in 0..127 knob units
- *     (noise_offset moves the noise level, colour_offset the colour morph) */
+ *     (noise_offset moves the noise level, colour_offset the colour morph)
+ *   harm_offset_q8 : HARMONIC's modulation in 1/256 knob units (fine, so a slow sweep glides) */
 void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t freq1_q16, uint32_t freq2_q16,
-                       int balance_offset, int xmod_offset, int noise_offset, int colour_offset);
+                       int balance_offset, int xmod_offset, int noise_offset, int colour_offset, int harm_offset_q8);
+/* HARMONIC (0..127, fractional with its mod) to the resonance's ratio 1..8: a stop on each overtone (a third of a
+ * span holds it), a smoothstep between (the NOISE page draws its stones from it too) */
+float osc_mixer_harm_ratio(float h);
+/* after osc_prepare: the whistle's step from OSC1's (its undetuned playhead) */
+void osc_mixer_whistle_step(OscMixVoice *mv, uint32_t osc1_step);
 
 /* Audio rate: OSC2's sample, cross-modulated by OSC1's sample wave1_q15 (FM / AM / RING / PM by xmod_type). */
 /* OSC2 for a block against OSC1's samples w1, into w2: osc_mixer_osc2 sample by sample for a bank; a PCM wave as a
@@ -78,22 +101,23 @@ void osc_mixer_osc2_block(const OscMixVoice *mv, const int32_t *w1, WavetableOsc
 int16_t osc_mixer_osc2(const OscMixVoice *mv, int16_t wave1_q15, WavetableOsc *osc2);
 
 /* Audio rate: the sub-oscillator (following OSC1) and the noise generator at half weight each, Q15, unclamped.
- * sub_phase is the voice's 32-bit sub-oscillator cycle phase, advanced here. */
-int32_t osc_mixer_extras(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, int at);
+ * sub_phase is the voice's 32-bit sub-oscillator cycle phase, advanced here, as the whistle's is. */
+int32_t osc_mixer_extras(OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, int at);
 
 /* Audio rate, at full weight: the sub-oscillator alone (advances sub_phase), and the noise generator alone.
- * BINAURAL uses them separately: one sub for both ears, each ear its own noise (ear 0 / 1). at: the pass frame. */
+ * BINAURAL uses them separately: one sub for both ears, each ear its own noise (ear 0 / 1). at: the pass frame.
+ * The noise reads the whistle's phase without moving it: osc_mixer_whistle_advance moves it once for both ears. */
 int32_t osc_mixer_sub(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase);
-int32_t osc_mixer_noise(const OscMixVoice *mv, int ear, int at);
+int32_t osc_mixer_noise(OscMixVoice *mv, int ear, int at);
+static inline void osc_mixer_whistle_advance(OscMixVoice *mv, int n) { mv->wh_phase += mv->wh_step * (uint32_t)n; }
 /* Blocks: n samples of the sub (osc_mixer_sub >> 1) / the noise (osc_mixer_noise >> 1) added into acc, the same values
- * in the same order; osc_mixer_extras_block is both (the sum osc_mixer_extras gives). */
+ * in the same order; osc_mixer_extras_block is both (the sum osc_mixer_extras gives) and moves the whistle on. */
 void osc_mixer_sub_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, int32_t *acc, int n);
-void osc_mixer_noise_block(const OscMixVoice *mv, int ear, int at, int32_t *acc, int n);
-void osc_mixer_extras_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, int at,
+void osc_mixer_noise_block(OscMixVoice *mv, int ear, int at, int32_t *acc, int n);
+void osc_mixer_extras_block(OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, int at,
                             int32_t *acc, int n);
 
 /* Audio rate, DUAL OSC: OSC1 + cross-modulated OSC2 by balance, plus sub and noise, to one Q15 mono sample. */
-int16_t osc_mixer_render(const OscMixVoice *mv, WavetableOsc *osc1, WavetableOsc *osc2, uint32_t *sub_phase,
-                         int at);
+int16_t osc_mixer_render(OscMixVoice *mv, WavetableOsc *osc1, WavetableOsc *osc2, uint32_t *sub_phase, int at);
 
 #endif

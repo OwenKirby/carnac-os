@@ -129,11 +129,12 @@ PS_STATIC_ASSERT(EW_BYTES(EW_OSC) == sizeof(OscParams) && EW_BYTES(EW_OSCMIX) ==
 PS_STATIC_ASSERT(MSRC_COUNT <= 32u && XMOD_COUNT <= 8u && SUBOCT_COUNT <= 4u && SUBWAVE_COUNT <= 8u && ATK_COUNT <= 64u &&
                  ATKTRK_COUNT <= 4u && FLT_COUNT <= 8u && MFN_COUNT <= 16u && DRIVE_COUNT <= 8u && MFX_COUNT <= 32u &&
                  VARCH_COUNT <= 16u && CHAR_MAP_LEN <= 64u && NOSC == 2u && NFILTER == 2u && NENV == 3u && NLFO == 3u &&
-                 NMODSLOT == 4u && ENGINE_RESERVED == 4u && NMODSEND == 12u && MDST_COUNT <= 64u, "every list fits its width; the repeats below");
+                 NMODSLOT == 4u && ENGINE_RESERVED == 1u && NMODSEND == 12u && MDST_COUNT <= 64u, "every list fits its width; the repeats below");
 static const uint8_t ENG_W[] = {
     EW_OSC, EW_OSC, EW_OSCMIX, EW_FILTER, EW_FILTER, EW_FLTMIX, EW_X3(EW_ENV), EW_X3(EW_LFO), EW_X4(EW_MOD), EW_AMP,
     4u /* arch, VARCH_* */, EW_NAME, EW_V /* ANALOG */, EW_V, EW_V /* KEY TRACK */, EW_X3(EW_V) /* VEL > LEVEL */,
-    EW_X3(EW_SRC) /* DEPTH MOD SRC */, EW_X3(EW_V) /* DEPTH MOD AMT */, EW_MFX, EW_X4(8u) /* reserved */,
+    EW_X3(EW_SRC) /* DEPTH MOD SRC */, EW_X3(EW_V) /* DEPTH MOD AMT */, EW_MFX, EW_X3(8u) /* noise HARMONIC, its mod source and amount (2026-11-06, were reserved: same widths) */,
+    8u /* reserved */,
     EW_X4(EW_X3(EW_SEND)) /* the MOD SENDS (2026-11-03, added at the end: no bump) */
 };
 PS_STATIC_ASSERT(sizeof ENG_W == sizeof(EngineState), "ENG_W: one width per EngineState byte, in order");

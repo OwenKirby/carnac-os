@@ -38,6 +38,7 @@ SYNTH_COLD void voice_allocator_init(void) {
         osc_set_phase(&n->osc1, ph);
         osc_set_phase(&n->osc2, ph);
         n->sub_phase = ph >> 1;
+        osc_mixer_voice_init(&n->mix, (unsigned)v);   /* its own noise band and resonance phase */
         n->layer = 0;
         n->src = VSRC_KEYS;
         n->release_boost_q15 = 0;

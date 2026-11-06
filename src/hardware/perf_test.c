@@ -81,6 +81,7 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_MIX 0x1000000u             /* the MIX page all engaged (2026-11-02, dsp/fx.h fx_live): BALANCE / DRY-WET off its
                                       * middle (the faders' ramps), LOOP TONE dark (the delay's feedback low-pass), both
                                       * cross-feeds high (the loop) */
+#define F_AIR (1u << 26)            /* with F_HEAVY: noise COLOUR at AIR (the whistle, 2026-11-05) instead of 20 */
 #define F_MFXEQ (1u << 25)           /* BRONZE AGE with its EQ off noon (DIST 120, the scooped render's: every band run) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
@@ -247,6 +248,10 @@ static const PtScen SCEN[] = {
      UIPAGE_HOME1},
     {"SPREAD H CEL STON", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_MFX | F_MFXT(MFX_RINGING_STONES),
      UIPAGE_HOME1},
+    /* the noise whistle (2026-11-05): COLOUR at AIR beside SINGLE HEAVY, BINAURAL HEAVY, SPREAD H CEL+PP */
+    {"SINGLE HEAVY AIR", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_AIR, UIPAGE_HOME1},
+    {"BINAURAL HEAVY AIR", K_HELD, VARCH_BINAURAL, FLT_FORMANT, F_HEAVY | F_AIR, UIPAGE_HOME1},
+    {"SPREAD H CEL+PP AIR", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_AIR, UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -350,7 +355,8 @@ static void patch(EngineState *e, const PtScen *s)
     if (s->flags & F_HEAVY) {
         e->oscmix.xmod_type = XMOD_RING;
         e->oscmix.noise_level = 100;
-        e->oscmix.noise_colour = 40;
+        e->oscmix.noise_colour = s->flags & F_AIR ? NOISE_AIR : 10;   /* 10: white -> pink, as 40 was before the
+                                                                      * resonance (2026-11-06), bit for bit */
         e->osc[1].wavebank = 3;
         e->filter[0].cutoff = 70;
         e->filter[1].cutoff = 90;

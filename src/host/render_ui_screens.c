@@ -211,6 +211,20 @@ int main(int argc, char **argv)
     e->arch = VARCH_SPREAD; e->oscmix.spread = 70; e->oscmix.sub_level = 0;
     ui_sm_enforce(&sm);
     shot(dir, "oscmix_spr");
+    {                                                /* NOISE (2026-11-06): OSC2's place with one oscillator */
+        e->oscmix.noise_level = 100; e->oscmix.noise_colour = 112; e->noise_harmonic = 38;   /* ringing, 3rd stop */
+        run(3000);
+        go(UIPAGE_OSC2);
+        shot(dir, "noise");
+        e->oscmix.noise_colour = 24; e->noise_harmonic = 0;       /* pink -> brown: no resonance yet */
+        run(3000);
+        shot(dir, "noise_pink");
+        e->oscmix.noise_colour = 70; e->noise_harmonic = 90;      /* the band at ~30 Hz, between stops 5 and 6 */
+        run(3000);
+        shot(dir, "noise_glide");
+        e->oscmix.noise_level = 20; e->oscmix.noise_colour = 90; e->noise_harmonic = 0;
+        go(UIPAGE_OSCMIX);
+    }
     e->arch = VARCH_SINGLE; e->oscmix.sub_octave = SUBOCT_DOWN2; e->oscmix.sub_waveform = SUBWAVE_SQUARE; e->oscmix.sub_level = 70;
     ui_sm_enforce(&sm);
     shot(dir, "oscmix_one");

@@ -799,18 +799,21 @@ static void voices_up_to(uint32_t frame)
 }
 
 /* The shared noise for the pass (oscmixer.h noise_buf), before any voice reads it: an ear and its colours only when a
- * playing voice's layer can make them (its noise level, or a source on it; its colour morph, or a source on that). */
+ * playing voice's layer can make them (its noise level, or a source on it; its colour morph, or a source on that),
+ * or the voice's own colour segment needs them now (a MOD SEND on the colour). */
 static void noise_pass_fill(uint32_t frames)
 {
+    static const uint8_t seg_wants[8] = {2u, 6u, 4u, 4u};   /* the colours each segment reads (4: the voice's own) */
     uint8_t want[2] = {0, 0};                  /* bit 0 white, 1 pink, 2 brown */
     for (int v = 0; v < POLYPHONY_VOICES; v++) {
         const SynthVoiceNode *s = &poly_bank[v];
         if (voice_is_free(s)) continue;
         const OscMixerParams *m = &engine_state[s->layer < NLAYER ? s->layer : 0u].oscmix;
-        if (m->noise_level == 0 && m->noise_mod_amt == BIPOLAR_CENTER) continue;
-        int col_mod = m->noise_col_mod_amt != BIPOLAR_CENTER;
-        uint8_t w = (uint8_t)(1u | (m->noise_colour > 0 || col_mod ? 2u : 0u) |
-                              (m->noise_colour > NOISE_PINK || col_mod ? 4u : 0u));
+        if (m->noise_level == 0 && m->noise_mod_amt == BIPOLAR_CENTER && s->mix.noise_gain_q15 <= 0) continue;
+        int col_mod = m->noise_col_mod_amt != BIPOLAR_CENTER, c = m->noise_colour;
+        uint8_t w = (uint8_t)(1u | ((c > 0 && c < (int)NOISE_BROWN) || col_mod ? 2u : 0u) |
+                              ((c > (int)NOISE_PINK && c < (int)NOISE_BAND) || col_mod ? 4u : 0u) |
+                              seg_wants[s->mix.noise_seg & 7u]);
         want[0] |= w;
         if (s->arch == VARCH_BINAURAL) want[1] |= w;
     }
