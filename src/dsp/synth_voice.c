@@ -827,16 +827,15 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     float route = (float)voice->route_q15 * q15_inv;
     float dry = route * ((float)MIX_HEADROOM_Q15 * q15_inv) * q15_inv;
     if (arch == VARCH_STACK) {
-        /* FILTER MIXER: BLEND (knob 1 + its mod) weighs A against B; WIDTH pulls A left and B right of the pan */
+        /* FILTER MIXER: BLEND (knob 1 + its mod) weighs A against B; both sit at the one pan, the layers play as one
+         * (WIDTH, which pulled them apart, removed 2026-11-06, user) */
         int32_t blend_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt) +
                              send_sum(&c, MDST_BALANCE, 1)) >> 15;
         int32_t gain_b = clampi(fm->balance + (int)blend_mod, 0, 127) * 258, gain_a = 32768 - gain_b;
-        int half = fm->stack_width >> 1;
-        int32_t al, ar, bl, br;
-        amp_pan_gains(&voice->master_amp, clampi(pan - half, 0, 127), &al, &ar);
-        amp_pan_gains(&voice->master_amp, clampi(pan + (fm->stack_width - half), 0, 127), &bl, &br);
-        mix_gains(voice->mix_a, (al * gain_a) >> 15, (ar * gain_a) >> 15, dry);
-        mix_gains(voice->mix_b, (bl * gain_b) >> 15, (br * gain_b) >> 15, dry);
+        int32_t pl, pr;
+        amp_pan_gains(&voice->master_amp, pan, &pl, &pr);
+        mix_gains(voice->mix_a, (pl * gain_a) >> 15, (pr * gain_a) >> 15, dry);
+        mix_gains(voice->mix_b, (pl * gain_b) >> 15, (pr * gain_b) >> 15, dry);
     } else if (arch == VARCH_BINAURAL) {
         /* WIDTH: 127 keeps each ear on its own side, 0 sums them; the pan then balances the pair */
         int32_t pl, pr, w = (int32_t)fm->bin_width * 258;

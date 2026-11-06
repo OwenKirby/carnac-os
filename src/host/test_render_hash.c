@@ -73,7 +73,6 @@ static void patch(EngineState *e, uint8_t arch, int noise, int slots)
     e->env[0].attack = 0; e->env[0].sustain = 100; e->env[0].release = 30;
     e->env[1].attack = 10; e->env[1].sustain = 60; e->env[1].release = 30;
     e->oscmix.spread = 60; e->oscmix.xmod_amt = 20;
-    e->fltmix.stack_width = 127;
     e->osc[1].wavebank = 3;
     e->filter[0].cutoff = 70; e->filter[1].cutoff = 90;
     e->lfo[0].rate = 70; e->lfo[1].rate = 90; e->lfo[2].rate = 40;

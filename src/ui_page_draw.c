@@ -20,14 +20,16 @@
  *
  *   OSC1 / OSC2   one cycle of the wavetable frame at the live scan (the newest sounding voice's, else the knob's);
  *                 the bank's 8 frames as a row of stones, the scan's place between them on the ground
- *   OSCMIXER      two cycles of the mix: OSC1, OSC2 by the balance (STACK: the blend), the sub at its octave and wave,
- *                 the noise at its colour; SPREAD adds its detuned playheads as dim ghosts
+ *   OSCMIXER      two cycles of the mix: OSC1, OSC2 by the balance, the sub at its octave and wave, the noise at its
+ *                 colour; SPREAD adds its detuned playheads as dim ghosts. STACK: two strata, A (OSC1, sub, noise) the
+ *                 earth and B (OSC2 as the cross-mod leaves it) the sky in its mist, ley lines rising between them
  *   FILTER1 / 2   the response curve of the flavour's circuit (dsp/filter.h: the SH-2's 4-pole loop at its morph
  *                 LP .. BP .. HP, MULTI's at its mode, the MS-20 Sallen-Key at its morph LP .. BP .. HP,
  *                 FORMANT's two bands at their spread); what the morph does on the right; the cutoff as a
  *                 stone on the ground (FORMANT: a second for the upper band)
- *   FILTER MIXER  DUAL FILTER: both curves and their serial / parallel mix. STACK: A and B as stones across the stereo
- *                 field, sized by the blend. BINAURAL: the left and right ears' curves, the phase offset as a dial
+ *   FILTER MIXER  DUAL FILTER: both curves and their serial / parallel mix. STACK: two cairns of two stones, AMP (ENV1 with
+ *                 ENV2 on its back) and FILTER (FILTER1's response with FILTER2's on top), each stone as thick as its
+ *                 share of the blend, in the grass; ENV3>CUTOFF ghosts where the envelope lifts the filter cairn. BINAURAL: the left and right ears' curves, the phase offset as a dial
  *   ENV1..3       the ADSR as a barrow; the newest voice's stage and level as a stone on the ground
  *   LFO1..3       two cycles of the shape after its delay and fade; the playhead on the ground and a moon whose phase
  *                 is the LFO's
@@ -885,6 +887,86 @@ static int32_t pu_track_osc(const UIStateMachine *sm, uint8_t osc)
 }
 
 /* -------------------------------------------------------------- mixer --- */
+/* STACK: two voices, one over the other. A, the earth: OSC1 with the sub and the noise, the ground under it in fog. B,
+ * the sky: OSC2 as the cross-mod leaves it (FM bends its pitch with A, AM swells it, RING folds it, PM pushes it, as
+ * dsp/oscmixer.c osc_mixer_osc2 does), at OSC2's octave from OSC1. Between them ley lines rise from A into B, closer
+ * together as CROSS-MOD grows. Each trace's height is its share of the FILTER MIXER's BLEND. */
+#define PU_STK_X0 (PV_X0 + 12)                       /* (the letters A and B at the left) */
+#define PU_STK_W (PV_W - 12)
+#define PU_STK_YA 50
+#define PU_STK_YB 17
+
+static void pu_viz_stack(const UIStateMachine *sm)
+{
+    const EngineState *e = sm->engine[sm->s.active_synth_layer];
+    const OscMixerParams *m = &e->oscmix;
+    int32_t voice, morph1 = pu_osc_morph(sm, 0, &voice), morph2 = pu_osc_morph(sm, 1, &voice);
+    int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2, amt = m->xmod_amt, depth = amt * 258, col = m->noise_colour;
+    int32_t oct = (((int32_t)e->osc[1].octave * 7) >> 7) - (((int32_t)e->osc[0].octave * 7) >> 7);
+    int32_t x, pa = 4096, pb = 4096, brown = 0, blend = e->fltmix.balance, ha, hb, gap, y;
+    uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;
+    uint8_t type = m->xmod_type < XMOD_COUNT ? m->xmod_type : (uint8_t)XMOD_FM;
+    uint32_t seed = 0x1234567u, sstep = 0xFFFFFFFFu / PU_STK_W, step = sstep * (uint32_t)ncyc, step2, ph2 = 0;
+    if (oct > 2) oct = 2;
+    if (oct < -2) oct = -2;
+    step2 = oct >= 0 ? step << oct : step >> -oct;
+    for (x = 0; x < PU_STK_W; x++) {
+        uint32_t ph = (uint32_t)x * step, sph = (uint32_t)x * sstep;
+        int32_t a1 = wave_preview(wave1, morph1, ph), sub, n, c, s;
+        if (m->sub_waveform == SUBWAVE_SQUARE) sub = sph < 0x80000000u ? 24000 : -24000;
+        else if (m->sub_waveform == SUBWAVE_CURRENT) sub = wave_preview(wave1, morph1, sph);
+        else sub = PU_SIN[sph >> 26] * 128;
+        seed = seed * 1664525u + 1013904223u;        /* the noise: white, browned by the colour (a leaky sum) */
+        n = (int32_t)(seed >> 17) - 16384;
+        brown += (n - brown / 8) / 4;
+        s = 127 * a1 + m->sub_level * sub + m->noise_level * ((n * (127 - col) + (brown / 2) * col) / 127);
+        pu_ys[x] = s / 127;
+        switch (type) {
+        case XMOD_AM:
+            c = wave_preview(wave2, morph2, ph2);
+            c = (c * (32767 - (((32767 - ((a1 + 32768) >> 1)) * depth) >> 15))) >> 15;
+            break;
+        case XMOD_RING:
+            c = wave_preview(wave2, morph2, ph2);
+            c += ((((c * a1) >> 15) - c) * depth) >> 15;
+            break;
+        case XMOD_PM:
+            c = wave_preview(wave2, morph2, ph2 + (uint32_t)((int64_t)a1 * amt * 258));
+            break;
+        default:                                     /* FM: A speeds B up and slows it down (up to ~4x at full) */
+            c = wave_preview(wave2, morph2, ph2);
+            ph2 += (uint32_t)(((int64_t)step2 * a1 * amt) >> 20);
+            break;
+        }
+        ph2 += step2;
+        pu_ys2[x] = c;
+        if ((s = pu_ys[x] < 0 ? -pu_ys[x] : pu_ys[x]) > pa) pa = s;
+        if ((c = c < 0 ? -c : c) > pb) pb = c;
+    }
+    ha = 4 + ((127 - blend) * 10) / 127;             /* the blend: A's share, B's */
+    hb = 4 + (blend * 10) / 127;
+    for (x = 0; x < PU_STK_W; x++) {
+        pu_ys[x] = PU_STK_YA - (pu_ys[x] * ha) / pa;
+        pu_ys2[x] = PU_STK_YB - (pu_ys2[x] * hb) / pb;
+    }
+    if (amt) {                                       /* the ley lines, A into B */
+        gap = 5 + ((127 - amt) * 22) / 127;
+        for (x = gap / 2; x < PU_STK_W; x += gap)
+            for (y = pu_ys2[x] + 3; y < pu_ys[x] - 2; y += 2)
+                cv_pset(PU_STK_X0 + x, y, amt > 95 ? SQC(DIM) : PUC_STONE);
+    }
+    for (x = 0; x < PU_STK_W; x++) {                 /* A, the earth */
+        pu_fog_col(PU_STK_X0 + x, pu_ys[x] + 2, PV_GROUND, 7u, PUC_STONE, PU_VIZ_Y);
+        if (x) cv_line(PU_STK_X0 + x - 1, pu_ys[x - 1], PU_STK_X0 + x, pu_ys[x], SQC(THEME));
+    }
+    for (x = 0; x < PU_STK_W; x++) {                 /* B, the sky: a thinner mist above it */
+        pu_fog_col(PU_STK_X0 + x, 0, pu_ys2[x] - 1, 15u, PUC_STONE, PU_VIZ_Y);
+        if (x) cv_line(PU_STK_X0 + x - 1, pu_ys2[x - 1], PU_STK_X0 + x, pu_ys2[x], SQC(ACCENT));
+    }
+    sq_text(PV_X0, PU_STK_YA - 7 + CAP_IN(S, 13), &AF_S, "A", SQC(MID));
+    sq_text(PV_X0, PU_STK_YB - 7 + CAP_IN(S, 13), &AF_S, "B", SQC(MID));
+}
+
 /* the mix over one cycle of the sub: two cycles of the oscillators for SUB -1 OCT, four for -2 */
 static void pu_viz_oscmix(const UIStateMachine *sm)
 {
@@ -896,8 +978,8 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
     int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2;
     uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;
     uint32_t seed = 0x1234567u, sstep = 0xFFFFFFFFu / PV_W, step = sstep * (uint32_t)ncyc;
+    if (arch == VARCH_STACK) { pu_viz_stack(sm); return; }
     if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL || arch == VARCH_DUAL_SPREAD) { w2 = m->balance; w1 = 127 - w2; }
-    if (arch == VARCH_STACK) { w2 = e->fltmix.balance; w1 = 127 - w2; }
     for (x = 0; x < PV_W; x++) {
         uint32_t ph = (uint32_t)x * step, sph = (uint32_t)x * sstep;
         int32_t s = w1 * wave_preview(wave1, morph1, ph), sub, n;
@@ -1097,6 +1179,106 @@ static void pu_viz_filter(const UIStateMachine *sm, uint8_t i)
 }
 
 /* ------------------------------------------------------- filter mixer --- */
+/* STACK, two layers played as one: A (OSC1 -> FILTER1, ENV1) and B (OSC2 -> FILTER2, ENV2), each a stone in two cairns
+ * standing in the grass. AMP at the left: A's stone shaped by ENV1 over time, B's by ENV2 resting on A's back, on one
+ * time scale. FILTER at the right: A's by FILTER1's response, B's by FILTER2's on top of it, low to high. Each stone's
+ * thickness is its share of the BLEND (so the top line is the pair's sum); ENV3>CUTOFF ghosts the filter cairn's top
+ * where the envelope takes both cutoffs. */
+#define PU_CRN_W 106                                 /* a cairn's width; AMP at x 6, FILTER at x 128 */
+#define PU_CRN_BASE 69                               /* the stones' foot (the turf over it) */
+
+static int32_t pu_env_w(uint8_t t) { return 4 + ((int32_t)t * t * 56) / 16129; }   /* 4 .. 60 px a stage */
+
+/* ENV p's level (Q8, 0 .. 256) t units into the note: the attack easing up, the decay and release falling as a curve,
+ * the sustain held 24 units (unit widths as the ENV page's, pu_env_w) */
+static int32_t pu_env_at(const EnvParams *p, int32_t t)
+{
+    int32_t wa = pu_env_w(p->attack), wd = pu_env_w(p->decay), wr = pu_env_w(p->release), s = (p->sustain * 256) / 127, u;
+    if (t < wa) { u = 256 - (t * 256) / wa; return 256 - (u * u >> 8); }
+    t -= wa;
+    if (t < wd) { u = 256 - (t * 256) / wd; return s + (((256 - s) * (u * u >> 8)) >> 8); }
+    t -= wd;
+    if (t < 24) return s;
+    t -= 24;
+    if (t < wr) { u = 256 - (t * 256) / wr; return (s * (u * u >> 8)) >> 8; }
+    return 0;
+}
+
+static int32_t pu_env_len(const EnvParams *p) { return pu_env_w(p->attack) + pu_env_w(p->decay) + 24 + pu_env_w(p->release); }
+
+/* a filter's response at column x of a cairn (cutoff c), Q8 0 .. 256: -36 dB at 0, +12 dB (a resonant peak) at 256 */
+static int32_t pu_flt_at(const FilterParams *f, int32_t x, int32_t c)
+{
+    int32_t v = (((pu_filter_l2(f, (x * 127 * 256) / (PU_CRN_W - 1), c) * 771) >> 8) + 36 * 256) / 48;
+    return v < 0 ? 0 : v > 256 ? 256 : v;
+}
+
+/* one cairn at x0: la[x], lb[x] (Q8) the layers' curves, ha, hb their full heights; A solid and grained, B outlined in
+ * its own colour with a speckled face, a dark seam between them */
+static void pu_cairn(int32_t x0, const int32_t *la, const int32_t *lb, int32_t ha, int32_t hb)
+{
+    int32_t x, y, ta, tb, ptb = 0;
+    uint16_t ca = SQC(THEME), cb = SQC(ACCENT);
+    for (x = 0; x < PU_CRN_W; x++) {
+        int32_t chip = (int32_t)(pu_hash(x0 + x, 41) >> 30) == 0;   /* a weathered nick in the top here and there */
+        ta = PU_CRN_BASE - ((la[x] * ha) >> 8);
+        tb = ta - 1 - ((lb[x] * hb) >> 8);
+        for (y = ta + chip; y < PU_CRN_BASE; y++)
+            cv_pset(x0 + x, y, sq_shade(ca, (pu_hash(x0 + x, y + 3) >> 29) == 0u ? 2u : (pu_hash(x0 + x, y) >> 30) == 0u));
+        if (tb < ta - 1) {
+            for (y = tb + 1; y < ta - 1; y++)
+                if (pu_speck(x0 + x, y + PU_VIZ_Y, 3u)) cv_pset(x0 + x, y, sq_shade(cb, 2u));
+            if (x) cv_line(x0 + x - 1, ptb, x0 + x, tb, cb);
+            else cv_pset(x0, tb, cb);
+            cv_pset(x0 + x, ta - 2 < tb ? tb : ta - 2, sq_shade(cb, 1u));      /* B's underside on A's back */
+        }
+        if ((x == 0 || x == PU_CRN_W - 1) && tb < ta - 1)                     /* B's ends */
+            cv_line(x0 + x, tb, x0 + x, ta - 2, cb);
+        ptb = tb;
+    }
+}
+
+static void pu_viz_stack_pair(const EngineState *e)
+{
+    const FilterMixerParams *fm = &e->fltmix;
+    int32_t b = fm->balance, ev = (int32_t)fm->env3_cutoff - BIPOLAR_CENTER, x, t, T, ha, hb, c1, c2, g;
+    int32_t ta = pu_env_len(&e->env[0]), tb = pu_env_len(&e->env[1]);
+    c1 = e->filter[0].cutoff > VAL_MAX ? (int32_t)VAL_MAX : e->filter[0].cutoff;
+    c2 = e->filter[1].cutoff > VAL_MAX ? (int32_t)VAL_MAX : e->filter[1].cutoff;
+    ha = 8 + ((127 - b) * 38) / 127;                 /* the blend: A's share, B's (at most 54 together) */
+    hb = 8 + (b * 38) / 127;
+    sq_text(PV_X0, CAP_IN(S, 13), &AF_S, "AMP", SQC(MID));
+    sq_text(128, CAP_IN(S, 13), &AF_S, "FILTER", SQC(MID));
+
+    /* AMP: both envelopes on one clock, the longer filling the cairn */
+    T = ta > tb ? ta : tb;
+    for (x = 0; x < PU_CRN_W; x++) {
+        t = (x * T) / (PU_CRN_W - 1);
+        pu_ys[x] = pu_env_at(&e->env[0], t);
+        pu_ys2[x] = pu_env_at(&e->env[1], t);
+    }
+    pu_cairn(PV_X0, pu_ys, pu_ys2, ha, hb);
+
+    /* FILTER */
+    for (x = 0; x < PU_CRN_W; x++) {
+        pu_ys[x] = pu_flt_at(&e->filter[0], x, c1);
+        pu_ys2[x] = pu_flt_at(&e->filter[1], x, c2);
+    }
+    pu_cairn(128, pu_ys, pu_ys2, ha, hb);
+    if (ev) {                                        /* ENV3>CUTOFF: where the envelope's peak takes the pair's top */
+        int32_t s1 = c1 + ev, s2 = c2 + ev;
+        s1 = s1 < 0 ? 0 : s1 > 127 ? 127 : s1;
+        s2 = s2 < 0 ? 0 : s2 > 127 ? 127 : s2;
+        for (x = 0; x < PU_CRN_W; x += 2) {
+            g = PU_CRN_BASE - ((pu_flt_at(&e->filter[0], x, s1) * ha) >> 8) - 1 - ((pu_flt_at(&e->filter[1], x, s2) * hb) >> 8);
+            if (g > 12) cv_pset(128 + x, g - 1, SQC(MID));
+        }
+    }
+    /* the grass along both feet */
+    sq_grass(PV_X0 - 2, PV_X0 + PU_CRN_W + 2, PU_VIZ_H, 5, SQC(MID), 3, 0, 0, 0, 0, 0);
+    sq_grass(126, 128 + PU_CRN_W + 2, PU_VIZ_H, 5, SQC(MID), 9, 0, 0, 0, 0, 0);
+}
+
 static void pu_viz_fltmix(const UIStateMachine *sm)
 {
     const EngineState *e = sm->engine[sm->s.active_synth_layer];
@@ -1105,19 +1287,8 @@ static void pu_viz_fltmix(const UIStateMachine *sm)
     int32_t x, c1 = e->filter[0].cutoff, c2 = e->filter[1].cutoff;
     if (c1 > (int32_t)VAL_MAX) c1 = VAL_MAX;
     if (c2 > (int32_t)VAL_MAX) c2 = VAL_MAX;
-    if (arch == VARCH_STACK) {                       /* A and B across the stereo field */
-        int32_t w = fm->stack_width, b = fm->balance, xa, xb, ha, hb;
-        pu_ground(PV_GROUND, PUC_STONE);
-        sq_text(PV_X0, CAP_IN(S, 13), &AF_S, "L", SQC(DIM));
-        sq_text_r(PV_X0 + PV_W, CAP_IN(S, 13), &AF_S, "R", SQC(DIM), SQC(BG));
-        xa = pu_cut_x(64 - w / 2);
-        xb = pu_cut_x(64 + (w + 1) / 2);
-        ha = 8 + (127 - b) * 40 / 127;
-        hb = 8 + b * 40 / 127;
-        pu_menhir(xa - 8, PV_GROUND, 16, ha, SQC(THEME));
-        pu_menhir_edge(xb - 8, PV_GROUND, 16, hb, SQC(ACCENT));
-        sq_text_in(xa - 10, PV_GROUND - ha - 14 + CAP_IN(S, 13), 20, &AF_S, "A", SQC(MID), SQC(BG));
-        sq_text_in(xb - 10, PV_GROUND - hb - 14 + CAP_IN(S, 13), 20, &AF_S, "B", SQC(MID), SQC(BG));
+    if (arch == VARCH_STACK) {
+        pu_viz_stack_pair(e);
         return;
     }
     pu_db_axis();
@@ -1158,7 +1329,6 @@ static void pu_viz_fltmix(const UIStateMachine *sm)
 }
 
 /* ----------------------------------------------------------- envelope --- */
-static int32_t pu_env_w(uint8_t t) { return 4 + ((int32_t)t * t * 56) / 16129; }   /* 4 .. 60 px a stage */
 #define PU_ENV_TOP 8
 #define PU_ENV_HOLD 40
 

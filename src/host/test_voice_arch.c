@@ -72,7 +72,6 @@ static void base_patch(EngineState *e, uint8_t arch)
     e->env[1].attack = 0; e->env[1].sustain = 100; e->env[1].release = 20;
     e->oscmix.spread = 60;
     e->oscmix.xmod_amt = 20;
-    e->fltmix.stack_width = 127;
     e->osc[1].wavebank = 3;
     /* LFO1 on the filter cutoff so BINAURAL's phase offset has something to shift */
     e->filter[0].mod_src = MSRC_LFO1;
@@ -213,7 +212,7 @@ int main(void)
         CHECK(vox == cap, "%s: %d voices sounding, cap %u", ARCH[a], vox, cap);
         CHECK(s.rms_l > 300 && s.rms_r > 300, "%s: too quiet", ARCH[a]);
         CHECK(s.peak <= 32767, "%s: over full scale", ARCH[a]);
-        if (a == VARCH_STACK || a == VARCH_BINAURAL)
+        if (a == VARCH_BINAURAL)                    /* (STACK's A and B share the pan since 2026-11-06) */
             CHECK(s.rms_side > 0.2 * s.rms_l, "%s: no stereo difference (side %.0f)", ARCH[a], s.rms_side);
         else
             CHECK(s.rms_side < 0.05 * s.rms_l + 1, "%s: unexpected stereo difference", ARCH[a]);

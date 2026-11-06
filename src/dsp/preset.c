@@ -93,7 +93,6 @@ void engine_defaults(EngineState *e)
     e->fltmix.routing_mod_amt = BIPOLAR_CENTER;
     e->fltmix.balance_mod_src = MSRC_ENV3;
     e->fltmix.routing_mod_src = MSRC_ENV3;
-    e->fltmix.stack_width = 0;           /* A and B centred */
     e->fltmix.env3_cutoff = BIPOLAR_CENTER;
     e->fltmix.bin_mod_phase = 64;        /* 180 deg */
     e->fltmix.bin_width = 127;           /* full separation */

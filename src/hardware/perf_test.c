@@ -351,7 +351,6 @@ static void patch(EngineState *e, const PtScen *s)
         e->oscmix.xmod_type = XMOD_RING;
         e->oscmix.noise_level = 100;
         e->oscmix.noise_colour = 40;
-        e->fltmix.stack_width = 127;
         e->osc[1].wavebank = 3;
         e->filter[0].cutoff = 70;
         e->filter[1].cutoff = 90;

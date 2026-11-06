@@ -214,6 +214,25 @@ int main(int argc, char **argv)
     e->arch = VARCH_SINGLE; e->oscmix.sub_octave = SUBOCT_DOWN2; e->oscmix.sub_waveform = SUBWAVE_SQUARE; e->oscmix.sub_level = 70;
     ui_sm_enforce(&sm);
     shot(dir, "oscmix_one");
+    {                                                /* STACK: A the earth, B the sky, ley lines by CROSS-MOD */
+        static const char *const NM[XMOD_COUNT] = {"oscmix_stack_fm", "oscmix_stack_am", "oscmix_stack_ring",
+                                                   "oscmix_stack_pm"};
+        uint8_t t;
+        e->arch = VARCH_STACK; e->oscmix.sub_octave = SUBOCT_DOWN1; e->oscmix.sub_waveform = SUBWAVE_SINE;
+        e->oscmix.sub_level = 12; e->oscmix.noise_level = 3; e->oscmix.xmod_amt = 90; e->fltmix.balance = 64;
+        e->osc[1].octave = 82;                       /* OSC2 an octave up; plain waves (VCO) */
+        e->osc[0].wavebank = 0; e->osc[1].wavebank = 0; e->osc[0].scan = 20; e->osc[1].scan = 0;
+        ui_sm_enforce(&sm);
+        for (t = 0; t < XMOD_COUNT; t++) {
+            e->oscmix.xmod_type = t;
+            shot(dir, NM[t]);
+        }
+        e->oscmix.xmod_type = XMOD_FM; e->oscmix.xmod_amt = 0; e->fltmix.balance = 100;
+        shot(dir, "oscmix_stack_quiet");             /* no cross-mod: no ley lines, B louder */
+        e->oscmix.xmod_amt = 127; e->fltmix.balance = 64;
+        shot(dir, "oscmix_stack_full");
+        e->osc[1].octave = 64; e->oscmix.xmod_amt = 0; e->fltmix.balance = 64;
+    }
 
     /* FILTER: a resonant bandpass-ish SVF, a ladder; FILTER MIXER in each architecture */
     e->arch = VARCH_DUAL_FILTER;
@@ -238,9 +257,15 @@ int main(int argc, char **argv)
     e->fltmix.routing = 90; e->fltmix.balance = 70;
     go(UIPAGE_FLTMIX);
     shot(dir, "fltmix_dual");
-    e->arch = VARCH_STACK; e->fltmix.stack_width = 100; e->fltmix.balance = 80;
+    e->arch = VARCH_STACK; e->fltmix.balance = 64;
     ui_sm_enforce(&sm);
     shot(dir, "fltmix_stack");
+    e->fltmix.env3_cutoff = 100; e->fltmix.balance = 30; e->env[1].attack = 90; e->env[1].release = 110;
+    shot(dir, "fltmix_stack_env3");                  /* ENV3>CUTOFF up: the ghost over the filter cairn; B a slow swell */
+    e->fltmix.env3_cutoff = BIPOLAR_CENTER; e->fltmix.balance = 110;
+    shot(dir, "fltmix_stack_b");                     /* mostly B */
+    e->fltmix.balance = 10;
+    shot(dir, "fltmix_stack_a");                     /* mostly A */
     e->arch = VARCH_BINAURAL; e->fltmix.bin_cutoff_offset = 100; e->fltmix.bin_mod_phase = 40;
     ui_sm_enforce(&sm);
     shot(dir, "fltmix_bin");
