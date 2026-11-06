@@ -114,10 +114,11 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "usage: render_loop_wear OUTDIR\n"); return 2; }
     synth_init();
     {
-        extern const uint8_t pcm_image_host0[], pcm_image_host1[];
-        extern const uint32_t pcm_image_host_len0, pcm_image_host_len1;
+        extern const uint8_t pcm_image_host0[], pcm_image_host1[], pcm_image_host2[];
+        extern const uint32_t pcm_image_host_len0, pcm_image_host_len1, pcm_image_host_len2;
         pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0);
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
+        pcm_store_attach(PCM_AREA_ST2, pcm_image_host2, pcm_image_host_len2);
     }
     factory_install();
     for (unsigned s = 0; s < sizeof scenes / sizeof scenes[0]; s++)

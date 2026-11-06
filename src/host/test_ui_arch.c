@@ -118,6 +118,8 @@ int main(void)
     press(BTN_FX); CHECK(sm.page == UIPAGE_OSC1, "FX 1");
     press(BTN_FX); CHECK(sm.page == UIPAGE_OSC2, "FX 2 STACK %u", sm.page);
     press(BTN_FX); CHECK(sm.page == UIPAGE_OSCMIX, "FX 3");
+    press(BTN_FX); CHECK(sm.page == UIPAGE_OSC1, "FX 4 wraps to OSC1 (it went to FILTER1 after STRIKE left): %u", sm.page);
+    press(BTN_FX); press(BTN_FX); CHECK(sm.page == UIPAGE_OSCMIX, "FX 3 again");
     dump("OSCMIX STACK"); knobs(UIPAGE_OSCMIX, "OSCMIX STACK");
     CHECK(find_row("XMOD TYPE") < 0 && find_row("XMOD MOD SRC") >= 0 && find_row("MIX MOD SRC") < 0 &&
           find_row("SPR MOD SRC") < 0, "STACK OSCMIX rows (XMOD TYPE is knob 1)");

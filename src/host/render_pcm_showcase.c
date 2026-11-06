@@ -18,8 +18,8 @@
 #include "dsp/pcm_osc.h"
 #include "dsp/attacks.h"
 
-extern const uint8_t pcm_image_host0[], pcm_image_host1[];
-extern const uint32_t pcm_image_host_len0, pcm_image_host_len1;
+extern const uint8_t pcm_image_host0[], pcm_image_host1[], pcm_image_host2[];
+extern const uint32_t pcm_image_host_len0, pcm_image_host_len1, pcm_image_host_len2;
 
 #define RATE 44100u
 static int32_t buf[2 * 128];
@@ -103,7 +103,8 @@ int main(int argc, char **argv)
     const char *dir = argc > 1 ? argv[1] : ".";
     char path[512], nm[13];
     if (pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0) <= 0 ||
-        pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1) <= 0) {
+        pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1) <= 0 ||
+        pcm_store_attach(PCM_AREA_ST2, pcm_image_host2, pcm_image_host_len2) <= 0) {
         printf("the PCM images do not attach\n");
         return 1;
     }

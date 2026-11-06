@@ -7,6 +7,7 @@
 #include "wavetables.h"
 #include "synth_voice.h"                    /* SYNTH_CTRL_PERIOD */
 #include "dsp_cold.h"
+#include "amplifier.h"                     /* amp_exp2f (the FM1 links no libm) */
 
 /* mu-law byte -> Q15 sample, in RAM: int16, so a read interpolates in int like the wavetables (on the FM1 an int16
  * lerp beats float, which pays an int -> float conversion; fm1-cpu-profile) */
@@ -25,7 +26,11 @@ void pcm_osc_init(void)
 int wave_kind(uint8_t code)
 {
     if (code < WAVE_ATK_FIRST) return 0;
+#if ATK_COUNT
     if (code < WAVE_PCM_FIRST) return code - WAVE_ATK_FIRST < ATK_COUNT ? 1 : -1;
+#else
+    if (code < WAVE_PCM_FIRST) return -1;   /* (no attack-waves since 2026-11-05) */
+#endif
     return code - WAVE_PCM_FIRST < pcm_wave_count() ? 2 : -1;
 }
 
@@ -38,7 +43,11 @@ uint8_t wave_list_code(uint32_t pos)
     pos -= NUM_BANKS;
     if (pos < w) return (uint8_t)(WAVE_PCM_FIRST + pos);
     pos -= w;
+#if ATK_COUNT
     return (uint8_t)(WAVE_ATK_FIRST + (pos < ATK_COUNT ? pos : ATK_COUNT - 1u));
+#else
+    return (uint8_t)(w ? WAVE_PCM_FIRST + w - 1u : NUM_BANKS - 1u);   /* past the end: the last */
+#endif
 }
 
 uint32_t wave_list_pos(uint8_t code)
@@ -55,7 +64,9 @@ const char *wave_name(uint8_t code, char *buf13)
 {
     switch (wave_kind(code)) {
     case 0: return wavetable_bank_names[code % NUM_BANKS];
+#if ATK_COUNT
     case 1: return attack_names[code - WAVE_ATK_FIRST];
+#endif
     case 2: {
         const PcmEntry *e = pcm_wave(code - WAVE_PCM_FIRST);
         for (uint32_t i = 0; i < PCM_NAME_LEN; i++) buf13[i] = e->name[i];
@@ -71,11 +82,13 @@ static int32_t dec_at(const uint8_t *p, uint32_t i) { return pcm_dec[p[i]]; }
 SYNTH_COLD int32_t wave_preview(uint8_t code, int morph_q12, uint32_t phase)
 {
     switch (wave_kind(code)) {
+#if ATK_COUNT
     case 1: {
         const AttackInfo *ai = &attack_info[code - WAVE_ATK_FIRST];
         uint32_t n = ai->length < 1024u ? ai->length : 1024u;
         return dec_at(attack_data + ai->offset, (uint32_t)(((uint64_t)phase * n) >> 32));
     }
+#endif
     case 2: {
         const PcmEntry *w = pcm_wave(code - WAVE_PCM_FIRST), *a, *b = NULL;
         const uint8_t *da, *db = NULL;
@@ -94,6 +107,8 @@ SYNTH_COLD int32_t wave_preview(uint8_t code, int morph_q12, uint32_t phase)
         return va + (((vb - va) * xf) >> 15);
     }
     default:
+        if (code < WAVE_ATK_FIRST && code % NUM_BANKS == 0 && osc_bank0_vco)
+            return osc_vco_preview(morph_q12, phase);      /* the VCO: its own shape, not Foundations' frames */
         return wt_read_morph(code < WAVE_ATK_FIRST ? code % NUM_BANKS : 0, morph_q12, 1, phase);
     }
 }
@@ -139,10 +154,22 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
     int32_t k_level = W1;
     uint8_t k_root = 60;
     uint32_t k_len = 0, b_off = 0;
-    int new_wave = q->code == 0;
+    int new_wave = q->code == 0, hand_wave = 0, trig = 0;
+    const uint8_t *dkb = NULL;              /* HANDOFF: the attack that opens loop B */
+    float kb_rate = 0.f;
+    uint8_t kb_root = 60;
+    uint32_t kb_len = 0;
+    float tail_a = 0.f, tail_b = 0.f;
     if (q->code >= WAVE_PCM_FIRST) {
         const PcmEntry *w = pcm_wave(q->code - WAVE_PCM_FIRST);
         if (w) {
+            hand_wave = (w->u.w.flags & PCM_WF_HANDOFF) != 0u;
+            tail_a = (float)w->u.w.tail_a; tail_b = (float)w->u.w.tail_b;
+            if (hand_wave && w->u.w.atk_ref_b != PCM_REF_NONE) {
+                const PcmEntry *kb = pcm_sample(w->u.w.atk_ref_b, PCM_ONESHOT, &dkb);
+                if (kb) { kb_rate = (float)kb->u.s.rate * (65536.f / 44100.f); kb_root = kb->root; kb_len = kb->u.s.len; }
+                else dkb = NULL;
+            }
             a = pcm_sample(w->u.w.loop_a, PCM_LOOP, &da);
             if (w->u.w.loop_b != PCM_REF_NONE)
                 b = pcm_sample(w->u.w.loop_b, PCM_LOOP, &db);
@@ -152,21 +179,27 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
             if (w->u.w.atk_ref != PCM_REF_NONE) {
                 k = pcm_sample(w->u.w.atk_ref, PCM_ONESHOT, &dk);
                 if (k) { k_rate = (float)k->u.s.rate * (65536.f / 44100.f); k_root = k->root; k_len = k->u.s.len; }
-            } else if (w->u.w.atk_fw < ATK_COUNT) {
+            }
+#if ATK_COUNT
+            else if (w->u.w.atk_fw < ATK_COUNT) {
                 const AttackInfo *ai = &attack_info[w->u.w.atk_fw];
                 dk = attack_data + ai->offset;
                 k_rate = (float)ai->rate_q16;
                 k_root = ai->root != ATK_UNPITCHED ? ai->root : 60u;
                 k_len = ai->length;
             }
+#endif
         }
-    } else if (q->code >= WAVE_ATK_FIRST && q->code - WAVE_ATK_FIRST < ATK_COUNT) {
+    }
+#if ATK_COUNT
+    else if (q->code >= WAVE_ATK_FIRST && q->code - WAVE_ATK_FIRST < ATK_COUNT) {
         const AttackInfo *ai = &attack_info[q->code - WAVE_ATK_FIRST];   /* an attack alone: a one-shot wave */
         dk = attack_data + ai->offset;
         k_rate = (float)ai->rate_q16;
         k_root = ai->root != ATK_UNPITCHED ? ai->root : 60u;
         k_len = ai->length;
     }
+#endif
     /* the loops: a new wave (or one that lost its samples) starts them where B's offset says; else they run on */
     if (a) {
         uint32_t len = a->u.s.len << 16;
@@ -193,37 +226,123 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
     } else {
         q->pb = NULL;
     }
-    /* the attack: from the start at a new note; it stops if its wave changes under it */
-    if (q->trig) {
-        q->trig = 0;
-        q->pk = dk && k_len > 1u ? dk : NULL;
-        q->pos_k = 0;
-        q->end_k = k_len > 1u ? (k_len - 1u) << 16 : 0u;
-        q->wk = q->pk ? k_level : 0;
-        q->dk = 0;
-    } else if (q->pk && q->pk != dk) {
-        q->pk = NULL;
-    }
-    if (q->pk)
-        q->step_k = step_for(k_rate, k_root, freq_q16);
-    q->inv_freq = freq_q16 ? 1.f / (float)freq_q16 : 0.f;
-
-    /* the weights: SCAN's crossfade; while the attack plays, the loop nearer SCAN alone (two reads) */
     int32_t xf = morph_q12 >= (7 << 12) ? W1 : (int32_t)(((uint32_t)morph_q12 << 15) / (7u << 12));
     if (!q->pb) xf = 0;
     if (!q->pa) xf = q->pb ? W1 : 0;
     q->xf = xf;
+    /* the attack: from the start at a new note; it stops if its wave changes under it. HANDOFF: the attack nearer
+     * SCAN, chosen at the note, plays on whatever SCAN does after */
+    if (q->trig) {
+        q->trig = 0;
+        trig = 1;
+#ifdef PCM_RETAKE_OLD
+        int can_hand = q->idle;
+#else
+        int can_hand = 1;
+#endif
+        /* HANDOFF with SCAN between the ends: both attacks, A's as the attack (pk), B's beside it (pk2). Decided here,
+         * before the nearer attack is picked: 2026-11-05 test_pcm_handoff caught SCAN 64..126 playing B's twice */
+        int both = can_hand && hand_wave && dk && k_len > 1u && dkb && kb_len > 1u && xf > 0 && xf < W1;
+        if (hand_wave && dkb && xf >= W1 / 2 && !both) {
+            dk = dkb; k_rate = kb_rate; k_root = kb_root; k_len = kb_len;
+        }
+        q->pk = dk && k_len > 1u ? dk : NULL;
+        q->pos_k = 0;
+        q->end_k = k_len > 1u ? (k_len - 1u) << 16 : 0u;
+        q->dk = 0;
+        /* a voice still sounding (retaken): its loops fade out under the new attack over this tick, then are placed
+         * as an idle voice's (hand 2 -> 1 at the next tick); an idle voice's are silent at once */
+#ifdef PCM_RETAKE_OLD                        /* host A/B only: the old way (attack over the sounding loops) */
+        q->hand = (uint8_t)(hand_wave && q->pk && q->idle);
+#else
+        q->hand = (uint8_t)(hand_wave && q->pk ? (q->idle ? 1 : 2) : 0);
+#endif
+        if (q->hand == 1)
+            q->wa = q->wb = 0;
+        /* HANDOFF with SCAN between the ends: both attacks, each opening its own loop (two whole notes, crossfaded) */
+        q->pk2 = NULL;
+        q->ksplit = W1;
+        if (both && q->hand) {
+            q->pk2 = dkb;
+            q->pos_k2 = 0;
+            q->end_k2 = (kb_len - 1u) << 16;
+            q->wk2 = (int32_t)(((int64_t)k_level * xf) >> 15);
+            q->ksplit = W1 - xf;
+        }
+        q->wk = q->pk ? (int32_t)(((int64_t)k_level * q->ksplit) >> 15) : 0;
+        q->tail_a = q->tail_b = W1;         /* the tails: each loop decays on as its attack did */
+        q->tmul_a = hand_wave && tail_a > 0.f && !q->hold ?
+            (int32_t)(W1 * amp_exp2f(-tail_a * (float)SYNTH_CTRL_PERIOD * (3.3219281f / (20.f * 44100.f)))) : 0;
+        q->tmul_b = hand_wave && tail_b > 0.f && !q->hold ?
+            (int32_t)(W1 * amp_exp2f(-tail_b * (float)SYNTH_CTRL_PERIOD * (3.3219281f / (20.f * 44100.f)))) : 0;
+    } else if (q->pk == dkb && dkb && q->hand) {
+        k_rate = kb_rate; k_root = kb_root; k_len = kb_len;
+    } else if (q->pk && q->pk != dk) {
+        q->pk = NULL;
+        q->hand = 0;
+    }
+    if (q->pk)
+        q->step_k = step_for(k_rate, k_root, freq_q16);
+    if (q->pk2)
+        q->step_k2 = step_for(kb_rate, kb_root, freq_q16);
+    q->inv_freq = freq_q16 ? 1.f / (float)freq_q16 : 0.f;
+    {                                       /* PM: a cycle of the note is 44100 / Hz engine samples of each read */
+        float c = 44100.f * q->inv_freq * (1.f / 65536.f);   /* (Q16 Hz in inv_freq; 2^32 phase = 2^16 * 2^16) */
+        q->pm_a = (float)q->step_a * c;
+        q->pm_b = (float)q->step_b * c;
+        q->pm_k = (float)q->step_k * c;
+        q->pm_k2 = (float)q->step_k2 * c;
+    }
+    if (!trig && q->hand == 2 && q->pk) {   /* retaken: the loops faded out last tick; now placed to reach index 0
+                                             * as the attacks end (the samples each has left, at its pace) */
+        uint64_t ra = q->end_k > q->pos_k ? (uint64_t)(q->end_k - q->pos_k) : 0u;
+        if (q->pa) q->pos_a = q->len_a - (uint32_t)((ra * q->step_a / q->step_k) % q->len_a);
+        if (q->pb && q->pk2) {
+            uint64_t rb = q->end_k2 > q->pos_k2 ? (uint64_t)(q->end_k2 - q->pos_k2) : 0u;
+            q->pos_b = q->len_b - (uint32_t)((rb * q->step_b / q->step_k2) % q->len_b);
+        } else if (q->pb) q->pos_b = q->len_b - (uint32_t)((ra * q->step_b / q->step_k) % q->len_b);
+        if (q->pa && q->pos_a >= q->len_a) q->pos_a -= q->len_a;
+        if (q->pb && q->pos_b >= q->len_b) q->pos_b -= q->len_b;
+        for (int h = 0; h < 4; h++) {
+            q->spa[h] = q->pos_a;
+            q->spb[h] = q->pos_b;
+        }
+        q->wa = q->wb = 0;
+        q->hand = 1;
+    }
+    if (trig && q->hand == 1) {             /* the loops reach index 0 as the attack ends (its length, at its pace) */
+        uint64_t t16 = (uint64_t)k_len << 16;
+        if (q->pa) q->pos_a = q->len_a - (uint32_t)((t16 * q->step_a / q->step_k) % q->len_a);
+        if (q->pb && q->pk2)                /* both attacks: B's loop reaches 0 as B's attack ends */
+            q->pos_b = q->len_b - (uint32_t)((((uint64_t)kb_len << 16) * q->step_b / q->step_k2) % q->len_b);
+        else if (q->pb) q->pos_b = q->len_b - (uint32_t)((t16 * q->step_b / q->step_k) % q->len_b);
+        if (q->pa && q->pos_a >= q->len_a) q->pos_a -= q->len_a;
+        if (q->pb && q->pos_b >= q->len_b) q->pos_b -= q->len_b;
+        for (int h = 0; h < 4; h++) {
+            q->spa[h] = q->pos_a;
+            q->spb[h] = q->pos_b;
+        }
+    }
+
+    /* the weights: SCAN's crossfade; while the attack plays, the loop nearer SCAN alone (two reads); HANDOFF: none */
     int32_t ta = q->pa ? W1 - xf : 0, tb = q->pb ? xf : 0;
-    if (q->pk) {
+    if (q->pk && q->hand) {
+        ta = tb = 0;
+    } else if (q->pk) {
         ta = q->pa && xf < W1 / 2 ? W1 : 0;
         tb = q->pb && !ta ? W1 : 0;
+    } else if (q->tmul_a || q->tmul_b) {    /* HANDOFF's tails: each loop goes on decaying as its attack did */
+        if (q->tmul_a) q->tail_a = (int32_t)(((int64_t)q->tail_a * q->tmul_a) >> 15);
+        if (q->tmul_b) q->tail_b = (int32_t)(((int64_t)q->tail_b * q->tmul_b) >> 15);
+        ta = (int32_t)(((int64_t)ta * q->tail_a) >> 15);
+        tb = (int32_t)(((int64_t)tb * q->tail_b) >> 15);
     }
     if (new_wave) {                         /* a new wave: its weights at once (it starts from silence anyway) */
         q->wa = ta;
         q->wb = tb;
         q->sxf = 0;                         /* SPREAD's playheads restart from the new loops (pcm_spread) */
     }
-    set_targets(q, ta, tb, q->pk ? k_level : 0);
+    set_targets(q, ta, tb, q->pk ? (int32_t)(((int64_t)k_level * q->ksplit) >> 15) : 0);
 }
 
 void pcm_spread(PcmOsc *q, const uint32_t *ratio_q28, int32_t xfade_q15)
@@ -263,6 +382,12 @@ static inline int32_t rd(const uint8_t *p, uint32_t pos)
 }
 
 static inline uint32_t wrap(uint32_t pos, uint32_t len) { return pos >= len ? pos - len : pos; }
+/* pos moved by d (either sign, |d| under len) round a loop of len */
+static inline uint32_t wrap_by(uint32_t pos, int32_t d, uint32_t len)
+{
+    int64_t p = (int64_t)pos + d;
+    return (uint32_t)(p < 0 ? p + len : p >= (int64_t)len ? p - len : p);
+}
 
 static inline int32_t clamp15(int32_t y) { return y > 32767 ? 32767 : (y < -32767 ? -32767 : y); }
 
@@ -270,7 +395,17 @@ static inline int32_t clamp15(int32_t y) { return y > 32767 ? 32767 : (y < -3276
 static void attack_done(PcmOsc *q)
 {
     q->pk = NULL;
+    q->pk2 = NULL;
     q->wk = 0;
+    if (q->hand) {                          /* HANDOFF: the loops take over where the attack ends, at once */
+        q->hand = 0;
+        q->wa = q->ta = q->pa ? W1 - q->xf : 0;
+        q->wb = q->tb = q->pb ? q->xf : 0;
+        q->tk = 0;
+        q->da = q->db = q->dk = 0;
+        q->ramp = 0;
+        return;
+    }
     set_targets(q, q->pa ? W1 - q->xf : 0, q->pb ? q->xf : 0, 0);
 }
 
@@ -299,6 +434,10 @@ static void render_attack(PcmOsc *q, int32_t *out, int m)
     for (int i = 0; i < m; i++) {
         int32_t y = (rd(pk, xk) * wk) >> 15;
         xk += sk;
+        if (q->pk2 && q->pos_k2 < q->end_k2) {
+            y += (rd(q->pk2, q->pos_k2) * q->wk2) >> 15;
+            q->pos_k2 += q->step_k2;
+        }
         if (use_a) y += (rd(pa, xa) * wa) >> 15;
         if (use_b) y += (rd(pb, xb) * wb) >> 15;
         if (pa) xa = wrap(xa + sa, la);
@@ -447,6 +586,10 @@ static void render_spread(PcmOsc *q, int32_t *out, int m)
         if (pk) {
             y += (rd(pk, xk) * wk) >> 15;
             xk += sk;
+            if (q->pk2 && q->pos_k2 < q->end_k2) {
+                y += (rd(q->pk2, q->pos_k2) * q->wk2) >> 15;
+                q->pos_k2 += q->step_k2;
+            }
         }
         out[i] = clamp15(y);
         if (pa) {
@@ -559,6 +702,7 @@ static void render_spread_steady(PcmOsc *q, int32_t *out, int m)
 void pcm_render_block(PcmOsc *q, int32_t *out, int n)
 {
     int i = 0;
+    q->idle = 0;
     if (q->sxf) {
         int r = q->pk ? n : (q->ramp < n ? q->ramp : n);
         if (r > 0)
@@ -589,19 +733,31 @@ static int32_t one(PcmOsc *q, float mul)
 {
     int32_t y = 0;
     int ramp = q->ramp;
+    q->idle = 0;
     if (q->sxf) {                           /* SPREAD (no FM reaches it: SPREAD has no OSC2) */
         render_spread(q, &y, 1);
         return y;
     }
     if (q->pk) {
-        uint32_t sk = mul == 1.f ? q->step_k : (uint32_t)((float)q->step_k * mul);
+        float ak = mul < 0.f ? -mul : mul;  /* (an attack never runs backwards) */
+        uint32_t sk = mul == 1.f ? q->step_k : (uint32_t)((float)q->step_k * ak);
         y += (rd(q->pk, q->pos_k) * q->wk) >> 15;
         q->pos_k += sk ? sk : 1u;
+        if (q->pk2 && q->pos_k2 < q->end_k2) {
+            uint32_t s2 = mul == 1.f ? q->step_k2 : (uint32_t)((float)q->step_k2 * ak);
+            y += (rd(q->pk2, q->pos_k2) * q->wk2) >> 15;
+            q->pos_k2 += s2 ? s2 : 1u;
+        }
     }
     if (q->pa && q->wa != 0) y += (rd(q->pa, q->pos_a) * q->wa) >> 15;
     if (q->pb && q->wb != 0) y += (rd(q->pb, q->pos_b) * q->wb) >> 15;
-    if (q->pa) q->pos_a = wrap(q->pos_a + (mul == 1.f ? q->step_a : (uint32_t)((float)q->step_a * mul)), q->len_a);
-    if (q->pb) q->pos_b = wrap(q->pos_b + (mul == 1.f ? q->step_b : (uint32_t)((float)q->step_b * mul)), q->len_b);
+    if (mul == 1.f) {
+        if (q->pa) q->pos_a = wrap(q->pos_a + q->step_a, q->len_a);
+        if (q->pb) q->pos_b = wrap(q->pos_b + q->step_b, q->len_b);
+    } else {                                /* FM: either way round (through zero) */
+        if (q->pa) q->pos_a = wrap_by(q->pos_a, (int32_t)((float)q->step_a * mul), q->len_a);
+        if (q->pb) q->pos_b = wrap_by(q->pos_b, (int32_t)((float)q->step_b * mul), q->len_b);
+    }
     if (ramp) {
         RAMP_STEP(q->wk, q->dk, q->tk);
         RAMP_STEP(q->wa, q->da, q->ta);
@@ -615,10 +771,40 @@ static int32_t one(PcmOsc *q, float mul)
 
 int32_t pcm_render_one(PcmOsc *q) { return one(q, 1.f); }
 
-int32_t pcm_render_one_fm(PcmOsc *q, uint32_t freq_q16)
+int32_t pcm_render_one_fm(PcmOsc *q, int32_t freq_q16)
 {
     float mul = (float)freq_q16 * q->inv_freq;
-    return one(q, mul > 4.f ? 4.f : mul);
+    return one(q, mul > 4.f ? 4.f : mul < -4.f ? -4.f : mul);
+}
+
+/* the reads moved by off of a cycle for this sample (the loops round, the attacks within their samples), then back */
+int32_t pcm_render_one_pm(PcmOsc *q, int32_t off)
+{
+    float o = (float)off;
+    int32_t da = (int32_t)(q->pm_a * o), db = (int32_t)(q->pm_b * o), dk = 0, dk2 = 0;
+    if (q->pa) q->pos_a = wrap_by(q->pos_a, da, q->len_a);
+    if (q->pb) q->pos_b = wrap_by(q->pos_b, db, q->len_b);
+    if (q->pk) {
+        int64_t p = (int64_t)q->pos_k + (int32_t)(q->pm_k * o);
+        p = p < 0 ? 0 : p >= (int64_t)q->end_k ? (int64_t)q->end_k - 1 : p;
+        dk = (int32_t)(p - (int64_t)q->pos_k);
+        q->pos_k = (uint32_t)p;
+        if (q->pk2 && q->pos_k2 < q->end_k2) {
+            int64_t p2 = (int64_t)q->pos_k2 + (int32_t)(q->pm_k2 * o);
+            p2 = p2 < 0 ? 0 : p2 >= (int64_t)q->end_k2 ? (int64_t)q->end_k2 - 1 : p2;
+            dk2 = (int32_t)(p2 - (int64_t)q->pos_k2);
+            q->pos_k2 = (uint32_t)p2;
+        }
+    }
+    const uint8_t *pk = q->pk;
+    int32_t y = one(q, 1.f);
+    if (q->pa) q->pos_a = wrap_by(q->pos_a, -da, q->len_a);
+    if (q->pb) q->pos_b = wrap_by(q->pos_b, -db, q->len_b);
+    if (q->pk && q->pk == pk) {             /* (the attack still playing: back where it would be) */
+        q->pos_k -= (uint32_t)dk;
+        if (q->pk2) q->pos_k2 -= (uint32_t)dk2;
+    }
+    return y;
 }
 
 void pcm_idle(PcmOsc *q, int n)
@@ -632,4 +818,7 @@ void pcm_idle(PcmOsc *q, int n)
             if (q->pb) q->spb[h] = skip(q->spb[h], q->ssb[h], q->len_b, n);
         }
     q->pk = NULL;
+    q->pk2 = NULL;
+    q->hand = 0;
+    q->idle = 1;
 }

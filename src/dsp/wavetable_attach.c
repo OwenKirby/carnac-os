@@ -4,7 +4,8 @@
  * firmware and is read in place through XIP (it was uploaded over USB-MIDI to the store flash at WT_STORE_BASE, which
  * now holds the saved presets). wavetable_attach checks an image's header and CRC; without a valid one every bank
  * plays wavetable_sine, like a sampler with its sample gone: the synth still sounds, in tune.
- * Since 2026-10-26 the image holds banks 1..14 (16 until Menhir and Hollow Reeds retired, 2026-10-27); bank 0 (Foundations) and,
+ * Since 2026-10-26 the image holds the banks from 1 (8 of them since 2026-11-05: Bone Flute, the three vocal banks and
+ * the five the VCO plays as well retired, Overtone Halo, Passage Tomb and Aurora new; 14 before, 16 until Menhir and Hollow Reeds retired, 2026-10-27); bank 0 (Foundations) and,
  * since 2026-11-03, the image's last 6 frames on the FM1 (WT_IMAGE_SPILLED) are in the store flash's wavetable areas
  * (wavetable_area_attach), and play the sine until one is attached. */
 #include <stddef.h>
@@ -17,20 +18,19 @@ extern const uint8_t wavetable_image_host[WT_IMAGE_LINKED_LEN];  /* wavetables_i
 #define WT_START_BANK(b) WT_START(b, 0), WT_START(b, 1), WT_START(b, 2), WT_START(b, 3), \
                          WT_START(b, 4), WT_START(b, 5), WT_START(b, 6), WT_START(b, 7)
 #define WT_SINE_BANK wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine,                      wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine
-_Static_assert(NUM_MORPH_STEPS == 8 && NUM_BANKS == 15 && WT_BANK_FIRST_IMAGE == 1 && NUM_IMAGE_BANKS == 14,
+_Static_assert(NUM_MORPH_STEPS == 8 && NUM_BANKS == 9 && WT_BANK_FIRST_IMAGE == 1 && NUM_IMAGE_BANKS == 8,
                "WT_START_BANK / the initialiser below list every frame");
 #define WT_IMAGE_FRAMES (wavetable_frames + WT_BANK_FIRST_IMAGE * NUM_MORPH_STEPS)
 
 const int16_t *wavetable_frames[NUM_BANKS * NUM_MORPH_STEPS] = {
     WT_SINE_BANK,                                          /* bank 0 until its image is attached */
-    WT_START_BANK(0), WT_START_BANK(1), WT_START_BANK(2), WT_START_BANK(3), WT_START_BANK(4),
-    WT_START_BANK(5), WT_START_BANK(6), WT_START_BANK(7), WT_START_BANK(8), WT_START_BANK(9),
-    WT_START_BANK(10), WT_START_BANK(11), WT_START_BANK(12),
-#ifdef WT_IMAGE_SPILLED                                    /* the last bank's frames 3..8: an area's, the sine until then */
-    WT_START(13, 0), WT_START(13, 1), wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine,
+    WT_START_BANK(0), WT_START_BANK(1), WT_START_BANK(2), WT_START_BANK(3), WT_START_BANK(4), WT_START_BANK(5),
+    WT_START_BANK(6),
+#ifdef WT_IMAGE_SPILLED                                   /* the last bank's frames 3..8: an area's, the sine until then */
+    WT_START(7, 0), WT_START(7, 1), wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine,
     wavetable_sine,
 #else
-    WT_START_BANK(13),
+    WT_START_BANK(7),
 #endif
 };
 _Static_assert(WT_SPILL_FRAMES == 6u, "the initialiser above leaves out the last 6 frames");

@@ -832,7 +832,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parents[2] / "listening" / "pcm")
     ap.add_argument("--images-only", action="store_true")
+    ap.add_argument("--legacy", action="store_true")
     args = ap.parse_args()
+    if not args.legacy:   # 2026-11-05: the firmware's images come from proto_pcm/atkfit/definitive_fw.py
+        raise SystemExit("gen_pcm_waves.py no longer makes the shipped images (the definitive list: "
+                         "proto_pcm/atkfit/definitive_fw.py); --legacy writes the old ones over them")
     here = Path(__file__).resolve().parent
 
     samples = build_samples()

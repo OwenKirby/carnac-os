@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """PCM waves for the FM1 (2026-10-21): upload an image to one of the free flash areas the firmware reads PCM waves from
 (src/dsp/pcm_store.h, src/hardware/pcm_store_fm1.c), over USB-MIDI. The images come from src/dsp/gen_pcm_waves.py
-(src/dsp/pcm_area0.bin, pcm_area1.bin: the chimes, ensembles and their attacks, format version 2). Areas 2 and 3 are
-not PCM: they hold wavetable frames (src/dsp/wt_area2.bin: bank 0, Foundations, and three frames of Dust;
-wt_area3.bin: three more; from src/dsp/gen_wt_areas.py; firmware from 2026-11-03 on. Before, area 2 held
-Foundations alone, foundations_bank.bin).
+(src/dsp/pcm_area0.bin, pcm_area1.bin, pcm_area2.bin, format version 2). Since 2026-11-05 area 2 is PCM too (the
+store's area 3, pcm_store.h PCM_AREA_ST2); from 2026-10-26 to 11-05 areas 2 and 3 held wavetable frames (Foundations,
+Dust), which firmware of that time wants there.
 
   pcm_store_upload.py info                             what each area holds
   pcm_store_upload.py sync                             write every area whose image differs from this repo's
-                                                       (pcm_area0.bin, pcm_area1.bin, wt_area2.bin, wt_area3.bin);
+                                                       (pcm_area0.bin, pcm_area1.bin, pcm_area2.bin);
                                                        fm1_perf.py install runs it after the firmware
-  pcm_store_upload.py upload IMAGE --area A            write IMAGE to area A (0: 36 KiB, 1: 56 KiB, 2 and 3:
-                                                       wavetable frames)
+  pcm_store_upload.py upload IMAGE --area A            write IMAGE to area A (0: 36 KiB, 1: 56 KiB, 2: 24 KiB)
   pcm_store_upload.py clear --area A                   empty area A
   pcm_store_upload.py syx IMAGE OUT.syx --area A       no device: the upload's SysEx frames, for
                                                        src/host/test_pcm_store.c
 
 Each image is made for its own area (a wave refers to its samples by area): upload pcm_area0.bin to area 0 and
-pcm_area1.bin to area 1, wt_area2.bin to area 2, wt_area3.bin to area 3. Needs mido and a backend such as python-rtmidi for the device commands.
+pcm_area1.bin to area 1, pcm_area2.bin to area 2. Needs mido and a backend such as python-rtmidi for the device commands.
 """
 import argparse
 import struct
@@ -31,12 +29,12 @@ PCM_BEGIN, PCM_WRITE, PCM_END, PCM_INFO, PCM_ID = 100, 101, 102, 103, 104
 MAGIC, VERSION = 0x57505243, 2
 HDR_SIZE, ENTRY_SIZE, NAME_LEN = 32, 36, 12
 KINDS = {1: "loop", 2: "one-shot", 3: "wave"}
-AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000, 3: 0x2000}
-WT_AREAS, WT_MAGIC, WT_VERSION = (2, 3), 0x46575243, 1   # wavetables.h WT_AREA_* ("CRWF")
+AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000}
+WT_AREAS, WT_MAGIC, WT_VERSION = (), 0x46575243, 1   # wavetable areas: none since 2026-11-05 (were 2, 3: "CRWF")
 FRAME_BYTES = 1024 * 2
 CHUNK = 256
 DSP = Path(__file__).resolve().parents[1] / "dsp"
-IMAGES = {0: DSP / "pcm_area0.bin", 1: DSP / "pcm_area1.bin", 2: DSP / "wt_area2.bin", 3: DSP / "wt_area3.bin"}
+IMAGES = {0: DSP / "pcm_area0.bin", 1: DSP / "pcm_area1.bin", 2: DSP / "pcm_area2.bin"}
 RC = {1: "arguments", 2: "flash", 3: "order", 4: "too big for the area", 5: "refused by the image check"}
 CHECK = {-1: "no image", -2: "header", -3: "an entry (areas 2, 3: another bank set)", -4: "data CRC"}
 
@@ -73,7 +71,7 @@ def check_for_area(img, area):
     is_wt = len(img) >= 4 and struct.unpack_from("<I", img)[0] == WT_MAGIC
     if (area in WT_AREAS) != is_wt:
         sys.exit(f"area {area} takes {'a wavetable area image' if area in WT_AREAS else 'a PCM image'}"
-                 f" ({f'wt_area{area}.bin' if area in WT_AREAS else 'pcm_area0.bin or pcm_area1.bin'})")
+                 f" ({f'wt_area{area}.bin' if area in WT_AREAS else f'pcm_area{area}.bin'})")
     check_wt(img) if is_wt else parse_image(img)
 
 

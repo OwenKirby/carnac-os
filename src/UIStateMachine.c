@@ -524,9 +524,15 @@ static const uint8_t SECTION_FIRST[BTN_COUNT] = {
     UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ
 };
 static const uint8_t SECTION_COUNT[BTN_COUNT] = {
-    4, 3, 3, 3, 2, 3, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* EDIT: MOD, MFX. GLO: AMP, FX, MIX (2026-11-03). HOME:
-                                                           * LAYER, ZONES, the browser, GLOBAL */
+    3, 3, 3, 3, 2, 3, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* FX: OSC1, OSC2, OSCMIX (ATTACK went with STRIKE: it was 4,
+                                                           * and the 4th press landed on FILTER1, 2026-11-05). EDIT:
+                                                           * MOD, MFX. GLO: AMP, FX, MIX (2026-11-03). HOME: LAYER,
+                                                           * ZONES, the browser, GLOBAL */
 };
+/* each section's pages end where the next section's begin (a page dropped from the enum must shrink its count) */
+PS_STATIC_ASSERT(UIPAGE_OSC1 + 3 == UIPAGE_FILTER1 && UIPAGE_FILTER1 + 3 == UIPAGE_ENV1 &&
+                 UIPAGE_ENV1 + 3 == UIPAGE_LFO1 && UIPAGE_LFO1 + 3 == UIPAGE_MOD && UIPAGE_MOD + 2 == UIPAGE_AMP &&
+                 UIPAGE_AMP + 3 == UIPAGE_HOME1, "SECTION_COUNT: a section's presses stay inside its own pages");
 
 /* -------------------------------------------------------- knob table --- */
 /* 2.2: the four knobs of each page. offset is in the page's data block (as the rows' offsets are), except HOME's

@@ -64,8 +64,14 @@ SYNTH_COLD int pcm_store_check(uint32_t a, const uint8_t *img, uint32_t size)
                 return -3;                          /* the samples inside the image, after the entries */
         } else if (e->kind == PCM_WAVE) {
             const uint8_t *nm = (const uint8_t *)e->name;
-            if (!nm[0] || e->root || e->u.w.rsv || e->u.w.rsv2 || e->u.w.rsv3[0] || e->u.w.rsv3[1])
+            if (!nm[0] || e->root || e->u.w.rsv || (e->u.w.flags & ~PCM_WF_HANDOFF) ||
+                e->u.w.rsv2[0] || e->u.w.rsv2[1] || e->u.w.rsv2[2] || e->u.w.rsv2[3] || e->u.w.rsv2[4] ||
+                e->u.w.rsv2[5] || (!(e->u.w.flags & PCM_WF_HANDOFF) && (e->u.w.tail_a || e->u.w.tail_b)))
                 return -3;
+            if (!(e->u.w.flags & PCM_WF_HANDOFF) ? e->u.w.atk_ref_b != 0u :
+                (e->u.w.atk_ref == PCM_REF_NONE ||
+                 (e->u.w.atk_ref_b != PCM_REF_NONE && !ref_ok(a, img, h->count, e->u.w.atk_ref_b, PCM_ONESHOT))))
+                return -3;                          /* HANDOFF: its own attacks, in the store */
             if (!ref_ok(a, img, h->count, e->u.w.loop_a, PCM_LOOP))
                 return -3;
             if (e->u.w.loop_b != PCM_REF_NONE && !ref_ok(a, img, h->count, e->u.w.loop_b, PCM_LOOP))

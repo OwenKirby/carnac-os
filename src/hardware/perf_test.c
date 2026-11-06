@@ -68,9 +68,10 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_DLY_BBD 64u                /* the delay as a BBD (DELAY TYPE), with any of the above */
 /* (128u: F_ATK_FILT, STRIKE's, retired 2026-11-04) */
 #define F_HP 256u                    /* both filters' morph at 110 (SH-2: past BP, all five output taps) */
-#define F_PCM 512u                   /* PCM waves (needs the store uploaded): OSC1 CHOIR at SCAN 64 (both loops read),
-                                      * OSC2 WOOD CHIMES; with K_RS / K_SEQ OSC1 plays WOOD CHIMES too (the attack
-                                      * at every note). gen_pcm_waves.py's wave order: WOOD CHIMES 0, CHOIR 4 */
+#define F_PCM 512u                   /* PCM waves (needs the store uploaded): OSC1 CHOIR at SCAN 64 (both whole
+                                      * notes: both attacks, then both loops), OSC2 LORE; with K_RS / K_SEQ OSC1 plays
+                                      * BELL (both attacks at every note, then the decaying tails). The wave order
+                                      * (2026-11-06, the rebuilt bank, bank_fw.py): CHOIR 0, LORE 7, BELL 8 */
 #define F_DRIVE 1024u                /* AMP DRIVE 80 through the model in bits 11..13 (F_DRV) */
 #define F_DRV(m) (F_DRIVE | (uint16_t)((m) << 11))
 #define F_MFX 0x4000u                /* STONE PHASER on layer 1 (RATE 0.5 Hz, FEEDBACK 100, STEREO 64, AUTO) */
@@ -370,8 +371,8 @@ static void patch(EngineState *e, const PtScen *s)
         e->amp.drive_model = (uint8_t)((s->flags >> 11) & 7u);
     }
     if (s->flags & F_PCM) {
-        e->osc[0].wavebank = (uint8_t)(WAVE_PCM_FIRST + (s->kind == K_HELD ? 4u : 0u));
-        e->osc[1].wavebank = WAVE_PCM_FIRST;
+        e->osc[0].wavebank = (uint8_t)(WAVE_PCM_FIRST + (s->kind == K_HELD ? 0u : 8u));
+        e->osc[1].wavebank = WAVE_PCM_FIRST + 7u;
         e->osc[0].scan = e->osc[1].scan = 64;
     }
 }

@@ -229,10 +229,11 @@ static void boot(void)
     factory_install();
     ps_load();
     {   /* the PCM waves (src/dsp/gen_pcm_waves.py's images), as on a unit they were uploaded to */
-        extern const uint8_t pcm_image_host0[], pcm_image_host1[];
-        extern const uint32_t pcm_image_host_len0, pcm_image_host_len1;
+        extern const uint8_t pcm_image_host0[], pcm_image_host1[], pcm_image_host2[];
+        extern const uint32_t pcm_image_host_len0, pcm_image_host_len1, pcm_image_host_len2;
         pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0);
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
+        pcm_store_attach(PCM_AREA_ST2, pcm_image_host2, pcm_image_host_len2);
     }
     {   /* wavetable bank 0, Foundations (src/dsp/gen_foundations.py), as on a unit it was uploaded to */
         extern const uint8_t wt_area2_host[];

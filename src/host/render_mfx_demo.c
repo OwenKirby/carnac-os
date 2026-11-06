@@ -249,12 +249,13 @@ int main(int argc, char **argv)
     }
     synth_init();
     {
-        extern const uint8_t pcm_image_host0[], pcm_image_host1[];
-        extern const uint32_t pcm_image_host_len0, pcm_image_host_len1;
+        extern const uint8_t pcm_image_host0[], pcm_image_host1[], pcm_image_host2[];
+        extern const uint32_t pcm_image_host_len0, pcm_image_host_len1, pcm_image_host_len2;
         extern const uint8_t wt_area2_host[];
         extern const uint32_t wt_area2_host_len;
         pcm_store_attach(0, pcm_image_host0, pcm_image_host_len0);
         pcm_store_attach(1, pcm_image_host1, pcm_image_host_len1);
+        pcm_store_attach(PCM_AREA_ST2, pcm_image_host2, pcm_image_host_len2);
         wavetable_area_attach(0, wt_area2_host, wt_area2_host_len);
     }
     if (argc >= 3) {

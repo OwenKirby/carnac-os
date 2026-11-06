@@ -282,6 +282,10 @@ SYNTH_COLD static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note
     v->snap = 1;
     analog_note_on(&v->analog);                /* ANALOG: this note's own small pitch and speed offsets */
     v->osc1.pcm.trig = v->osc2.pcm.trig = 1;   /* a PCM wave's attack starts at the next tick (pcm_osc.c) */
+    /* a held note (its amp envelope sustains) keeps a percussive wave's ring: no HANDOFF tail (2026-11-05, user: the
+     * drums serve as sustained tones too); STACK's OSC2 has ENV2 for its amp */
+    v->osc1.pcm.hold = (uint8_t)(e->env[0].sustain > 0u);
+    v->osc2.pcm.hold = (uint8_t)(e->env[e->arch == VARCH_STACK ? 1 : 0].sustain > 0u);
 
     v->age_counter = 0;
     v->release_boost_q15 = boost;

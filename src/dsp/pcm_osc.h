@@ -33,11 +33,20 @@ typedef struct {
     int32_t da, db, dk;             /* each sample's step toward them, for `ramp` more samples (then exactly there) */
     int32_t xf;                     /* SCAN as a crossfade, Q15: 0 = A, 32768 = B */
     float inv_freq;                 /* 1 / the tick's frequency (Q16 Hz): FM scales the steps by freq * this */
+    float pm_a, pm_b, pm_k, pm_k2;  /* PM (2026-11-05): Q16 samples of each read per 2^32 of cycle phase at this pitch */
     uint8_t code;                   /* the wave playing (0: none) */
     uint8_t on;                     /* 1: this oscillator plays PCM (osc_select_wave) */
     uint8_t trig;                   /* 1: a note started: the attack starts at the next tick */
     uint8_t ramp;
-    uint8_t slive;                  /* SPREAD: bit i, playhead i sounds (its steps within 4 samples) */
+    uint8_t hand;                   /* 1: a HANDOFF attack plays alone, the loops silent until it ends (pcm_store.h);
+                                     * 2: a voice retaken while it sounded: its loops fade out this tick first */
+    uint8_t idle;                   /* 1: the voice was silent (pcm_idle) since it last rendered */
+    uint8_t hold;                   /* 1: this note's amp envelope sustains: the ring holds (no tail), set at a note */
+    int32_t tail_a, tail_b, tmul_a, tmul_b; /* HANDOFF: each loop's gain after the attacks, Q15, its factor a tick (0: none) */
+    const uint8_t *pk2;             /* HANDOFF, SCAN between A and B at the note: B's attack beside A's (pk) */
+    uint32_t pos_k2, step_k2, end_k2;
+    int32_t wk2, ksplit;            /* B's attack weight (still); A's share of the attack level, Q15 (W1: one attack) */
+    uint8_t slive;               /* SPREAD: bit i, playhead i sounds (its steps within 4 samples) */
     int32_t sxf;                    /* SPREAD's crossfade from the undetuned reads, Q15: 0 = no spread */
     uint32_t spa[4], spb[4];        /* SPREAD: each loop's four detuned read positions, Q16 samples */
     uint32_t ssa[4], ssb[4];        /* and their steps */
@@ -52,7 +61,12 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12);
 void pcm_spread(PcmOsc *q, const uint32_t *ratio_q28, int32_t xfade_q15);
 void pcm_render_block(PcmOsc *q, int32_t *out, int n);
 int32_t pcm_render_one(PcmOsc *q);
-int32_t pcm_render_one_fm(PcmOsc *q, uint32_t freq_q16);   /* audio-rate FM: this sample's frequency */
+/* audio-rate FM: this sample's frequency (Q16 Hz). Through zero (2026-11-05): below 0 the loops read backwards (the
+ * attack forwards, at the speed's size); the speed against the note's own stays within +-4 */
+int32_t pcm_render_one_fm(PcmOsc *q, int32_t freq_q16);
+/* audio-rate PM (2026-11-05): this sample read `off` of a cycle (2^32 = one cycle of the note) away, as a wavetable's
+ * PM offsets its phase; the positions themselves run on at the note's pitch */
+int32_t pcm_render_one_pm(PcmOsc *q, int32_t off);
 void pcm_idle(PcmOsc *q, int n);    /* a silent voice: the loops keep turning, n samples */
 
 /* the panel's wave list: banks, then the store's PCM waves, then the attacks; position <-> wave code */

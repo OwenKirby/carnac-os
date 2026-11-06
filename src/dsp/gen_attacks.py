@@ -612,7 +612,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path,
                     default=Path(__file__).resolve().parents[2] / "listening" / "attacks")
-    ap.add_argument("--c", type=Path, default=Path(__file__).with_name("attacks.c"), help="the firmware tables")
+    ap.add_argument("--c", type=Path, default=None, help="also write the tables as C here (the firmware has had no "
+                    "attacks since 2026-11-05: src/dsp/attacks.c is now only the decode table, hand-kept)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -634,8 +635,9 @@ def main():
         _, _, root, sr, x = by_name[aname]
         demo = render_demo(x, sr, root, bank_cycle(bank, scan), notes, level, fade_in)
         write_wav(args.out / f"{fname}.wav", demo, OUT_SR)
-    nbytes = write_c(args.c, attacks)
-    print(f"wrote {args.c} ({nbytes} B of samples)")
+    if args.c:
+        nbytes = write_c(args.c, attacks)
+        print(f"wrote {args.c} ({nbytes} B of samples)")
     print(f"wrote {len(attacks)} attacks, the reel and {len(DEMOS)} LA demos to {args.out}")
 
 

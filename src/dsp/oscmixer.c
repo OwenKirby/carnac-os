@@ -101,8 +101,7 @@ int16_t osc_mixer_osc2(const OscMixVoice *mv, int16_t wave1_q15, WavetableOsc *o
          * only SPREAD runs detuned playheads, and it has no OSC2. */
         int32_t fm_hz = ((int32_t)wave1_q15 * mv->depth) >> 12;
         int32_t freq2_mod_q16 = (int32_t)mv->freq2_q16 + fm_hz * 98304;
-        if (freq2_mod_q16 < 655360) freq2_mod_q16 = 655360;          /* 10 Hz floor, no fold-back */
-        return osc_process_skulpt_spread_fixed(osc2, (uint32_t)freq2_mod_q16, 0);
+        return osc_process_fm_tz(osc2, freq2_mod_q16);   /* through zero (2026-11-05; was a 10 Hz floor) */
     }
     }
 }
@@ -120,9 +119,14 @@ void osc_mixer_osc2_block(const OscMixVoice *mv, const int32_t *w1, WavetableOsc
     if (fm) {                                   /* FM: osc_mixer_osc2's pitch, per sample */
         for (int i = 0; i < n; i++) {
             int32_t fm_hz = ((int32_t)(int16_t)w1[i] * mv->depth) >> 12;
-            int32_t f = (int32_t)mv->freq2_q16 + fm_hz * 98304;
-            w2[i] = pcm_render_one_fm(&osc2->pcm, (uint32_t)(f < 655360 ? 655360 : f));
+            w2[i] = pcm_render_one_fm(&osc2->pcm, (int32_t)mv->freq2_q16 + fm_hz * 98304);   /* through zero */
         }
+        osc2->center_phase += osc2->center_step * (uint32_t)n;
+        return;
+    }
+    if (osc2->pcm.on && mv->xmod_type == OSCMIX_XMOD_PM && mv->depth != 0) {   /* PM on a PCM wave (2026-11-05) */
+        for (int i = 0; i < n; i++)
+            w2[i] = pcm_render_one_pm(&osc2->pcm, (int32_t)((int64_t)(int16_t)w1[i] * mv->depth * 258));
         osc2->center_phase += osc2->center_step * (uint32_t)n;
         return;
     }
@@ -227,7 +231,9 @@ int32_t osc_mixer_sub(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t 
         uint8_t level = mv->sub_level;
         uint32_t off = wavetable_level_start[level], shift = WT_LEVEL_SHIFT[level], mask = WT_LEVEL_SAMPLES[level] - 1u;
         if (mv->sub_waveform == SUBWAVE_CURRENT) {          /* follows OSC1's scan: its frames for this tick */
-            sub_q15 = wt_read_frames(osc1->frame_a, osc1->frame_b, osc1->morph_frac_q15, off, shift, mask, *sub_phase);
+            sub_q15 = osc1->vco ? osc_vco_at(osc1, *sub_phase, mv->sub_step)    /* the VCO: its own shape */
+                                : wt_read_frames(osc1->frame_a, osc1->frame_b, osc1->morph_frac_q15, off, shift, mask,
+                                                 *sub_phase);
         } else {
             const int16_t *table = mv->sub_waveform == SUBWAVE_SQUARE ? wavetable_sub_square : wavetable_sine;
             sub_q15 = wt_read_frames(table, table, 0, off, shift, mask, *sub_phase);
@@ -252,6 +258,14 @@ void osc_mixer_sub_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32
     }
     uint32_t phase = *sub_phase, step = mv->sub_step;
     int32_t gain = mv->sub_gain_q15;
+    if (mv->sub_waveform == SUBWAVE_CURRENT && osc1->vco) {   /* the VCO's own shape (osc_mixer_sub) */
+        for (int i = 0; i < n; i++) {
+            phase += step;
+            acc[i] += ((osc_vco_at(osc1, phase, step) * gain) >> 15) >> 1;
+        }
+        *sub_phase = phase;
+        return;
+    }
     for (int i = 0; i < n; i++) {
         phase += step;
         int32_t s = wt_read_frames(fa, fb, mf, off, shift, mask, phase);
