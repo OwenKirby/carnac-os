@@ -614,7 +614,7 @@ static const UiKnob FLTMIX_KNOBS[VARCH_COUNT][4] = {
     {KNONE, KNONE, KNONE, KNONE},
     {KFMX(balance, "BALANCE", UIKNOB_BIP), KFMX(routing, "ROUTING", UIKNOB_RAW),
      KFMX(balance_mod_amt, "BALANCE MOD", UIKNOB_BIP), KFMX(routing_mod_amt, "ROUTING MOD", UIKNOB_BIP)},     /* DUAL FILTER */
-    {KFMX(balance, "BLEND A/B", UIKNOB_BIP), KNONE,   /* (WIDTH removed 2026-11-06: the layers play as one) */
+    {KFMX(balance, "BLEND A/B", UIKNOB_BIP), KFMX(stack_xfeed, "CROSS-FEED", UIKNOB_BIP),
      KFMX(balance_mod_amt, "BLEND MOD", UIKNOB_BIP), KFMX(env3_cutoff, "ENV3>CUTOFF", UIKNOB_BIP)},          /* STACK */
     {KFMX(bin_mod_phase, "FLT PHASE", UIKNOB_RAW), KFMX(bin_width, "WIDTH", UIKNOB_RAW),
      KFMX(bin_cutoff_offset, "CUTOFF L/R", UIKNOB_BIP), KFMX(bin_phase_mod_amt, "PHASE MOD", UIKNOB_BIP)},    /* BINAURAL */

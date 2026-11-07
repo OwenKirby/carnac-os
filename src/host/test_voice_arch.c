@@ -206,6 +206,23 @@ static void send_same(const char *name, uint8_t arch, SendTweak tw)
     if (same) printf("MOD SEND %-10s = the own-source route\n", name);
 }
 
+/* STACK at CROSS-FEED xfeed: one note, path keep's envelope (0: ENV1 / A, 1: ENV2 / B) releasing slowly, the other's at
+ * once; the level of what is left once the other has gone */
+static double stack_tail(uint8_t xfeed, int keep)
+{
+    synth_init();
+    base_patch(&engine_state[0], VARCH_STACK);
+    engine_state[0].fltmix.stack_xfeed = xfeed;
+    engine_state[0].env[keep].release = 100;
+    engine_state[0].env[!keep].release = 0;
+    synth_midi_3(0x90, 60, 100);
+    render(4410);
+    synth_midi_3(0x80, 60, 0);
+    render(4410);
+    Stats s = render(4410);
+    return s.rms_l + s.rms_r;
+}
+
 int main(void)
 {
     /* 1. each architecture, 8 notes held: voices <= cap, sound present, stereo where expected; CPU time */
@@ -260,6 +277,16 @@ int main(void)
     {
         Stats s = render(4410);
         CHECK(s.rms_l + s.rms_r > 50, "STACK: B release silent");
+    }
+    /* 3b. STACK CROSS-FEED (2026-11-06): the path left sounding after the other's envelope has ended carries the other's
+     * tone too when the knob feeds it (+ into B, - into A), and centre is the old STACK */
+    {
+        double t_b0 = stack_tail(BIPOLAR_CENTER, 1), t_bp = stack_tail(127, 1), t_bm = stack_tail(0, 1);
+        double t_a0 = stack_tail(BIPOLAR_CENTER, 0), t_am = stack_tail(0, 0);
+        printf("STACK CROSS-FEED tails: B %.0f (centre) %.0f (+) %.0f (-); A %.0f (centre) %.0f (-)\n",
+               t_b0, t_bp, t_bm, t_a0, t_am);
+        CHECK(t_bp > 1.2 * t_b0, "CROSS-FEED +: A's tone not in B's tail (%.0f vs %.0f)", t_bp, t_b0);
+        CHECK(t_am > 1.2 * t_a0, "CROSS-FEED -: B's tone not in A's tail (%.0f vs %.0f)", t_am, t_a0);
     }
 
     /* 4. layering: DUAL with SINGLE (cap 8) + STACK (cap 6): each layer gets min / 2 = 3 */

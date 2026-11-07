@@ -404,7 +404,8 @@ typedef struct {                     /* FILTER MIXER (DUAL FILTER, STACK, BINAUR
     uint8_t balance_mod_src;         /* MSRC_* (default ENV3) */
     uint8_t routing_mod_src;         /* MSRC_* (default ENV3), DUAL FILTER */
     /* STACK */
-    uint8_t stack_width;             /* unused since 2026-11-06 (STACK's WIDTH removed: A and B share the pan); spare */
+    uint8_t stack_xfeed;             /* knob 2, (bip) CROSS-FEED (2026-11-06, WIDTH's old byte): + FILTER1's output also
+                                      * into FILTER2 (so through ENV2), - FILTER2's into FILTER1 (through ENV1) */
     uint8_t env3_cutoff;             /* knob 4, (bip): ENV3 to both filter cutoffs */
     /* BINAURAL */
     uint8_t bin_mod_phase;           /* knob 1: LFO phase offset of the right ear's filter mod, 0..127 = 0..357 deg */
