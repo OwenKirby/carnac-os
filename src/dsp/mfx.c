@@ -113,7 +113,7 @@ typedef struct {
         struct { float f, sa, sb, xlim, ylim, hiss, pol, dpol; int32_t r0, rd, m0[2], md[2]; } tf;
                                              /* TAPE FLANGER: the decks' settings, the reference's read head and each
                                               * side's second deck's (16.16, start and step a frame) */
-        struct { HrSvf f; float fb, g0, g1, hiss, pc[2], pfb; int32_t d0[2], dd[2]; uint8_t cross; } bf;
+        struct { HrSvf f; float fb, g0, g1, hiss; int32_t d0[2], dd[2]; uint8_t cross; } bf;
                                              /* BBD FLANGER: the boards' filter, FEEDBACK, the delay's gain (with the
                                               * POLARITY, ramped g0 -> g1), each side's read head; MODE III's crossing;
                                              * PHASE+FLANGE: each side's phaser coefficient, COLOUR */
@@ -170,9 +170,6 @@ typedef struct {
     float en_fast;                           /* ENSEMBLE: the tremolo oscillator's phase */
     float en_d[3];                           /* ... each line's delay at the last control step, samples */
     float ss_ctl, ss_lfo;                    /* ENS+PHASER: the OTAs' control current (0..1, glided), the LFO's phase */
-    float pf_ctl[2];                         /* PHASE+FLANGE: each side's phaser control (0..1, glided; the LFO:
-                                              * ss_lfo) */
-    float pf_key, pf_rate;                   /* ... PHASE RATE as last worked out, and its rate (Hz) */
     float br_wow, br_wow_to;                 /* the aging clock's drift, and where it heads */
     uint32_t br_rng, br_wow_n;               /* (its draws; BULLROARER's noise too) */
     uint32_t br_w;                           /* BULLROARER (run whole, on one core): the write place */
@@ -1111,97 +1108,6 @@ static void bf_side(MfxState *s, int ch, float *y)
     sd->rng = rng;
 }
 
-/* ---- PHASE+FLANGE ---- */
-/* The cheap combo (2026-11-04, the user's: "a cheap phaser into cheap flanger, or vice-versa"): ENS+PHASER's
- * four-stage OTA phaser and BBD FLANGER's brigade in one half-rate loop a side, so the whole effect lives in the
- * brigade's band (~10 kHz: the trade that makes it cheap; the dry is not added at the full rate). The phaser comes
- * first; after the flanger it measured the same to 0.1 dB (two linear filters commute: the order only tells with
- * something nonlinear between), so there is no ORDER. The flanger is BBD FLANGER's FLANGER II (the sides swept
- * against each other), its DEPTH held; the phaser sweeps its whole range, the right side WIDTH behind. Knobs: PHASE
- * RATE, FLANGE RATE, CENTER, FEEDBACK. Rows: COLOUR (the phaser's feedback), WIDTH. */
-#define PF_DEPTH 80.f                            /* the flanger's DEPTH, held */
-#define PF_OUT 1.4f                              /* the output's level: the two sweeps' notches together take ~8 dB
-                                                  * of a held tone in the middle (sines 220 .. 1760 Hz), ~4 made up
-                                                  * (more and everything full runs past the bound: test_mfx) */
-
-/* its step (the plan): BBD FLANGER's, then the phaser's control on each side and COLOUR */
-static SYNTH_COLD void pf_plan(MfxState *s, MfxStep *step, const float *k, const float *row, float lr)
-{
-    const float kf[4] = {k[MFX_K_PF_CENTER], k[MFX_K_PF_FL_RATE], PF_DEPTH, k[MFX_K_PF_FEEDBACK]};
-    const float rf[2] = {(float)MFX_BF_FLANGER2, 0.f};
-    bf_plan(s, step, kf, rf);
-    if (k[MFX_K_PF_PH_RATE] != s->pf_key) {    /* (the plan's diet, 2026-11-04: worked out when it moves) */
-        s->pf_key = k[MFX_K_PF_PH_RATE];
-        s->pf_rate = 0.04f * amp_exp2f(s->pf_key * (7.966f / 127.f));
-    }
-    const float rate = s->pf_rate;
-    for (int j = 0; j < 2; j++) {
-        float ph = s->ss_lfo - (j ? lr * (0.5f / 127.f) : 0.f);
-        if (ph < 0.f) ph += 1.f;
-        const float want = ph < 0.5f ? 2.f * ph : 2.f - 2.f * ph;
-        s->pf_ctl[j] += (want - s->pf_ctl[j]) * (0.0155f * (float)step->m / (float)MFX_SUB);
-        /* tan(pi f / HR_SR) by its series to x^7 (x <= 0.43 at 3 kHz: within 0.05 %; two parabola sines and a
-         * divide a step before) */
-        const float x = (SS_F_LO + (SS_F_HI - SS_F_LO) * s->pf_ctl[j]) * (MFX_PI / HR_SR), x2 = x * x;
-        const float t = x * (1.f + x2 * (1.f / 3.f + x2 * (2.f / 15.f + x2 * (17.f / 315.f))));
-        step->u.bf.pc[j] = (1.f - t) / (1.f + t);
-    }
-    step->u.bf.pfb = SS_FB * row[MFX_R_COLOUR] * (1.f / 127.f);
-    s->ss_lfo += rate * (float)step->m * (1.f / MFX_SR);
-    if (s->ss_lfo >= 1.f) s->ss_lfo -= 1.f;
-}
-
-/* PHASE+FLANGE on one side (ch), y in place: each pair of frames into one half-rate sample, the phaser and the
- * flanger, back up all wet */
-static void pf_side(MfxState *s, int ch, float *y)
-{
-    MfxSide *sd = &s->side[ch];
-    float *line = sd->line.f;
-    float a1 = sd->flt[0], a2 = sd->flt[1], b1 = sd->flt[2], b2 = sd->flt[3], env = sd->env, fbv = sd->fbv;
-    float z0 = sd->ss_z[0], z1 = sd->ss_z[1], z2 = sd->ss_z[2], z3 = sd->ss_z[3], z4 = sd->ss_z[4];
-    uint32_t w = sd->w, rng = sd->rng;
-    for (uint32_t k = 0; k < s->nstep; k++) {
-        const MfxStep *step = &s->plan[k];
-        const uint32_t m = step->m, mp = m >> 1;
-        const HrSvf f = step->u.bf.f;
-        const float fb = step->u.bf.fb, hiss = step->u.bf.hiss, g = step->u.bf.g1, c = step->u.bf.pc[ch];
-        const float pfb = step->u.bf.pfb;
-        float wet[MFX_SUB / 2];
-        int32_t hd = step->u.bf.d0[ch];
-        const int32_t dd = step->u.bf.dd[ch];
-        for (uint32_t i = 0; i < mp; i++) {
-            float x = 0.5f * (y[2u * i] + y[2u * i + 1u]), v, o;
-            float av = x < 0.f ? -x : x;                       /* the hiss rides the level */
-            env += (av > env ? 0.04f : 0.001f) * (av - env);
-#define PF_PHASE(X) do { \
-                v = (X) + pfb * z4;                            /* COLOUR: the chain's end back to its start */ \
-                o = c * (v + z1) - z0; z0 = v; \
-                v = c * (o + z2) - z1; z1 = o; \
-                o = c * (v + z3) - z2; z2 = v; \
-                v = c * (o + z4) - z3; z3 = o; z4 = v; \
-                (X) = 0.5f * ((X) + v); \
-            } while (0)
-            PF_PHASE(x);
-            float a = hr_lp(&f, x + fb * fbv, &a1, &a2);       /* the input and the FEEDBACK into the brigade */
-            line[w] = br_sat(a * BR_SCALE) * BF_UN;
-            hd += dd;
-            HrTap t = hr_at(w, hd);
-            rng = rng * 1664525u + 1013904223u;
-            fbv = hr_lp(&f, hr_read(line, &t) + env * hiss * (float)(int32_t)rng, &b1, &b2);
-#undef PF_PHASE
-            wet[i] = BF_MIX * x + g * fbv;                     /* the direct and the delay */
-            w = (w + 1u) & (HR_LEN - 1u);
-        }
-        hr_up(y, wet, m, &sd->prev, PF_OUT, 0.f);
-        y += m;
-    }
-    sd->flt[0] = a1; sd->flt[1] = a2; sd->flt[2] = b1; sd->flt[3] = b2;
-    sd->env = env; sd->fbv = fbv;
-    sd->ss_z[0] = z0; sd->ss_z[1] = z1; sd->ss_z[2] = z2; sd->ss_z[3] = z3; sd->ss_z[4] = z4;
-    sd->w = w;
-    sd->rng = rng;
-}
-
 /* ---- PITCH SHIFT ---- */
 /* The late-70s digital pitch changer: the input written into a short memory, a read head moving through it at the
  * pitch ratio's pace (its delay grows by 1 - ratio a sample). When it runs out of memory (up: it catches the writer;
@@ -1490,7 +1396,7 @@ SYNTH_COLD float mfx_peek(int layer, int i)
     if (t == MFX_ENS_PHASER && i == 5) return s->ss_ctl;
     if ((t == MFX_ENSEMBLE || t == MFX_ENS_PHASER) && i >= 0 && i < 3) return s->en_d[i] * (1.f / EN_DMAX);
     if (t == MFX_CHORUS && i >= 0 && i < 2) return s->side[i].ch_d * (1.f / EN_DMAX);
-    if ((t == MFX_BBD_FLANGER || t == MFX_PHASE_FLANGE) && i >= 0 && i < 2) {   /* each side's delay, on CENTER's scale (octaves from its least) */
+    if (t == MFX_BBD_FLANGER && i >= 0 && i < 2) {   /* each side's delay, on CENTER's scale (octaves from its least) */
         union { float f; uint32_t u; } v = {s->bf_d[i] * (1.f / BF_DMIN)};
         float m = (float)(v.u & 0x7FFFFFu) * (1.f / 8388608.f);           /* log2: the exponent, the mantissa's curve */
         float l2 = (float)((int32_t)(v.u >> 23) - 127) + m * (1.3465f - 0.3465f * m);
@@ -2112,10 +2018,10 @@ static SYNTH_COLD void mfx_begin(MfxState *s, const MfxParams *p)
     s->kn[4] = (float)p->lr;
     s->kn[5] = (float)p->row[0];
     s->kn[6] = (float)p->row[1];
-    s->ss_ctl = s->pf_ctl[0] = s->pf_ctl[1] = 0.5f;
+    s->ss_ctl = 0.5f;
     s->sp_set.key[0] = s->en_set.key[0] = s->ss_set.key[0] = s->ch_set.key[0] = s->tf_set.key[0] = -1.f;
     s->bf_set.key[0] = s->ps_set.key[0] = s->qe_set.key[0] = s->mt_set.key[0] = -1.f;
-    s->rs_set.key[0] = s->pf_key = -1.f;
+    s->rs_set.key[0] = -1.f;
     if (p->type == MFX_WIND_HARP)                /* (its strings, outside the state) */
         memset(rs_line[s == &mfx_st[1]], 0, sizeof rs_line[0]);
     if (p->type == MFX_BBD_ECHO)                 /* (its brigade, outside the state) */
@@ -2216,8 +2122,6 @@ int mfx_layer_plan(int layer, float *l, float *r, uint32_t n)
             xi += m >> 1;
         } else if (p->type == MFX_PITCH_SHIFT)
             ps_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
-        else if (p->type == MFX_PHASE_FLANGE)
-            pf_plan(s, step, s->kn, s->kn + 5, s->kn[4]);
         else if (p->type == MFX_WIND_HARP || p->type == MFX_RINGING_STONES) {
             rs_plan(s, step, s->kn, s->kn + 5, s->kn[4], p->type == MFX_RINGING_STONES);
             for (uint32_t i = 0; i < (m >> 2); i++) {        /* both sides' quarter-rate input (WIDTH's crossing) */
@@ -2259,8 +2163,6 @@ void mfx_layer_side(int layer, int side, float *y)
         mt_side(s, side & 1, y);
 #endif
     }
-    else if (s->type == MFX_PHASE_FLANGE)
-        pf_side(s, side & 1, y);
     else if (s->type == MFX_WIND_HARP || s->type == MFX_RINGING_STONES)
         rs_side(s, side & 1, y, s->type == MFX_RINGING_STONES);
     else

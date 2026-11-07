@@ -98,10 +98,10 @@ static const char *const PERF_NAMES[] = {"SINGL", "DUAL", "SPLIT"};
 /* SPREAD shows as SINGLE (2026-10-27, user): at SPREAD 0 it is the old SINGLE path, which it replaced */
 static const char *const VARCH_NAMES[] = {"SINGLE", "DUAL OSC", "SINGLE", "DUAL FILT", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL SPRD"};
 /* the ARCH row's order (2026-10-27, user); the stored codes stay as they are. SINGLE (hidden) sits where SPREAD does */
-static const uint8_t ARCH_ORDER[] = {VARCH_SPREAD, VARCH_DUAL_OSC, VARCH_DUAL_FILTER, VARCH_DUAL_SPREAD, VARCH_FULL,
+static const uint8_t ARCH_ORDER[] = {VARCH_SPREAD, VARCH_DUAL_OSC, VARCH_DUAL_FILTER, VARCH_FULL,
                                      VARCH_STACK, VARCH_BINAURAL};
 #define ARCH_ORDER_N ((uint8_t)(sizeof ARCH_ORDER / sizeof ARCH_ORDER[0]))
-PS_STATIC_ASSERT(sizeof ARCH_ORDER == VARCH_COUNT - 2u, "every offered VARCH_* once in ARCH_ORDER (SINGLE and STRIKE load as SPREAD)");
+PS_STATIC_ASSERT(sizeof ARCH_ORDER == VARCH_COUNT - 3u, "every offered VARCH_* once in ARCH_ORDER (SINGLE and STRIKE load as SPREAD, DUAL SPREAD as DUAL OSC)");
 
 static uint8_t arch_pos(uint8_t a)
 {
@@ -190,16 +190,16 @@ static const UiRow OSC_ROWS[] = {
  * cross-mod need OSC2 (STACK has XMOD TYPE on knob 1), SPREAD has its source row (spread and its amount are knobs),
  * BINAURAL adds the right ear's scan offset. The noise shows here only with two oscillators: with one it has the NOISE
  * page (2026-11-06, in OSC2's place), and SUB OCTAVE takes the noise's knob. */
-#define A_OSC2 ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL) | A(DUAL_SPREAD)))   /* the architectures with OSC2 */
+#define A_OSC2 ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL)))   /* the architectures with OSC2 */
 /* HARMONIC and its mod live at the patch's end (EngineState.noise_harmonic): an offset from the OSCMIXER block */
 #define HOFS(m) ((uint8_t)(offsetof(EngineState, m) - offsetof(EngineState, oscmix)))
 static const UiRow OSCMIX_ROWS[] = {
-    {"MIX MOD SRC", OFS(OscMixerParams, mix_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_OSC) | A(FULL) | A(DUAL_SPREAD)},
-    {"MIX MOD AMT", OFS(OscMixerParams, mix_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(FULL) | A(DUAL_SPREAD)},
+    {"MIX MOD SRC", OFS(OscMixerParams, mix_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_OSC) | A(FULL)},
+    {"MIX MOD AMT", OFS(OscMixerParams, mix_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(FULL)},
     {"XMOD MOD SRC", OFS(OscMixerParams, xmod_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(DUAL_OSC) | A(STACK) | A(FULL)},
     {"XMOD TYPE", OFS(OscMixerParams, xmod_type), 0, XMOD_COUNT - 1, RK_BYTE, 0, XMOD_NAMES, A(DUAL_OSC) | A(FULL)},
     {"XMOD MOD AMT", OFS(OscMixerParams, xmod_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(STACK) | A(FULL)},
-    {"SPR MOD SRC", OFS(OscMixerParams, spread_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(SPREAD) | A(DUAL_SPREAD)},
+    {"SPR MOD SRC", OFS(OscMixerParams, spread_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(SPREAD)},
     {"NOISE COLOUR", OFS(OscMixerParams, noise_colour), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},
     {"COL MOD SRC", OFS(OscMixerParams, noise_col_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_OSC2},
     {"COL MOD AMT", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
@@ -295,16 +295,16 @@ static const UiRow AMP_ROWS[] = {
  * at OFF and on a list knob). Then LEVEL: the slot's output level (its amount, what a chain reads it at). */
 #define EOFS(member) OFS(EngineState, member)
 #define MDEST(label, d, archs) {label, d, 0, VAL_MAX, RK_SEND, RF_BIPOLAR, NULL, archs}
-#define A_OSC2 ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL) | A(DUAL_SPREAD)))
+#define A_OSC2 ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL)))
 #define A_FLT2 ((uint16_t)(A(DUAL_FILTER) | A(STACK) | A(FULL)))
 static const UiRow MOD_ROWS[] = {
     MDEST("OSC1 SCAN", MDST_OSC1_SCAN, A_ALL),
     MDEST("OSC1 PITCH", MDST_OSC1_PITCH, A_ALL),
     MDEST("OSC2 SCAN", MDST_OSC2_SCAN, A_OSC2),
     MDEST("OSC2 PITCH", MDST_OSC2_PITCH, A_OSC2),
-    MDEST("OSC MIX", MDST_OSC_MIX, A(DUAL_OSC) | A(FULL) | A(DUAL_SPREAD)),
+    MDEST("OSC MIX", MDST_OSC_MIX, A(DUAL_OSC) | A(FULL)),
     MDEST("CROSS-MOD", MDST_XMOD, A(DUAL_OSC) | A(STACK) | A(FULL)),
-    MDEST("SPREAD", MDST_SPREAD, A(SPREAD) | A(DUAL_SPREAD)),
+    MDEST("SPREAD", MDST_SPREAD, A(SPREAD)),
     MDEST("NOISE LEVEL", MDST_NOISE_LEVEL, A_ALL),
     MDEST("NOISE COLOUR", MDST_NOISE_COLOUR, A_ALL),
     MDEST("F1 CUTOFF", MDST_F1_CUTOFF, A_ALL),
@@ -339,7 +339,7 @@ static const UiRow MOD_ROWS[] = {
  * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]) */
 static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS",
                                                               "TAPE FLANGER", "BBD FLANGER", "PITCH SHIFT",
-                                                              "BBD ECHO", "BRONZE AGE", "PHASE+FLANGE", "WIND HARP",
+                                                              "BBD ECHO", "BRONZE AGE", "WIND HARP",
                                                               "RINGING STONES"};
 static const char *const MFX_RS_ROOT_NAMES[24] = {"C2", "C#2", "D2", "D#2", "E2", "F2", "F#2", "G2", "G#2", "A2", "A#2",
                                                   "B2", "C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3", "G#3", "A3",
@@ -365,7 +365,7 @@ static const UiRow MFX_ROWS[] = {
     {"SPREAD", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(PITCH_SHIFT)},
     {"L/R PHASE", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(STONE_PHASER) | MT(TAPE_FLANGER)},
     {"COLOUR", (uint8_t)(OFS(MfxParams, row) + MFX_R_COLOUR), 0, VAL_MAX, RK_BYTE, 0, NULL,
-     MT(ENS_PHASER) | MT(PHASE_FLANGE)},
+     MT(ENS_PHASER)},
     {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE), 0, VAL_MAX, RK_BYTE, 0, NULL,
      MT(ENS_PHASER) | MT(CHORUS) | MT(PITCH_SHIFT)},
     {"AGE", (uint8_t)(OFS(MfxParams, row) + MFX_R_AGE2), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(BBD_ECHO)},
@@ -374,7 +374,7 @@ static const UiRow MFX_ROWS[] = {
     {"CHORD", (uint8_t)(OFS(MfxParams, row) + MFX_R_RS_CHORD), 0, MFX_RS_CHORDS - 1, RK_BYTE, 0, MFX_RS_CHORD_NAMES,
      MT(WIND_HARP) | MT(RINGING_STONES)},
     {"WIDTH", OFS(MfxParams, lr), 0, VAL_MAX, RK_BYTE, 0, NULL,
-     MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS) | MT(BBD_ECHO) | MT(PHASE_FLANGE) | MT(WIND_HARP) |
+     MT(ENSEMBLE) | MT(ENS_PHASER) | MT(CHORUS) | MT(BBD_ECHO) | MT(WIND_HARP) |
      MT(RINGING_STONES)},
     {"LEVEL", (uint8_t)(OFS(MfxParams, row) + MFX_R_MT_LEVEL), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(METAL)},
     {"LOW", (uint8_t)(OFS(MfxParams, row) + MFX_R_MT_LOW), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, MT(METAL)},
@@ -423,22 +423,22 @@ static const UiRow GLOBAL_ROWS[] = {   /* the MIDI setup first (2026-10-27, user
  * (UIPAGE_PERF) since 2026-10-17 */
 static const UiRow HOME1_ROWS[] = {
     {"ARCH", ENGB(arch), VARCH_DUAL_OSC, VARCH_COUNT - 1, RK_ARCH, 0, VARCH_NAMES, A_ALL},   /* SINGLE: SPREAD at 0 */
-    {"ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, 0, NULL, A_ALL},
     {"VOICING", PERF(voice_mode), 0, VMODE_COUNT - 1, RK_BYTE, 0, VMODE_NAMES, A_ALL},
     {"UNISON DETUNE", PERF(unison_detune), 0, VAL_MAX, RK_BYTE, RF_UNISON, NULL, A_ALL},
     {"PORTA", PERF(porta_mode), 0, PORTA_COUNT - 1, RK_BYTE, 0, PORTA_NAMES, A_ALL},
     {"PORTA TIME", PERF(porta_time), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"MAX VOICES", 0, 0, VOICE_POOL, RK_VOICES, 0, NULL, A_ALL},
+    {"ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, 0, NULL, A_ALL},
 };
 static const UiRow HOME2_ROWS[] = {
     {"ARCH", ENGB(arch), VARCH_DUAL_OSC, VARCH_COUNT - 1, RK_ARCH, RF_LAYER2, VARCH_NAMES, A_ALL},
-    {"ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, RF_LAYER2, NULL, A_ALL},
     {"VOICING", (uint8_t)(PERF(voice_mode) + 1u), 0, VMODE_COUNT - 1, RK_BYTE, RF_LAYER2, VMODE_NAMES, A_ALL},
     {"UNISON DETUNE", (uint8_t)(PERF(unison_detune) + 1u), 0, VAL_MAX, RK_BYTE,
      RF_LAYER2 | RF_UNISON, NULL, A_ALL},
     {"PORTA", (uint8_t)(PERF(porta_mode) + 1u), 0, PORTA_COUNT - 1, RK_BYTE, RF_LAYER2, PORTA_NAMES, A_ALL},
     {"PORTA TIME", (uint8_t)(PERF(porta_time) + 1u), 0, VAL_MAX, RK_BYTE, RF_LAYER2, NULL, A_ALL},
     {"MAX VOICES", 0, 0, VOICE_POOL, RK_VOICES, RF_LAYER2, NULL, A_ALL},
+    {"ANALOG", ENGB(analog), 0, VAL_MAX, RK_ENG, RF_LAYER2, NULL, A_ALL},
 };
 static const UiRow HOME3_ROWS[] = {
     {"SPLIT NOTE", PERF(split_note), 0, VAL_MAX, RK_BYTE, RF_LAYER2 | RF_NOTE, NULL, A_ALL},
@@ -660,8 +660,6 @@ static const UiKnob MFX_KNOBS[MFX_OFFERED][4] = {
      UIK("ENV", (uint8_t)(OFS(MfxParams, knob) + MFX_K_QE_ENV), UIKNOB_BIP), KMFX(MFX_K_QE_MIX, "MIX")},
     {KMFX(MFX_K_MT_DIST, "DIST"), UIK("HIGH", (uint8_t)(OFS(MfxParams, knob) + MFX_K_MT_HIGH), UIKNOB_BIP),
      UIK("MIDDLE", (uint8_t)(OFS(MfxParams, knob) + MFX_K_MT_MIDDLE), UIKNOB_BIP), KMFX(MFX_K_MT_FREQ, "MID FREQ")},
-    {KMFX(MFX_K_PF_PH_RATE, "PHS RATE"), KMFX(MFX_K_PF_FL_RATE, "FLG RATE"), KMFX(MFX_K_PF_CENTER, "CENTER"),
-     KMFX(MFX_K_PF_FEEDBACK, "FEEDBACK")},
     {KMFX(MFX_K_RS_DECAY, "DECAY"), KMFX(MFX_K_RS_TONE, "TONE"), KMFX(MFX_K_RS_AGE, "AGE"), KMFX(MFX_K_RS_MIX, "MIX")},
     {KMFX(MFX_K_RS_DECAY, "DECAY"), KMFX(MFX_K_RS_TONE, "TONE"), KMFX(MFX_K_RS_AGE, "AGE"), KMFX(MFX_K_RS_MIX, "MIX")},
 };
@@ -1036,8 +1034,6 @@ static void mfx_type_set(MfxParams *m, uint8_t t)
         {99, 35, 92, 55, 40, 0, 30},      /* BBD ECHO: a 60 ms slap, a few repeats, the clock swooping up on hard
                                            * notes, a little wide, a little worn */
         {100, 64, 64, 64, 0, 64, 64},     /* BRONZE AGE: much DIST, the EQ flat, LEVEL near the dry's */
-        {35, 25, 50, 70, 64, 0, 60},      /* PHASE+FLANGE: a slow phaser (~0.3 Hz) into a slow resonant jet, some
-                                           * COLOUR, the sides apart */
         {100, 70, 40, 70, 100, 9, 1},     /* WIND HARP: A minor strings ringing ~8 s, a little worn, wide */
         {100, 60, 30, 70, 100, 0, 0},     /* RINGING STONES: C fifths, ~8 s, wide */
     };

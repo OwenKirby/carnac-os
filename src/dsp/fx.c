@@ -31,6 +31,9 @@
 #define WOW_INC2 55026u                   /* the second head's (PING PONG's near head, the BBD's right line, 2026-11-03):
                                            * 0.565 Hz ... */
 #define FLUTTER_INC2 570617u              /* ... 5.86 Hz: each side wobbles on its own, the repeats drift apart */
+/* Wow and flutter move a head at a few Hz: the pull is computed every MOD_EVERY samples (two sine lookups and two
+ * multiplies a head) and interpolated between (2026-11-06: ping pong's second head cost ~11 ticks a sample on core 0). */
+#define MOD_EVERY 8u
 #define WOW_STEP_Q8 96                    /* per wow step (tape_degrade): 127 = +-47.6 cells at full speed, 0.34 % pitch */
 #define FLUTTER_STEP_Q8 16                /* per flutter step: 127 = +-7.9 cells, 0.71 % pitch */
 
@@ -83,6 +86,7 @@ typedef struct {
     float aa_z[6], rc_z[4], rcb_z[4];     /* (the biquads' states: the record filter's, each head's; together) */
     int32_t aa_h[3];                      /* the record filter's last three samples, oldest first (the crossings) */
     uint32_t wow_ph2, flutter_ph2;        /* the second head's wow and flutter (WOW_INC2) */
+    int32_t mt[2][2];                     /* the wow + flutter pull of each head, at the last 8-sample step (MOD_EVERY): [head][tape / BBD] */
 } TapeState;
 
 static TapeState tp;
@@ -1063,6 +1067,7 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
     int32_t gap = tp.gap_q16, speed = tp.speed_q24, aa_lp = tp.aa_lp, loss_lp = tp.loss_lp, hp_lp = tp.hp_lp;
     int32_t loss2 = tp.loss2_lp, hp2 = tp.hp2_lp;
     int32_t h0 = tp.aa_h[0], h1 = tp.aa_h[1], h2 = tp.aa_h[2];
+    int32_t m1 = 0, d1 = 0, m2 = 0, d2 = 0;                /* the heads' pull, Q16, and its step */
     /* slowed (or slowing): the anti-aliasing (TapeAA) and 1 / speed (the crossings' times), once a block from the speed
      * at its start */
     const int slow = tp.speed_q24 < (1 << 24) || speed_tgt < (1 << 24);
@@ -1086,7 +1091,14 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
         /* wow and flutter move the play head; scaled by speed so the pitch wobble is the same at any tape speed */
         wow_ph += WOW_INC;
         flutter_ph += FLUTTER_INC;
-        int32_t mod_q8 = (para_sine(wow_ph) * wow_q8 + para_sine(flutter_ph) * flutter_q8) >> 15;
+        if (!(s & (MOD_EVERY - 1u))) {
+            int32_t nt = (para_sine(wow_ph + MOD_EVERY * WOW_INC) * wow_q8 + para_sine(flutter_ph + MOD_EVERY * FLUTTER_INC) * flutter_q8) >> 15;
+            m1 = tp.mt[0][0] << 8;
+            d1 = (nt - tp.mt[0][0]) << 5;
+            tp.mt[0][0] = nt;
+        }
+        m1 += d1;
+        int32_t mod_q8 = m1 >> 8;
         int32_t mod_q16 = (mod_q8 * speed_q16) >> 8;
 
         /* play head: linear interpolation between the two cells around it (slowed: tape_read_slow) */
@@ -1111,7 +1123,14 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
                                                            * wow and flutter (2026-11-03: the two sides drift apart) */
             wow_ph2 += WOW_INC2;
             flutter_ph2 += FLUTTER_INC2;
-            int32_t mod2_q8 = (para_sine(wow_ph2) * wow_q8 + para_sine(flutter_ph2) * flutter_q8) >> 15;
+            if (!(s & (MOD_EVERY - 1u))) {
+                int32_t nt = (para_sine(wow_ph2 + MOD_EVERY * WOW_INC2) * wow_q8 + para_sine(flutter_ph2 + MOD_EVERY * FLUTTER_INC2) * flutter_q8) >> 15;
+                m2 = tp.mt[1][0] << 8;
+                d2 = (nt - tp.mt[1][0]) << 5;
+                tp.mt[1][0] = nt;
+            }
+            m2 += d2;
+            int32_t mod2_q8 = m2 >> 8;
             uint32_t r2 = wpos - ((uint32_t)gap >> 1) - (uint32_t)((mod2_q8 * speed_q16) >> 8);
             int32_t play2;
             if (slow) {
@@ -1285,6 +1304,7 @@ static void bbd_delay_block(const MasterPerformancePreset *p, const int32_t *in,
     uint32_t wow_ph2 = tp.wow_ph2, flutter_ph2 = tp.flutter_ph2;
     int32_t gap = tp.gap_q16, speed = tp.speed_q24;
     BbLine L = tp.bb[0], R = tp.bb[1];
+    int32_t ml = 0, mr = 0, dl_ = 0, dr_ = 0;              /* the lines' pull, Q16, and its step */
     if (fb.scoop_c == 0.f) L.scoop = R.scoop = 0.f;
     if (pp) { R.run_lp = 0; R.scoop = 0.f; }             /* (the right feeds nothing back in a ping pong) */
     int16_t *const tl = tape, *const tr = tape + BBD_TRACK;
@@ -1303,8 +1323,19 @@ static void bbd_delay_block(const MasterPerformancePreset *p, const int32_t *in,
         flutter_ph += FLUTTER_INC;
         wow_ph2 += WOW_INC2;
         flutter_ph2 += FLUTTER_INC2;
-        int32_t mod_l = (para_sine(wow_ph) * wow_q8 + para_sine(flutter_ph) * flutter_q8) >> 15;
-        int32_t mod_r = (para_sine(wow_ph2) * wow_q8 + para_sine(flutter_ph2) * flutter_q8) >> 15;
+        if (!(s & (MOD_EVERY - 1u))) {
+            int32_t nl_ = (para_sine(wow_ph + MOD_EVERY * WOW_INC) * wow_q8 + para_sine(flutter_ph + MOD_EVERY * FLUTTER_INC) * flutter_q8) >> 15;
+            int32_t nr_ = (para_sine(wow_ph2 + MOD_EVERY * WOW_INC2) * wow_q8 + para_sine(flutter_ph2 + MOD_EVERY * FLUTTER_INC2) * flutter_q8) >> 15;
+            ml = tp.mt[0][1] << 8;
+            mr = tp.mt[1][1] << 8;
+            dl_ = (nl_ - tp.mt[0][1]) << 5;
+            dr_ = (nr_ - tp.mt[1][1]) << 5;
+            tp.mt[0][1] = nl_;
+            tp.mt[1][1] = nr_;
+        }
+        ml += dl_;
+        mr += dr_;
+        int32_t mod_l = ml >> 8, mod_r = mr >> 8;
         uint32_t r = wpos - (uint32_t)gap;
         int32_t ol = bbd_out(&L, tl, r - (uint32_t)((mod_l * speed_q16) >> 8), slow, lp_c, hp_c);
         int32_t or_ = bbd_out(&R, tr, r - (uint32_t)((mod_r * speed_q16) >> 8), slow, lp_c, hp_c);

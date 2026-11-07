@@ -279,14 +279,13 @@ static const uint8_t FV_NEWGRANGE[] = {
     V_AMP(0, SOFT, 34, 80), V_(analog, 28),
     V_END};
 
-/* ---- 15 THIN VEIL: the night the veil is thinnest. DUAL SPREAD: Foundations SAW and PULSE 35 % 4 cents apart, each
- * as four drifting playheads, LFO1 moving the saw's shape; a soft MS-20 low-pass swelling with ENV2. WHEEL: the
+/* ---- 15 THIN VEIL: the night the veil is thinnest. DUAL OSC (was DUAL SPREAD until 2026-11-06): Foundations SAW and PULSE 35 % 4 cents apart, LFO1 moving the saw's shape; a soft MS-20 low-pass swelling with ENV2. WHEEL: the
  * MS-20 morphs toward band-pass (the pad turns to voices). */
 static const uint8_t FV_VEIL[] = {
-    V_(arch, VARCH_DUAL_SPREAD),
+    V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_FOUND, F_SAW, 0), V_(osc[0].scan_mod_src, MSRC_LFO1), V_(osc[0].scan_mod_amt, 20),
     V_OSC(1, W_FOUND, F_P35, 0), V_(osc[1].fine, 69 /* +4 c */),
-    V_(oscmix.balance, 64), V_(oscmix.spread, 50),
+    V_(oscmix.balance, 64),
     V_FLT(0, MS20, 20, 0, 70, 40, 16), V_KT(0, 50),
     V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(44)),
     V_ENV(0, 80, 100, 116, 98), V_ENV(1, 90, 100, 70, 98),

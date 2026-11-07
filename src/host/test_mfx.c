@@ -19,7 +19,6 @@
  *     tone (+-15 cents), its levels, bounded.
  * 15. BRONZE AGE: its level, its aliases at full DIST, MIDDLE, bounded.
  * 16. WIND HARP and RINGING STONES: the level, the strings' tuning, bounded.
- * 17. PHASE+FLANGE: its level, bounded.
  * 12. TAPE FLANGER: its level on pink noise at five settings within 1 dB of TF_POS_DB / TF_NEG_DB, bounded loud; through zero (TAPE 0,
  *     NEGATIVE, the thumb sweeping through the reference): the sound all but vanishes where the decks meet, and not
  *     quite with the tape's wobbles (TAPE 127); POLARITY flipped mid-tone without a click.
@@ -404,10 +403,10 @@ int main(void)
     /* 11. the stereo image kept: every type with sound on the left only leaves the right all but silent (its own hiss,
      *     ducked by the level, at most), at WIDTH 0 and 127 (BBD ECHO not: one brigade, mono, as the pedals) */
     {
-        static const uint8_t T[9] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
-                                      MFX_BBD_FLANGER, MFX_PITCH_SHIFT, MFX_METAL, MFX_PHASE_FLANGE};
+        static const uint8_t T[8] = {MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER,
+                                      MFX_BBD_FLANGER, MFX_PITCH_SHIFT, MFX_METAL};
         static float l[128], r[128];
-        for (int ti = 0; ti < 9; ti++)
+        for (int ti = 0; ti < 8; ti++)
             for (int wi = 0; wi < 2; wi++) {
                 mfx_init();
                 MFX_PARAMS(0) = (MfxParams){T[ti], {64, 64, 64, 64}, (uint8_t)(wi ? 127 : 0),
@@ -862,40 +861,6 @@ int main(void)
             }
             printf("%s everything full, loud noise: peak %.0f\n", ti ? "RINGING STONES" : "WIND HARP", peak);
             if (!isfinite(peak) || peak > 400000.0) { printf("resonator not bounded\n"); fails++; }
-        }
-    }
-
-    /* 17. PHASE+FLANGE (2026-11-04): pink noise comes out -2 .. +7 dB against the dry (the makeup is set for held tones
-     *     in the middle, where the two sweeps' notches take most); everything full on loud noise bounded */
-    {
-        static float l[128], r[128];
-        for (int o = 0; o < 1; o++) {
-            double ein = 0.0, eout = 0.0;
-            mfx_init();
-            MFX_PARAMS(0) = (MfxParams){MFX_PHASE_FLANGE, {35, 25, 50, 70}, 64, {0, 60}};
-            srand(31);
-            for (int b = 0; b < 1500; b++) {
-                for (int i = 0; i < 128; i++) l[i] = r[i] = 0.3f * pink();
-                if (b >= 500) for (int i = 0; i < 128; i++) ein += (double)l[i] * l[i];
-                mfx_layer_block(0, l, r, 128);
-                if (b >= 500) for (int i = 0; i < 128; i++) eout += (double)l[i] * l[i] + (double)r[i] * r[i];
-            }
-            double db = 10.0 * log10(eout / (2.0 * ein));
-            printf("PHASE+FLANGE: pink noise comes out %+.1f dB\n", db);
-            if (db < -2.0 || db > 7.0) { printf("PHASE+FLANGE level off\n"); fails++; }
-        }
-        {
-            double peak = 0.0;
-            mfx_init();
-            MFX_PARAMS(0) = (MfxParams){MFX_PHASE_FLANGE, {127, 127, 127, 127}, 127, {1, 127}};
-            srand(32);
-            for (int b = 0; b < 3445; b++) {
-                for (int i = 0; i < 128; i++) l[i] = r[i] = 40.f * pink();
-                mfx_layer_block(0, l, r, 128);
-                for (int i = 0; i < 128; i++) if (!(fabs(l[i]) < 1e9)) peak = 1e30; else if (fabs(l[i]) > peak) peak = fabs(l[i]);
-            }
-            printf("PHASE+FLANGE everything full, loud noise: peak %.0f\n", peak);
-            if (!isfinite(peak) || peak > 400000.0) { printf("PHASE+FLANGE not bounded\n"); fails++; }
         }
     }
 

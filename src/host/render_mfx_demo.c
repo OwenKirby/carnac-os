@@ -260,7 +260,6 @@ int main(int argc, char **argv)
     }
     if (argc >= 3) {
         if (argv[2][0] == 'r') goto resonators;
-        if (argv[2][0] == 'p') goto phase_flange;
         if (argv[2][0] == '9') goto nineties;
         goto bronze;
     }
@@ -446,7 +445,6 @@ nineties:
             static const struct { MfxParams p; const char *n; } F[] = {
                 {{MFX_METAL, {100, 64, 64, 64}, 0, {64, 64}}, "BRONZE AGE"},
                 {{MFX_ENS_PHASER, {74, 64, 15, 110}, 100, {30, 40}}, "ENS+PHASER"},
-                {{MFX_PHASE_FLANGE, {35, 25, 50, 70}, 64, {0, 60}}, "PHASE+FLANGE"},
                 {{MFX_TAPE_FLANGER, {40, 40, 64, 40}, 0, {0, 0}}, "TAPE FLANGER"},
                 {{MFX_PITCH_SHIFT, {19, 75, 0, 64}, 127, {30, 0}}, "PITCH SHIFT"},
                 {{MFX_WIND_HARP, {100, 70, 40, 70}, 100, {9, 1}}, "WIND HARP"},
@@ -457,21 +455,6 @@ nineties:
             for (unsigned i = 0; i < sizeof F / sizeof F[0]; i++)
                 printf("  host cost, one layer stereo: %-14s %5.1f ns/sample (firmware type)\n", F[i].n, cost(F[i].p));
         }
-        if (argc >= 3) return 0;
-    }
-phase_flange:
-    {   /* PHASE+FLANGE (2026-11-04): knobs PHASE RATE / FLANGE RATE / CENTER / FEEDBACK, lr WIDTH, row[1] COLOUR */
-        printf("PHASE+FLANGE:\n");
-        render(argv[1], "401_pad_dry", SC_PAD, (MfxParams){MFX_OFF, {0}}, 0);
-        render(argv[1], "402_pad_phase_flange", SC_PAD, (MfxParams){MFX_PHASE_FLANGE, {35, 25, 50, 70}, 64, {0, 60}}, 0);
-        render(argv[1], "403_pad_phase_flange_fast_phaser", SC_PAD, (MfxParams){MFX_PHASE_FLANGE, {75, 20, 45, 60}, 90, {0, 40}}, 0);
-        render(argv[1], "404_pad_slow_jet_deep", SC_PAD, (MfxParams){MFX_PHASE_FLANGE, {20, 12, 70, 110}, 100, {0, 90}}, 0);
-        render(argv[1], "405_riff_dry", SC_RIFF, (MfxParams){MFX_OFF, {0}}, 0);
-        render(argv[1], "406_riff_phase_flange", SC_RIFF, (MfxParams){MFX_PHASE_FLANGE, {60, 40, 40, 80}, 64, {0, 50}}, 0);
-        render(argv[1], "407_lead_phase_flange", SC_LEAD, (MfxParams){MFX_PHASE_FLANGE, {50, 30, 55, 90}, 80, {0, 70}}, 0);
-        render(argv[1], "408_noise_phase_flange", SC_NOISE, (MfxParams){MFX_PHASE_FLANGE, {40, 30, 50, 90}, 64, {0, 80}}, 0);
-        printf("  host cost, one layer stereo: PHASE+FLANGE %.1f ns/sample\n",
-               cost((MfxParams){MFX_PHASE_FLANGE, {35, 25, 50, 70}, 64, {0, 60}}));
         if (argc >= 3) return 0;
     }
 resonators:

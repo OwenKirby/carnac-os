@@ -480,8 +480,7 @@ int main(void)
         static const struct { uint8_t arch, bank; const char *name; } wa[] = {
             {VARCH_SINGLE, 0, "SINGLE"}, {VARCH_SPREAD, 0, "SPREAD"}, {VARCH_DUAL_OSC, 0, "DUAL OSC VCO"},
             {VARCH_DUAL_OSC, 3, "DUAL OSC bank"}, {VARCH_DUAL_FILTER, 0, "DUAL FILTER"},
-            {VARCH_STACK, 0, "STACK"}, {VARCH_BINAURAL, 0, "BINAURAL"}, {VARCH_FULL, 3, "FULL bank"},
-            {VARCH_DUAL_SPREAD, 0, "DUAL SPREAD"}};
+            {VARCH_STACK, 0, "STACK"}, {VARCH_BINAURAL, 0, "BINAURAL"}, {VARCH_FULL, 3, "FULL bank"}};
         static int32_t cap[2][16384];
         const double f0 = 261.63;
         for (unsigned a = 0; a < sizeof wa / sizeof wa[0]; a++) {

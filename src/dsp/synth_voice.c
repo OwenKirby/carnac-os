@@ -725,11 +725,11 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     if (mx->noise_col_mod_amt != BIPOLAR_CENTER || ((c.sends >> MDST_NOISE_COLOUR) & 1u))
         colour_off = (resolve_source(&c, mx->noise_col_mod_src, 0) * bip(mx->noise_col_mod_amt) +
                       send_sum(&c, MDST_NOISE_COLOUR, 1)) >> 15;
-    if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL || arch == VARCH_DUAL_SPREAD)
+    if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL)
         balance_off = (resolve_source(&c, mx->mix_mod_src, 0) * mx->mix_mod_amt + send_sum(&c, MDST_OSC_MIX, 2)) >> 15;
     if (varch_uses_osc2(arch))
         xmod_off = (resolve_source(&c, mx->xmod_mod_src, 0) * mx->xmod_mod_amt + send_sum(&c, MDST_XMOD, 2)) >> 15;
-    if (arch == VARCH_SPREAD || arch == VARCH_DUAL_SPREAD)
+    if (arch == VARCH_SPREAD)
         spread = clampi(mx->spread + ((resolve_source(&c, mx->spread_mod_src, 0) * mx->spread_mod_amt +
                                        send_sum(&c, MDST_SPREAD, 2)) >> 15), 0, 127);
     int32_t harm_off_q8 = e->harm_mod_amt != BIPOLAR_CENTER ?   /* HARMONIC's mod, fine: 1/256 of a knob step */
@@ -739,7 +739,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     osc_prepare(&voice->osc1, freq1_q16, (int)spread);
     osc_mixer_whistle_step(&voice->mix, voice->osc1.center_step);   /* the resonance: HARMONIC x OSC1's pitch */
     if (varch_uses_osc2(arch))
-        osc_prepare(&voice->osc2, freq2_q16, arch == VARCH_DUAL_SPREAD ? (int)spread : 0);
+        osc_prepare(&voice->osc2, freq2_q16, 0);
     SPROF_LAP(SPROF_C_OSC);
 
     /* 5. Filters: each architecture prepares only the cores its path runs. A new note's first tick sets the
@@ -1020,22 +1020,6 @@ static void render_full(SynthVoiceNode *v, float *mix, int n) {
     finish_mono_block(v, x, mix, n);
 }
 
-/* DUAL SPREAD: OSC1 and OSC2, each its 4 detuned playheads, as blocks, by balance (no cross-mod), + sub + noise
- * -> FILTER1 */
-static void render_dual_spread(SynthVoiceNode *v, float *mix, int n) {
-    int32_t w1[VB], w2[VB];
-    float x[VB];
-    osc_render_block(&v->osc1, w1, n);
-    osc_render_block(&v->osc2, w2, n);
-    int32_t g1 = v->mix.osc1_gain_q15, g2 = v->mix.osc2_gain_q15;
-    for (int i = 0; i < n; i++)
-        w1[i] = ((w1[i] * g1) >> 15) + ((w2[i] * g2) >> 15);
-    osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, w1, n);
-    q15_to_float(w1, x, n);
-    filter_core_render_block(&v->synth_filters.core[0], x, x, n);
-    finish_mono_block(v, x, mix, n);
-}
-
 /* STACK: A = OSC1 + sub + noise -> FILTER1 (ENV1), B = cross-modulated OSC2 -> FILTER2 (ENV2). CROSS-FEED runs one
  * way, so the blocks stay whole: + renders FILTER1 first and adds its output to FILTER2's input, - the other way round.
  * (The sign at the block's middle picks the order; a knob crossing the centre loses at most a block of near-zero feed.) */
@@ -1098,7 +1082,7 @@ static void (*const render_arch[VARCH_COUNT])(SynthVoiceNode *, float *, int) = 
     render_binaural,     /* BINAURAL */
     render_single,       /* STRIKE (retired 2026-11-04: loads as SPREAD; never reached) */
     render_full,         /* FULL */
-    render_dual_spread,  /* DUAL SPREAD */
+    render_dual_osc,     /* DUAL SPREAD (retired 2026-11-06: loads as DUAL OSC; never reached) */
 };
 
 void voice_render_block(SynthVoiceNode *voice, float *mix, int n) {

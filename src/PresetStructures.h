@@ -88,8 +88,8 @@ enum {                               /* voice architecture, per patch: the signa
                                       * attack samples live on as PCM waves */
     VARCH_FULL,                      /* OSC1 + OSC2 (cross-mod) -> FILTER1 / FILTER2 (serial .. parallel): DUAL OSC into
                                       * DUAL FILTER (2026-10-26) */
-    VARCH_DUAL_SPREAD,               /* OSC1 + OSC2, each as 4 detuned playheads (SPREAD), by OSC MIX, no cross-mod -> FILTER1
-                                      * (2026-10-26) */
+    VARCH_DUAL_SPREAD,               /* retired 2026-11-06 (was OSC1 + OSC2, each as 4 detuned playheads): loads as DUAL OSC at
+                                      * SPREAD 0 (varch_single_to_spread). Too dear for what DUAL OSC already gives */
     VARCH_COUNT
 };
 #define VARCH_BIT(a) (1u << (a))
@@ -562,13 +562,17 @@ static inline void varch_single_to_spread(EngineState *e)
         e->arch = VARCH_SPREAD;
         e->oscmix.spread = 0;
         e->oscmix.spread_mod_amt = 0;
+    } else if (e->arch == VARCH_DUAL_SPREAD) {           /* (retired 2026-11-06: its two oscillators without the playheads) */
+        e->arch = VARCH_DUAL_OSC;
+        e->oscmix.spread = 0;
+        e->oscmix.spread_mod_amt = 0;
     }
 }
 
 /* the pages an architecture uses; the UI hides the rest (OSC1, OSCMIXER and FILTER1 always show) */
 static inline uint8_t varch_uses_osc2(uint8_t a)
 {
-    return (uint8_t)(a == VARCH_DUAL_OSC || a == VARCH_STACK || a == VARCH_FULL || a == VARCH_DUAL_SPREAD);
+    return (uint8_t)(a == VARCH_DUAL_OSC || a == VARCH_STACK || a == VARCH_FULL);
 }
 static inline uint8_t varch_uses_filter2(uint8_t a)
 {
@@ -597,7 +601,7 @@ static inline uint8_t varch_voice_cap(const EngineState *e)
         8u,                          /* STRIKE (retired: loads as SPREAD) */
         4u,                          /* FULL: DUAL OSC's oscillators + DUAL FILTER's filters (2026-10-26 measured: 4 = 2 a core,
                                       * worst 62 % (SH-2 heavy); 6 = 3 a core 71..82 %, and 5 still puts 3 on a core) */
-        4u,                          /* DUAL SPREAD: SPREAD's playheads on both oscillators (2026-10-26: 6 = 3 a core passed held
+        4u,                          /* DUAL SPREAD (retired 2026-11-06; was: 6 = 3 a core passed held
                                       * notes but SEQ+ARP + CELESTIAL hit 95.6 %; 4 = 2 a core, held rows 47..59 %) */
     };
     return cap[varch_of(e)];

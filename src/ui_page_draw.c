@@ -1050,7 +1050,7 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
     uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;
     uint32_t seed = 0x1234567u, sstep = 0xFFFFFFFFu / PV_W, step = sstep * (uint32_t)ncyc;
     if (arch == VARCH_STACK) { pu_viz_stack(sm); return; }
-    if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL || arch == VARCH_DUAL_SPREAD) { w2 = m->balance; w1 = 127 - w2; }
+    if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL) { w2 = m->balance; w1 = 127 - w2; }
     for (x = 0; x < PV_W; x++) {
         uint32_t ph = (uint32_t)x * step, sph = (uint32_t)x * sstep;
         int32_t s = w1 * wave_preview(wave1, morph1, ph), sub, n;
@@ -2197,15 +2197,6 @@ static void pu_viz_mfx(const UIStateMachine *sm)
         }
         s = 46 - (24 * (int32_t)m->knob[MFX_K_BF_FEEDBACK]) / 127;
         eddy = m->knob[MFX_K_BF_FEEDBACK];
-    } else if (t == MFX_PHASE_FLANGE) {              /* the flanger's gusts (a side each), FEEDBACK's eddies */
-        for (i = 0; i < 2; i++) {
-            float u = mfx_peek(layer, i);
-            gx[ng] = pw_x(u < 0.f ? (float)m->knob[MFX_K_PF_CENTER] / 127.f : u);
-            gc[ng++] = i ? SQC(ACCENT) : SQC(THEME);
-        }
-        s = 46 - (24 * (int32_t)m->knob[MFX_K_PF_FEEDBACK]) / 127;
-        eddy = m->knob[MFX_K_PF_FEEDBACK];
-        flutter = (int32_t)m->row[MFX_R_COLOUR];
     } else if (t == MFX_BBD_ECHO) {                  /* a gust a tap at its echo's distance (the clock's swoop moves
                                                       * them); FEEDBACK's eddies; DUCK: faint while held down */
         float g = mfx_peek(layer, 2);

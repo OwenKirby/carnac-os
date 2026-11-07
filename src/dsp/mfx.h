@@ -88,7 +88,7 @@
  * their band, headroom, hiss and wandering clock. Knobs: DECAY, TONE, AGE, MIX. Rows: ROOT (C2 .. B3), CHORD,
  * WIDTH. Each side rings half the chord. */
 enum { MFX_OFF, MFX_STONE_PHASER, MFX_ENSEMBLE, MFX_ENS_PHASER, MFX_CHORUS, MFX_TAPE_FLANGER, MFX_BBD_FLANGER,
-       MFX_PITCH_SHIFT, MFX_BBD_ECHO, MFX_METAL, MFX_PHASE_FLANGE, MFX_WIND_HARP, MFX_RINGING_STONES,
+       MFX_PITCH_SHIFT, MFX_BBD_ECHO, MFX_METAL, MFX_WIND_HARP, MFX_RINGING_STONES,
        MFX_BULLROARER, MFX_COUNT };
 #define MFX_OFFERED (MFX_RINGING_STONES + 1)      /* the MFX page's TYPE list: BULLROARER (the prototype) is not offered */
 enum { MFX_K_MANUAL, MFX_K_RATE, MFX_K_FEEDBACK, MFX_K_DEPTH };    /* STONE PHASER's knobs */
@@ -102,7 +102,6 @@ enum { MFX_K_PS_PITCH, MFX_K_PS_FINE, MFX_K_PS_FEEDBACK, MFX_K_PS_MIX };      /*
 enum { MFX_K_QE_TIME, MFX_K_QE_FEEDBACK, MFX_K_QE_ENV, MFX_K_QE_MIX };    /* BBD ECHO's (ENV: 64 none) */
 enum { MFX_K_MT_DIST, MFX_K_MT_HIGH, MFX_K_MT_MIDDLE, MFX_K_MT_FREQ };    /* BRONZE AGE's (HIGH, MIDDLE: 64 flat) */
 enum { MFX_R_MT_LEVEL, MFX_R_MT_LOW };                                    /* ... its rows (row[]; LOW: 64 flat) */
-enum { MFX_K_PF_PH_RATE, MFX_K_PF_FL_RATE, MFX_K_PF_CENTER, MFX_K_PF_FEEDBACK };   /* PHASE+FLANGE's */
 enum { MFX_K_RS_DECAY, MFX_K_RS_TONE, MFX_K_RS_AGE, MFX_K_RS_MIX };        /* the resonators' */
 enum { MFX_R_RS_ROOT, MFX_R_RS_CHORD };                                   /* ... their rows (WIDTH: lr) */
 #define MFX_RS_CHORDS 7                                                    /* FIFTHS MINOR MAJOR SUS4 MINOR 7 PHRYGIAN

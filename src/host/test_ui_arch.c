@@ -90,7 +90,7 @@ int main(void)
      * STACK, BINAURAL (SINGLE = SPREAD; STRIKE retired 2026-11-04); one step at a time to STACK */
     sm.s.current_param_focus = (uint8_t)arch_row;
     {
-        static const uint8_t order[] = {VARCH_SPREAD, VARCH_DUAL_OSC, VARCH_DUAL_FILTER, VARCH_DUAL_SPREAD, VARCH_FULL,
+        static const uint8_t order[] = {VARCH_SPREAD, VARCH_DUAL_OSC, VARCH_DUAL_FILTER, VARCH_FULL,
                                         VARCH_STACK, VARCH_BINAURAL};
         ui_sm_handle(&sm, UIEV_ALGO_ENC, -20);
         CHECK(engine_state[0].arch == VARCH_SPREAD && strcmp(ui_sm_row_text(&sm, (uint8_t)arch_row), "SINGLE") == 0,
