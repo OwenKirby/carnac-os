@@ -77,6 +77,7 @@ typedef struct __attribute__((aligned(64))) {
      * (MIX_L, MIX_R): everything that holds still over a tick folded into one gain each (pan law, headroom gain, the
      * layer's routing weight, the mix gain). Path B is STACK's B / BINAURAL's right ear. */
     float vol, vol_step, vol_b, vol_b_step;
+    float xfeed, xfeed_step;      // STACK CROSS-FEED, ramped as vol: + A's filtered sample into FILTER2, - B's into FILTER1
     float mix_a[2], mix_b[2];
     uint8_t noise_at;             // the block's first frame in the render pass: where it reads the shared noise
     int32_t choke_q15;            // choke fade: 32767 = untouched, ramps to 0 over CHOKE_TICKS ticks, then silence

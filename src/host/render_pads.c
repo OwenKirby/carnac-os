@@ -67,7 +67,7 @@ static const uint8_t PD_PAN[] = {
 static const uint8_t PD_HORNS[] = {
     V_(arch, VARCH_STACK), V_OSC(0, P_HORNS, 50, 0), V_OSC(1, W_FOUND, F_SAW, 0), V_(osc[1].fine, 69),
     V_FLT(0, MULTI, 0, 0, 108, 8, 0), V_FLT(1, SH2, 20, 0, 60, 30, 30), V_KT(1, 64),
-    V_(fltmix.balance, 50), V_(fltmix.stack_width, 70),
+    V_(fltmix.balance, 50),
     V_ENV(0, 6, 90, 112, 80), V_ENV(1, 30, 96, 80, 80),
     V_MFX(CHORUS, 24, 50, 60, 40, 64),
     V_AMP(0, 30, 80), V_(analog, 30), V_END};
@@ -77,7 +77,7 @@ static const uint8_t PD_HORNS[] = {
 static const uint8_t PD_STONE[] = {
     V_(arch, VARCH_STACK), V_OSC(0, P_STONE, 90, 0), V_OSC(1, P_CHOIR, 20, 0), V_(osc[1].fine, 66),
     V_FLT(0, MULTI, 0, 0, 100, 10, 0), V_FLT(1, MULTI, 0, 0, 96, 10, 0),
-    V_(fltmix.balance, 56), V_(fltmix.stack_width, 90),
+    V_(fltmix.balance, 56),
     V_ENV(0, 30, 100, 120, 96), V_ENV(1, 60, 100, 120, 96),
     V_MFX(ENSEMBLE, 30, 24, 40, 60, 100),
     V_AMP(0, 16, 92), V_(analog, 24), V_END};
@@ -86,7 +86,7 @@ static const uint8_t PD_STONE[] = {
 static const uint8_t PD_RAIN[] = {
     V_(arch, VARCH_STACK), V_OSC(0, P_MOON, 10, 0), V_OSC(1, P_RAIN, 30, 0),
     V_FLT(0, MULTI, 0, 0, 98, 10, 0), V_FLT(1, MULTI, 0, 0, 120, 0, 0),
-    V_(fltmix.balance, 64), V_(fltmix.stack_width, 100),
+    V_(fltmix.balance, 64),
     V_ENV(0, 50, 100, 120, 100), V_ENV(1, 2, 100, 120, 100),
     V_AMP(0, 20, 90), V_(analog, 20), V_END};
 
@@ -111,7 +111,7 @@ static const uint8_t PD_LOGDEC[] = {
 static const uint8_t PD_ANGK[] = {
     V_(arch, VARCH_STACK), V_OSC(0, P_ANGKLUNG, 20, 0), V_OSC(1, P_MOON, 30, -1),
     V_FLT(0, MULTI, 0, 0, 112, 6, 0), V_FLT(1, MULTI, 0, 0, 90, 10, 0),
-    V_(fltmix.balance, 52), V_(fltmix.stack_width, 80),
+    V_(fltmix.balance, 52),
     V_ENV(0, 2, 100, 116, 90), V_ENV(1, 70, 100, 110, 100),
     V_AMP(0, 40, 86), V_(analog, 20), V_END};
 
@@ -121,7 +121,7 @@ static const uint8_t PD_CHIMES[] = {
     V_(arch, VARCH_STACK), V_OSC(0, P_CHIMES, 120, 0), V_OSC(1, W_STARS, 40, 0),
     V_(osc[1].scan_mod_src, MSRC_LFO3), V_(osc[1].scan_mod_amt, 40),
     V_FLT(0, MULTI, 0, 0, 120, 0, 0), V_FLT(1, MULTI, 0, 0, 92, 14, 0),
-    V_(fltmix.balance, 60), V_(fltmix.stack_width, 100),
+    V_(fltmix.balance, 60),
     V_ENV(0, 2, 100, 120, 100), V_ENV(1, 70, 100, 110, 100), V_LFO(2, 0, 16),
     V_MFX(ENSEMBLE, 30, 24, 40, 50, 110),
     V_AMP(0, 30, 94), V_(analog, 20), V_END};
@@ -130,7 +130,7 @@ static const uint8_t PD_CHIMES[] = {
 static const uint8_t PD_LORE[] = {
     V_(arch, VARCH_STACK), V_OSC(0, P_LORE, 30, 0), V_OSC(1, P_CHOIR, 10, -1),
     V_FLT(0, MULTI, 0, 0, 118, 0, 0), V_FLT(1, MULTI, 0, 0, 92, 10, 0),
-    V_(fltmix.balance, 62), V_(fltmix.stack_width, 100),
+    V_(fltmix.balance, 62),
     V_ENV(0, 2, 100, 120, 100), V_ENV(1, 70, 100, 116, 100),
     V_MFX(ENSEMBLE, 30, 24, 40, 50, 110),
     V_AMP(0, 24, 92), V_(analog, 20), V_END};
@@ -141,7 +141,7 @@ static const uint8_t PD_HALO[] = {
     V_(arch, VARCH_STACK), V_OSC(0, W_HALO, 30, 0), V_(osc[0].scan_mod_src, MSRC_LFO1), V_(osc[0].scan_mod_amt, 70),
     V_OSC(1, P_MOON, 20, -1),
     V_FLT(0, MULTI, 0, 0, 112, 6, 0), V_FLT(1, MULTI, 0, 0, 90, 8, 0),
-    V_(fltmix.balance, 50), V_(fltmix.stack_width, 90),
+    V_(fltmix.balance, 50),
     V_ENV(0, 60, 100, 120, 100), V_ENV(1, 80, 100, 116, 100), V_LFO(0, 21, 8),
     V_MFX(ENSEMBLE, 30, 24, 50, 60, 110),
     V_AMP(0, 30, 96), V_(analog, 20), V_END};

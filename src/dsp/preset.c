@@ -96,6 +96,7 @@ void engine_defaults(EngineState *e)
     e->fltmix.routing_mod_amt = BIPOLAR_CENTER;
     e->fltmix.balance_mod_src = MSRC_ENV3;
     e->fltmix.routing_mod_src = MSRC_ENV3;
+    e->fltmix.stack_xfeed = BIPOLAR_CENTER;   /* no cross-feed */
     e->fltmix.env3_cutoff = BIPOLAR_CENTER;
     e->fltmix.bin_mod_phase = 64;        /* 180 deg */
     e->fltmix.bin_width = 127;           /* full separation */
@@ -130,6 +131,7 @@ void engine_defaults(EngineState *e)
     }
 
     e->amp.pan_mod_src = MSRC_KEYBOARD;
+    e->amp.amp_mod_src = MSRC_LFO1;      /* tremolo ready on AMP MOD (2026-11-06, user); AMP MOD 0 leaves it silent */
     e->arch = VARCH_DUAL_OSC;            /* both oscillators into FILTER1: the old default path minus FILTER2 */
 }
 

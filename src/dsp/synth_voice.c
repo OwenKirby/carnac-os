@@ -669,7 +669,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
      * count as 0; an inverted envelope reads 1 -> 0). A unison stack and a choke fade scale the level too. */
     const AmpParams *a = &e->amp;
     int32_t amp_gain_q15 = 32767;
-    if (a->amp_mod_src != MSRC_NONE) {
+    int amp_mod = a->amp_mod_src != MSRC_NONE && a->amp_mod_depth;   /* (a source at depth 0, the default LFO1: none) */
+    if (amp_mod) {
         int32_t depth_q15 = (int32_t)a->amp_mod_depth * 258;
         int32_t mod_uni_q15 = resolve_source(&c, a->amp_mod_src, 0);
         if (src_is_inverted_env(e, a->amp_mod_src)) mod_uni_q15 += 32767;
@@ -677,7 +678,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         amp_gain_q15 = clamp32(32767 - depth_q15 + ((mod_uni_q15 * depth_q15) >> 15), 0, 32767);
     }
     if ((c.sends >> MDST_AMP_LEVEL) & 1u)
-        amp_gain_q15 = a->amp_mod_src == MSRC_NONE ? send_gain(&c) : (amp_gain_q15 * send_gain(&c)) >> 15;
+        amp_gain_q15 = !amp_mod ? send_gain(&c) : (amp_gain_q15 * send_gain(&c)) >> 15;
     int32_t level_q15 = (amp_gain_q15 * voice->unison_gain_q15) >> 15;
     if (voice->choke) level_q15 = (level_q15 * voice->choke_q15) >> 15;
     if (analog) level_q15 = (level_q15 * an->level_q15) >> 15;      /* (a little over 32767 is fine: float from here) */
@@ -841,6 +842,14 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         amp_pan_gains(&voice->master_amp, pan, &pl, &pr);
         mix_gains(voice->mix_a, (pl * gain_a) >> 15, (pr * gain_a) >> 15, dry);
         mix_gains(voice->mix_b, (pl * gain_b) >> 15, (pr * gain_b) >> 15, dry);
+        /* CROSS-FEED (knob 2): full feeds the other filter at 0.75; a new note or a settled knob jumps (centre: 0, and
+         * render_stack skips the feed) */
+        float xf = (float)bip(fm->stack_xfeed) * (0.75f / 64.f), dx = xf - voice->xfeed;
+        if (snap || (dx < 1e-4f && dx > -1e-4f)) {
+            voice->xfeed = xf;
+            voice->xfeed_step = 0.f;
+        } else
+            voice->xfeed_step = dx * tick_inv;
     } else if (arch == VARCH_BINAURAL) {
         /* WIDTH: 127 keeps each ear on its own side, 0 sums them; the pan then balances the pair */
         int32_t pl, pr, w = (int32_t)fm->bin_width * 258;
@@ -1027,7 +1036,9 @@ static void render_dual_spread(SynthVoiceNode *v, float *mix, int n) {
     finish_mono_block(v, x, mix, n);
 }
 
-/* STACK: A = OSC1 + sub + noise -> FILTER1 (ENV1), B = cross-modulated OSC2 -> FILTER2 (ENV2) */
+/* STACK: A = OSC1 + sub + noise -> FILTER1 (ENV1), B = cross-modulated OSC2 -> FILTER2 (ENV2). CROSS-FEED runs one
+ * way, so the blocks stay whole: + renders FILTER1 first and adds its output to FILTER2's input, - the other way round.
+ * (The sign at the block's middle picks the order; a knob crossing the centre loses at most a block of near-zero feed.) */
 static void render_stack(SynthVoiceNode *v, float *mix, int n) {
     int32_t w1[VB], w2[VB];
     float a[VB], b[VB];
@@ -1036,8 +1047,20 @@ static void render_stack(SynthVoiceNode *v, float *mix, int n) {
     osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, w1, n);   /* A: w1 + sub + noise */
     q15_to_float(w1, a, n);
     for (int i = 0; i < n; i++) b[i] = (float)w2[i];
-    filter_core_render_block(&v->synth_filters.core[0], a, a, n);
-    filter_core_render_block(&v->synth_filters.core[1], b, b, n);
+    float g = v->xfeed, step = v->xfeed_step;
+    int feed = g != 0.f || step != 0.f;
+    v->xfeed = g + step * (float)n;
+    if (g + step * (float)(n >> 1) >= 0.f) {
+        filter_core_render_block(&v->synth_filters.core[0], a, a, n);
+        for (int i = 0; feed && i < n; i++, g += step)
+            b[i] += (g > 0.f ? g : 0.f) * a[i];
+        filter_core_render_block(&v->synth_filters.core[1], b, b, n);
+    } else {
+        filter_core_render_block(&v->synth_filters.core[1], b, b, n);
+        for (int i = 0; i < n; i++, g += step)
+            a[i] -= (g < 0.f ? g : 0.f) * b[i];
+        filter_core_render_block(&v->synth_filters.core[0], a, a, n);
+    }
     finish_pair_block(v, a, b, 1, mix, n);
 }
 
