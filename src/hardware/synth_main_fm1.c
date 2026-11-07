@@ -303,13 +303,13 @@ static uint32_t render_block(int32_t *o)            /* ALNK0: one half, measured
     return us * 1000u / budget;
 }
 
-/* Overload shedding (Felucca sheds too, audio.c SHED_TICKS): two halves in a row that took SHED_ON_PM of their time (or
+/* Overload shedding (Felucca sheds too, audio.c SHED_TICKS): two halves in a row that took SHED_ON_PM (90 %) of their time (or
  * one that ran late) take one voice from each layer's limit (voice_shed: the voice left out fades in a few ms, not a
  * cut), at most one every SHED_GAP halves while the fade still costs. A voice comes back when the SMOOTHED load
  * (audio_cpu_pct, ~16 halves) has been under SHED_OFF_PCT for SHED_CALM halves; with nothing sounding at all the limit
  * is lifted whole (2026-11-06: the old rule needed every half of a second under 65 %, which a patch near the limit
  * never gives, so the limit only ratcheted down, to one voice). Off during the PERF TEST: it measures. */
-#define SHED_ON_PM 880u
+#define SHED_ON_PM 900u                             /* (88 % until 2026-11-06: two hot halves in a row are needed now) */
 #define SHED_OFF_PCT 72u
 #define SHED_GAP 4u                                 /* halves between two sheds (~46 ms) */
 #define SHED_CALM 43u                               /* halves of calm before a voice comes back (~0.5 s) */
