@@ -475,6 +475,8 @@ SYNTH_COLD void synth_restart(void)
         global_lfo1_state[l].phase_accumulator = 0;
         global_lfo1_state[l].envelope_amp_q15 = 32767;
     }
+    for (unsigned l = 0; l < NLAYER; l++)
+        held_count[l] = 0;                     /* (the voices are gone: a key still down at restart has no note to stack) */
     seq_qn = 0;
     ext_h = ext_n = 0;
     maq_init(&maq, seq_lanes, &perf_state, rt_seq_out);     /* its notes and controllers take the MIDI path */
@@ -903,6 +905,7 @@ static void render_pass(int32_t *out, uint32_t frames)
     in_pass = 0;
     sample_clock = pass_base + frames;
     SPROF_START();
+    PF_START();
 
     /* each layer's dry sum over the pass (the two sets, in this order), then the shared effects' sends from those
      * sums: the layer's AMP DELAY / REVERB SEND (2026-11-01: per voice before; the same sum, the mix gain divided back
@@ -914,6 +917,7 @@ static void render_pass(int32_t *out, uint32_t frames)
             layer_r[l][frame] = m0[MIX_LAYER(l) + MIX_R] + m1[MIX_LAYER(l) + MIX_R];
         }
     }
+    PF_LAP(SPROF_F_SUM);
     /* each layer's MFX, on its own sum (nothing at OFF), shared with core 1, which has nothing else to do here (one
      * on one core cost the pass ~3.3..5 points on the FM1): both on, a layer a core; one, a side a core */
     fx_frames = frames;
@@ -933,6 +937,7 @@ static void render_pass(int32_t *out, uint32_t frames)
                         mfx_job((uint32_t)l | 2u);
                 }
     }
+    PF_LAP(SPROF_F_MFX);
     /* the MIX page's BALANCE (fx.h): DUAL / SPLIT, each layer's fader here (after its MFX, before its sends: a faded
      * layer's echoes fade with it); SINGL, DRY / WET, applied below */
     float g_to[MIXG_N], g0, g1;
@@ -956,6 +961,7 @@ static void render_pass(int32_t *out, uint32_t frames)
         if (lvl_on && (fx_rev_in[frame] < 0 ? -fx_rev_in[frame] : fx_rev_in[frame]) > lvl_peak[3])
             lvl_peak[3] = fx_rev_in[frame] < 0 ? -fx_rev_in[frame] : fx_rev_in[frame];
     }
+    PF_LAP(SPROF_F_SEND);
     fx_frames = frames;
     fx_tone_sync(&perf_state);                         /* LOOP TONE's thinner half is DELAY HP (fx.h) */
     fx_pulse_q8 = midi_clock_period_q8();              /* DELAY SYNC follows the tempo, internal or MIDI */
@@ -963,9 +969,12 @@ static void render_pass(int32_t *out, uint32_t frames)
     int on2 = !fx_one_core && core2_run && core2_run(fx_reverb_job, 0u);
     fx_delay_block(&perf_state, fx_dly, fx_dly_l, fx_dly_r, frames);
     fx_cross_to_rev(fx_dly_l, fx_dly_r, fx_rev_in, frames);   /* DLY > REV: this pass's echoes */
+    PF_LAP(SPROF_F_DLY);
     fx_reverb_front(&perf_state, fx_rev_in, frames);   /* (for the back's next pass: it reads a pass behind) */
+    PF_LAP(SPROF_F_RVF);
     if (!on2 || core2_wait())
         fx_reverb_job(0u);
+    PF_LAP(SPROF_F_RVB);
     fx_cross_keep(fx_rev_l, fx_rev_r, frames);         /* (core 1 done: the reverb's out, for the next pass) */
     for (uint32_t frame = 0; lvl_on && frame < frames; ++frame) {   /* the meters (synth_levels): before the wet sum */
         int32_t r = fx_rev_l[frame] < 0 ? -fx_rev_l[frame] : fx_rev_l[frame];
@@ -1009,6 +1018,7 @@ static void render_pass(int32_t *out, uint32_t frames)
         out[frame * 2u] = clamp_q15_64(left);
         out[frame * 2u + 1u] = clamp_q15_64(right);
     }
+    PF_LAP(SPROF_F_TAIL);
     SPROF_LAP(SPROF_FX);
 #if defined(SYNTH_PROF)
     synth_prof_acc[SPROF_TOTAL] += synth_prof_now() - sprof_total;

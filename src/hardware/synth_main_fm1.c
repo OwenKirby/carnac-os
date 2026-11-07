@@ -303,32 +303,44 @@ static uint32_t render_block(int32_t *o)            /* ALNK0: one half, measured
     return us * 1000u / budget;
 }
 
-/* Overload shedding (Felucca sheds too, audio.c SHED_TICKS): a half that took SHED_ON_PM of its time, or ran late, takes
- * one voice from each layer's limit (voice_shed: the voice left out fades in a few ms, not a cut), at most one every
- * SHED_GAP halves while the fade still costs; a calm second (every half under SHED_OFF_PM) gives one back. So a patch
- * and a playing style the CPU cannot carry lose voices instead of buzzing. Off during the PERF TEST: it measures. */
+/* Overload shedding (Felucca sheds too, audio.c SHED_TICKS): two halves in a row that took SHED_ON_PM of their time (or
+ * one that ran late) take one voice from each layer's limit (voice_shed: the voice left out fades in a few ms, not a
+ * cut), at most one every SHED_GAP halves while the fade still costs. A voice comes back when the SMOOTHED load
+ * (audio_cpu_pct, ~16 halves) has been under SHED_OFF_PCT for SHED_CALM halves; with nothing sounding at all the limit
+ * is lifted whole (2026-11-06: the old rule needed every half of a second under 65 %, which a patch near the limit
+ * never gives, so the limit only ratcheted down, to one voice). Off during the PERF TEST: it measures. */
 #define SHED_ON_PM 880u
-#define SHED_OFF_PM 650u
+#define SHED_OFF_PCT 72u
 #define SHED_GAP 4u                                 /* halves between two sheds (~46 ms) */
-#define SHED_CALM 86u                               /* halves of calm before a voice comes back (~1 s) */
-static uint32_t shed_wait, shed_calm, shed_count;   /* shed_count: voices shed since boot (the debug read) */
+#define SHED_CALM 43u                               /* halves of calm before a voice comes back (~0.5 s) */
+static uint32_t shed_wait, shed_calm, shed_count, shed_hot, shed_idle;   /* shed_count: voices shed since boot (the debug read) */
 static void shed_update(uint32_t pm, uint8_t late)
 {
     uint8_t n = voice_shed;
+    uint32_t v, sounding = 0;
     if (pt_state() == PT_RUN) {
         voice_shed = 0;
         return;
     }
     if (shed_wait)
         shed_wait--;
-    if ((pm >= SHED_ON_PM || late) && n + 1u < VOICE_POOL) {
+    shed_hot = pm >= SHED_ON_PM ? shed_hot + 1u : 0u;
+    for (v = 0; v < POLYPHONY_VOICES; v++)
+        sounding += !voice_is_free(&poly_bank[v]);
+    shed_idle = sounding ? 0u : shed_idle + 1u;
+    if (n && shed_idle >= SHED_CALM) {              /* nothing sounds: nothing to protect */
+        voice_shed = 0;
+        shed_calm = 0;
+        return;
+    }
+    if ((shed_hot >= 2u || late) && n + 1u < VOICE_POOL) {
         shed_calm = 0;
         if (!shed_wait) {
             voice_shed = (uint8_t)(n + 1u);
             shed_wait = SHED_GAP;
             shed_count++;
         }
-    } else if (pm < SHED_OFF_PM && n) {
+    } else if (audio_cpu_pct < SHED_OFF_PCT && pm < SHED_ON_PM && n) {
         if (++shed_calm >= SHED_CALM) {
             voice_shed = (uint8_t)(n - 1u);
             shed_calm = 0;
