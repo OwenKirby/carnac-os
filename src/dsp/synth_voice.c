@@ -978,7 +978,7 @@ static void render_single(SynthVoiceNode *v, float *mix, int n) {
  * sample cost DUAL OSC ~55 profile ticks) */
 static void dual_osc_block(SynthVoiceNode *v, float *x, int n) {
     int32_t o[VB];
-    if (v->osc1.pcm.on || v->osc2.pcm.on || v->osc1.vco || v->osc2.vco) {
+    {
         int32_t w1[VB], w2[VB];
         osc_render_block(&v->osc1, w1, n);
         osc_mixer_osc2_block(&v->mix, w1, &v->osc2, w2, n);
@@ -986,9 +986,6 @@ static void dual_osc_block(SynthVoiceNode *v, float *x, int n) {
         for (int i = 0; i < n; i++)
             o[i] = (((int32_t)(int16_t)w1[i] * g1) >> 15) + (((int32_t)(int16_t)w2[i] * g2) >> 15);
         osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
-    } else {
-        for (int i = 0; i < n; i++)
-            o[i] = osc_mixer_render(&v->mix, &v->osc1, &v->osc2, &v->sub_phase, v->noise_at + i);
     }
     q15_to_float(o, x, n);
 }

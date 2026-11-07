@@ -196,9 +196,10 @@ int16_t osc_mixer_osc2(const OscMixVoice *mv, int16_t wave1_q15, WavetableOsc *o
 void osc_mixer_osc2_block(const OscMixVoice *mv, const int32_t *w1, WavetableOsc *osc2, int32_t *w2, int n) {
     int fm = mv->xmod_type != OSCMIX_XMOD_AM && mv->xmod_type != OSCMIX_XMOD_RING &&
              mv->xmod_type != OSCMIX_XMOD_PM && mv->depth != 0;
-    /* a bank: sample by sample. VCO (oscillators.c) only for FM and PM, which move its pitch or phase per sample;
-     * plain, AM and RING take the block below, the same values (2026-11-02: the per-sample call cost DUAL OSC 7 points) */
-    if (!osc2->pcm.on && (!osc2->vco || fm || mv->xmod_type == OSCMIX_XMOD_PM)) {
+    /* A bank or the VCO (oscillators.c): sample by sample only for FM and PM, which move its pitch or phase per sample;
+     * plain, AM and RING take the block below, the same values (2026-11-02: the per-sample call cost DUAL OSC 7 points
+     * on the VCO; 2026-11-06 the wavetable banks too) */
+    if (!osc2->pcm.on && (fm || mv->xmod_type == OSCMIX_XMOD_PM)) {
         for (int i = 0; i < n; i++)
             w2[i] = osc_mixer_osc2(mv, (int16_t)w1[i], osc2);
         return;
