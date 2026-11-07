@@ -57,7 +57,9 @@ static void wt_to_flash(void)
     pt_wt_on = 0;
 }
 
-enum { K_IDLE, K_HELD, K_SEQ, K_RS };   /* K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS */
+enum { K_IDLE, K_HELD, K_SEQ, K_RS, K_REC, K_ALL };   /* K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS; K_REC: K_SEQ with
+                                                       * the REC page's loop playing too; K_ALL: K_REC with the chord held (every
+                                                       * note source at once, 2026-11-06) */
 enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_HEAVY 1u
 #define F_ONE 2u                     /* one note, not the cap */
@@ -240,6 +242,12 @@ static const PtScen SCEN[] = {
     {"SINGLE HEAVY AIR", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_AIR, UIPAGE_HOME1},
     {"BINAURAL HEAVY AIR", K_HELD, VARCH_BINAURAL, FLT_FORMANT, F_HEAVY | F_AIR, UIPAGE_HOME1},
     {"SPREAD H CEL+PP AIR", K_HELD, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL | F_AIR, UIPAGE_HOME1},
+    /* every note source at once (2026-11-06): the REC page's loop beside the sequencer and the arp, then with the chord held */
+    {"SEQ+ARP+REC HOME", K_REC, VARCH_SINGLE, FLT_FORMANT, F_HEAVY, UIPAGE_HOME1},
+    {"SEQ+ARP+REC CELEST+PP", K_REC, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    {"ALL HOME", K_ALL, VARCH_SINGLE, FLT_FORMANT, F_HEAVY, UIPAGE_HOME1},
+    {"ALL SPRD CEL", K_ALL, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    {"ALL DUALOSC CEL", K_ALL, VARCH_DUAL_OSC, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -405,13 +413,45 @@ static void seq_slot(void)
     arp_set_timing(&arp_state, ARPDIV_1_32);
 }
 
+/* a two-bar loop in the REC page's recorder, playing: eighth notes up a scale and a held triad on each bar's top (22
+ * notes), as a played-in loop would be */
+static void rec_loop(void)
+{
+    Krec *k = synth_rec();
+    uint16_t nn = 0;
+    krec_clear(k);
+    for (uint16_t b = 0; b < 2u; b++) {
+        for (uint16_t i = 0; i < 3u; i++) {                     /* the triad */
+            k->n[nn].t = (uint16_t)(b * KREC_BAR);
+            k->n[nn].len = (uint16_t)(KREC_TPB * 2u);
+            k->n[nn].note = (uint8_t)(48 + 4 * i);
+            k->n[nn].vel = 90;
+            k->n[nn].chp = 0;
+            k->n[nn++].fresh = 0;
+        }
+        for (uint16_t i = 0; i < 8u; i++) {                     /* the eighths */
+            k->n[nn].t = (uint16_t)(b * KREC_BAR + i * (KREC_TPB / 2u));
+            k->n[nn].len = (uint16_t)(KREC_TPB / 2u - 8u);
+            k->n[nn].note = (uint8_t)(60 + (i * 2u) % 12u);
+            k->n[nn].vel = (uint8_t)(70 + i * 5u);
+            k->n[nn].chp = 0;
+            k->n[nn++].fresh = 0;
+        }
+    }
+    k->nn = nn;
+    k->len = (uint16_t)(2u * KREC_BAR);
+    k->state = KREC_PLAY;
+    k->pass_mask = 1u;
+    krec_set_playing(k, 1, synth_frame());
+}
+
 static void setup(const PtScen *s)
 {
     uint8_t n, i;
     live_defaults();
     if (s->kind != K_IDLE)
         patch(&engine_state[0], s);
-    if (s->kind == K_SEQ) {
+    if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL) {
         patch(&engine_state[1], s);
         seq_slot();
     }
@@ -461,14 +501,17 @@ static void setup(const PtScen *s)
     tally_clear();
     if (s->flags & F_HEAVY)
         synth_midi_3(0xB0, 1, 90);
-    if (s->kind == K_HELD || s->kind == K_RS) {
+    if (s->kind == K_HELD || s->kind == K_RS || s->kind == K_ALL) {
         n = (s->flags & F_ONE) ? 1u : varch_voice_cap(&engine_state[0]);
         for (i = 0; i < n; i++)
             synth_midi_3(0x90, (uint8_t)(48 + i * 3), (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
-    } else if (s->kind == K_SEQ) {
+    }
+    if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL) {
         maq_set_playing(synth_seq(), 1);
         carp_set_playing(synth_arp(), 1);           /* (the ARP has its own transport since 2026-10-17) */
     }
+    if (s->kind == K_REC || s->kind == K_ALL)
+        rec_loop();
 }
 
 static void restore(void)
