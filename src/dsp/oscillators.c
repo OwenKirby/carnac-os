@@ -758,6 +758,60 @@ void osc_render_block(WavetableOsc *osc, int32_t *out, int n) {
     osc->center_phase = phase;
 }
 
+/* osc_process_fm_tz over a block: OSC1's samples w1 move this oscillator's frequency (freq2_q16 + 1.5 Hz per unit of
+ * (w1 * depth) >> 12, in 16.16), through zero. The same samples and end state as the per-sample calls (the phase,
+ * and the four playheads and steps skulpt_spread_fixed leaves at spread 0), with the frames and the phase held in
+ * locals; the mip level still follows each sample's frequency. A bank or the VCO, not a PCM wave. */
+void osc_render_fm_block(WavetableOsc *osc, const int32_t *w1, int depth, uint32_t freq2_q16, int32_t *out, int n) {
+    const int16_t *fa = osc->frame_a, *fb = osc->frame_b;
+    const int32_t mf = osc->morph_frac_q15;
+    const int vco = osc->vco;
+    uint32_t ph = osc->center_phase, step = osc->step_increments[0];
+    for (int i = 0; i < n; i++) {
+        int32_t fm_hz = ((int32_t)(int16_t)w1[i] * depth) >> 12;
+        int32_t fq = (int32_t)freq2_q16 + fm_hz * 98304;
+        uint32_t f = fq >= 0 ? (uint32_t)fq : (uint32_t)-fq;
+        step = phase_step(f);
+        ph += fq >= 0 ? step : (uint32_t)0 - step;
+        if (vco) {
+            out[i] = (int16_t)an_one(osc, ph, step);
+        } else {
+            uint8_t lv = wt_level_for_freq(f);
+            out[i] = (int16_t)wt_read_frames(fa, fb, mf, wavetable_level_start[lv], WT_LEVEL_SHIFT[lv],
+                                             WT_LEVEL_SAMPLES[lv] - 1u, ph);
+        }
+    }
+    if (n > 0) {
+        osc->center_phase = ph;
+        for (int h = 0; h < 4; h++) {
+            osc->phases_q16[h] = ph;
+            if (!vco) osc->step_increments[h] = step;   /* (the VCO's path leaves them) */
+        }
+    }
+}
+
+/* osc_render with a phase offset per sample (OSC1 phase-modulates this one: up to a quarter cycle at full depth),
+ * over a block: the undetuned playhead alone (xfade 0), the accumulator keeping its own pitch. A bank or the VCO. */
+void osc_render_pm_block(WavetableOsc *osc, const int32_t *w1, int depth, int32_t *out, int n) {
+    uint32_t ph = osc->center_phase;
+    const uint32_t step = osc->center_step;
+    if (osc->vco) {
+        for (int i = 0; i < n; i++) {
+            ph += step;
+            out[i] = (int16_t)an_one(osc, ph + (uint32_t)((int32_t)(int16_t)w1[i] * depth * 258), step);
+        }
+    } else {
+        const int16_t *fa = osc->frame_a, *fb = osc->frame_b;
+        const int32_t mf = osc->morph_frac_q15;
+        const uint32_t off = osc->rd_off[4], sh = osc->rd_shift[4], mask = osc->rd_mask[4];
+        for (int i = 0; i < n; i++) {
+            ph += step;
+            out[i] = (int16_t)wt_read_frames(fa, fb, mf, off, sh, mask, ph + (uint32_t)((int32_t)(int16_t)w1[i] * depth * 258));
+        }
+    }
+    osc->center_phase = ph;
+}
+
 /* MIDI note -> frequency in Hz, Q16 (value = round(440 * 2^((n - 69) / 12) * 65536)). Generated offline; no runtime float. */
 static const uint32_t mtof_q16_table[128] = {
     535809, 567670, 601425, 637188, 675077, 715219, 757749, 802807,

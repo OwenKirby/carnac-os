@@ -405,6 +405,8 @@ static void knob_turn(uint32_t k, int32_t d)
         return;
     }
     hi = info.n_enum ? (int32_t)info.n_enum - 1 : (int32_t)VAL_MAX;
+    if (info.kind == UIKNOB_BPM)                    /* INT TEMPO runs on to 255 BPM */
+        hi = (int32_t)MIDI_CLOCK_TEMPO_MAX;
     if (info.n_enum)                                /* a list moves one entry a detent */
         d = d > 0 ? 1 : -1;
     v = (int32_t)*p + d;

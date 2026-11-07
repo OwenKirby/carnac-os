@@ -89,6 +89,9 @@ int16_t osc_render(WavetableOsc *osc);
 /* n samples of osc_render into out (int16 values), the same ones in the same order: the undetuned playhead with its
  * reads held in registers across the block; SPREAD's detuned playheads sample by sample. */
 void osc_render_block(WavetableOsc *osc, int32_t *out, int n);
+/* FM and PM of OSC2 over a block (a bank or the VCO), the same samples as the per-sample calls below / in oscmixer.c */
+void osc_render_fm_block(WavetableOsc *osc, const int32_t *w1, int depth, uint32_t freq2_q16, int32_t *out, int n);
+void osc_render_pm_block(WavetableOsc *osc, const int32_t *w1, int depth, int32_t *out, int n);
 /* FM's per-sample render (OSC2), through zero: a negative frequency (Q16 Hz) runs the phase backwards */
 int16_t osc_process_fm_tz(WavetableOsc *osc, int32_t frequency_q16);
 /* the VCO (bank 0) at cycle phase ph, band-limited for `step`, in OSC1's current shape: SUB CURRENT's read */

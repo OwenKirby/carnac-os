@@ -382,7 +382,7 @@ static void seq_slot(void)
 {
     uint8_t l, i;
     perf_state.perf_mode = PERF_DUAL_SYNTH;
-    perf_state.int_tempo = 127;                     /* 167 BPM: the most steps a second */
+    perf_state.int_tempo = 215;                     /* 255 BPM: the most steps a second */
     for (l = 0; l < 3u; l++) {                      /* bench_maq.c's worst case, on both layers */
         seq_lanes[l].event_type = SEQEV_NOTE;
         seq_lanes[l].target_mask = SEQ_TGT_BOTH;

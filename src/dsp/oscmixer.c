@@ -199,9 +199,17 @@ void osc_mixer_osc2_block(const OscMixVoice *mv, const int32_t *w1, WavetableOsc
     /* A bank or the VCO (oscillators.c): sample by sample only for FM and PM, which move its pitch or phase per sample;
      * plain, AM and RING take the block below, the same values (2026-11-02: the per-sample call cost DUAL OSC 7 points
      * on the VCO; 2026-11-06 the wavetable banks too) */
-    if (!osc2->pcm.on && (fm || mv->xmod_type == OSCMIX_XMOD_PM)) {
-        for (int i = 0; i < n; i++)
-            w2[i] = osc_mixer_osc2(mv, (int16_t)w1[i], osc2);
+    if (!osc2->pcm.on && fm) {
+        osc_render_fm_block(osc2, w1, mv->depth, mv->freq2_q16, w2, n);
+        return;
+    }
+    if (!osc2->pcm.on && mv->xmod_type == OSCMIX_XMOD_PM) {
+        if (osc2->xfade_q15 == 0) {
+            osc_render_pm_block(osc2, w1, mv->depth, w2, n);
+        } else {                                /* (a spread on OSC2: the playheads move with it) */
+            for (int i = 0; i < n; i++)
+                w2[i] = osc_mixer_osc2(mv, (int16_t)w1[i], osc2);
+        }
         return;
     }
     if (fm) {                                   /* FM: osc_mixer_osc2's pitch, per sample */

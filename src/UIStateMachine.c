@@ -414,7 +414,7 @@ static const UiRow GLOBAL_ROWS[] = {   /* the MIDI setup first (2026-10-27, user
     {"VEL CURVE", INST(vel_curve), 0, VELCURVE_COUNT - 1, RK_INST, 0, VELCURVE_NAMES, A_ALL},
     {"BASE VELOCITY", PERF(base_velocity), 12, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CLOCK OUT", INST(clock_out), 0, CLKOUT_COUNT - 1, RK_INST, 0, CLKOUT_NAMES, A_ALL},
-    {"INT TEMPO", PERF(int_tempo), 0, VAL_MAX, RK_BYTE, RF_BPM, NULL, A_ALL},
+    {"INT TEMPO", PERF(int_tempo), 0, MIDI_CLOCK_TEMPO_MAX, RK_BYTE, RF_BPM, NULL, A_ALL},
     {"THEME", 0, 0, UITHEME_COUNT - 1, RK_THEME, 0, THEME_NAMES, A_ALL},
 };
 /* 5.3 View 1 / View 2: the architecture and ANALOG live in the layer's patch (RK_ENG), the rest in the performance. Since

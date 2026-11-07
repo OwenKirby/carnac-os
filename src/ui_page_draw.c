@@ -510,11 +510,14 @@ static void pu_knob_read(UIStateMachine *sm, uint8_t page, uint8_t k, PuKnob *o,
     o->bip = (uint8_t)(info.kind == UIKNOB_BIP || info.kind == UIKNOB_OCT);
     o->list = (uint8_t)(info.names != NULL && n > 0);
     o->text = o->none ? "" : o->list ? ui_sm_knob_text(sm, page, layer, k) : b;
-    if (v > (int32_t)VAL_MAX) v = VAL_MAX;
-    if (o->list) {
+    if (info.kind == UIKNOB_BPM) {                   /* INT TEMPO: 0 .. MIDI_CLOCK_TEMPO_MAX */
+        if (v > (int32_t)MIDI_CLOCK_TEMPO_MAX) v = MIDI_CLOCK_TEMPO_MAX;
+        o->pos = (v * 48 + MIDI_CLOCK_TEMPO_MAX / 2) / MIDI_CLOCK_TEMPO_MAX;
+    } else if (o->list) {
         if (v > n - 1) v = n - 1;
         o->pos = n > 1 ? (v * 48 + (n - 1) / 2) / (n - 1) : 0;
     } else {
+        if (v > (int32_t)VAL_MAX) v = VAL_MAX;
         o->pos = (v * 48 + 63) / 127;
     }
     if (o->none || o->list)
@@ -522,7 +525,7 @@ static void pu_knob_read(UIStateMachine *sm, uint8_t page, uint8_t k, PuKnob *o,
     if (info.kind == UIKNOB_OCT)
         pu_num(b, ((v - (int32_t)BIPOLAR_CENTER) * 3) / 63, 1u, 1u);   /* -3 .. +3, as the browser shows it */
     else if (info.kind == UIKNOB_BPM)
-        pu_num(b, (int32_t)MIDI_CLOCK_BPM_BASE + v, 0u, 1u);           /* INT TEMPO: 40 .. 167 */
+        pu_num(b, (int32_t)MIDI_CLOCK_BPM_BASE + v, 0u, 1u);           /* INT TEMPO: 40 .. 255 */
     else if (info.kind == UIKNOB_NOTE)
         ui_sm_note_name((uint8_t)v, b);                                 /* SPLIT NOTE: C4 */
     else if (info.kind == UIKNOB_FINE)

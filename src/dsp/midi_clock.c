@@ -51,9 +51,9 @@ static uint8_t clock_source(void)
 
 static uint8_t internal_bpm(void)
 {
-    /* int_tempo 0..127 -> 40..167 BPM. Clamped: a stored byte past 127 (a damaged record) would wrap the sum to 0 at
-     * 216 and internal_period_q8 would divide by zero */
-    uint8_t t = perf_state.int_tempo > VAL_MAX ? (uint8_t)VAL_MAX : perf_state.int_tempo;
+    /* int_tempo 0..215 -> 40..255 BPM. Clamped: a stored byte past 215 (a damaged record) would wrap the sum to 0 at
+     * 256 and internal_period_q8 would divide by zero */
+    uint8_t t = perf_state.int_tempo > MIDI_CLOCK_TEMPO_MAX ? (uint8_t)MIDI_CLOCK_TEMPO_MAX : perf_state.int_tempo;
     return (uint8_t)(MIDI_CLOCK_BPM_BASE + t);
 }
 

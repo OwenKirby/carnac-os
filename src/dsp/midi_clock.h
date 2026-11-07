@@ -9,6 +9,7 @@
 
 #define MIDI_CLOCK_NDIV 8u           /* musical grid divisions: rate knob / 16, 0 = 1/1 (slowest) .. 7 = 1/32 (fastest) */
 #define MIDI_CLOCK_BPM_BASE 40u      /* INT TEMPO value v is BPM_BASE + v */
+#define MIDI_CLOCK_TEMPO_MAX 215u    /* the highest INT TEMPO value: 255 BPM, the top of the uint8_t BPM */
 
 void midi_clock_init(void);
 

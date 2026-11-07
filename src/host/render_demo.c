@@ -49,7 +49,7 @@ int main(int argc, char **argv)
     int use_midi = strcmp(argv[2], "midi") == 0;
     int bpm = argc > 3 ? atoi(argv[3]) : 120;
     int bars = argc > 4 ? atoi(argv[4]) : 8;
-    if (bpm < 40 || bpm > 167) { fprintf(stderr, "bpm must be 40..167\n"); return 1; }
+    if (bpm < 40 || bpm > 255) { fprintf(stderr, "bpm must be 40..255\n"); return 1; }
 
     synth_init();
 
