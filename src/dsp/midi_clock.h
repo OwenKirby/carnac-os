@@ -16,6 +16,12 @@ void midi_clock_init(void);
 /* once per audio frame, before the voices read the clock: runs the engine clock and stamps the frame */
 void midi_clock_frame(uint32_t frame);
 
+/* How many frames after the one midi_clock_frame just ran change nothing but the clock's own count (internal clock;
+ * 0 for MIDI). The render skips their midi_clock_frame calls and calls midi_clock_skipped(n, last frame) in their
+ * place, before a MIDI event, the next full call, or the pass's end. Bit-exact with running every frame. */
+uint32_t midi_clock_quiet(void);
+void midi_clock_skipped(uint32_t n, uint32_t last);
+
 /* Whether the next midi_clock_frame changes what the clock tells the voices (a pulse, or a reset when CLOCK SOURCE
  * changed). Between such frames the clock's answer depends only on the frame asked about, so the block-major render
  * (synth_runtime.c) renders the voices up to this frame first, and they ask midi_clock_phase_at their own frame. */

@@ -54,6 +54,7 @@ build rec_screen $DSP src/UIStateMachine.c src/host/render_rec_screen.c && mkdir
 build seq_idle $DSP src/host/test_seq_idle.c && build seq_idle_ref -DSYNTH_SEQ_NO_IDLE $DSP src/host/test_seq_idle.c \
     && "$OUT/seq_idle_ref.exe" >"$OUT/seq_idle_ref.txt" \
     && run seq_idle sh -c "'$OUT/seq_idle.exe' | diff - '$OUT/seq_idle_ref.txt' && echo 'MAQ / ARP idle fast paths: bit-exact'"
+build clk_skip_ref -DSYNTH_CLK_NO_SKIP $DSP src/host/test_seq_idle.c     && "$OUT/clk_skip_ref.exe" >"$OUT/clk_skip_ref.txt"     && run clk_skip sh -c "'$OUT/seq_idle.exe' | diff - '$OUT/clk_skip_ref.txt' && echo 'clock quiet-frame skip: bit-exact'"
 build drive_tables src/host/gen_drive_tables.c && run drive_tables sh -c "'$OUT/drive_tables.exe' | diff - src/dsp/drive_tables.h && echo 'drive_tables.h matches its generator'"
 build fx_hash src/dsp/fx.c src/dsp/preset.c src/host/test_fx_hash.c && run fx_hash "$OUT/fx_hash.exe"
 build spring_dub src/dsp/fx.c src/dsp/preset.c src/host/test_spring_dub.c && run spring_dub "$OUT/spring_dub.exe"

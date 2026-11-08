@@ -856,22 +856,44 @@ static void render_pass(int32_t *out, uint32_t frames)
     uint32_t seq_wake = 0;
     uint32_t seq_skip = 0;                     /* ... this many since the last one run */
     uint32_t pc_cur = 0, pc_prev = 0;          /* the clock's pulse count at the end of the frame before, and before that */
+    uint32_t clk_left = 0, clk_skip = 0, clk_pc = 0;       /* the internal clock's quiet frames still to skip, and skipped since its last call */
     for (uint32_t f = 0; f < frames; ++f) {
         pass_frame = f;
         sample_clock = pass_base + f;
         uint8_t ext_now = ext_n && (int32_t)(ext_q[ext_h].at - sample_clock) <= 0;
-        if (ext_now || midi_clock_frame_changes()) voices_up_to(f);   /* a pulse or an event: the voices before it as they were */
-        SPROF_START();
-        pc_prev = pc_cur;
-        pc_cur = midi_clock_pulse_count();
+        int clk_quiet = clk_left && !ext_now;  /* (2026-11-07) a frame with no pulse: the clock's call skipped, settled in one go */
+        if (clk_quiet) {
+            clk_left--;
+            clk_skip++;
+            SPROF_START();
+            pc_prev = pc_cur;
+            pc_cur = clk_pc;                   /* (no pulse since the call: its count after the frame) */
+        } else {
+            if (clk_skip) {
+                midi_clock_skipped(clk_skip, sample_clock - 1u);
+                clk_skip = 0;
+            }
+            clk_left = 0;
+            if (ext_now || midi_clock_frame_changes()) voices_up_to(f);   /* a pulse or an event: the voices before it as they were */
+            SPROF_START();
+            pc_prev = pc_cur;
+            pc_cur = midi_clock_pulse_count();
+        }
         if (ext_now) {                             /* an event may wake them: the skipped frames' last one first, */
             if (seq_skip) seq_frame(sample_clock - 1u, 1, pc_prev);   /* at its clock (before this frame's) */
             seq_quiet = 0;
             seq_skip = 0;
         }
-        midi_clock_frame(sample_clock);            /* the clock is stamped before the LFOs read it this frame */
+        if (!clk_quiet) {
+            midi_clock_frame(sample_clock);        /* the clock is stamped before the LFOs read it this frame */
+#if !defined(SYNTH_CLK_NO_SKIP)                    /* (the test's reference: every frame run) */
+            clk_left = midi_clock_quiet();
+#endif
+            clk_pc = midi_clock_pulse_count();
+        }
         while (ext_now) {                          /* timed MIDI in on this frame (a 0xF8 after the clock's own pulse) */
             midi_apply(ext_q[ext_h].st, ext_q[ext_h].d1, ext_q[ext_h].d2, VSRC_KEYS);
+            clk_left = 0;                          /* (a tempo or source change: the clock is asked next frame) */
             ext_h = (uint8_t)((ext_h + 1u) % EXT_Q_MAX);
             ext_n--;
             ext_now = ext_n && (int32_t)(ext_q[ext_h].at - sample_clock) <= 0;
@@ -899,6 +921,8 @@ static void render_pass(int32_t *out, uint32_t frames)
         }
         layer_ctrl_left--;
     }
+    if (clk_skip)
+        midi_clock_skipped(clk_skip, sample_clock);
     if (seq_skip)                              /* the pass's last frame, skipped: run now (the UI reads them next) */
         seq_frame(sample_clock, 1, pc_cur);
     voices_up_to(frames);
@@ -982,42 +1006,73 @@ static void render_pass(int32_t *out, uint32_t frames)
         if (r > lvl_peak[0]) lvl_peak[0] = r;
         if (d > lvl_peak[1]) lvl_peak[1] = d;
     }
-    fx_mix_block(fx_dly_l, fx_dly_r, fx_rev_l, fx_rev_r, frames);
+    int wet_on = mix_step(MIXG_WET, g_to[MIXG_WET], &g0, &g1);   /* (the wet gain moving: it scales the echoes' sum, below) */
+    float wet_g0 = g0, wet_g1 = g1;
+    if (wet_on)
+        fx_mix_block(fx_dly_l, fx_dly_r, fx_rev_l, fx_rev_r, frames);   /* (else the output loop adds them: one pass fewer) */
     /* SINGL's DRY / WET: the dry after the sends (the echoes go on without it), the wet after the loop's taps */
     if (mix_step(MIXG_DRY, g_to[MIXG_DRY], &g0, &g1))
         for (int l = 0; l < NLAYER; l++)
             mix_apply(g0, g1, frames, layer_l[l], layer_r[l]);
-    if (mix_step(MIXG_WET, g_to[MIXG_WET], &g0, &g1))
+    if (wet_on)
         for (uint32_t frame = 0; frame < frames; ++frame) {
-            float g = g0 + (g1 - g0) * (float)(frame + 1u) * (1.f / (float)frames);
+            float g = wet_g0 + (wet_g1 - wet_g0) * (float)(frame + 1u) * (1.f / (float)frames);
             fx_rev_l[frame] = (int32_t)((float)fx_rev_l[frame] * g);
             fx_rev_r[frame] = (int32_t)((float)fx_rev_r[frame] * g);
         }
+    /* The output: the layers' sum, the wet sum, the master limiter (2026-11-07: an int32 path for the frames that pass
+     * inside +-2^23 with the limiter at rest, which is nearly all of them; the 64-bit one below is the same arithmetic
+     * for the rest, so the output is bit for bit as before). The limiter: the envelope jumps to a peak over the
+     * ceiling at once (so no frame passes it) and falls back toward the ceiling; the gain is ceiling / envelope, unity
+     * whenever the envelope is at the ceiling. Only a frame that is being limited pays for the division. */
+    const float *sl0 = layer_l[0], *sl1 = layer_l[1], *sr0 = layer_r[0], *sr1 = layer_r[1];
+    int32_t env = limit_env_q8;
     for (uint32_t frame = 0; frame < frames; ++frame) {
-        int64_t left = mix_q15(layer_l[0][frame] + layer_l[1][frame]), right = mix_q15(layer_r[0][frame] + layer_r[1][frame]);
-        if (lvl_on && (left < 0 ? -left : left) > lvl_peak[2]) lvl_peak[2] = (int32_t)(left < 0 ? -left : left);
-        left += fx_rev_l[frame];                  /* the wet sum, each side its own */
-        right += fx_rev_r[frame];
-
-        /* Master limiter: the envelope jumps to a peak over the ceiling at once (so no frame passes it) and
-         * falls back toward the ceiling; the gain is ceiling / envelope, unity whenever the envelope is at the
-         * ceiling. Only a frame that is being limited pays for the division. */
+        int32_t li = mix_q15(sl0[frame] + sl1[frame]), ri = mix_q15(sr0[frame] + sr1[frame]);
+        int32_t wl = fx_rev_l[frame], wr = fx_rev_r[frame];
+        if (!wet_on) {
+            wl += fx_dly_l[frame];
+            wr += fx_dly_r[frame];
+        }
+        if (lvl_on && (li < 0 ? -li : li) > lvl_peak[2]) lvl_peak[2] = li < 0 ? -li : li;
+        /* the fast frame: every term inside +-2^23, so the int32 sums cannot wrap and `peak << 8` fits */
+        if ((uint32_t)li + 0x800000u < 0x1000000u && (uint32_t)ri + 0x800000u < 0x1000000u &&
+            (uint32_t)wl + 0x800000u < 0x1000000u && (uint32_t)wr + 0x800000u < 0x1000000u) {
+            int32_t left = li + wl, right = ri + wr;
+            int32_t pl = left < 0 ? -left : left, pr = right < 0 ? -right : right;
+            int32_t peak = pr > pl ? pr : pl;
+            if (peak > 0x7FFFFF) peak = 0x7FFFFF;
+            if (peak << 8 > env)
+                env = peak << 8;
+            else
+                env -= (env - ((int32_t)LIMIT_CEILING << 8)) >> LIMIT_RELEASE_SHIFT;
+            if (env > ((int32_t)LIMIT_CEILING << 8)) {
+                int64_t g = ((uint32_t)LIMIT_CEILING << 15) / (uint32_t)(env >> 8);
+                left = (int32_t)(((int64_t)left * g) >> 15);
+                right = (int32_t)(((int64_t)right * g) >> 15);
+            }
+            out[frame * 2u] = left > Q15_MAX ? Q15_MAX : (left < Q15_MIN ? Q15_MIN : left);
+            out[frame * 2u + 1u] = right > Q15_MAX ? Q15_MAX : (right < Q15_MIN ? Q15_MIN : right);
+            continue;
+        }
+        int64_t left = (int64_t)li + wl, right = (int64_t)ri + wr;   /* the original, 64-bit */
         int64_t peak = left < 0 ? -left : left;
         int64_t peak_r = right < 0 ? -right : right;
         if (peak_r > peak) peak = peak_r;
         if (peak > 0x7FFFFF) peak = 0x7FFFFF;                       /* keeps peak << 8 inside int32 */
-        if ((int32_t)peak << 8 > limit_env_q8)
-            limit_env_q8 = (int32_t)peak << 8;
+        if ((int32_t)peak << 8 > env)
+            env = (int32_t)peak << 8;
         else
-            limit_env_q8 -= (limit_env_q8 - ((int32_t)LIMIT_CEILING << 8)) >> LIMIT_RELEASE_SHIFT;
-        if (limit_env_q8 > ((int32_t)LIMIT_CEILING << 8)) {
-            uint32_t gain_q15 = ((uint32_t)LIMIT_CEILING << 15) / (uint32_t)(limit_env_q8 >> 8);
+            env -= (env - ((int32_t)LIMIT_CEILING << 8)) >> LIMIT_RELEASE_SHIFT;
+        if (env > ((int32_t)LIMIT_CEILING << 8)) {
+            uint32_t gain_q15 = ((uint32_t)LIMIT_CEILING << 15) / (uint32_t)(env >> 8);
             left = (left * gain_q15) >> 15;
             right = (right * gain_q15) >> 15;
         }
         out[frame * 2u] = clamp_q15_64(left);
         out[frame * 2u + 1u] = clamp_q15_64(right);
     }
+    limit_env_q8 = env;
     PF_LAP(SPROF_F_TAIL);
     SPROF_LAP(SPROF_FX);
 #if defined(SYNTH_PROF)

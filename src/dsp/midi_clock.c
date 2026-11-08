@@ -200,6 +200,28 @@ void midi_clock_frame(uint32_t frame)
     }
 }
 
+/* Quiet frames (2026-11-07): after a midi_clock_frame, how many of the frames that follow change nothing but the engine
+ * clock's accumulator and now_frame (no pulse, no reset). The render skips their calls and settles them in one go
+ * (midi_clock_skipped) before anything can see the difference: the UI writes only between passes, and a MIDI event
+ * settles it first. Internal clock only: the MIDI lock stays frame by frame. */
+uint32_t midi_clock_quiet(void)
+{
+    uint32_t need;
+    if (clock_source() != CLKSRC_INTERNAL || source_seen != CLKSRC_INTERNAL || internal_bpm() != internal_bpm_seen)
+        return 0;
+    need = period_q8 - internal_acc_q8;               /* acc < period after a frame */
+    if (internal_acc_q8 >= period_q8)
+        return 0;
+    return ((need + 255u) >> 8) - 1u;                 /* frames j with acc + 256 j < period */
+}
+
+/* n quiet frames, the last of them `last`, as midi_clock_frame would have run them */
+void midi_clock_skipped(uint32_t n, uint32_t last)
+{
+    internal_acc_q8 += 256u * n;
+    now_frame = last;
+}
+
 uint8_t midi_clock_frame_changes(void)
 {
     uint8_t src = clock_source();
