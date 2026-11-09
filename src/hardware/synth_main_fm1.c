@@ -48,6 +48,7 @@
 #include "dsp/wavetables.h"
 #include "dsp/flash_record.h"       /* FREC_VER_*: the preset store keeps each bank's layout version */
 #include "dsp/tuning.h"             /* MTS SysEx into GLOBAL's USER tunings (ed_service) */
+#include "dsp/shed_policy.h"        /* overload shedding */
 #include "UIStateMachine.h"
 #include "hardware/mem_section.h"     /* SYNTH_POOL */
 #if defined(SYNTH_NO_SPLASH)               /* TEST builds only (build_fm1.py -D SYNTH_NO_SPLASH=1): a black start-up
@@ -303,51 +304,21 @@ static uint32_t render_block(int32_t *o)            /* ALNK0: one half, measured
     return us * 1000u / budget;
 }
 
-/* Overload shedding (Felucca sheds too, audio.c SHED_TICKS): two halves in a row that took SHED_ON_PM (90 %) of their time (or
- * one that ran late) take one voice from each layer's limit (voice_shed: the voice left out fades in a few ms, not a
- * cut), at most one every SHED_GAP halves while the fade still costs. A voice comes back when the SMOOTHED load
- * (audio_cpu_pct, ~16 halves) has been under SHED_OFF_PCT for SHED_CALM halves; with nothing sounding at all the limit
- * is lifted whole (2026-11-06: the old rule needed every half of a second under 65 %, which a patch near the limit
- * never gives, so the limit only ratcheted down, to one voice). Off during the PERF TEST: it measures. */
-#define SHED_ON_PM 900u                             /* (88 % until 2026-11-06: two hot halves in a row are needed now) */
-#define SHED_OFF_PCT 72u
-#define SHED_GAP 4u                                 /* halves between two sheds (~46 ms) */
-#define SHED_CALM 43u                               /* halves of calm before a voice comes back (~0.5 s) */
-static uint32_t shed_wait, shed_calm, shed_count, shed_hot, shed_idle;   /* shed_count: voices shed since boot (the debug read) */
+/* Overload shedding: the policy is src/dsp/shed_policy.h (host-tested); this feeds it once a half. Off during the PERF
+ * TEST: it measures. */
+static ShedState shed;
+#define shed_count shed.count                       /* voices shed since boot (the debug read) */
 static void shed_update(uint32_t pm, uint8_t late)
 {
-    uint8_t n = voice_shed;
     uint32_t v, sounding = 0;
     if (pt_state() == PT_RUN) {
-        voice_shed = 0;
+        voice_shed = shed.n = 0;
         return;
     }
-    if (shed_wait)
-        shed_wait--;
-    shed_hot = pm >= SHED_ON_PM ? shed_hot + 1u : 0u;
     for (v = 0; v < POLYPHONY_VOICES; v++)
         sounding += !voice_is_free(&poly_bank[v]);
-    shed_idle = sounding ? 0u : shed_idle + 1u;
-    if (n && shed_idle >= SHED_CALM) {              /* nothing sounds: nothing to protect */
-        voice_shed = 0;
-        shed_calm = 0;
-        return;
-    }
-    if ((shed_hot >= 2u || late) && n + 1u < VOICE_POOL) {
-        shed_calm = 0;
-        if (!shed_wait) {
-            voice_shed = (uint8_t)(n + 1u);
-            shed_wait = SHED_GAP;
-            shed_count++;
-        }
-    } else if (audio_cpu_pct < SHED_OFF_PCT && pm < SHED_ON_PM && n) {
-        if (++shed_calm >= SHED_CALM) {
-            voice_shed = (uint8_t)(n - 1u);
-            shed_calm = 0;
-        }
-    } else {
-        shed_calm = 0;
-    }
+    shed_step(&shed, pm, late, (uint8_t)(sounding != 0u), audio_cpu_pct, VOICE_POOL);
+    voice_shed = shed.n;
 }
 
 void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_isr.S) */

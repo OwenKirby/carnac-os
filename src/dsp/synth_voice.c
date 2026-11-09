@@ -476,7 +476,8 @@ void synth_voice_begin_tick(uint32_t frame) {
     tune_cents_now = instrument_tune_cents();       /* once a tick, not once a voice */
     tuning_now = PERF_TUNING(&perf_state);
     tuning_root_now = PERF_TUNING_ROOT(&perf_state);
-    analog_begin_tick();                            /* ANALOG's warm-up drift, shared by every voice */
+    if (engine_state[0].analog | engine_state[1].analog)
+        analog_begin_tick();                        /* ANALOG's warm-up drift, shared by every voice (nothing to drift: skipped) */
     layer_mod_pass++;                                               /* the LFO1 pass is a pass of its own */
     for (unsigned l = 0; l < NLAYER; l++)
         layer_sends[l] = send_mask(&engine_state[l], &layer_sends_hi[l]);

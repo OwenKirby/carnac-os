@@ -81,20 +81,31 @@ SYNTH_COLD void voice_allocator_init(void) {
 
 void pool_range(uint8_t layer, int *first, int *count) {
     uint8_t mode = perf_state.perf_mode < PERF_COUNT ? perf_state.perf_mode : (uint8_t)PERF_SINGL_SYNTH;
+    /* the two layers' limits, cached on what they come from (the performance mode, the two voice modes, the two patches'
+     * prices): the fit is a search of about a thousand operations, and this runs for every note and every layer tick
+     * (the SEQ rows of the PERF TEST went over 100 % with it uncached, 2026-11-09) */
+    static uint32_t cache_key = 0xFFFFFFFFu;
+    static uint8_t cache_n[NLAYER];
+    uint32_t key = (uint32_t)mode | (uint32_t)(perf_state.voice_mode[0] & 7u) << 2 | (uint32_t)(perf_state.voice_mode[1] & 7u) << 5 |
+                   (uint32_t)varch_voice_cost(&engine_state[0]) << 8 | (uint32_t)varch_voice_cost(&engine_state[1]) << 16 |
+                   (uint32_t)(engine_state[0].mfx.type != 0u) << 24 | (uint32_t)(engine_state[1].mfx.type != 0u) << 25;
     int n[NLAYER];
-    for (uint8_t l = 0; l < NLAYER; l++)
-        n[l] = layer_voice_limit(mode, &engine_state[0], &engine_state[1], perf_state.voice_mode[0],
-                                 perf_state.voice_mode[1], l);
-    /* layer 2 from the second half, earlier when a mono layer 1 leaves it more than half (it always fits: the two
-     * limits never sum past the pool) */
-    if (layer == 0) *first = 0;
-    else {
-        *first = POLYPHONY_VOICES - n[1] < POLYPHONY_VOICES / 2 ? POLYPHONY_VOICES - n[1] : POLYPHONY_VOICES / 2;
-        if (*first < n[0]) *first = n[0];
+    if (key != cache_key) {
+        for (uint8_t l = 0; l < NLAYER; l++)
+            cache_n[l] = layer_voice_limit(mode, &engine_state[0], &engine_state[1], perf_state.voice_mode[0],
+                                           perf_state.voice_mode[1], l);
+        cache_key = key;
     }
+    for (uint8_t l = 0; l < NLAYER; l++)
+        n[l] = cache_n[l];
+    /* layer 2 at the top of the pool (its voices end at the last one), layer 1 from the bottom: an odd count on either
+     * layer then still splits the two cores evenly (PresetStructures.h voice_core_cost). The two limits never sum past
+     * the pool. */
+    if (layer == 0) *first = 0;
+    else *first = POLYPHONY_VOICES - n[1];
     *count = layer < NLAYER ? n[layer] : 0;
-    if (voice_shed && *count > 1)
-        *count = *count > (int)voice_shed + 1 ? *count - (int)voice_shed : 1;
+    if (voice_shed && *count > 2)                   /* (shedding never takes a layer under two voices: a chord stays a chord) */
+        *count = *count > (int)voice_shed + 2 ? *count - (int)voice_shed : 2;
 }
 
 SYNTH_COLD int check_if_any_other_voice_held(int current_voice_index, uint8_t layer) {
@@ -112,6 +123,24 @@ int allocate_voice_slot(uint8_t layer, uint8_t src) {
     pool_range(layer, &first, &count);
     if (count <= 0) return -1;
     end = first + count;
+
+    /* Stage 0 (2026-11-09): the ARP, the SEQ and the REC loop keep at most SRC_TAILS released notes ringing a layer. A
+     * new note of one of them past that takes its own oldest tail over (the same voice, restarted from its level),
+     * so a fast line with a long release costs a known number of voices instead of all it can find. The keys are free. */
+    if (src != VSRC_KEYS) {
+        int tails = 0, own = -1;
+        uint32_t own_age = 0;
+        for (int v = first; v < end; v++) {
+            const SynthVoiceNode *s = &poly_bank[v];
+            if (s->src != src || s->is_gate_open || s->silent || s->choke) continue;
+            tails++;
+            if (own < 0 || s->age_counter >= own_age) {
+                own_age = s->age_counter;
+                own = v;
+            }
+        }
+        if (tails >= SRC_TAILS) return own;
+    }
 
     // Stage 1: Try to look for an inactive, perfectly silent voice slot
     for (int v = first; v < end; v++) {

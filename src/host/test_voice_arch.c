@@ -289,15 +289,16 @@ int main(void)
         CHECK(t_am > 1.2 * t_a0, "CROSS-FEED -: B's tone not in A's tail (%.0f vs %.0f)", t_am, t_a0);
     }
 
-    /* 4. layering: DUAL with SINGLE (cap 8) + STACK (cap 6): each layer gets min / 2 = 3 */
+    /* 4. layering, the priced pool (2026-11-09): a plain SINGLE voice costs 10, a STACK voice 15, a core carries 56: SINGLE +
+     * STACK take 4 + 4 (2 + 2 voices a core: 20 + 30 = 50) where the old shared cap gave 3 + 3 */
     synth_init();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     base_patch(&engine_state[0], VARCH_SINGLE);
     base_patch(&engine_state[1], VARCH_STACK);
     for (int i = 0; i < 6; i++) { synth_midi_3(0x90, (uint8_t)(48 + i), 100); synth_midi_3(0x91, (uint8_t)(60 + i), 100); }
     render(2048);
-    CHECK(sounding(0) == 3 && sounding(1) == 3, "DUAL SINGLE+STACK: layer voices %d / %d, want 3 / 3", sounding(0), sounding(1));
-    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_POLY_REUSE, VMODE_POLY_REUSE, 0) == 3,
+    CHECK(sounding(0) == 4 && sounding(1) == 4, "DUAL SINGLE+STACK: layer voices %d / %d, want 4 / 4", sounding(0), sounding(1));
+    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_POLY_REUSE, VMODE_POLY_REUSE, 0) == 4,
           "limit");
     /* both SINGLE: the spec's 4 + 4 */
     all_off();
@@ -307,7 +308,7 @@ int main(void)
     CHECK(sounding(0) == 4 && sounding(1) == 4, "DUAL SINGLE+SINGLE: %d / %d, want 4 / 4", sounding(0), sounding(1));
 
     /* a MONO layer takes one voice and gives the rest to the other: SINGLE + SINGLE 1 + 7, either way round (DUAL
-     * and SPLIT); SINGLE + STACK (cap 6) with layer 1 mono: 1 + floor(6 * 7 / 8) = 5 */
+     * and SPLIT); SINGLE + STACK with layer 1 mono: 1 + 6 (the priced pool) */
     for (int pm = PERF_DUAL_SYNTH; pm <= PERF_SPLIT_SYNTH; pm++)
         for (int ml = 0; ml < 2; ml++) {
             synth_init();
@@ -328,8 +329,8 @@ int main(void)
     CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_MONO_RETRIG, 1) == 1,
           "both mono");
     base_patch(&engine_state[1], VARCH_STACK);
-    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_UNISON_STACK, 1) == 5,
-          "mono SINGLE + STACK");
+    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_UNISON_STACK, 1) == 6,
+          "mono SINGLE + STACK: 1 + 6 (the mono voice, 10, and 3 STACK voices, 45, on core 0: 55 of 56)");
 
     /* 4b. a full layer steals by source (2026-10-26): ARP below SEQ below the keys, never upward; inside the ARP / SEQ
      * the outer notes are kept, the keys lose their oldest */

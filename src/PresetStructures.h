@@ -583,28 +583,66 @@ static inline uint8_t varch_uses_fltmix(uint8_t a)
     return (uint8_t)(a == VARCH_DUAL_FILTER || a == VARCH_STACK || a == VARCH_BINAURAL || a == VARCH_FULL);
 }
 
-/* The most voices one patch may sound so its worst case still renders in real time, by architecture. The filter
- * circuit does not change it: every flavour, MULTI included, fits each cap on the FM1 (PERF TEST 2026-10-15, two
- * cores, heavy patch: worst SPREAD + MULTI x 7 at 64 %, budget 70 %; docs/fm1-measure-checklist.md). */
+/* THE VOICE POOL IS PRICED (2026-11-09). A voice costs what its patch makes it cost, in tenths of a plain one-oscillator,
+ * one-filter voice (measured on the FM1, PERF TEST heavy rows, 2026-11-07: points a voice over the idle floor, 4.8 for
+ * SPREAD 0): SPREAD 6.2 (13), DUAL OSC 6.0 (12), DUAL FILTER 6.9 (14), STACK 7.4 (15), BINAURAL 7.9 (16), FULL 8.0 (17);
+ * an SH-2 filter adds about 1.0 a filter that runs (2) and a PCM wave about 0.8..2 an oscillator that plays one (2).
+ * The two cores render alternate voices (CORE1_VOICES: the odd ones are core 1's) and a pass lasts as long as the busier
+ * core, so what a patch may sound is what one core can carry: VOICE_CORE_COST. Measured: pass time ~ 14.6 % + 0.95 % a
+ * tenth the busier core carries (SINGLE x8 40 -> 52.9 %, SPREAD SH-2 x8 60 -> 70.6 %, DUAL FILTER x7 56 -> 62.9 %). 56 keeps
+ * every plain patch at its old voice count (8 SPREAD, 8 DUAL FILTER (the old 7 already put 4 on the busier core), 6 STACK / BINAURAL) and gives an SH-2 / PCM patch on a
+ * two-chain architecture fewer. (A PCM wave costs a SPREAD voice only 1: its loops read through the spread block path.) */
 #define VOICE_POOL 8u                /* physical voices: SINGL_SYNTH may use all of them */
+#define VOICE_CORE_COST 56u
+#define VOICE_COST_PCM_FIRST 64u     /* OscParams.wavebank from here is a PCM wave (pcm_osc.h WAVE_PCM_FIRST) */
+static inline uint8_t varch_voice_cost(const EngineState *e)
+{
+    uint8_t a = varch_of(e), c, sh2 = 0, pcm = 0, bin = a == VARCH_BINAURAL;
+    switch (a) {
+    case VARCH_SPREAD:      c = (e->oscmix.spread || e->oscmix.spread_mod_amt) ? 13u : 10u; break;
+    case VARCH_DUAL_OSC:    c = 12u; break;
+    case VARCH_DUAL_FILTER: c = 14u; break;
+    case VARCH_STACK:       c = 15u; break;
+    case VARCH_BINAURAL:    c = 16u; break;
+    case VARCH_FULL:        c = 17u; break;
+    case VARCH_DUAL_SPREAD: c = 12u; break;     /* (retired: loads as DUAL OSC) */
+    default:                c = 10u; break;     /* SINGLE, STRIKE (retired: load as SPREAD 0) */
+    }
+    sh2 = (uint8_t)((e->filter[0].flavour == FLT_SH2) * (bin ? 2 : 1) +
+                    (varch_uses_filter2(a) && e->filter[1].flavour == FLT_SH2));
+    pcm = (uint8_t)((e->osc[0].wavebank >= VOICE_COST_PCM_FIRST) * (bin ? 2 : 1) +
+                    (varch_uses_osc2(a) && e->osc[1].wavebank >= VOICE_COST_PCM_FIRST));
+    return (uint8_t)(c + 2u * sh2 + (c == 13u ? 1u : 2u) * pcm);
+}
+
+/* The cost one core carries when layer A sounds voices 0..na-1 and layer B the top nb of the pool (voice v is on core
+ * v & 1): L2 sits at the top of the pool so an odd count on either layer still splits the cores evenly. */
+static inline uint8_t voice_core_cost(uint8_t wa, uint8_t na, uint8_t wb, uint8_t nb, uint8_t core)
+{
+    uint32_t t = 0;
+    for (uint8_t v = 0; v < VOICE_POOL; v++) {
+        if ((v & 1u) != core) continue;
+        if (v < na) t += wa;
+        if (v >= VOICE_POOL - nb) t += wb;
+    }
+    return (uint8_t)(t > 255u ? 255u : t);
+}
+
+/* An MFX on a layer takes a share of the pass whatever is played (measured under load, 2026-11-04: any MFX costs 5 to 10
+ * points, the floor 5): VOICE_MFX_COST tenths off each core's share for every layer that runs one. */
+#define VOICE_MFX_COST 5u
+static inline uint8_t voice_overhead(const EngineState *l1, const EngineState *l2, uint8_t both_layers)
+{
+    return (uint8_t)(VOICE_MFX_COST * ((l1->mfx.type != 0u) + (both_layers && l2->mfx.type != 0u)));
+}
+
+/* The most voices one patch may sound alone: the most one core's share of them can carry. */
 static inline uint8_t varch_voice_cap(const EngineState *e)
 {
-    static const uint8_t cap[VARCH_COUNT] = {
-        8u,                          /* SINGLE */
-        6u,                          /* DUAL OSC (5 -> 6 2026-10-26, measured: 5 and 6 both put 3 voices on the busier core;
-                                      * every row within 0.2 of 5, worst H CEL+PP 68.5) */
-        8u,                          /* SPREAD (7 -> 6 2026-10-15; 6 -> 8 2026-10-26 measured: 4 a core 57.5 .. 69.6 % heavy, only
-                                      * SH-2 + CELESTIAL over, 74.3) */
-        7u,                          /* DUAL FILTER (5 -> 7 2026-10-15, measured) */
-        6u,                          /* STACK (4 -> 6 2026-10-15, measured) */
-        6u,                          /* BINAURAL: FILTER1's settings run twice, once per ear (4 -> 6 2026-10-15) */
-        8u,                          /* STRIKE (retired: loads as SPREAD) */
-        4u,                          /* FULL: DUAL OSC's oscillators + DUAL FILTER's filters (2026-10-26 measured: 4 = 2 a core,
-                                      * worst 62 % (SH-2 heavy); 6 = 3 a core 71..82 %, and 5 still puts 3 on a core) */
-        4u,                          /* DUAL SPREAD (retired 2026-11-06; was: 6 = 3 a core passed held
-                                      * notes but SEQ+ARP + CELESTIAL hit 95.6 %; 4 = 2 a core, held rows 47..59 %) */
-    };
-    return cap[varch_of(e)];
+    uint8_t w = varch_voice_cost(e), n, room = (uint8_t)(VOICE_CORE_COST - voice_overhead(e, e, 0u));
+    for (n = VOICE_POOL; n > 1u; n--)
+        if (voice_core_cost(w, n, 0u, 0u, 0u) <= room) break;
+    return n;
 }
 
 /* the voice modes that sound one voice (UNISON stacks the layer's voices, so it is not one of them) */
@@ -613,30 +651,47 @@ static inline uint8_t vmode_one_voice(uint8_t m)
     return (uint8_t)(m == VMODE_MONO_RETRIG || m == VMODE_MONO_LEGATO);
 }
 
-/* Voices one layer may use (5.3). SINGL_SYNTH: layer 1 gets its patch's cap, layer 2 none. DUAL / SPLIT: both
- * layers sound at once, so the pair shares the lower cap of the two patches, layer 1 taking the odd voice (two
- * 8-voice patches: 4 + 4, the spec's split; 5: 3 + 2; 4: 2 + 2). Every voice then costs at most what the more
- * expensive patch's voice costs, so the pair stays inside that patch's budget. Never below 1.
- * A MONO layer (vm1 / vm2, 2026-10-25) needs one voice, so the other layer gets the rest of the budget: a voice of a
- * patch with cap c costs at most 1/c of it, so the mono voice leaves (1 - 1/c_mono) for c_other-cap voices, i.e.
- * floor(c_other * (c_mono - 1) / c_mono) (SINGLE + SINGLE: 1 + 7; mono DUAL OSC + SINGLE: 1 + 6; both mono: 1 + 1). */
+/* Voices one layer may use (5.3). SINGL_SYNTH: layer 1 gets its patch's cap, layer 2 none. DUAL / SPLIT: both layers
+ * sound at once and share the pool by price: the most voices in all that each core can carry, layer 1 at the bottom of the
+ * pool and layer 2 at the top, as even between the layers as the price allows (two 8-voice patches: 4 + 4; a cheap layer
+ * gets what a dear one leaves; the search is a thousand operations: pool_range caches it). A MONO layer (vm1 / vm2, 2026-10-25) sounds one voice and the other layer gets the rest.
+ * Never below 1. */
+static inline uint8_t layer_voice_limit_w(uint8_t perf_mode, uint8_t w1, uint8_t w2, uint8_t over, uint8_t vm1, uint8_t vm2,
+                                          uint8_t layer)
+{
+    uint8_t m1 = vmode_one_voice(vm1), m2 = vmode_one_voice(vm2);
+    uint8_t best0 = 1u, best1 = 1u, n0, n1;
+    uint16_t best_key = 0u;
+    if (perf_mode != PERF_DUAL_SYNTH && perf_mode != PERF_SPLIT_SYNTH) {
+        uint8_t n;
+        if (layer != 0u) return 0u;
+        if (m1) return 1u;
+        for (n = VOICE_POOL; n > 1u; n--)
+            if (voice_core_cost(w1, n, 0u, 0u, 0u) <= VOICE_CORE_COST - over) break;
+        return n;
+    }
+    for (n0 = 1u; n0 <= (m1 ? 1u : VOICE_POOL - 1u); n0++) {
+        for (n1 = 1u; n1 <= (m2 ? 1u : VOICE_POOL - n0); n1++) {
+            uint16_t key;
+            if (n0 + n1 > VOICE_POOL) break;
+            if (voice_core_cost(w1, n0, w2, n1, 0u) > VOICE_CORE_COST - over || voice_core_cost(w1, n0, w2, n1, 1u) > VOICE_CORE_COST - over)
+                continue;
+            /* most voices in all, then the evener split, then layer 1 the larger */
+            key = (uint16_t)((n0 + n1) * 256u + (15u - (n0 > n1 ? n0 - n1 : n1 - n0)) * 16u + n0);
+            if (key > best_key) {
+                best_key = key; best0 = n0; best1 = n1;
+            }
+        }
+    }
+    return layer == 0u ? best0 : best1;
+}
+
 static inline uint8_t layer_voice_limit(uint8_t perf_mode, const EngineState *l1, const EngineState *l2,
                                         uint8_t vm1, uint8_t vm2, uint8_t layer)
 {
-    uint8_t c1 = varch_voice_cap(l1), c2 = varch_voice_cap(l2), lo, n;
-    uint8_t m1 = vmode_one_voice(vm1), m2 = vmode_one_voice(vm2);
-    if (perf_mode != PERF_DUAL_SYNTH && perf_mode != PERF_SPLIT_SYNTH)
-        return layer == 0u ? c1 : (uint8_t)0u;
-    if (m1 || m2) {
-        uint8_t cm = m1 ? c1 : c2, co = m1 ? c2 : c1;
-        if (layer == 0u ? m1 : m2)
-            return 1u;
-        n = (uint8_t)(co * (cm - 1u) / cm);
-        return n > 0u ? n : (uint8_t)1u;
-    }
-    lo = c1 < c2 ? c1 : c2;
-    n = (uint8_t)(layer == 0u ? (lo + 1u) >> 1 : lo >> 1);
-    return n > 0u ? n : (uint8_t)1u;
+    return layer_voice_limit_w(perf_mode, varch_voice_cost(l1), varch_voice_cost(l2),
+                               voice_overhead(l1, l2, perf_mode == PERF_DUAL_SYNTH || perf_mode == PERF_SPLIT_SYNTH), vm1, vm2,
+                               layer);
 }
 
 /* UNISON: the outer voices' detune in cents for UNISON DETUNE 0..127, square law (fine at the low end): 0 = none,

@@ -19,6 +19,7 @@ PS_STATIC_ASSERT(POLYPHONY_VOICES == VOICE_POOL, "the allocator's pool is Preset
  * and the SEQ on one pitch no longer cut each other), and a full layer steals from the lowest rank it may (the ARP
  * never takes what the SEQ holds, neither what the keys hold). The keys are the panel and MIDI in. */
 enum { VSRC_ARP, VSRC_SEQ, VSRC_REC, VSRC_KEYS };   /* the rank a voice is taken by (REC: the REC page's loop, 2026-11-04) */
+#define SRC_TAILS 2                  /* released notes the ARP / SEQ / REC loop each keep ringing on a layer (allocate_voice_slot) */
 
 // FIXED: Explicit structural array mapping to store your per-voice layer properties
 typedef struct {

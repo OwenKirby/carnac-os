@@ -264,10 +264,9 @@ int main(void)
     }
     dump("HOME2 DUAL");
     {
-        uint8_t lo = (uint8_t)(varch_voice_cap(&engine_state[0]) < varch_voice_cap(&engine_state[1])
-                                  ? varch_voice_cap(&engine_state[0]) : varch_voice_cap(&engine_state[1]));
-        CHECK(ui_sm_layer_voices(&sm, 0) == (lo + 1) / 2 && ui_sm_layer_voices(&sm, 1) == lo / 2, "layer voices %u %u of %u",
-              ui_sm_layer_voices(&sm, 0), ui_sm_layer_voices(&sm, 1), lo);
+        /* the priced pool: the two layers' limits are the pool's, each one's, and sum to no more than the pool */
+        uint8_t n0 = ui_sm_layer_voices(&sm, 0), n1 = ui_sm_layer_voices(&sm, 1);
+        CHECK(n0 >= 1 && n1 >= 1 && n0 + n1 <= VOICE_POOL && n0 >= n1, "layer voices %u %u of %u", n0, n1, VOICE_POOL);
     }
     /* SPLIT: L2 VOICE MODE and L2 UNISON DETUNE mirror layer 1 */
     perf_state.perf_mode = PERF_SPLIT_SYNTH;

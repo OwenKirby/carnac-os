@@ -37,8 +37,10 @@ build render_hash $DSP src/host/wt_areas_host.c src/host/test_render_hash.c && r
 run render_hash_core2 "$OUT/render_hash.exe" --core2
 run render_hash_core2_fail "$OUT/render_hash.exe" --core2-fail
 build voice_arch $DSP src/host/test_voice_arch.c && run voice_arch "$OUT/voice_arch.exe"
+build voice_pool $DSP src/host/test_voice_pool.c && run voice_pool "$OUT/voice_pool.exe"
 build held_restart $DSP src/host/test_held_restart.c && run held_restart "$OUT/held_restart.exe"
 build shed_sources $DSP src/host/test_shed_sources.c && run shed_sources "$OUT/shed_sources.exe"
+build shed_policy src/host/test_shed_policy.c && run shed_policy "$OUT/shed_policy.exe"
 build pcm_osc $DSP src/host/pcm_images_host.c src/host/test_pcm_osc.c && run pcm_osc "$OUT/pcm_osc.exe"
 build pcm_handoff $DSP src/host/test_pcm_handoff.c && run pcm_handoff "$OUT/pcm_handoff.exe"
 build filter src/host/test_filter.c src/dsp/filter.c && run filter "$OUT/filter.exe"
