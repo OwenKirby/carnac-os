@@ -139,7 +139,7 @@ static const uint8_t PU_LOGADD[17] = {255, 198, 150, 112, 82, 60, 44, 31, 22, 16
 
 /* the long knob names the 60 px cells cannot hold, as the screen shows them */
 static const char *const PU_SHORT[][2] = {
-    {"WAVE SCAN", "SCAN"}, {"PITCH MOD", "PCH MOD"}, {"NOISE COLOUR", "COLOUR"}, {"SUB OCTAVE", "SUB OCT"},
+    {"WAVE SCAN", "SCAN"}, {"PITCH MOD", "PCH MOD"}, {"NOISE COLOUR", "COLOUR"}, {"NOISE LEVEL", "NOISE"}, {"LEVEL MOD", "LVL MOD"},
     {"CROSS-MOD", "X-MOD"}, {"XMOD TYPE", "X TYPE"}, {"SPREAD MOD", "SPR MOD"}, {"OSC PHASE", "PHASE"},
     {"TYPE MORPH", "MORPH"}, {"RESONANCE", "RESO"}, {"MOD AMOUNT", "MOD AMT"}, {"BALANCE MOD", "BAL MOD"},
     {"ROUTING MOD", "RTG MOD"}, {"BLEND A/B", "BLEND"}, {"BLEND MOD", "BLD MOD"}, {"ENV3>CUTOFF", "ENV3>CUT"},

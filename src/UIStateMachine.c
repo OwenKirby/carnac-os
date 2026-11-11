@@ -49,6 +49,8 @@ enum {                               /* how a row reads and writes its value */
     RK_DEPTH_SRC,                    /* RK_BYTE holding an LFO's DEPTH MOD SRC: steps over the LFOs and MOD slots */
     RK_ARCH,                         /* RK_ENG holding the architecture: steps in ARCH_ORDER, not enum order */
     RK_REC_ACT,                      /* the REC page's DOUBLE (offset 0) / CLEAR (1): a turn asks, SAVE does it */
+    RK_SUBWAVE,                      /* SUB WAVE's 6 steps (SUBWAVE6_NAMES) over the two bytes at offset: sub_octave
+                                      * and sub_waveform (sub6_get / sub6_set) */
     RK_LINK                          /* RK_BYTE holding a PERF page link (layer_patch, seq_link, arp_link): a turn loads
                                       * the next used slot (ui_sm_perf_link_turn), the link follows once it has loaded */
 };
@@ -89,8 +91,24 @@ static const char *const MSRC_NAMES[] = {
 PS_STATIC_ASSERT(sizeof(MSRC_NAMES) / sizeof(MSRC_NAMES[0]) == MSRC_COUNT, "one name per MSRC_*");
 static const char *const FLT_NAMES[] = {"SH-2", "MULTI", "MS-20", "FORMANT"};
 static const char *const XMOD_NAMES[] = {"FM", "AM", "RING", "PM"};
-static const char *const SUBOCT_NAMES[] = {"-1 OCT", "-2 OCT"};
-static const char *const SUBWAVE_NAMES[] = {"SINE", "SQUARE", "CURRENT"};
+/* SUB WAVE (2026-11-11): one 6-step setting over SUB OCTAVE and the wave, step = wave * 2 + octave */
+static const char *const SUBWAVE6_NAMES[] = {"SINE -1", "SINE -2", "SQR -1", "SQR -2", "CURR -1", "CURR -2"};
+#define SUBWAVE6_COUNT ((uint8_t)(SUBWAVE_COUNT * SUBOCT_COUNT))
+PS_STATIC_ASSERT(sizeof(SUBWAVE6_NAMES) / sizeof(SUBWAVE6_NAMES[0]) == SUBWAVE6_COUNT, "one name per sub wave step");
+PS_STATIC_ASSERT(offsetof(OscMixerParams, sub_waveform) == offsetof(OscMixerParams, sub_octave) + 1u,
+                 "RK_SUBWAVE: the wave byte follows the octave byte");
+static uint8_t sub6_get(const uint8_t *b)            /* b: sub_octave, then sub_waveform */
+{
+    uint8_t o = b[0] < SUBOCT_COUNT ? b[0] : (uint8_t)(SUBOCT_COUNT - 1u);
+    uint8_t w = b[1] < SUBWAVE_COUNT ? b[1] : (uint8_t)(SUBWAVE_COUNT - 1u);
+    return (uint8_t)(w * SUBOCT_COUNT + o);
+}
+static void sub6_set(uint8_t *b, uint8_t v)
+{
+    if (v >= SUBWAVE6_COUNT) v = (uint8_t)(SUBWAVE6_COUNT - 1u);
+    b[0] = (uint8_t)(v % SUBOCT_COUNT);
+    b[1] = (uint8_t)(v / SUBOCT_COUNT);
+}
 static const char *const DRIVE_NAMES[] = {"SOFT", "HARD", "FOLD", "TAPE", "TUBE", "OVERDRIVE"};
 PS_STATIC_ASSERT(sizeof(DRIVE_NAMES) / sizeof(DRIVE_NAMES[0]) == DRIVE_COUNT, "one name per DRIVE_*");
 static const char *const REVTYPE_NAMES[] = {"SPRING", "TOMB", "MOD", "CELESTIAL", "DOLMEN", "TUMULUS"};
@@ -188,8 +206,9 @@ static const UiRow OSC_ROWS[] = {
 };
 /* OSCMIXER (4.1): a parameter on one of the architecture's knobs (OSCMIX_KNOBS) has no row there. Balance and
  * cross-mod need OSC2 (STACK has XMOD TYPE on knob 1), SPREAD has its source row (spread and its amount are knobs),
- * BINAURAL adds the right ear's scan offset. The noise shows here only with two oscillators: with one it has the NOISE
- * page (2026-11-06, in OSC2's place), and SUB OCTAVE takes the noise's knob. */
+ * BINAURAL adds the right ear's scan offset. The noise's colour shows here only with two oscillators: with one it has
+ * the NOISE page (2026-11-06, in OSC2's place). NOISE LEVEL is on this page in every architecture (2026-11-11), a knob
+ * or BINAURAL's row; SUB WAVE is a knob with one oscillator, a row with two. */
 #define A_OSC2 ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL)))   /* the architectures with OSC2 */
 /* HARMONIC and its mod live at the patch's end (EngineState.noise_harmonic): an offset from the OSCMIXER block */
 #define HOFS(m) ((uint8_t)(offsetof(EngineState, m) - offsetof(EngineState, oscmix)))
@@ -200,6 +219,8 @@ static const UiRow OSCMIX_ROWS[] = {
     {"XMOD TYPE", OFS(OscMixerParams, xmod_type), 0, XMOD_COUNT - 1, RK_BYTE, 0, XMOD_NAMES, A(DUAL_OSC) | A(FULL)},
     {"XMOD MOD AMT", OFS(OscMixerParams, xmod_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(DUAL_OSC) | A(STACK) | A(FULL)},
     {"SPR MOD SRC", OFS(OscMixerParams, spread_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A(SPREAD)},
+    {"SPR MOD AMT", OFS(OscMixerParams, spread_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A(SPREAD)},   /* (its knob
+                                                                                 * went to NOISE LEVEL; the matrix next) */
     {"NOISE COLOUR", OFS(OscMixerParams, noise_colour), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},
     {"COL MOD SRC", OFS(OscMixerParams, noise_col_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_OSC2},
     {"COL MOD AMT", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
@@ -208,18 +229,19 @@ static const UiRow OSCMIX_ROWS[] = {
     {"HARM MOD AMT", HOFS(harm_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
     {"NOISE MOD SRC", OFS(OscMixerParams, noise_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_OSC2},
     {"NOISE MOD AMT", OFS(OscMixerParams, noise_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
+    {"NOISE LEVEL", OFS(OscMixerParams, noise_level), 0, VAL_MAX, RK_BYTE, 0, NULL, A(BINAURAL)},
     {"R SCAN OFFSET", OFS(OscMixerParams, bin_scan_offset), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A(BINAURAL)},
-    {"SUB OCTAVE", OFS(OscMixerParams, sub_octave), 0, SUBOCT_COUNT - 1, RK_BYTE, 0, SUBOCT_NAMES, A_OSC2},
-    {"SUB WAVE", OFS(OscMixerParams, sub_waveform), 0, SUBWAVE_COUNT - 1, RK_BYTE, 0, SUBWAVE_NAMES, A_ALL},
+    {"SUB WAVE", OFS(OscMixerParams, sub_octave), 0, SUBWAVE6_COUNT - 1, RK_SUBWAVE, 0, SUBWAVE6_NAMES,
+     A_OSC2},
 };
-/* NOISE (2026-11-06): with one oscillator, in OSC2's place. COLOUR, HARMONIC, the level and COL MOD AMT on the
- * knobs; the sources and the other two amounts here. Its block is the OSCMIXER's (NOISE_PAGE_DEF). */
+/* NOISE (2026-11-06): with one oscillator, in OSC2's place; it shapes the noise, the OSCMIXER sets its level
+ * (2026-11-11). COLOUR, HARMONIC, COL MOD and LEVEL MOD on the knobs; the sources and HARMONIC's amount here. Its
+ * block is the OSCMIXER's (NOISE_PAGE_DEF). */
 static const UiRow NOISE_ROWS[] = {
     {"COL MOD SRC", OFS(OscMixerParams, noise_col_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"HARM MOD SRC", HOFS(harm_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
     {"HARM MOD AMT", HOFS(harm_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
-    {"NOISE MOD SRC", OFS(OscMixerParams, noise_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"NOISE MOD AMT", OFS(OscMixerParams, noise_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    {"LVL MOD SRC", OFS(OscMixerParams, noise_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
 };
 /* FILTER1 / FILTER2 (4.2): DRIVE first (2026-10-21), then the circuit and KEY TRACK; the type morph's own mod source
  * and amount show in every architecture. KEY TRACK lives at the patch's end (EngineState.filter_key_track), so each
@@ -576,32 +598,32 @@ static const UiKnob OSC_KNOBS_SCAN[4] = {   /* SINGLE / SPREAD / STRIKE: the sca
     KOSC(scan, "WAVE SCAN", UIKNOB_RAW), KOSC(octave, "OCTAVE", UIKNOB_OCT),
     KOSC(scan_mod_amt, "SCAN AMT", UIKNOB_RAW), KOSC(pitch_mod_amt, "PITCH MOD", UIKNOB_RAW),
 };
-/* OSCMIXER by architecture. With one oscillator the noise has its own page, so SUB OCTAVE has the noise's knob:
- * SPREAD: spread, sub octave, sub, spread mod; DUAL FILTER / BINAURAL: knob 3 the sub, knob 4 its octave. STACK: the
- * cross-mod type and amount, sub, noise. The others: knob 3 the sub, knob 4 the noise; knobs 1 / 2 need OSC2 (BINAURAL
- * reuses them for the right ear); with no OSC2 they are greyed. */
+/* OSCMIXER by architecture (2026-11-11, user layout). With one oscillator: knob 2 SUB WAVE, 3 SUB LEVEL, 4 NOISE
+ * (SPREAD's spread on knob 1, its mod a row); BINAURAL keeps the right ear's knobs 1 / 2, SUB WAVE on 4, the noise a
+ * row. STACK: the cross-mod type and amount, sub, noise. The others: knob 3 the sub, knob 4 the noise; knobs 1 / 2
+ * need OSC2; with no OSC2 they are greyed. */
+#define KSUB6 {"SUB WAVE", OFS(OscMixerParams, sub_octave), UIKNOB_LIST, SUBWAVE6_COUNT, SUBWAVE6_NAMES}   /* sub6_knob */
 static const UiKnob OSCMIX_KNOBS[VARCH_COUNT][4] = {
-    {KNONE, KNONE, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT)},
-                                                                                                                /* SINGLE */
+    {KNONE, KSUB6, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)}, /* SINGLE */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* DUAL OSC */
-    {KMIX(spread, "SPREAD", UIKNOB_RAW), KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT),
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(spread_mod_amt, "SPREAD MOD", UIKNOB_RAW)},                /* SPREAD */
-    {KNONE, KNONE, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT)},
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},                  /* DUAL OSC */
+    {KMIX(spread, "SPREAD", UIKNOB_RAW), KSUB6,
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},                  /* SPREAD */
+    {KNONE, KSUB6, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},
                                                                                                                 /* DUAL FILTER */
     {KMIXL(xmod_type, "XMOD TYPE", XMOD_NAMES, XMOD_COUNT), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* STACK */
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},                  /* STACK */
     {KMIX(bin_mod_phase, "OSC PHASE", UIKNOB_RAW), KMIX(bin_beat, "BEAT HZ", UIKNOB_RAW),
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIXL(sub_octave, "SUB OCTAVE", SUBOCT_NAMES, SUBOCT_COUNT)},  /* BINAURAL */
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KSUB6},                                                          /* BINAURAL */
     {KNONE, KNONE, KNONE, KNONE},                                                                               /* STRIKE (retired) */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* FULL */
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},                  /* FULL */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(spread, "SPREAD", UIKNOB_RAW),
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE", UIKNOB_RAW)},                        /* DUAL SPREAD */
+     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},                  /* DUAL SPREAD */
 };
-static const UiKnob NOISE_KNOBS[4] = {     /* the NOISE page (2026-11-06) */
+static const UiKnob NOISE_KNOBS[4] = {     /* the NOISE page (2026-11-06; the level went to the OSCMIXER 2026-11-11) */
     KMIX(noise_colour, "COLOUR", UIKNOB_RAW), UIK("HARMONIC", HOFS(noise_harmonic), UIKNOB_RAW),
-    KMIX(noise_level, "NOISE", UIKNOB_RAW), KMIX(noise_col_mod_amt, "COL MOD", UIKNOB_BIP),
+    KMIX(noise_col_mod_amt, "COL MOD", UIKNOB_BIP), KMIX(noise_mod_amt, "LEVEL MOD", UIKNOB_BIP),
 };
 static const UiKnob FILTER_KNOBS[4] = {
     KFLT(morph, "TYPE MORPH", UIKNOB_RAW), KFLT(cutoff, "CUTOFF", UIKNOB_RAW),
@@ -1014,6 +1036,7 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     case RK_ARP_TIMING: return ARP_TIMING(sm->arp);
     case RK_BIT0: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] & 1u);
     case RK_HIGH7: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] >> 1);
+    case RK_SUBWAVE: return sub6_get(&page_block(sm, ui_cur_page(sm))[r->offset]);
     default: return page_block(sm, ui_cur_page(sm))[r->offset];
     }
 }
@@ -1070,6 +1093,7 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
         *b = r->kind == RK_BIT0 ? (uint8_t)((*b & 0xFEu) | (v & 1u)) : (uint8_t)((*b & 1u) | (uint8_t)(v << 1));
         break;
     }
+    case RK_SUBWAVE: sub6_set(&page_block(sm, ui_cur_page(sm))[r->offset], v); break;
     default: page_block(sm, ui_cur_page(sm))[r->offset] = v; break;
     }
 }
@@ -2036,6 +2060,12 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         if (in->master_tune > MASTER_TUNE_MAX) in->master_tune = MASTER_TUNE_MAX;
         return;
     }
+    if (page == UIPAGE_OSCMIX && knob < 4u) {        /* SUB WAVE's step back into its two bytes */
+        uint8_t layer = sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u;
+        if (OSCMIX_KNOBS[layer_arch(sm, layer)][knob].names == SUBWAVE6_NAMES)
+            sub6_set(&sm->engine[layer]->oscmix.sub_octave, sm->sub6_knob);
+        return;
+    }
     if (page == UIPAGE_SAVE_COMMIT) {
         if (sm->save_slot >= ui_sm_bank_slots(sm->save_target))
             sm->save_slot = (uint8_t)(ui_sm_bank_slots(sm->save_target) - 1u);
@@ -2749,6 +2779,10 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
         block = (uint8_t *)&sm->engine[layer]->mod[sm->mod_slot < NMODSLOT ? sm->mod_slot : 0u];
     else
         block = page_block_for(sm, page_def(sm, page, layer), layer);
+    if (block && k->names == SUBWAVE6_NAMES) {       /* SUB WAVE: two bytes, the knob turns a step (ui_sm_knob_written) */
+        sm->sub6_knob = sub6_get(block + k->offset);
+        return &sm->sub6_knob;
+    }
     return block ? block + k->offset : 0;
 }
 

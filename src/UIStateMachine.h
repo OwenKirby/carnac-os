@@ -91,7 +91,7 @@ enum {
     UIKNOB_PERF,                     /* a HOME performance controller sent as MIDI (velocity, bend, mod wheel): the byte is
                                       * UIStateMachine.perf_knob, which the knob handler writes as it sends the message */
     UIKNOB_SEQ,                      /* a SEQ step value: read ui_sm_seq_knob_get, write ui_sm_seq_knob_set / _turn */
-    UIKNOB_LIST,                     /* an index into names (n_enum entries): SUB OCTAVE, XMOD TYPE */
+    UIKNOB_LIST,                     /* an index into names (n_enum entries): SUB WAVE, XMOD TYPE */
     UIKNOB_BPM,                      /* stored 0..127, shown as MIDI_CLOCK_BPM_BASE + value BPM: GLOBAL's INT TEMPO */
     UIKNOB_NOTE,                     /* a MIDI note 0..127, shown by name: ZONES' SPLIT NOTE */
     UIKNOB_FINE,                     /* OSC FINE TUNE: shown in cents, osc_fine_cents */
@@ -187,6 +187,8 @@ typedef struct {
     void *slot_ctx;
     uint8_t perf_knob[UIPERF_COUNT]; /* 5.1 HOME knobs 1..3 as last sent (velocity, bend 64 = centre, mod wheel) */
     uint8_t mod_slot;                /* the MOD page's SLOT (knob 4), 0..NMODSLOT-1: the slot its knobs and sends edit */
+    uint8_t sub6_knob;               /* the OSCMIXER's SUB WAVE knob: its step, from sub_octave + sub_waveform each
+                                      * ui_sm_knob, back into them in ui_sm_knob_written */
     Krec *rec;                       /* the REC page's loop (ui_sm_attach_rec); NULL: REC only on SEQ / ARP */
     uint8_t rec_ask;                 /* the confirm popup asks DOUBLE (1) or CLEAR (2) for the loop; 0: not the loop's */
     uint8_t rec_msg;                 /* a word over the loop for rec_msg_ms: 1 UNDO, 2 NOTHING TO UNDO, 3 FULL */
@@ -449,8 +451,9 @@ const char *ui_sm_arch_name(uint8_t arch);                         /* "SINGLE" .
 
 /* 2.2 knob map: what knob 0..3 of `page` controls for `layer`'s architecture. Fills *info and returns the stored
  * byte it edits, or NULL (UIKNOB_NONE, UIKNOB_SEQ, a hidden page). The same byte may sit on different knobs in
- * different architectures (OSCMIXER knob 4: NOISE, or SPREAD in SPREAD). HOME knobs 1..3 (UIKNOB_PERF) return
- * perf_knob[k]: the caller sends the MIDI message and stores the value there. SAVE submenu 1 (6.1): the layer 1 / 2
+ * different architectures (SUB WAVE: OSCMIXER knob 2, knob 4 in BINAURAL). HOME knobs 1..3 (UIKNOB_PERF) return
+ * perf_knob[k]: the caller sends the MIDI message and stores the value there. SUB WAVE returns sub6_knob: call
+ * ui_sm_knob_written after writing it. SAVE submenu 1 (6.1): the layer 1 / 2
  * patch, SEQ and ARP links (layer 2 greyed under SINGL). SAVE submenu 2 (6.2.1): TARGET, SLOT, and while RENAME is
  * focused the character position and its character (name[name_cursor] of ui_sm_rename_name, a list knob over
  * UI_CHAR_MAP); none while a dialog is up (the popup owns the controls). GLOBAL: knob 4 is INT TEMPO while CLOCK

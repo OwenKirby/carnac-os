@@ -228,6 +228,9 @@ int main(int argc, char **argv)
     e->arch = VARCH_SINGLE; e->oscmix.sub_octave = SUBOCT_DOWN2; e->oscmix.sub_waveform = SUBWAVE_SQUARE; e->oscmix.sub_level = 70;
     ui_sm_enforce(&sm);
     shot(dir, "oscmix_one");
+    e->arch = VARCH_BINAURAL;                        /* SUB WAVE on knob 4, NOISE LEVEL a row (2026-11-11) */
+    ui_sm_enforce(&sm);
+    shot(dir, "oscmix_bin");
     {                                                /* STACK: A the earth, B the sky, ley lines by CROSS-MOD */
         static const char *const NM[XMOD_COUNT] = {"oscmix_stack_fm", "oscmix_stack_am", "oscmix_stack_ring",
                                                    "oscmix_stack_pm"};
