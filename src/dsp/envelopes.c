@@ -75,6 +75,7 @@ void adsr_init(ADSR *env) {
     env->retrigger_timer = 0;
     env->retrig_phase = 0;
     env->time_dk_q16 = 0;
+    env->ck = 0;
 }
 
 void adsr_note_on_legato(ADSR *env, const EnvParams *p, int is_any_other_voice_held) {
@@ -144,15 +145,23 @@ static uint32_t coef_analog(uint32_t coef_q31, int32_t dk_q16) {
     return c >= (int64_t)(1u << 31) ? (1u << 31) - 1u : (c < 1 ? 1u : (uint32_t)c);
 }
 
+/* The running stage's coefficient depends only on the stage, its time step, the release boost, the shift and ANALOG's
+ * speed change, and a held stage asks for the same one every tick: it is kept in the ADSR (bit-exact with making it
+ * afresh, which cost four 64-bit squarings a tick). 1 = the kept one is the one asked for (the caller then reads
+ * ck_coef), 0 = it was not, the key now names the new one and the caller makes it. */
+static int stage_hit(ADSR *env, uint32_t state, uint32_t idx, uint32_t boost_q7, uint32_t shift) {
+    uint32_t key = 0x80000000u | (state << 22) | (idx << 15) | (boost_q7 << 4) | (shift & 15u);
+    if (env->ck == key && env->ck_dk == env->time_dk_q16) return 1;
+    env->ck = key;
+    env->ck_dk = env->time_dk_q16;
+    return 0;
+}
+
 int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, uint16_t release_boost_q15,
                      uint8_t shift, uint32_t frame) {
     int attack_i = clampi(p->attack + time_mod + atk_mod, 0, 127);
     int decay_i = clampi(p->decay + time_mod, 0, 127);
     int release_i = clampi(p->release + time_mod, 0, 127);
-    // AUTO DECAY: rapid repeats speed up the release. Factor 1.0 + amount * boost, up to 2x at full amount.
-    uint32_t boost_q7 = 128u + (((uint32_t)p->auto_decay * (uint32_t)release_boost_q15) >> 15);
-    uint32_t release_coef = (uint32_t)(((uint64_t)env_fall_coef_q31[release_i] * boost_q7) >> 7);
-
     int32_t sustain_target = ((int32_t)p->sustain * 258) << 15;
 
     // AUTO-RETRIGGER: while the key is held, the envelope loops back into its attack every period.
@@ -165,8 +174,9 @@ int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, u
     int32_t level = env->level_q30;
     switch (env->state) {
         case STATE_ATTACK:
-            level = env_step(level, ENV_PEAK_Q30 + (ENV_PEAK_Q30 >> 1),
-                             coef_pow2(coef_analog(env_attack_coef_q31[attack_i], env->time_dk_q16), shift));
+            if (!stage_hit(env, STATE_ATTACK, (uint32_t)attack_i, 0u, shift))
+                env->ck_coef = coef_pow2(coef_analog(env_attack_coef_q31[attack_i], env->time_dk_q16), shift);
+            level = env_step(level, ENV_PEAK_Q30 + (ENV_PEAK_Q30 >> 1), env->ck_coef);
             if (level >= ENV_PEAK_Q30) {
                 level = ENV_PEAK_Q30;
                 env->state = STATE_DECAY;
@@ -175,8 +185,10 @@ int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, u
         case STATE_DECAY:
             /* Roland style: the decay discharges toward 0 and is caught at the sustain level, so a high sustain
              * is reached sooner and the curve keeps its full exponential slope into the sustain. */
-            level = env_step(level, 0, coef_pow2(coef_analog((uint32_t)(((uint64_t)env_fall_coef_q31[decay_i] *
-                                                                    ENV_DECAY_SLOWING_Q10) >> 10), env->time_dk_q16), shift));
+            if (!stage_hit(env, STATE_DECAY, (uint32_t)decay_i, 0u, shift))
+                env->ck_coef = coef_pow2(coef_analog((uint32_t)(((uint64_t)env_fall_coef_q31[decay_i] *
+                                                                 ENV_DECAY_SLOWING_Q10) >> 10), env->time_dk_q16), shift);
+            level = env_step(level, 0, env->ck_coef);
             if (level - sustain_target < ENV_DECAY_SNAP) {
                 level = sustain_target;
                 env->state = STATE_SUSTAIN;
@@ -186,7 +198,15 @@ int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, u
             level = sustain_target;
             break;
         case STATE_RELEASE:
-            level = env_step(level, 0, coef_pow2(coef_analog(release_coef, env->time_dk_q16), shift));
+        {
+            // AUTO DECAY: rapid repeats speed up the release. Factor 1.0 + amount * boost, up to 2x at full amount.
+            uint32_t boost_q7 = 128u + (((uint32_t)p->auto_decay * (uint32_t)release_boost_q15) >> 15);
+            if (!stage_hit(env, STATE_RELEASE, (uint32_t)release_i, boost_q7, shift)) {
+                uint32_t release_coef = (uint32_t)(((uint64_t)env_fall_coef_q31[release_i] * boost_q7) >> 7);
+                env->ck_coef = coef_pow2(coef_analog(release_coef, env->time_dk_q16), shift);
+            }
+            level = env_step(level, 0, env->ck_coef);
+        }
             if (level < ENV_RELEASE_OFF) {
                 level = 0;
                 env->state = STATE_OFF;

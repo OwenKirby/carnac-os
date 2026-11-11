@@ -6,6 +6,7 @@
 
 SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 volatile uint8_t voice_shed;
+volatile uint8_t voice_tail_cut;
 
 void voice_mod_fn_reset(SynthVoiceNode *v, int slot) {
     ModFnState *m = &v->mod_fn[slot];

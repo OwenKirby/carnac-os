@@ -115,6 +115,9 @@ void pool_range(uint8_t layer, int *first, int *count);
  * may use this many voices fewer than its limit, never fewer than one. A voice the lower limit leaves out is choked
  * (a few ms fade) at the next layer tick, as for any limit change. */
 extern volatile uint8_t voice_shed;
+/* Tail cuts (2026-11-11, the glue again): this many of the quietest released voices, of any layer, are choked at the
+ * next layer tick, the limits left alone (shed_policy.h: tails go before the limit is cut). */
+extern volatile uint8_t voice_tail_cut;
 /* a voice for a note of source src (VSRC_*), -1 when there is none: the layer has no voices, or every one is held by
  * a higher rank */
 int allocate_voice_slot(uint8_t layer, uint8_t src);

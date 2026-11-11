@@ -244,6 +244,8 @@ def main():
             print("sends: L1 reverb %d delay %d, L2 reverb %d delay %d; perf mode %d; arch L1 %d L2 %d" % tuple(v[20:27]))
         if n >= 29:
             print("reverb send going in %s; core 1 stack used %d of 2816 B" % (db(v[27]), v[28]))
+        if n >= 30:
+            print("tails cut by the overload guard (before any shed): %d" % v[29])
 
         return 0
     if not a or a[0] not in ("build", "install", "run", "read", "all"):

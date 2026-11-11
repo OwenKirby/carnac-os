@@ -57,7 +57,7 @@ static void wt_to_flash(void)
     pt_wt_on = 0;
 }
 
-enum { K_IDLE, K_HELD, K_SEQ, K_RS, K_REC, K_ALL, K_LOOP };   /* K_LOOP (2026-11-11): a played loop, not a torture: see loop_slot; K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS; K_REC: K_SEQ with
+enum { K_IDLE, K_HELD, K_SEQ, K_RS, K_REC, K_ALL, K_LOOP, K_LOOPCH };   /* K_LOOP (2026-11-11): a played loop, not a torture: see loop_slot; K_LOOPCH: K_LOOP with a four-note chord on the keys (both layers) changed every PT_CHORD_MS, the tails piling up to the caps; K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS; K_REC: K_SEQ with
                                                        * the REC page's loop playing too; K_ALL: K_REC with the chord held (every
                                                        * note source at once, 2026-11-06) */
 enum { P_SETUP, P_SETTLE, P_MEASURE };
@@ -88,6 +88,7 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_LONGREL (1u << 27)        /* both envelopes' RELEASE 110: every note rings on as a tail (a pad's) */
 #define F_MFXEQ (1u << 25)           /* BRONZE AGE with its EQ off noon (DIST 120, the scooped render's: every band run) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
+#define PT_CHORD_MS 1000u            /* K_LOOPCH: a half bar at 120 BPM; with RELEASE 110 three chords ring at once */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
 
 typedef struct {
@@ -259,6 +260,12 @@ static const PtScen SCEN[] = {
     {"LOOP STACK MFX1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX, UIPAGE_HOME1},
     {"LOOP STACK MFX2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2, UIPAGE_HOME1},
     {"LOOP STACK SH2", K_LOOP, VARCH_STACK, FLT_SH2, F_LONGREL | F_FX_TUM, UIPAGE_HOME1},
+    /* the loop with chords played over it (2026-11-11): the caps reached, every new chord stealing tails */
+    {"LOOPCH DUALOSC", K_LOOPCH, VARCH_DUAL_OSC, FLT_MULTI, F_LONGREL | F_FX_TUM, UIPAGE_HOME1},
+    {"LOOPCH STACK", K_LOOPCH, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM, UIPAGE_HOME1},
+    {"LOOPCH STACK H", K_LOOPCH, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_HEAVY, UIPAGE_HOME1},
+    {"LOOPCH STACK MFX2", K_LOOPCH, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2, UIPAGE_HOME1},
+    {"LOOPCH STACK SH2", K_LOOPCH, VARCH_STACK, FLT_SH2, F_LONGREL | F_FX_TUM, UIPAGE_HOME1},
     /* the MFX in the loop (2026-11-11): one layer or both, the same type or two (the second type is layer 2's) */
     {"LOOP BRNZ1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX | F_MFXT(MFX_METAL), UIPAGE_HOME1},
     {"LOOP BRNZ2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_METAL), UIPAGE_HOME1},
@@ -287,7 +294,8 @@ static const PtScen SCEN[] = {
 
 static struct {
     uint8_t state, scen, phase;
-    uint32_t t0, t_rs;                  /* t_rs: K_RS's last strike */
+    uint32_t t0, t_rs;                  /* t_rs: K_RS's last strike (K_LOOPCH: its last chord change) */
+    uint8_t chord;                      /* K_LOOPCH: the chord sounding (0..3) */
     PtResult res[NSCEN];
     /* the live state the test overwrites, put back after */
     EngineState eng[NLAYER];
@@ -481,6 +489,16 @@ static void loop_slot(void)
     arp_set_timing(&arp_state, ARPDIV_1_4);
 }
 
+/* K_LOOPCH's chords: a minor seventh an octave over each of loop_slot's pad roots, pt.chord's struck (0x90) or let go
+ * (0x80) */
+static void loop_chord(uint8_t status)
+{
+    static const uint8_t ROOT[4] = {60, 65, 67, 62}, IV[4] = {0, 3, 7, 10};
+    uint8_t i;
+    for (i = 0; i < 4u; i++)
+        synth_midi_3(status, (uint8_t)(ROOT[pt.chord & 3u] + IV[i]), status == 0x90 ? (uint8_t)(84 + i * 6) : 0u);
+}
+
 /* a two-bar loop in the REC page's recorder, playing: eighth notes up a scale and a held triad on each bar's top (22
  * notes), as a played-in loop would be */
 static void rec_loop(void)
@@ -523,7 +541,7 @@ static void setup(const PtScen *s)
         patch(&engine_state[1], s);
         seq_slot();
     }
-    if (s->kind == K_LOOP) {
+    if (s->kind == K_LOOP || s->kind == K_LOOPCH) {
         patch(&engine_state[1], s);
         loop_slot();
     }
@@ -579,7 +597,11 @@ static void setup(const PtScen *s)
         for (i = 0; i < n; i++)
             synth_midi_3(0x90, (uint8_t)(48 + i * 3), (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
     }
-    if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL || s->kind == K_LOOP) {
+    if (s->kind == K_LOOPCH) {
+        pt.chord = 0;
+        loop_chord(0x90);
+    }
+    if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL || s->kind == K_LOOP || s->kind == K_LOOPCH) {
         maq_set_playing(synth_seq(), 1);
         carp_set_playing(synth_arp(), 1);           /* (the ARP has its own transport since 2026-10-17) */
     }
@@ -667,6 +689,12 @@ uint8_t pt_tick(uint32_t now_ms)
             synth_midi_3(0x80, note, 0);
             synth_midi_3(0x90, note, (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
         }
+        pt.t_rs = now_ms;
+    }
+    if (s->kind == K_LOOPCH && pt.phase != P_SETUP && now_ms - pt.t_rs >= PT_CHORD_MS) {
+        loop_chord(0x80);                            /* let the chord go (its tails ring on), then the next */
+        pt.chord++;
+        loop_chord(0x90);
         pt.t_rs = now_ms;
     }
     switch (pt.phase) {

@@ -13,7 +13,10 @@
  *    shed voices (no shed / give back / overload cycle, each turn of which is a glitch) and they return when the player
  *    lets go of notes. A shed within SHED_REBOUND halves of a give-back doubles `need` (to SHED_MAXNEED); a long quiet
  *    stretch resets it.
- *  - With nothing sounding for SHED_CALM halves the limit is lifted whole. */
+ *  - With nothing sounding for SHED_CALM halves the limit is lifted whole.
+ *  - Tails first (2026-11-11, the user: a stolen voice beats a shed one): while a released note still rings, trouble
+ *    cuts the quietest tail (shed_step returns 1; the render chokes it) and the limit stays. Only with every voice
+ *    held is the limit cut. A tail cut is judged like a shed: one that bought nothing holds cutting off too. */
 #ifndef SHED_POLICY_H
 #define SHED_POLICY_H
 #include <stdint.h>
@@ -34,9 +37,13 @@ typedef struct {
     uint8_t pre;                                    /* the smoothed load when the last shed was made */
     uint8_t relief;                                 /* points that shed bought, as judged */
     uint8_t n;                                      /* voices off each layer */
+    uint8_t tcut;                                   /* the shed being judged was a tail cut */
+    uint32_t tail_count;                            /* tails cut since boot (the debug read) */
 } ShedState;
 
-static inline void shed_step(ShedState *s, uint32_t pm, uint8_t late, uint8_t sounding, uint32_t cpu_pct, uint8_t pool)
+/* once a half; tails: released voices still ringing. Returns 1 when the quietest tail is to be cut now. */
+static inline uint8_t shed_step(ShedState *s, uint32_t pm, uint8_t late, uint8_t sounding, uint32_t cpu_pct,
+                                uint8_t pool, uint8_t tails)
 {
     uint8_t trouble;
     if (!s->need)
@@ -50,28 +57,43 @@ static inline void shed_step(ShedState *s, uint32_t pm, uint8_t late, uint8_t so
         s->need = SHED_CALM;
     if (s->n && s->idle >= SHED_CALM) {             /* nothing sounds: nothing to protect */
         s->n = 0;
-        s->calm = s->judge = 0;
-        return;
+        s->calm = s->judge = s->tcut = 0;
+        return 0;
     }
-    if (s->judge && --s->judge == 0 && s->n) {
+    if (s->judge && --s->judge == 0 && (s->n || s->tcut)) {
         uint32_t r = s->pre > cpu_pct ? s->pre - cpu_pct : 0u;
         if (r < SHED_RELIEF) {                      /* no relief: the voices were not it */
-            s->n--;
+            if (!s->tcut)
+                s->n--;
             s->hold = SHED_HOLD;
-            s->calm = 0;
-            return;
+            s->calm = s->tcut = 0;
+            return 0;
         }
-        s->relief = (uint8_t)r;
+        if (!s->tcut)
+            s->relief = (uint8_t)r;
+        s->tcut = 0;
     }
     trouble = (uint8_t)(late || s->hot >= 2u);
     if (trouble) {
         s->calm = 0;
+        if (tails) {                                /* a tail first: it was going to be stolen anyway */
+            if (s->hold || s->wait || (s->judge && s->tcut && !late))
+                return 0;                           /* (judging one: another only for a late half) */
+            if (!(s->judge && s->tcut))
+                s->pre = (uint8_t)(cpu_pct > 255u ? 255u : cpu_pct);
+            s->judge = SHED_JUDGE;
+            s->tcut = 1;
+            s->wait = SHED_GAP;
+            s->tail_count++;
+            return 1;
+        }
         if (!s->hold && !s->wait && s->n + 1u < pool) {
             if (s->since < SHED_REBOUND && s->need < SHED_MAXNEED)
                 s->need = (uint16_t)(s->need * 2u > SHED_MAXNEED ? SHED_MAXNEED : s->need * 2u);
             s->n++;
             s->pre = (uint8_t)(cpu_pct > 255u ? 255u : cpu_pct);
             s->judge = SHED_JUDGE;
+            s->tcut = 0;
             s->wait = SHED_GAP;
             s->count++;
         }
@@ -84,5 +106,6 @@ static inline void shed_step(ShedState *s, uint32_t pm, uint8_t late, uint8_t so
     } else {
         s->calm = 0;
     }
+    return 0;
 }
 #endif

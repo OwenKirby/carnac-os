@@ -450,6 +450,20 @@ static void enforce_voice_limits(void)
             s->is_gate_open = 0;
         }
     }
+    for (; voice_tail_cut; voice_tail_cut--) {      /* the overload's tail cuts: the quietest ringing release first */
+        SynthVoiceNode *q = 0;
+        for (int v = 0; v < POLYPHONY_VOICES; v++) {
+            SynthVoiceNode *s = &poly_bank[v];
+            if (s->is_gate_open || s->silent || s->choke) continue;
+            if (!q || s->amp_env.level_q15 < q->amp_env.level_q15) q = s;
+        }
+        if (!q) {
+            voice_tail_cut = 0;
+            break;
+        }
+        q->choke = 1;
+        q->choke_q15 = 32767;
+    }
 }
 
 /* ----------------------------------------------------------- lifecycle --- */

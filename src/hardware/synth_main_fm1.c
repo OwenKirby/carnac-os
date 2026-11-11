@@ -310,14 +310,19 @@ static ShedState shed;
 #define shed_count shed.count                       /* voices shed since boot (the debug read) */
 static void shed_update(uint32_t pm, uint8_t late)
 {
-    uint32_t v, sounding = 0;
+    uint32_t v, sounding = 0, tails = 0;
     if (pt_state() == PT_RUN) {
         voice_shed = shed.n = 0;
         return;
     }
-    for (v = 0; v < POLYPHONY_VOICES; v++)
-        sounding += !voice_is_free(&poly_bank[v]);
-    shed_step(&shed, pm, late, (uint8_t)(sounding != 0u), audio_cpu_pct, VOICE_POOL);
+    for (v = 0; v < POLYPHONY_VOICES; v++) {
+        const SynthVoiceNode *s = &poly_bank[v];
+        sounding += !voice_is_free(s);
+        tails += !s->is_gate_open && !s->silent && !s->choke;
+    }
+    if (shed_step(&shed, pm, late, (uint8_t)(sounding != 0u), audio_cpu_pct, VOICE_POOL, (uint8_t)tails) &&
+        voice_tail_cut < 8u)
+        voice_tail_cut++;                           /* (the render chokes it at its next layer tick) */
     voice_shed = shed.n;
 }
 
@@ -494,7 +499,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         ed_b(0);
         break;
     case ED_STATS: {                                /* + the levels since the last read and the live settings */
-        uint32_t v[29], i, k, nv = 0, c1 = 0;
+        uint32_t v[30], i, k, nv = 0, c1 = 0;
         int32_t lv[4];
         synth_levels(lv);
         for (i = 0; i < POLYPHONY_VOICES; i++)
@@ -511,11 +516,12 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         while (c1 < FM1_C1_STACK_WORDS && _c1_ustack[c1] == FM1_C1_MARK)
             c1++;                                   /* core 1's stack: the words never touched, from the bottom */
         v[27] = (uint32_t)lv[3]; v[28] = (FM1_C1_STACK_WORDS - c1) * 4u;
-        for (i = 0; i < 29u; i++)
+        v[29] = shed.tail_count;                    /* (2026-11-11: tails cut before any shed) */
+        for (i = 0; i < 30u; i++)
             for (k = 0; k < 5u; k++)
                 ed_b(v[i] >> (7u * k));               /* 35 bits each, 7 at a time, low first */
         if (na && a[0] == 1u) {
-            syn_dbg.late = 0; syn_dbg.max_us = 0; audio_peak_pct = 0; shed_count = 0;
+            syn_dbg.late = 0; syn_dbg.max_us = 0; audio_peak_pct = 0; shed_count = 0; shed.tail_count = 0;
         }
         break;
     }

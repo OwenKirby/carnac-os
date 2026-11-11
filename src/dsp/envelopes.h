@@ -15,6 +15,9 @@ typedef struct {
     uint32_t retrigger_timer;
     uint32_t retrig_phase;    // clock-synced retrigger: the grid phase of the previous sample, to see a cycle start
     int32_t time_dk_q16;      // ANALOG (dsp/analog.h): the stages' speed is (1 + this / 65536) times the set one; 0 = as set
+    uint32_t ck;              // the stage coefficient kept below: its stage, step, boost and shift (adsr_advance); 0 = none
+    int32_t ck_dk;            // .. the time_dk_q16 it was made for
+    uint32_t ck_coef;         // .. the coefficient, Q31, for 2^shift samples
 } ADSR;
 
 void adsr_init(ADSR *env);
