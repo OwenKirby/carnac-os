@@ -350,7 +350,8 @@ static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_
         v->unison_pan = 0;
         int other = check_if_any_other_voice_held(slot, layer);
         voice_play(v, layer, note, velocity, src, route, 1, other, boost);
-        lfo_key_reset(&e->lfo[0], &global_lfo1_state[layer]);
+        if (!overlap)                                           /* LFO1: only a new phrase restarts it (Juno-style) */
+            lfo_phrase_reset(&e->lfo[0], &global_lfo1_state[layer]);
         return;
     }
 
@@ -377,8 +378,8 @@ static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_
         v->unison_gain_q15 = unison_gain_q15[n - 1];
         voice_play(v, layer, note, velocity, src, route, retrig, 0, boost);
     }
-    if (retrig)
-        lfo_key_reset(&e->lfo[0], &global_lfo1_state[layer]);
+    if (!overlap)
+        lfo_phrase_reset(&e->lfo[0], &global_lfo1_state[layer]);
 }
 
 /* A note-off for one layer, its own source's notes only. Mono modes fall back to the newest key still held of the

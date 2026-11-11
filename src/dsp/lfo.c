@@ -70,6 +70,13 @@ void lfo_key_reset(const LfoParams *cfg, LfoRuntimeState *state) {
     state->fade_counter = 0;
 }
 
+void lfo_phrase_reset(const LfoParams *cfg, LfoRuntimeState *state) {
+    if (cfg->key_reset)
+        state->phase_accumulator = (uint32_t)cfg->phase << 25;
+    state->delay_counter = 0;
+    state->fade_counter = 0;
+}
+
 void lfo_advance(const LfoParams *cfg, LfoRuntimeState *state, int32_t speed_mod_q15, int key_held, uint8_t shift,
                  uint32_t frame) {
     if (cfg->delay > LFO_REL_DELAY && key_held) {

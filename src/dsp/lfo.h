@@ -29,6 +29,9 @@ void lfo_advance(const LfoParams *cfg, LfoRuntimeState *state, int32_t speed_mod
                  uint32_t frame);
 // KEY RESET: a note-on puts the playhead at its PHASE start (and restarts delay and fade) when the LFO asks for it
 void lfo_key_reset(const LfoParams *cfg, LfoRuntimeState *state);
+// LFO1's phrase start (2026-11-11, Juno-style): the layer's first note after every key was up restarts the delay and
+// fade, and with KEY RESET the phase too. Notes played over held ones leave the layer's LFO1 running.
+void lfo_phrase_reset(const LfoParams *cfg, LfoRuntimeState *state);
 
 /* the triangle, saw and square tables, worked out into RAM: once, at start-up (synth_init), before any LFO runs */
 void lfo_tables_init(void);
