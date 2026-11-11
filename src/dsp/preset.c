@@ -125,10 +125,8 @@ void engine_defaults(EngineState *e)
     }
     e->env_vel_level[0] = ENV1_VEL_LEVEL_V9;     /* ENV1 as velocity always moved the amp; ENV2 / ENV3 none */
 
-    for (unsigned i = 0; i < NMODSLOT; i++) {
-        e->mod[i].func = MFN_ADD;
-        e->mod[i].amount = VAL_MAX;      /* LEVEL full (2026-11-03): a new slot's sends work at once */
-    }
+    for (unsigned i = 0; i < NROUTE; i++)
+        e->route[i].amount = BIPOLAR_CENTER;     /* every route free (SOURCE / VIA / DEST NONE), at 0 */
 
     e->amp.pan_mod_src = MSRC_KEYBOARD;
     e->amp.amp_mod_src = MSRC_LFO1;      /* tremolo ready on AMP MOD (2026-11-06, user); AMP MOD 0 leaves it silent */
@@ -255,30 +253,3 @@ const uint8_t mdst_ofs[MDST_COUNT][3] = {
 };
 #undef NO
 #undef EOFS
-/* the destinations whose own amount is bipolar (64 = 0): NOISE LEVEL / COLOUR, the morphs, the FILTER MIXER's, the
- * LFO speeds; the others' run 0..127 */
-#define MDST_BIPOLAR ((1u << MDST_NOISE_LEVEL) | (1u << MDST_NOISE_COLOUR) | (1u << MDST_F1_MORPH) | \
-                      (1u << MDST_F2_MORPH) | (1u << MDST_BALANCE) | (1u << MDST_ROUTING) | (1u << MDST_PHASE) | \
-                      (1u << MDST_CUTOFF_LR) | (1u << MDST_LFO1_SPEED) | (1u << MDST_LFO2_SPEED) | (1u << MDST_LFO3_SPEED))
-
-SYNTH_COLD void engine_slot_routes_to_sends(EngineState *e)
-{
-    uint8_t *b = (uint8_t *)e;
-    unsigned d, i;
-    for (d = 1u; d < MDST_COUNT; d++) {
-        uint8_t so = mdst_ofs[d][0], ao = mdst_ofs[d][1], src;
-        int a;
-        if (so == 0xFFu || (src = b[so]) < MSRC_MODSLOT1 || src > MSRC_MODSLOT4)
-            continue;
-        a = (MDST_BIPOLAR >> d) & 1u ? (int)b[ao] - (int)BIPOLAR_CENTER : ((int)b[ao] + 1) / 2;
-        if (a > 63) a = 63;
-        for (i = 0u; i < NMODSEND && a != 0; i++)
-            if (e->send[i].dest == MDST_NONE) {
-                e->send[i].dest = (uint8_t)(d | (unsigned)(src - MSRC_MODSLOT1) << MSEND_SLOT_SHIFT);
-                e->send[i].amount = (uint8_t)((int)BIPOLAR_CENTER + a);
-                break;
-            }
-        b[so] = MSRC_NONE;
-        b[ao] = (MDST_BIPOLAR >> d) & 1u ? (uint8_t)BIPOLAR_CENTER : 0u;
-    }
-}

@@ -8,16 +8,6 @@ SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 volatile uint8_t voice_shed;
 volatile uint8_t voice_tail_cut;
 
-void voice_mod_fn_reset(SynthVoiceNode *v, int slot) {
-    ModFnState *m = &v->mod_fn[slot];
-    m->out_q15 = 0;
-    m->held_q15 = 0;
-    m->tick = 0xFFFFFFFFu;     /* never equal to a frame tick, so the slot evaluates on its next read */
-    m->prev_side = 0;
-    m->init = 0;
-    m->busy = 0;
-}
-
 SYNTH_COLD void voice_allocator_init(void) {
     for (int v = 0; v < POLYPHONY_VOICES; v++) {
         SynthVoiceNode *n = &poly_bank[v];
@@ -32,7 +22,6 @@ SYNTH_COLD void voice_allocator_init(void) {
         n->active_note = 33;
         n->is_gate_open = 0;
         n->age_counter = 0;
-        n->mod_pass = 0;
         /* free-running oscillators: each voice starts at its own point of the cycle (voice_render_block keeps them
          * turning), so a unison stack never opens with every voice in phase. */
         uint32_t ph = (uint32_t)(v + 1) * 0x9E3779B9u;
@@ -48,8 +37,6 @@ SYNTH_COLD void voice_allocator_init(void) {
         n->mod_env.level_q15 = 0;
         n->aux_env.level_q15 = 0;
 
-        for (int s = 0; s < (int)NMODSLOT; s++)
-            voice_mod_fn_reset(n, s);
         n->glide_q16 = 0;
         n->glide_step_q16 = 0;
         n->glide_mod = 0;

@@ -24,7 +24,8 @@
 #define NFILTER 2u
 #define NENV 3u                      /* ENV1 is hardwired to the amp */
 #define NLFO 3u                      /* LFO1 global, LFO2 / LFO3 per voice */
-#define NMODSLOT 4u                  /* 4.5 lists 4 (MOD 4 removed 2026-10-15, back 2026-11-03: a slot runs only when read) */
+#define NROUTE 12u                   /* the mod matrix's routes (2026-11-11, replacing the 4 MOD slots and 12 MOD SENDS;
+                                      * 16 once the source pickers leave the patch) */
 #define SEQ_NLANE 4u
 #define SEQ_NSTEP 16u
 #define ARP_NSTEP 8u                 /* 8.1: keys 14..21, white keys only */
@@ -35,8 +36,9 @@
                                       * patches; a performance is now a whole snapshot, WholePerformance) */
 
 /* -------------------------------------------------- shared value lists --- */
-enum {                               /* mod_source_list (4); 2026-11-03 (v13): RANDOM, POLY AT, MOD4, the per-note sources
-                                      * first, then the controllers. After V1: new sources only at the end */
+enum {                               /* mod_source_list (4); 2026-11-03 (v13): RANDOM, POLY AT, the per-note sources first,
+                                      * then the controllers; 2026-11-11 (v14): MOD1..4 gone with the slots. After V1: new
+                                      * sources only at the end */
     MSRC_NONE, MSRC_VELOCITY, MSRC_KEYBOARD,
     MSRC_RANDOM,                     /* a value per note, picked at its note-on, -1 .. +1 */
     MSRC_MODWHEEL, MSRC_AFTERTOUCH,
@@ -44,12 +46,7 @@ enum {                               /* mod_source_list (4); 2026-11-03 (v13): R
                                       * has had none reads the channel's AFTERTOUCH */
     MSRC_CUSTOMCC1, MSRC_CUSTOMCC2,
     MSRC_ENV1, MSRC_ENV2, MSRC_ENV3, MSRC_LFO1, MSRC_LFO2, MSRC_LFO3,
-    MSRC_MODSLOT1, MSRC_MODSLOT2, MSRC_MODSLOT3, MSRC_MODSLOT4,
     MSRC_COUNT
-};
-enum {                               /* function_list (4.5) */
-    MFN_MUL, MFN_ADD, MFN_SUB, MFN_MAX, MFN_MIN, MFN_SAMPLE_B_ON_A, MFN_QUANTIZE_B_TO_A,
-    MFN_ABS_DIFF, MFN_LAG, MFN_DIODE, MFN_COUNT
 };
 enum { XMOD_FM, XMOD_AM, XMOD_RING, XMOD_PM, XMOD_COUNT };                  /* OSCMIXER cross-mod type */
 enum { SUBOCT_DOWN1, SUBOCT_DOWN2, SUBOCT_COUNT };                          /* sub-oscillator offset */
@@ -440,12 +437,6 @@ typedef struct {                     /* LFO1..3 */
     uint8_t key_reset;               /* 0 / 1 */
 } LfoParams;
 
-typedef struct {                     /* MODSLOT1..3 */
-    uint8_t src_a;                   /* knob 1, MSRC_* */
-    uint8_t func;                    /* knob 2, MFN_* */
-    uint8_t src_b;                   /* knob 3, MSRC_* */
-    uint8_t amount;                  /* knob 4, (bip) */
-} ModSlotParams;
 
 typedef struct {                     /* AMP (4.6 registry; 2.2's knob row differs) */
     uint8_t drive;                   /* knob 1 */
@@ -468,12 +459,12 @@ typedef struct {
                                       * POLARITY (0, 1) */
 } MfxParams;
 
-/* MOD SENDS (2026-11-03): a mod slot sent straight to a destination, on top of whatever the destination's own source
- * and amount do there (the MOD page sets them). A pool of NMODSEND a patch, at most one a slot and destination; an entry
- * with dest 0 is free. The send amount works as the destination's own amount would: full (+-64) does what the
- * destination's amount at full does (a 0..127 amount: twice the send, either sign). */
-#define NMODSEND 12u
-enum {                               /* the destinations (the MOD page's order is UIStateMachine.c MOD_ROWS'). Codes
+/* THE MOD MATRIX (2026-11-11, v14): NROUTE routes a patch, each SOURCE times VIA times AMOUNT into DEST, on top of
+ * whatever the destination's own source and amount do there (routes and fixed paths on one destination add). One
+ * source may feed any number of routes. AMOUNT works as the destination's own amount would: full (+-64) does what the
+ * destination's amount at full does (a 0..127 amount: twice the route's, either sign). A route with DEST NONE or SOURCE
+ * NONE is free. */
+enum {                               /* the destinations (the MOD MATRIX lists them in UIStateMachine.c MDEST_ORDER). Codes
                                       * under 32 are bits of the voices' send mask; after V1 new ones only at the end */
     MDST_NONE, MDST_OSC1_SCAN, MDST_OSC1_PITCH, MDST_OSC2_SCAN, MDST_OSC2_PITCH, MDST_OSC_MIX, MDST_XMOD, MDST_SPREAD,
     MDST_NOISE_LEVEL, MDST_NOISE_COLOUR, MDST_F1_CUTOFF, MDST_F1_MORPH, MDST_F2_CUTOFF, MDST_F2_MORPH,
@@ -488,14 +479,12 @@ enum {                               /* the destinations (the MOD page's order i
     MDST_COUNT
 };
 #define MDST_VOICE_BITS 32u          /* MDST_* under this: a bit in the voices' send mask (SourceCtx.sends) */
-#define MSEND_SLOT_SHIFT 6u
-#define MSEND_DEST(b) ((uint8_t)((b) & 63u))
-#define MSEND_SLOT(b) ((uint8_t)((b) >> MSEND_SLOT_SHIFT))
 typedef struct {
-    uint8_t dest;                    /* MDST_* | the slot (0..3) << MSEND_SLOT_SHIFT; 0: a free entry. (One byte: the CC
-                                      * map's address for a slot's send, slot * 64 + destination) */
-    uint8_t amount;                  /* (bip) */
-} ModSendParams;
+    uint8_t src;                     /* MSRC_*: what moves */
+    uint8_t via;                     /* MSRC_*: multiplies the route (NONE: 1); WHEEL = a depth control, an LFO = a swell */
+    uint8_t dest;                    /* MDST_*: what is moved */
+    uint8_t amount;                  /* (bip) -64..+63 */
+} ModRoute;
 
 #define ENGINE_RESERVED 1u           /* spare patch bytes (v11): stored, 0 until a later feature takes one (so 0 must
                                       * mean that feature's off / default) */
@@ -508,7 +497,6 @@ typedef struct {
     FilterMixerParams fltmix;
     EnvParams env[NENV];
     LfoParams lfo[NLFO];
-    ModSlotParams mod[NMODSLOT];
     AmpParams amp;
     uint8_t arch;                    /* VARCH_*: the voice architecture, HOME View 1 / 2 (5.3) */
     uint8_t name[NAME_LEN];          /* char_map indices (0 = space), not ASCII: RENAME PATCH (6.2.1) */
@@ -529,12 +517,11 @@ typedef struct {
     uint8_t harm_mod_src;            /* MSRC_*: moves HARMONIC (fine, so a slow LFO glides between the stops) */
     uint8_t harm_mod_amt;            /* (bip) */
     uint8_t reserved[ENGINE_RESERVED];
-    /* 2026-11-03, at the end (flash_record.h ENG_W): a v12 patch saved before reads them as free */
-    ModSendParams send[NMODSEND];    /* the MOD SENDS */
+    ModRoute route[NROUTE];          /* the mod matrix (2026-11-11, v14) */
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 235u, "EngineState layout");
-PS_STATIC_ASSERT(MDST_COUNT <= 64u && NMODSLOT <= 4u && MDST_MFX_K4 < MDST_VOICE_BITS,
-                 "a send's dest byte: 6 bits of destination, 2 of slot; the voices' destinations in the mask");
+PS_STATIC_ASSERT(sizeof(EngineState) == 243u, "EngineState layout");
+PS_STATIC_ASSERT(MDST_COUNT <= 64u && MDST_MFX_K4 < MDST_VOICE_BITS,
+                 "a route's DEST in 6 bits; the voices' destinations in the mask");
 #define ENV1_VEL_LEVEL_V9 111u       /* ENV1 VEL > LEVEL that plays as v9's fixed curve did (-18 dB at velocity 1) */
 /* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 184 is the most that keeps 22
  * patches to a store chunk (preset_store_fm1.c: (4064 - 16) / 184), so the chunks stay where they were. Since v12
@@ -819,7 +806,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 1010u,"WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 1026u,"WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */

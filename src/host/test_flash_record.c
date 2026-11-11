@@ -95,11 +95,11 @@ int main(void)
         }
         CHECK(ENG_W[offsetof(EngineState, osc[1].sync)] == 1u && ENG_W[offsetof(EngineState, env[2].invert)] == 1u &&
               ENG_W[offsetof(EngineState, lfo[2].key_reset)] == 1u && ENG_W[offsetof(EngineState, osc[1].wavebank)] == 8u &&
-              ENG_W[offsetof(EngineState, mod[3].src_b)] == EW_SRC && ENG_W[offsetof(EngineState, arch)] == 4u &&
+              ENG_W[offsetof(EngineState, route[NROUTE - 1u].via)] == EW_SRC && ENG_W[offsetof(EngineState, arch)] == 4u &&
               ENG_W[offsetof(EngineState, name)] == 6u && ENG_W[offsetof(EngineState, analog)] == EW_V &&
               ENG_W[offsetof(EngineState, lfo_depth_src)] == EW_SRC && ENG_W[offsetof(EngineState, mfx.type)] == 5u &&
               ENG_W[offsetof(EngineState, reserved) + ENGINE_RESERVED - 1u] == 8u &&
-              ENG_W[offsetof(EngineState, send[0].dest)] == 8u && ENG_W[sizeof e - 1u] == EW_V, "ENGINE: ENG_W out of step");
+              ENG_W[offsetof(EngineState, route[0].dest)] == 6u && ENG_W[sizeof e - 1u] == EW_V, "ENGINE: ENG_W out of step");
         {                                               /* a SINGLE patch loads as SPREAD at SPREAD 0 (2026-10-26) */
             memset(&e, 0, sizeof e);
             e.oscmix.spread = 70;                       /* leftovers SINGLE ignored */

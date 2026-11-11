@@ -29,7 +29,8 @@ enum {                               /* how a row reads and writes its value */
     RK_BYTE,                         /* the byte at offset in the page's data block */
     RK_ENG,                          /* the byte at offset in a layer's EngineState (RF_LAYER2: layer 2's), HOME */
     RK_VOICES,                       /* read-only: the layer's voice limit (RF_LAYER2: layer 2's) */
-    RK_SEND,                         /* a MOD page destination (offset: MDST_*): the SLOT's send there, -64..+63 */
+    RK_ROUTE,                        /* a MOD MATRIX route (offset: its index): its AMOUNT, -64..+63; the first free one
+                                      * is + NEW ROUTE, the free ones after it are not shown */
     RK_SEQ_STEPS,                    /* SEQ: the knob window, seq_step0; no value of its own (the Select Encoder moves
                                       * it, the Algorithm Encoder does nothing) */
     RK_SEQ_EVENT,                    /* EV:, written through seq_lane_set_event */
@@ -86,7 +87,7 @@ typedef struct {
 /* at most 5 letters: a source row's label and its value fit the menu at 2x (src/host/test_ui_rows_fit.c) */
 static const char *const MSRC_NAMES[] = {
     "none", "velo", "keyb", "rand", "modwh", "aftch", "polat", "cc1", "cc2", "env1", "env2", "env3",
-    "lfo1", "lfo2", "lfo3", "mod1", "mod2", "mod3", "mod4",
+    "lfo1", "lfo2", "lfo3",
 };
 PS_STATIC_ASSERT(sizeof(MSRC_NAMES) / sizeof(MSRC_NAMES[0]) == MSRC_COUNT, "one name per MSRC_*");
 static const char *const FLT_NAMES[] = {"SH-2", "MULTI", "MS-20", "FORMANT"};
@@ -151,8 +152,6 @@ static const char *const ARPRATE_NAMES[] = {"1/2", "1/4", "1/4T", "1/8", "1/8T",
 PS_STATIC_ASSERT(sizeof(ARPRATE_NAMES) / sizeof(ARPRATE_NAMES[0]) == ARPRATE_COUNT, "one name per ARPRATE_*");
 static const char *const BOOL_NAMES[] = {"OFF", "ON"};
 /* 4.5 function_list, as the knob shows it */
-static const char *const MFN_NAMES[] = {"a*b", "a+b", "a-b", "max", "min", "smpleBonA", "QuntzBtoA", "|a-b|", "lag", "diode"};
-PS_STATIC_ASSERT(sizeof(MFN_NAMES) / sizeof(MFN_NAMES[0]) == MFN_COUNT, "one name per MFN_*");
 /* 6.2.1 SAVE knobs: TARGET (UISAVE_*), the name position 1..16, and each UI_CHAR_MAP entry as a knob shows it */
 static const char *const SAVE_TARGET_NAMES[] = {"ARP", "SEQ", "PATCH", "PERF"};
 static const char *const NAME_POS_NAMES[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"};
@@ -311,51 +310,37 @@ static const UiRow AMP_ROWS[] = {
     {"PAN MOD DEPTH", OFS(AmpParams, pan_mod_depth), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"DRV MODEL", OFS(AmpParams, drive_model), 0, DRIVE_COUNT - 1, RK_BYTE, 0, DRIVE_NAMES, A_ALL},
 };
-/* MOD (2026-11-03): one page. The knobs are the slot SLOT (knob 4) picks: SOURCE A, FUNCTION, SOURCE B. The rows are
- * every destination the architecture has (offset: MDST_*), each this slot's MOD SEND there (EngineState.send, a pool:
- * send_set), on top of the destination's own source; the MFX knobs are named as the patch's MFX type names them (dark
- * at OFF and on a list knob). Then LEVEL: the slot's output level (its amount, what a chain reads it at). */
+/* MOD MATRIX (2026-11-11): one row a route in use (SOURCE[*VIA]>DEST, its AMOUNT on the Algorithm Encoder), then
+ * + NEW ROUTE; the knobs are the route under the cursor's SOURCE, VIA, DEST and AMOUNT. Routes stay packed at the
+ * front (routes_pack), so + NEW ROUTE is always last. */
 #define EOFS(member) OFS(EngineState, member)
-#define MDEST(label, d, archs) {label, d, 0, VAL_MAX, RK_SEND, RF_BIPOLAR, NULL, archs}
 #define A_OSC2 ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL)))
 #define A_FLT2 ((uint16_t)(A(DUAL_FILTER) | A(STACK) | A(FULL)))
+#define MROUTE(i) {"", i, 0, VAL_MAX, RK_ROUTE, RF_BIPOLAR, NULL, A_ALL}
 static const UiRow MOD_ROWS[] = {
-    MDEST("OSC1 SCAN", MDST_OSC1_SCAN, A_ALL),
-    MDEST("OSC1 PITCH", MDST_OSC1_PITCH, A_ALL),
-    MDEST("OSC2 SCAN", MDST_OSC2_SCAN, A_OSC2),
-    MDEST("OSC2 PITCH", MDST_OSC2_PITCH, A_OSC2),
-    MDEST("OSC MIX", MDST_OSC_MIX, A(DUAL_OSC) | A(FULL)),
-    MDEST("CROSS-MOD", MDST_XMOD, A(DUAL_OSC) | A(STACK) | A(FULL)),
-    MDEST("SPREAD", MDST_SPREAD, A(SPREAD)),
-    MDEST("NOISE LEVEL", MDST_NOISE_LEVEL, A_ALL),
-    MDEST("NOISE COLOUR", MDST_NOISE_COLOUR, A_ALL),
-    MDEST("F1 CUTOFF", MDST_F1_CUTOFF, A_ALL),
-    MDEST("F1 RESONANCE", MDST_F1_RES, A_ALL),
-    MDEST("F1 MORPH", MDST_F1_MORPH, A_ALL),
-    MDEST("F1 DRIVE", MDST_F1_DRIVE, A_ALL),
-    MDEST("F2 CUTOFF", MDST_F2_CUTOFF, A_FLT2),
-    MDEST("F2 RESONANCE", MDST_F2_RES, A_FLT2),
-    MDEST("F2 MORPH", MDST_F2_MORPH, A_FLT2),
-    MDEST("F2 DRIVE", MDST_F2_DRIVE, A_FLT2),
-    MDEST("BALANCE", MDST_BALANCE, A(DUAL_FILTER) | A(FULL)),
-    MDEST("BLEND A/B", MDST_BALANCE, A(STACK)),
-    MDEST("ROUTING", MDST_ROUTING, A(DUAL_FILTER) | A(FULL)),
-    MDEST("PHASE", MDST_PHASE, A(BINAURAL)),
-    MDEST("CUTOFF L/R", MDST_CUTOFF_LR, A(BINAURAL)),
-    MDEST("LFO1 SPEED", MDST_LFO1_SPEED, A_ALL),
-    MDEST("LFO2 SPEED", MDST_LFO2_SPEED, A_ALL),
-    MDEST("LFO3 SPEED", MDST_LFO3_SPEED, A_ALL),
-    MDEST("AMP LEVEL", MDST_AMP_LEVEL, A_ALL),
-    MDEST("PAN", MDST_PAN, A_ALL),
-    MDEST("GLIDE TIME", MDST_GLIDE, A_ALL),
-    MDEST("DELAY SEND", MDST_DLY_SEND, A_ALL),
-    MDEST("REVERB SEND", MDST_REV_SEND, A_ALL),
-    MDEST("MFX 1", MDST_MFX_K1, A_ALL), MDEST("MFX 2", MDST_MFX_K2, A_ALL),
-    MDEST("MFX 3", MDST_MFX_K3, A_ALL), MDEST("MFX 4", MDST_MFX_K4, A_ALL),
-    {"LEVEL", OFS(ModSlotParams, amount), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    MROUTE(0), MROUTE(1), MROUTE(2), MROUTE(3), MROUTE(4), MROUTE(5),
+    MROUTE(6), MROUTE(7), MROUTE(8), MROUTE(9), MROUTE(10), MROUTE(11),
 };
-#undef MDEST
-#define MOD_LEVEL_ROW (&MOD_ROWS[NROWS(MOD_ROWS) - 1u])
+#undef MROUTE
+PS_STATIC_ASSERT(sizeof(MOD_ROWS) / sizeof(MOD_ROWS[0]) == NROUTE, "a row a route");
+/* the destinations by MDST_* code: the DEST knob's names, and the route rows' short ones (4 letters) */
+static const char *const MDEST_NAMES[MDST_COUNT] = {
+    "-", "OSC1 SCAN", "OSC1 PCH", "OSC2 SCAN", "OSC2 PCH", "OSC MIX", "CROSS-MOD", "SPREAD", "NOISE LVL", "NOISE COL",
+    "F1 CUTOFF", "F1 MORPH", "F2 CUTOFF", "F2 MORPH", "BALANCE", "ROUTING", "PHASE", "CUT L/R", "LFO1 SPD", "LFO2 SPD",
+    "LFO3 SPD", "AMP LEVEL", "PAN", "F1 RESO", "F2 RESO", "F1 DRIVE", "F2 DRIVE", "GLIDE", "MFX 1", "MFX 2", "MFX 3",
+    "MFX 4", "DLY SEND", "REV SEND",
+};
+static const char *const MDEST_SHORT[MDST_COUNT] = {
+    "-", "SCN1", "PCH1", "SCN2", "PCH2", "MIX", "XMOD", "SPRD", "NOIS", "NCOL", "CUT1", "MRF1", "CUT2", "MRF2", "BAL",
+    "RTG", "PHAS", "CLR", "SPD1", "SPD2", "SPD3", "AMP", "PAN", "RES1", "RES2", "DRV1", "DRV2", "GLID", "MFX1", "MFX2",
+    "MFX3", "MFX4", "DLY", "REV",
+};
+static const char *const MSRC_SHORT[MSRC_COUNT] = {
+    "-", "VEL", "KEY", "RND", "WHL", "AT", "PAT", "CC1", "CC2", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3",
+};
+PS_STATIC_ASSERT(sizeof(MDEST_NAMES) / sizeof(MDEST_NAMES[0]) == MDST_COUNT &&
+                 sizeof(MDEST_SHORT) / sizeof(MDEST_SHORT[0]) == MDST_COUNT &&
+                 sizeof(MSRC_SHORT) / sizeof(MSRC_SHORT[0]) == MSRC_COUNT, "a name a destination and source");
 
 /* MFX (2026-11-01): the type, then its own rows (archs: here the types that show the row, a bit each). L/R PHASE and
  * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]) */
@@ -521,7 +506,7 @@ typedef struct {
 #define NROWS(a) ((uint8_t)(sizeof(a) / sizeof((a)[0])))
 #define ENG(member, i, type) ((uint8_t)(offsetof(EngineState, member) + (i) * sizeof(type)))
 #define SYNTH(rows, n, member, i, type) {rows, n, ST_ENGINE, ENG(member, i, type), UICTX_SYNTH}
-#define MODPAGE {MOD_ROWS, NROWS(MOD_ROWS), ST_ENGINE, 0, UICTX_SYNTH}   /* the knobs: SLOT's slot; the rows its sends */
+#define MODPAGE {MOD_ROWS, NROWS(MOD_ROWS), ST_ENGINE, 0, UICTX_SYNTH}   /* the knobs: the route under the cursor */
 
 static const UiPage UI_PAGES[] = {
     SYNTH(OSC_ROWS, NROWS(OSC_ROWS) - 1u, osc, 0, OscParams),           /* OSC1: no sync */
@@ -649,10 +634,9 @@ static const UiKnob LFO_KNOBS[4] = {
     UIK("SHAPE", OFS(LfoParams, shape), UIKNOB_RAW), UIK("RATE", OFS(LfoParams, rate), UIKNOB_RAW),
     UIK("DELAY", OFS(LfoParams, delay), UIKNOB_RAW), UIK("FADE", OFS(LfoParams, fade), UIKNOB_BIP),
 };
-static const char *const MODSLOT_NAMES[NMODSLOT] = {"MOD1", "MOD2", "MOD3", "MOD4"};
-static const UiKnob MOD_KNOBS[4] = {
-    UIK("SOURCE A", OFS(ModSlotParams, src_a), UIKNOB_SRC), UIK("FUNCTION", OFS(ModSlotParams, func), UIKNOB_FN),
-    UIK("SOURCE B", OFS(ModSlotParams, src_b), UIKNOB_SRC), {"SLOT", 0, UIKNOB_LIST, NMODSLOT, MODSLOT_NAMES},
+static const UiKnob MOD_KNOBS[4] = {                /* the route under the cursor */
+    UIK("SOURCE", OFS(ModRoute, src), UIKNOB_SRC), UIK("VIA", OFS(ModRoute, via), UIKNOB_SRC),
+    {"DEST", OFS(ModRoute, dest), UIKNOB_LIST, MDST_COUNT, MDEST_NAMES}, UIK("AMOUNT", OFS(ModRoute, amount), UIKNOB_BIP),
 };
 static const UiKnob AMP_KNOBS[4] = {
     UIK("DRIVE", OFS(AmpParams, drive), UIKNOB_RAW), UIK("AMP MOD", OFS(AmpParams, amp_mod_depth), UIKNOB_RAW),
@@ -785,30 +769,29 @@ static const UiPage *page_def(const UIStateMachine *sm, uint8_t page, uint8_t la
 
 static const UiPage *ui_cur_page(const UIStateMachine *sm) { return page_def(sm, sm->page, sm->s.active_synth_layer); }
 
-/* a row shows when the page is not a sound design page, or the focused layer's architecture uses it (a MOD page:
- * every destination the architecture has) */
+static uint8_t route_free(const ModRoute *r);
+/* a row shows when the page is not a sound design page, or the focused layer's architecture uses it; a MOD MATRIX route
+ * when it is in use or the first free one (+ NEW ROUTE) */
 static uint8_t row_shown(const UIStateMachine *sm, const UiPage *pg, const UiRow *r)
 {
+    if (r->kind == RK_ROUTE) {
+        const EngineState *e = sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u];
+        return (uint8_t)(!route_free(&e->route[r->offset]) || r->offset == 0u || !route_free(&e->route[r->offset - 1u]));
+    }
     return (uint8_t)(pg->store != ST_ENGINE || (r->archs & VARCH_BIT(layer_arch(sm, sm->s.active_synth_layer))) != 0u);
 }
 
-/* ------------------------------------------------------- MOD SENDS --- */
-int8_t ui_sm_send(const EngineState *e, uint8_t slot, uint8_t dest)
-{
-    uint8_t i, b = (uint8_t)(dest | slot << MSEND_SLOT_SHIFT);
-    for (i = 0u; i < NMODSEND; i++)
-        if (e->send[i].dest == b && dest != MDST_NONE)
-            return (int8_t)((int)e->send[i].amount - (int)BIPOLAR_CENTER);
-    return 0;
-}
+/* ------------------------------------------------------ MOD MATRIX --- */
+static uint8_t route_free(const ModRoute *r) { return (uint8_t)(r->src == MSRC_NONE && r->dest == MDST_NONE); }
 
-uint8_t ui_sm_dest_slots(const EngineState *e, uint8_t dest)
+uint8_t ui_sm_dest_routes(const EngineState *e, uint8_t dest)
 {
-    uint8_t i, m = 0u;
-    for (i = 0u; i < NMODSEND; i++)
-        if (dest != MDST_NONE && MSEND_DEST(e->send[i].dest) == dest && e->send[i].amount != BIPOLAR_CENTER)
-            m = (uint8_t)(m | 1u << MSEND_SLOT(e->send[i].dest));
-    return m;
+    uint8_t i, n = 0u;
+    for (i = 0u; i < NROUTE; i++)
+        if (dest != MDST_NONE && e->route[i].dest == dest && e->route[i].src != MSRC_NONE &&
+            e->route[i].amount != BIPOLAR_CENTER)
+            n++;
+    return n;
 }
 
 uint8_t ui_sm_dest_live(const UIStateMachine *sm, uint8_t layer, uint8_t dest)
@@ -820,41 +803,19 @@ uint8_t ui_sm_dest_live(const UIStateMachine *sm, uint8_t layer, uint8_t dest)
                      !(m->type == MFX_PITCH_SHIFT && dest - MDST_MFX_K1 == MFX_K_PS_PITCH));
 }
 
-/* the SLOT's send to dest set to v (64 = none): an entry it has, else a free one; none free: sends_full */
-static void send_set(UIStateMachine *sm, uint8_t dest, uint8_t v)
+/* the free routes moved behind the used ones (a route cleared by its knobs: SOURCE and DEST NONE), in order */
+static void routes_pack(EngineState *e)
 {
-    EngineState *e = sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u];
-    uint8_t i, b = (uint8_t)(dest | sm->mod_slot << MSEND_SLOT_SHIFT), at = NMODSEND;
-    for (i = 0u; i < NMODSEND; i++)
-        if (e->send[i].dest == b)
-            at = i;
-    if (at == NMODSEND && v != BIPOLAR_CENTER)
-        for (i = 0u; i < NMODSEND && at == NMODSEND; i++)
-            if (e->send[i].dest == MDST_NONE)
-                at = i;
-    if (at == NMODSEND) {
-        sm->sends_full = (uint8_t)(v != BIPOLAR_CENTER);
-        return;
-    }
-    if (v == BIPOLAR_CENTER) {
-        e->send[at].dest = MDST_NONE;    /* at 0 the entry goes back to the pool */
-        e->send[at].amount = 0u;
-    } else {
-        e->send[at].dest = b;
-        e->send[at].amount = v;
-    }
+    uint8_t i, j = 0u;
+    for (i = 0u; i < NROUTE; i++)
+        if (!route_free(&e->route[i]))
+            e->route[j++] = e->route[i];
+    for (; j < NROUTE; j++)
+        e->route[j] = (ModRoute){MSRC_NONE, MSRC_NONE, MDST_NONE, BIPOLAR_CENTER};
 }
 
-/* a MOD page destination: the SLOT sends there, only another slot does, or none */
-static uint8_t mod_route(const UIStateMachine *sm, const UiRow *r)
-{
-    const EngineState *e = sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u];
-    uint8_t m;
-    if (r->kind != RK_SEND)
-        return UIMOD_HERE;                           /* (not a destination: its own value) */
-    m = ui_sm_dest_slots(e, r->offset);
-    return (m >> sm->mod_slot) & 1u ? (uint8_t)UIMOD_HERE : m ? (uint8_t)UIMOD_OTHER : (uint8_t)UIMOD_NONE;
-}
+/* the route the MOD MATRIX's knobs edit: the one under the cursor */
+uint8_t ui_sm_route_sel(const UIStateMachine *sm);
 
 uint8_t ui_sm_dest_base(uint8_t dest)
 {
@@ -897,8 +858,6 @@ static uint8_t *page_block_for(const UIStateMachine *sm, const UiPage *pg, uint8
 {
     switch (pg->store) {
     case ST_ENGINE:
-        if (pg == &UI_PAGES[UIPAGE_MOD])             /* (its LEVEL row: the SLOT's slot) */
-            return (uint8_t *)&sm->engine[layer < NLAYER ? layer : 0u]->mod[sm->mod_slot < NMODSLOT ? sm->mod_slot : 0u];
         return (uint8_t *)sm->engine[layer < NLAYER ? layer : 0u] + pg->base;
     case ST_PERF: return (uint8_t *)sm->perf + pg->base;
     case ST_ARP: return (uint8_t *)sm->arp;
@@ -1003,10 +962,8 @@ static uint8_t value_allowed(const UIStateMachine *sm, const UiRow *r, uint8_t v
     case RK_ARP_LAYER:
         return v == ARPLAYER_L1 || (v == ARPLAYER_L2 && mode != PERF_SINGL_SYNTH) ||
                (v == ARPLAYER_BOTH && mode == PERF_DUAL_SYNTH);
-    case RK_BYTE:                    /* a destination's own source (2026-11-03): a slot reaches it by a MOD SEND */
-        return (uint8_t)(r->names != MSRC_NAMES || v < MSRC_MODSLOT1 || v > MSRC_MODSLOT4);
-    case RK_DEPTH_SRC:               /* an LFO or a MOD slot would scale the LFOs it is worked out before */
-        return (uint8_t)(v < MSRC_LFO1 || v > MSRC_MODSLOT4);
+    case RK_DEPTH_SRC:               /* an LFO would scale the LFOs it is worked out before */
+        return (uint8_t)(v < MSRC_LFO1 || v > MSRC_LFO3);
     case RK_SAVE_ACTION:             /* PASTE needs a clipboard of the TARGET's kind */
         return (uint8_t)(v != UIACT_PASTE || ui_sm_paste_ok(sm));
     default:
@@ -1017,9 +974,8 @@ static uint8_t value_allowed(const UIStateMachine *sm, const UiRow *r, uint8_t v
 static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
 {
     switch (r->kind) {
-    case RK_SEND:
-        return (uint8_t)((int)BIPOLAR_CENTER + ui_sm_send(sm->engine[sm->s.active_synth_layer < NLAYER ?
-                                                                    sm->s.active_synth_layer : 0u], sm->mod_slot, r->offset));
+    case RK_ROUTE:
+        return sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]->route[r->offset].amount;
     case RK_SEQ_STEPS: return sm->seq_step0;
     case RK_PERF_SLOT: return sm->perf_slot;
     case RK_SAVE_ACTION: return sm->save_action;
@@ -1078,7 +1034,8 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
     case RK_SAVE_ACTION: sm->save_action = v; break;
     case RK_THEME: sm->theme = v; break;
     case RK_INST: ((uint8_t *)ui_inst(sm))[r->offset] = v; break;
-    case RK_SEND: send_set(sm, r->offset, v); break;
+    case RK_ROUTE: sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]->route[r->offset].amount = v;
+        break;
     case RK_RENAME: case RK_VOICES: case RK_SEQ_STEPS: break;
     case RK_ENG: case RK_ARCH: ((uint8_t *)sm->engine[row_layer(r)])[r->offset] = v; break;
     case RK_SEQ_EVENT: seq_lane_set_event(cur_lane(sm), v); break;   /* also restarts TARGET: */
@@ -1112,7 +1069,6 @@ static void row_step(UIStateMachine *sm, const UiRow *r, int16_t delta)
         }
         return;
     }
-    sm->sends_full = 0u;
     if (r->kind == RK_WAVE) {                 /* by list position: banks, PCM waves, attacks */
         int32_t p = (int32_t)wave_list_pos((uint8_t)cur) + delta, last = (int32_t)wave_list_count() - 1;
         p = p < 0 ? 0 : p > last ? last : p;
@@ -1182,8 +1138,6 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
         return UIROW_INFO;
     if (r->kind == RK_REC_ACT && (sm->rec == 0 || (r->offset ? sm->rec->state == KREC_EMPTY : !krec_can_double(sm->rec))))
         return UIROW_GREYED;         /* DOUBLE at 16 bars (or too many notes), CLEAR with nothing */
-    if (r->kind == RK_SEND && !ui_sm_dest_live(sm, sm->s.active_synth_layer, r->offset))
-        return UIROW_GREYED;         /* the MFX knobs: dark at OFF and on a list knob */
     if (r->kind == RK_RENAME && ui_sm_rename_name(sm) == NULL)
         return UIROW_GREYED;         /* (every TARGET carries a name since 2026-10-25) */
     if (r->kind == RK_SEQ_TARGET && ui_sm_seq_target_count(sm, sm->s.active_seq_lane) <= 1u)
@@ -1260,7 +1214,6 @@ static void enter_page(UIStateMachine *sm, uint8_t page)
     sm->browse = 0u;                 /* the preset list belongs to the page it opened on */
     sm->rowpop = 0u;                 /* .. and so does the parameter list */
     sm->kb_ms = 0u;                  /* .. and SAVE's keyboard */
-    sm->sends_full = 0u;
     sm->s.current_param_focus = cursor_seek(sm, 0, 1);
     sm->seq_cap_held = 0u;           /* a 7.2 chord capture ends with the page */
     sm->seq_cap_n = 0u;
@@ -2056,6 +2009,10 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         if (in->master_tune > MASTER_TUNE_MAX) in->master_tune = MASTER_TUNE_MAX;
         return;
     }
+    if (page == UIPAGE_MOD) {                        /* a route cleared (SOURCE and DEST NONE): the rest close up */
+        routes_pack(sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]);
+        return;
+    }
     if (page == UIPAGE_OSCMIX && knob < 4u) {        /* SUB WAVE's step back into its two bytes */
         uint8_t layer = sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u;
         if (OSCMIX_KNOBS[layer_arch(sm, layer)][knob].names == SUBWAVE6_NAMES)
@@ -2741,8 +2698,8 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
         info->label = MORPH_LABEL[fl < FLT_COUNT ? fl : FLT_MULTI];
     }
     info->kind = k->kind;
-    info->n_enum = k->kind == UIKNOB_SRC ? (uint8_t)MSRC_COUNT : k->kind == UIKNOB_FN ? (uint8_t)MFN_COUNT : k->n_enum;
-    info->names = k->kind == UIKNOB_SRC ? MSRC_NAMES : k->kind == UIKNOB_FN ? MFN_NAMES : k->names;
+    info->n_enum = k->kind == UIKNOB_SRC ? (uint8_t)MSRC_COUNT : k->n_enum;
+    info->names = k->kind == UIKNOB_SRC ? MSRC_NAMES : k->names;
     if (page == UIPAGE_ARP && knob == 3u && sm->arp_knob[2] == ARPSTYLE_HOLD) {
         info->label = "STRUM";                       /* HOLD: RHYTHM is the strike's strum */
         info->names = ARPSTRUM_NAMES;
@@ -2768,10 +2725,8 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     }
     if (page == UIPAGE_ARP)
         block = sm->arp_knob;                        /* (written back into held steps by ui_sm_knob_written) */
-    else if (page == UIPAGE_MOD && knob == 3u)
-        return &sm->mod_slot;                        /* SLOT: the slot the page edits */
-    else if (page == UIPAGE_MOD)
-        block = (uint8_t *)&sm->engine[layer]->mod[sm->mod_slot < NMODSLOT ? sm->mod_slot : 0u];
+    else if (page == UIPAGE_MOD)                     /* the route under the cursor */
+        block = (uint8_t *)&sm->engine[layer]->route[ui_sm_route_sel(sm)];
     else
         block = page_block_for(sm, page_def(sm, page, layer), layer);
     if (block && k->names == SUBWAVE6_NAMES) {       /* SUB WAVE: two bytes, the knob turns a step (ui_sm_knob_written) */
@@ -2791,10 +2746,10 @@ const char *ui_sm_knob_text(UIStateMachine *sm, uint8_t page, uint8_t layer, uin
 }
 
 /* ------------------------------------------------------------ rendering --- */
-uint8_t ui_sm_mod_route(const UIStateMachine *sm, uint8_t row)
+uint8_t ui_sm_route_sel(const UIStateMachine *sm)
 {
-    const UiRow *r = vis_row(sm, row);
-    return r != NULL ? mod_route(sm, r) : (uint8_t)UIMOD_NONE;
+    const UiRow *r = sm->page == UIPAGE_MOD ? vis_row(sm, sm->s.current_param_focus) : NULL;
+    return r != NULL && r->kind == RK_ROUTE ? r->offset : (uint8_t)0u;
 }
 
 uint8_t ui_sm_row_count(const UIStateMachine *sm) { return vis_count(sm); }
@@ -2805,22 +2760,28 @@ const char *ui_sm_row_label(const UIStateMachine *sm, uint8_t row)
     if (r != NULL && r->kind == RK_RENAME)           /* 6.2.1: the name the TARGET carries */
         return sm->save_target == UISAVE_PATCH_PRESET ? "RENAME PATCH" :
                sm->save_target == UISAVE_WHOLE_PERF ? "RENAME PERF" : "RENAME";
-    if (r != NULL && r->kind == RK_SEND && r->offset >= MDST_MFX_K1 && r->offset <= MDST_MFX_K4) {
-        static char b[20];                           /* "MFX " and the knob's name, as the patch's MFX type names it */
-        const MfxParams *m = ui_sm_mfx(sm, sm->s.active_synth_layer);
-        const char *k = MFX_KNOBS[m->type < MFX_OFFERED ? m->type : MFX_OFF][r->offset - MDST_MFX_K1].label;
-        uint8_t i = 0u, j;
-        if (k[0] == '\0')
-            return r->label;
-        for (j = 0u; "MFX "[j]; j++) b[i++] = "MFX "[j];
-        for (j = 0u; k[j] && i < sizeof b - 1u; j++) b[i++] = k[j];
+    if (r != NULL && r->kind == RK_ROUTE) {          /* SOURCE[*VIA]>DEST, 14 letters at most */
+        static char b[16];
+        const ModRoute *m = &sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]->route[r->offset];
+        const char *s[5];
+        uint8_t i = 0u, j, n = 0u;
+        if (route_free(m))
+            return "+ NEW ROUTE";
+        s[n++] = MSRC_SHORT[m->src < MSRC_COUNT ? m->src : 0u];
+        if (m->via != MSRC_NONE && m->via < MSRC_COUNT) {
+            s[n++] = "*";
+            s[n++] = MSRC_SHORT[m->via];
+        }
+        s[n++] = ">";
+        s[n++] = MDEST_SHORT[m->dest < MDST_COUNT ? m->dest : 0u];
+        for (j = 0u; j < n; j++)
+            for (const char *c = s[j]; *c && i < sizeof b - 1u; c++) b[i++] = *c;
         b[i] = '\0';
         return b;
     }
     return r != NULL ? r->label : "";
 }
 
-uint8_t ui_sm_mod_slot(const UIStateMachine *sm) { return sm->mod_slot < NMODSLOT ? sm->mod_slot : 0u; }
 
 uint8_t ui_sm_row_dest(const UIStateMachine *sm, uint8_t row)
 {
@@ -2829,8 +2790,6 @@ uint8_t ui_sm_row_dest(const UIStateMachine *sm, uint8_t row)
     const uint8_t *e = (const uint8_t *)sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u], *p;
     if (r == NULL)
         return MDST_NONE;
-    if (r->kind == RK_SEND)
-        return r->offset;
     if ((pg->store != ST_ENGINE && pg->store != ST_MFX) || sm->page == UIPAGE_MOD || r->kind != RK_BYTE)
         return MDST_NONE;
     p = page_block(sm, pg) + r->offset;
@@ -2928,7 +2887,8 @@ const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row)
     if (r == NULL) return NULL;
     v = row_get(sm, r);
     if (r->kind == RK_SEQ_TARGET) return ui_sm_seq_target_text(sm, sm->s.active_seq_lane, target_buf);
-    if (r->kind == RK_SEND && v == BIPOLAR_CENTER) return "-";   /* no send from the SLOT */
+    if (r->kind == RK_ROUTE && route_free(&sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]
+                                              ->route[r->offset])) return "";   /* + NEW ROUTE */
     if (r->kind == RK_REC_ACT) return ">";
     if (r->kind == RK_FINE) return ui_sm_fine_text(v, num_buf);
     if (r->kind == RK_WAVE) return wave_name(v, num_buf);

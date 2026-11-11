@@ -56,8 +56,9 @@ static void factory_name(uint8_t *dst, const char *s)
     V_(filter[i].morph, mo), V_(filter[i].cutoff, cut), V_(filter[i].resonance, res), V_(filter[i].mod_amt, 2 * (amt))
 #define V_ENV(i, a, d, s, r) V_(env[i].attack, a), V_(env[i].decay, d), V_(env[i].sustain, s), V_(env[i].release, r)
 #define V_LFO(i, sh, rt) V_(lfo[i].shape, sh), V_(lfo[i].rate, rt)
-#define V_SLOT(i, a, fn, b, amt) V_(mod[i].src_a, MSRC_##a), V_(mod[i].func, MFN_##fn), V_(mod[i].src_b, MSRC_##b), \
-    V_(mod[i].amount, FP_BIP(amt))
+/* a mod matrix route (2026-11-11): SOURCE, VIA (NONE: none), DEST, AMOUNT -64..+63 */
+#define V_ROUTE(i, s, vi, d, amt) V_(route[i].src, MSRC_##s), V_(route[i].via, MSRC_##vi), V_(route[i].dest, MDST_##d), \
+    V_(route[i].amount, FP_BIP(amt))
 #define V_AMP(drv, model, ds, rs) V_(amp.drive, drv), V_(amp.drive_model, DRIVE_##model), V_(amp.delay_send, ds), \
     V_(amp.reverb_send, rs)
 #define V_KT(i, kt) V_(filter_key_track[i], kt)
@@ -80,16 +81,16 @@ enum { L_SINE = 0, L_TRI = 21, L_SAW = 43, L_SQUARE = 64, L_STEP = 85, L_SLEW = 
 /* ================================ basses: Foundations through the SH-2 and the MS-20 ================================ */
 
 /* ---- 0 DUB BARROW: a round dub bass. Foundations SAW an octave down over a sine sub, a warm SH-2 low-pass with a
- * short ENV2 bump; tied steps slide. WHEEL: a clock-synced eighth-note wobble on the cutoff (MODSLOT1 = LFO2 x wheel,
- * added to ENV2 in MODSLOT2). */
+ * short ENV2 bump; tied steps slide. WHEEL: a clock-synced eighth-note wobble on the cutoff (a route, LFO2 VIA
+ * WHEEL, beside ENV2's own amount). */
 static const uint8_t FV_DUBBARROW[] = {
     V_(arch, VARCH_SINGLE),
     V_OSC(0, W_FOUND, F_SAW, -1),
     V_(oscmix.sub_level, 70), V_(oscmix.sub_waveform, SUBWAVE_SINE),
-    V_FLT(0, SH2, 30, 0, 46, 40, 24), V_(filter[0].mod_src, MSRC_MODSLOT2), V_KT(0, 40),
+    V_FLT(0, SH2, 30, 0, 46, 40, 15), V_KT(0, 40),
     V_ENV(0, 0, 76, 100, 40), V_ENV(1, 0, 62, 20, 50),
     V_LFO(1, L_SINE, 56), V_(lfo[1].clock_sync, 1), V_(lfo[1].key_reset, 1),
-    V_SLOT(0, LFO2, MUL, MODWHEEL, 63), V_SLOT(1, ENV2, ADD, MODSLOT1, 40),
+    V_ROUTE(0, LFO2, MODWHEEL, F1_CUTOFF, 15),
     V_AMP(26, TUBE, 20, 10), V_(analog, 30),
     V_END};
 
@@ -110,9 +111,9 @@ static const uint8_t FV_BOG[] = {
     V_(arch, VARCH_SINGLE),
     V_OSC(0, W_FOUND, F_SAW, -1),
     V_(oscmix.sub_level, 30), V_(oscmix.sub_waveform, SUBWAVE_SQUARE),
-    V_FLT(0, SH2, 70, 0, 38, 100, 40), V_(filter[0].mod_src, MSRC_MODSLOT1), V_KT(0, 50),
+    V_FLT(0, SH2, 70, 0, 38, 100, 31), V_KT(0, 50),
     V_ENV(0, 0, 70, 90, 30), V_ENV(1, 0, 58, 0, 40),
-    V_SLOT(0, ENV2, ADD, MODWHEEL, 50),
+    V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 31),
     V_AMP(30, OVERDRIVE, 20, 6), V_(analog, 20),
     V_END};
 
@@ -122,10 +123,10 @@ static const uint8_t FV_WIGHT[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_FOUND, F_SAWSQ, -1), V_OSC(1, W_FOUND, F_SAW, -1), V_(osc[1].fine, 58 /* -6 c */),
     V_(oscmix.balance, 64),
-    V_FLT(0, MS20, 70, 0, 50, 90, 26), V_(filter[0].mod_src, MSRC_MODSLOT2), V_KT(0, 50),
+    V_FLT(0, MS20, 70, 0, 50, 90, 16), V_KT(0, 50),
     V_ENV(0, 0, 80, 100, 36), V_ENV(1, 0, 70, 40, 40),
     V_LFO(1, L_SINE, 56), V_(lfo[1].clock_sync, 1), V_(lfo[1].key_reset, 1),
-    V_SLOT(0, LFO2, MUL, MODWHEEL, 63), V_SLOT(1, ENV2, ADD, MODSLOT1, 40),
+    V_ROUTE(0, LFO2, MODWHEEL, F1_CUTOFF, 16),
     V_AMP(20, TUBE, 10, 8), V_(analog, 30),
     V_END};
 
@@ -136,10 +137,10 @@ static const uint8_t FV_CROM[] = {
     V_(arch, VARCH_SINGLE),
     V_OSC(0, W_FOUND, F_P20, 0), V_(osc[0].scan_mod_src, MSRC_LFO1), V_(osc[0].scan_mod_amt, 30),
     V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SINE),
-    V_FLT(0, SH2, 50, 0, 50, 76, 30), V_(filter[0].mod_src, MSRC_MODSLOT1), V_KT(0, 50),
+    V_FLT(0, SH2, 50, 0, 50, 76, 21), V_KT(0, 50),
     V_ENV(0, 0, 64, 30, 40), V_ENV(1, 0, 54, 0, 40),
     V_LFO(0, L_TRI, 30),
-    V_SLOT(0, ENV2, ADD, MODWHEEL, 44),
+    V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 21),
     V_AMP(10, TUBE, 44, 34), V_(analog, 30),
     V_END};
 
@@ -160,9 +161,9 @@ static const uint8_t FV_PEAT[] = {
     V_(arch, VARCH_SINGLE),
     V_OSC(0, W_FOUND, F_TRI, -1), V_(osc[0].pitch_mod_src, MSRC_ENV3), V_(osc[0].pitch_mod_amt, 40),
     V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SINE),
-    V_FLT(0, SH2, 60, 0, 50, 30, 30), V_(filter[0].mod_src, MSRC_MODSLOT1), V_KT(0, 50),
+    V_FLT(0, SH2, 60, 0, 50, 30, 19), V_KT(0, 50),
     V_ENV(0, 0, 66, 0, 56), V_ENV(1, 0, 50, 0, 40), V_ENV(2, 0, 40, 0, 40),
-    V_SLOT(0, ENV2, ADD, MODWHEEL, 40),
+    V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 19),
     V_AMP(20, TUBE, 16, 8), V_(analog, 20),
     V_END};
 
@@ -213,11 +214,11 @@ static const uint8_t FV_BANSHEE[] = {
 static const uint8_t FV_HAGSYNC[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_FOUND, F_SAW, 0), V_OSC(1, W_FOUND, F_SAW, 0), V_(osc[1].sync, 1),
-    V_(osc[1].pitch_mod_src, MSRC_MODSLOT1), V_(osc[1].pitch_mod_amt, 70),
+    V_(osc[1].pitch_mod_src, MSRC_NONE),
     V_(oscmix.balance, 100),
     V_FLT(0, MS20, 40, 0, 88, 40, 16), V_KT(0, 64),
     V_ENV(0, 0, 90, 110, 50), V_ENV(1, 0, 76, 60, 50), V_ENV(2, 0, 76, 30, 60),
-    V_SLOT(0, ENV3, ADD, MODWHEEL, 40),
+    V_ROUTE(0, ENV3, NONE, OSC2_PITCH, 28), V_ROUTE(1, MODWHEEL, NONE, OSC2_PITCH, 28),
     V_AMP(10, OVERDRIVE, 30, 40), V_(analog, 20),
     V_END};
 
@@ -225,11 +226,11 @@ static const uint8_t FV_HAGSYNC[] = {
  * a long tail. WHEEL: vibrato (LFO2 x wheel). */
 static const uint8_t FV_GHOST[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_TRI, 1), V_(osc[0].pitch_mod_src, MSRC_MODSLOT1), V_(osc[0].pitch_mod_amt, 13),
+    V_OSC(0, W_FOUND, F_TRI, 1), V_(osc[0].pitch_mod_src, MSRC_NONE),
     V_FLT(0, SH2, 0, 0, 96, 30, 0), V_KT(0, 64),
     V_ENV(0, 60, 90, 120, 90),
     V_LFO(1, L_SINE, 82),
-    V_SLOT(0, LFO2, MUL, MODWHEEL, 63),
+    V_ROUTE(0, LFO2, MODWHEEL, OSC1_PITCH, 7),
     V_AMP(0, SOFT, 40, 90), V_(analog, 50),
     V_END};
 
@@ -238,21 +239,21 @@ static const uint8_t FV_GHOST[] = {
 static const uint8_t FV_HUNT[] = {
     V_(arch, VARCH_SINGLE),
     V_OSC(0, W_FOUND, F_SAW, 0),
-    V_FLT(0, SH2, 50, 0, 70, 60, 30), V_(filter[0].mod_src, MSRC_MODSLOT1), V_KT(0, 64),
+    V_FLT(0, SH2, 50, 0, 70, 60, 19), V_KT(0, 64),
     V_ENV(0, 0, 90, 110, 60), V_ENV(1, 0, 76, 50, 60),
-    V_SLOT(0, ENV2, ADD, MODWHEEL, 40),
+    V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 19),
     V_AMP(22, TUBE, 30, 40), V_(analog, 30),
     V_END};
 
 /* ---- 13 SPIRIT SIREN: the dub siren. Foundations SQUARE through an SH-2; hold a note and push the WHEEL: LFO2 sweeps
- * the pitch up and down (MODSLOT1 = LFO2 x wheel), wider and wider. Made for the delay. */
+ * the pitch up and down (a route, LFO2 VIA WHEEL), wider and wider. Made for the delay. */
 static const uint8_t FV_SIREN[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_SQUARE, 0), V_(osc[0].pitch_mod_src, MSRC_MODSLOT1), V_(osc[0].pitch_mod_amt, 60),
+    V_OSC(0, W_FOUND, F_SQUARE, 0), V_(osc[0].pitch_mod_src, MSRC_NONE),
     V_FLT(0, SH2, 30, 0, 90, 50, 0), V_KT(0, 64),
     V_ENV(0, 0, 90, 127, 70),
     V_LFO(1, L_TRI, 60),
-    V_SLOT(0, LFO2, MUL, MODWHEEL, 63),
+    V_ROUTE(0, LFO2, MODWHEEL, OSC1_PITCH, 30),
     V_AMP(10, SOFT, 60, 40), V_(analog, 20),
     V_END};
 
@@ -265,16 +266,16 @@ static const uint8_t FV_SIREN[] = {
 static const uint8_t FV_NEWGRANGE[] = {
     V_(arch, VARCH_STACK),
     V_OSC(0, W_MOONSTONE, 24, 0), V_(osc[0].scan_mod_src, MSRC_ENV1), V_(osc[0].scan_mod_amt, 56),
-    V_(osc[0].pitch_mod_src, MSRC_MODSLOT1), V_(osc[0].pitch_mod_amt, 9),
+    V_(osc[0].pitch_mod_src, MSRC_NONE),
     V_OSC(1, W_CHOIR, 46, 0), V_(osc[1].fine, 69 /* +4 c */), V_(osc[1].scan_mod_src, MSRC_LFO3),
-    V_(osc[1].scan_mod_amt, 44), V_(osc[1].pitch_mod_src, MSRC_MODSLOT1), V_(osc[1].pitch_mod_amt, 9),
+    V_(osc[1].scan_mod_amt, 44), V_(osc[1].pitch_mod_src, MSRC_NONE),
     V_FLT(0, MULTI, 0, 36, 94, 18, 0), V_KT(0, 64),
     V_FLT(1, MULTI, 10, 0, 78, 26, 26), V_(filter[1].mod_src, MSRC_MODWHEEL), V_KT(1, 40),
     V_(fltmix.balance, 68), V_(fltmix.env3_cutoff, FP_BIP(22)),
     V_(fltmix.balance_mod_src, MSRC_LFO1), V_(fltmix.balance_mod_amt, FP_BIP(12)),
     V_ENV(0, 0, 84, 22, 88), V_ENV(1, 72, 92, 112, 96), V_ENV(2, 96, 100, 104, 96),
     V_LFO(0, L_SINE, 22), V_LFO(1, L_TRI, 86), V_LFO(2, L_SINE, 28),
-    V_SLOT(0, LFO2, MUL, MODWHEEL, 63),
+    V_ROUTE(0, LFO2, MODWHEEL, OSC1_PITCH, 5), V_ROUTE(1, LFO2, MODWHEEL, OSC2_PITCH, 5),
     V_(amp.pan_mod_src, MSRC_LFO3), V_(amp.pan_mod_depth, 30),
     V_AMP(0, SOFT, 34, 80), V_(analog, 28),
     V_END};
@@ -312,11 +313,10 @@ static const uint8_t FV_CRYPT[] = {
 static const uint8_t FV_CANDLE[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_FOUND, F_TRI, 0), V_OSC(1, W_MOONSTONE, 40, 1), V_(osc[1].fine, 122 /* +600 c */),
-    V_(oscmix.xmod_type, XMOD_RING), V_(oscmix.xmod_amt, 80), V_(oscmix.xmod_mod_src, MSRC_MODSLOT1),
-    V_(oscmix.xmod_mod_amt, 40),
+    V_(oscmix.xmod_type, XMOD_RING), V_(oscmix.xmod_amt, 80), V_(oscmix.xmod_mod_src, MSRC_NONE),
     V_FLT(0, MS20, 0, 0, 100, 10, 10), V_KT(0, 80),
     V_ENV(0, 0, 90, 0, 90), V_(env[0].key_to_time, FP_BIP(-16)), V_ENV(1, 0, 70, 0, 70), V_ENV(2, 0, 70, 0, 70),
-    V_SLOT(0, ENV3, ADD, MODWHEEL, 40),
+    V_ROUTE(0, ENV3, NONE, XMOD, 13), V_ROUTE(1, MODWHEEL, NONE, XMOD, 13),
     V_(amp.pan_mod_depth, 30),
     V_AMP(0, SOFT, 40, 80), V_(analog, 16),
     V_END};
@@ -325,12 +325,12 @@ static const uint8_t FV_CANDLE[] = {
  * drifting the vowel, a warm SH-2 with a little drive. WHEEL: the choir opens (SCAN ooh -> aah). */
 static const uint8_t FV_SOULS[] = {
     V_(arch, VARCH_SPREAD),
-    V_OSC(0, W_CHOIR, 20, 0), V_(osc[0].scan_mod_src, MSRC_MODSLOT1), V_(osc[0].scan_mod_amt, 80),
+    V_OSC(0, W_CHOIR, 20, 0), V_(osc[0].scan_mod_src, MSRC_NONE),
     V_(oscmix.spread, 90),
     V_FLT(0, SH2, 30, 0, 84, 24, 10), V_KT(0, 50),
     V_ENV(0, 80, 100, 116, 100), V_ENV(1, 80, 100, 90, 100),
     V_LFO(0, L_SINE, 12),
-    V_SLOT(0, LFO1, ADD, MODWHEEL, 40),
+    V_ROUTE(0, LFO1, NONE, OSC1_SCAN, 25), V_ROUTE(1, MODWHEEL, NONE, OSC1_SCAN, 25),
     V_(amp.pan_mod_depth, 20),
     V_AMP(0, SOFT, 24, 90), V_(analog, 30),
     V_END};
@@ -357,14 +357,14 @@ static const uint8_t FV_OTHERWORLD[] = {
  * through an open MULTI low-pass, under it. WHEEL: the voices open. */
 static const uint8_t FV_SPIRIT[] = {
     V_(arch, VARCH_STACK),
-    V_OSC(0, W_SPIRITVOX, 24, 0), V_(osc[0].scan_mod_src, MSRC_MODSLOT1), V_(osc[0].scan_mod_amt, 90),
+    V_OSC(0, W_SPIRITVOX, 24, 0), V_(osc[0].scan_mod_src, MSRC_NONE),
     V_OSC(1, W_PANFLUTE, 40, 0), V_(osc[1].fine, 69 /* +4 c */),
     V_FLT(0, SH2, 20, 0, 92, 20, 0), V_KT(0, 50),
     V_FLT(1, MULTI, 0, 0, 96, 10, 0),
     V_(fltmix.balance, 50),
     V_ENV(0, 72, 96, 116, 98),
     V_LFO(0, L_SINE, 12),
-    V_SLOT(0, LFO1, ADD, MODWHEEL, 30),
+    V_ROUTE(0, LFO1, NONE, OSC1_SCAN, 21), V_ROUTE(1, MODWHEEL, NONE, OSC1_SCAN, 21),
     V_(amp.pan_mod_depth, 20),
     V_AMP(0, SOFT, 30, 84), V_(analog, 24),
     V_END};
@@ -374,9 +374,9 @@ static const uint8_t FV_SPIRIT[] = {
 static const uint8_t FV_RUNE[] = {
     V_(arch, VARCH_SINGLE),
     V_OSC(0, W_FOUND, F_P10, 0),
-    V_FLT(0, SH2, 30, 0, 60, 60, 34), V_(filter[0].mod_src, MSRC_MODSLOT1), V_KT(0, 64),
+    V_FLT(0, SH2, 30, 0, 60, 60, 21), V_KT(0, 64),
     V_ENV(0, 0, 74, 0, 70), V_(env[0].key_to_time, FP_BIP(-16)), V_ENV(1, 0, 56, 0, 50),
-    V_SLOT(0, ENV2, ADD, MODWHEEL, 40),
+    V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 21),
     V_(amp.pan_mod_depth, 30),
     V_AMP(0, SOFT, 40, 50), V_(analog, 30),
     V_END};
@@ -506,7 +506,6 @@ static void factory_voice(EngineState *e, const EngineState *base, uint32_t s)
         ((uint8_t *)e)[p[0]] = p[1];
     factory_name(e->name, FV_TAB[s].name);
     varch_single_to_spread(e);
-    engine_slot_routes_to_sends(e);   /* (a MOD slot named as a destination's own source: a MOD SEND now) */
 }
 #undef V_
 

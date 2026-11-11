@@ -16,11 +16,10 @@
 #include "preset.h"
 #include "ctrl_tables.h"
 #include "tuning.h"
-#include "mfx.h"                     /* mfx_mod_off: the MOD SENDS to the MFX knobs */
+#include "mfx.h"                     /* mfx_mod_off: the routes to the MFX knobs */
 
 LfoRuntimeState global_lfo1_state[NLAYER];
 MidiInterfaceState master_midi;
-int8_t synth_mod_watch = -1;
 
 /* Shared per control tick, one set per layer: the OSCMIXER knobs and the LFO1 value every voice of that layer sees. */
 static OscillatorMixer osc_mixer[NLAYER];
@@ -68,7 +67,7 @@ typedef struct {
     SynthVoiceNode *voice;       /* NULL for the LFO1 pass */
     const VoiceInput *in;        /* NULL for the LFO1 pass */
     uint32_t lfo_offset;         /* BINAURAL right ear: LFO1..3 read this far ahead (2^32 = a cycle); 0 = the voice itself */
-    uint32_t sends;              /* bit MDST_* (under MDST_VOICE_BITS): some MOD SEND goes there (send_mask) */
+    uint32_t sends;              /* bit MDST_* (under MDST_VOICE_BITS): some route goes there (route_mask) */
 } SourceCtx;
 
 static int32_t resolve_source_any(const SourceCtx *c, int src, int depth);
@@ -76,20 +75,6 @@ static int32_t resolve_source_any(const SourceCtx *c, int src, int depth);
  * ~10 times a voice tick). */
 static inline int32_t resolve_source(const SourceCtx *c, int src, int depth) {
     return src == MSRC_NONE ? 0 : resolve_source_any(c, src, depth);
-}
-
-/* Pass counters for the stateful mod functions: each control pass bumps its own (a voice's tick: voice->mod_pass; the
- * layer-wide LFO1 pass: layer_mod_pass), and a slot runs once per pass and then answers from its cache. Per voice, not
- * one global: on the FM1 two cores run voice ticks at once (docs/dual-core-plan.md), and a shared counter bumped by
- * the other core mid-pass would make a slot run twice, advancing sample & hold and lag twice. */
-static uint32_t layer_mod_pass;
-/* The LFO1 pass has no voice, so the slots it reads keep their memory per layer. */
-static ModFnState layer_mod_fn[NLAYER][NMODSLOT];
-
-/* Sources that swing both sides of zero. Sample & hold and lag treat these as signals around 0; the unipolar
- * ones are treated as signals around half scale. */
-static int src_is_bipolar(int src) {
-    return src == MSRC_KEYBOARD || src == MSRC_RANDOM || (src >= MSRC_LFO1 && src <= MSRC_MODSLOT4);
 }
 
 /* ENV2 / ENV3 with INVERT run 0 -> -1 (2026-10-27): the knob is their rest point and they dip below it */
@@ -105,92 +90,8 @@ static int32_t source_level_q15(const EngineState *e, int src, int32_t s) {
     return clamp32(s, 0, 32767);
 }
 
-/* MODSLOT n (spec 4.5): function of two sources, scaled by the slot amount */
 static int32_t tune_cents_now;                      /* GLOBAL > MASTER TUNE, read once a tick */
 static uint8_t tuning_now, tuning_root_now;         /* GLOBAL > TUNING and ROOT (the performance's), the same */
-
-static int32_t slot_output(const SourceCtx *c, int slot, int depth) {
-    /* Feedback guard (spec 4.5): a chain of slots cannot run deeper than the slot count. */
-    if (depth >= (int)NMODSLOT) return 0;
-
-    ModFnState *st = c->voice ? &c->voice->mod_fn[slot] : &layer_mod_fn[c->layer][slot];
-    uint32_t pass = c->voice ? c->voice->mod_pass : layer_mod_pass;
-    if (st->tick == pass && c->lfo_offset == 0) return st->out_q15;
-    /* A loop back to this slot through its own sources (direct self-modulation): reads 0, spec 4.5. */
-    if (st->busy) return 0;
-
-    const ModSlotParams *m = &c->eng->mod[slot];
-    /* BINAURAL right ear: the stateless functions run again on the phase-shifted LFOs. Sample & hold and lag keep
-     * memory, and a second run in one tick would advance it twice, so they answer with the left ear's value (the
-     * left ear always reads a source before the right ear reads the same one). */
-    if (c->lfo_offset != 0 && (m->func == MFN_SAMPLE_B_ON_A || m->func == MFN_LAG))
-        return st->tick == pass ? st->out_q15 : 0;
-    st->busy = 1;
-    int32_t a = resolve_source(c, m->src_a, depth + 1);
-    int32_t b = resolve_source(c, m->src_b, depth + 1);
-    int32_t out;
-    switch (m->func) {
-    case MFN_MUL:      /* a missing source is the product's 1 (2026-10-17): one source passes through, none gives 0 */
-        if (m->src_a == MSRC_NONE) out = m->src_b == MSRC_NONE ? 0 : b;
-        else if (m->src_b == MSRC_NONE) out = a;
-        else out = (a * b) >> 15;
-        break;
-    case MFN_ADD:      out = a + b; break;
-    case MFN_SUB:      out = a - b; break;
-    case MFN_MAX:      out = a > b ? a : b; break;
-    case MFN_MIN:      out = a < b ? a : b; break;
-    case MFN_ABS_DIFF: out = a > b ? a - b : b - a; break;
-    case MFN_SAMPLE_B_ON_A: {
-        /* B is latched each time A crosses its midpoint; the output holds the latched value between crossings. */
-        int side = a >= (src_is_bipolar(m->src_a) ? 0 : src_is_inverted_env(c->eng, m->src_a) ? -16384 : 16384);
-        if (!st->init) {
-            st->held_q15 = b;
-            st->prev_side = (uint8_t)side;
-            st->init = 1;
-        } else if (side != st->prev_side) {
-            st->held_q15 = b;
-            st->prev_side = (uint8_t)side;
-        }
-        out = st->held_q15;
-        break;
-    }
-    case MFN_QUANTIZE_B_TO_A: {
-        /* B (unipolar) picks the bit depth: 0 keeps all 16 bits, full scale keeps only the sign bit. */
-        int32_t bu = b > 0 ? b : 0;
-        int shift = (int)((bu * 15) >> 15);             /* 0..14 bits dropped */
-        out = (a >> shift) * (1 << shift);
-        break;
-    }
-    case MFN_LAG: {
-        /* A slews toward its value. B (unipolar) sets the step per sample: 4096 at B = 0, 1 at full scale, taken a
-         * control tick at a time. */
-        int32_t bu = b > 0 ? b : 0;
-        int32_t step = 4096 >> (bu >> 11);
-        if (step < 1) step = 1;
-        step <<= SYNTH_CTRL_SHIFT;
-        if (!st->init) {
-            st->held_q15 = a;
-            st->init = 1;
-        }
-        int32_t d = a - st->held_q15;
-        if (d > step) d = step;
-        else if (d < -step) d = -step;
-        st->held_q15 += d;
-        out = st->held_q15;
-        break;
-    }
-    case MFN_DIODE:    out = (a - b) > 0 ? a - b : 0; break;   /* half-wave rectifier, spec 4.5 */
-    default:           out = a; break;                          /* MSRC_NONE function slots pass A */
-    }
-    out = (out * bip(m->amount)) >> 6;          /* amount -64..+63 */
-    out = clamp32(out, -32768, 32767);
-    st->busy = 0;
-    if (c->lfo_offset == 0) {                   /* the right ear's reruns never replace the voice's own value */
-        st->tick = pass;
-        st->out_q15 = out;
-    }
-    return out;
-}
 
 /* An LFO read lfo_offset ahead of its playhead, with the playhead's depth and fade (BINAURAL right ear). */
 static int32_t lfo_offset_q15(const LfoRuntimeState *state, uint8_t shape, uint32_t lfo_offset) {
@@ -233,79 +134,86 @@ static int32_t resolve_source_any(const SourceCtx *c, int src, int depth) {
                     v->lfo_gain_q15[i + 1]) >> 15;
         return v->lfo_q15[i];
     }
-    case MSRC_MODSLOT1:
-    case MSRC_MODSLOT2:
-    case MSRC_MODSLOT3:
-    case MSRC_MODSLOT4:   return slot_output(c, src - MSRC_MODSLOT1, depth);
     case MSRC_CUSTOMCC1:  return in ? in->custom_cc1 * 258 : 0;
     case MSRC_CUSTOMCC2:  return in ? in->custom_cc2 * 258 : 0;
     default:              return 0;                                    /* MSRC_NONE */
     }
 }
 
-/* ------------------------------------------------------------- MOD SENDS --- */
-/* (2026-11-03) A slot sent straight to a destination adds to what the destination's own source and amount do there:
- * the slot's output times the send amount through the destination's own amount (send_sum, send_cents, send_gain).
- * Which destinations have a send, as a mask, once a tick: a patch without sends pays one bit test a destination. */
-static __attribute__((noinline)) uint32_t send_mask(const EngineState *e, uint32_t *hi) {
+/* ------------------------------------------------------------- MOD MATRIX --- */
+/* (2026-11-11) A route adds SOURCE times VIA times AMOUNT to what its destination's own source and amount do there
+ * (send_sum, send_cents, send_gain: through the destination's own amount, as the MOD SENDS did). Which destinations
+ * have a route, as a mask, once a tick: a patch without routes pays one bit test a destination. */
+static __attribute__((noinline)) uint32_t route_mask(const EngineState *e, uint32_t *hi) {
     uint32_t m = 0, h = 0;
-    for (unsigned i = 0; i < NMODSEND; i++) {
-        unsigned d = MSEND_DEST(e->send[i].dest);
+    for (unsigned i = 0; i < NROUTE; i++) {
+        const ModRoute *r = &e->route[i];
+        unsigned d = r->dest;
+        if (r->src == MSRC_NONE || r->amount == BIPOLAR_CENTER)
+            continue;
         if (d < MDST_VOICE_BITS) m |= 1u << d;
         else if (d < MDST_COUNT) h |= 1u << (d - MDST_VOICE_BITS);
     }
     *hi = h;
     return m & ~1u;
 }
-/* The send helpers stay out of line and out of the hot path (2026-11-03): inlined at each destination they grew
- * voice_control_tick by 1.2 KB of code a patch without sends never runs, and as the tick and the voice's render take
- * turns in the FM1's I-cache, BINAURAL measured +8..10 PERF TEST points for it. */
+/* The route helpers stay out of line and out of the hot path (2026-11-03, as the sends were): inlined at each
+ * destination they grew voice_control_tick by 1.2 KB of code a patch without routes never runs, and as the tick and the
+ * voice's render take turns in the FM1's I-cache, BINAURAL measured +8..10 PERF TEST points for it. */
 #define SEND_COLD __attribute__((noinline, cold))
 /* each layer's mask, worked out once a tick (synth_voice_begin_tick) before any voice reads it */
 static uint32_t layer_sends[NLAYER];
 static uint32_t layer_sends_hi[NLAYER];             /* bit (MDST_* - MDST_VOICE_BITS): the layer-wide ones, DLY / REV SEND */
 int16_t synth_fx_send_mod[NLAYER][2];
 
-/* the sends to d, summed, in the units of its own source times its own amount: scale 1 for a bipolar amount (-64..+63),
- * 2 for a 0..127 one (the send's -64..+63 doubled, either sign) */
+/* a route's signal, Q15: SOURCE times VIA (NONE: 1), a plain product */
+static int32_t route_out(const SourceCtx *c, const ModRoute *r) {
+    int32_t s = resolve_source(c, r->src, 0);
+    if (r->via != MSRC_NONE)
+        s = (s * resolve_source(c, r->via, 0)) >> 15;
+    return s;
+}
+
+/* the routes to d, summed, in the units of its own source times its own amount: scale 1 for a bipolar amount
+ * (-64..+63), 2 for a 0..127 one (the route's -64..+63 doubled, either sign) */
 static SEND_COLD int32_t send_sum_any(const SourceCtx *c, unsigned d, int32_t scale) {
     int32_t s = 0;
-    for (unsigned i = 0; i < NMODSEND; i++) {
-        uint8_t b = c->eng->send[i].dest;
-        if (MSEND_DEST(b) == d && MSEND_SLOT(b) < NMODSLOT)
-            s += slot_output(c, MSEND_SLOT(b), 0) * (bip(c->eng->send[i].amount) * scale);
+    for (unsigned i = 0; i < NROUTE; i++) {
+        const ModRoute *r = &c->eng->route[i];
+        if (r->dest == d && r->src != MSRC_NONE)
+            s += route_out(c, r) * (bip(r->amount) * scale);
     }
     return s;
 }
 
-/* the pitch sends to d, in cents: each through the PITCH MOD AMOUNT curve at twice the send (a negative send turns
- * the slot over) */
+/* the pitch routes to d, in cents: each through the PITCH MOD AMOUNT curve at twice the route (a negative route turns
+ * the signal over) */
 static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
     int32_t cents = 0;
-    for (unsigned i = 0; i < NMODSEND; i++) {
-        uint8_t b = c->eng->send[i].dest;
-        if (MSEND_DEST(b) == d && MSEND_SLOT(b) < NMODSLOT) {
-            int a = bip(c->eng->send[i].amount) * 2, sg = a < 0 ? -1 : 1;
-            cents += sg * pitch_mod_cents(slot_output(c, MSEND_SLOT(b), 0), (uint8_t)clampi(a * sg, 0, 127));
+    for (unsigned i = 0; i < NROUTE; i++) {
+        const ModRoute *r = &c->eng->route[i];
+        if (r->dest == d && r->src != MSRC_NONE) {
+            int a = bip(r->amount) * 2, sg = a < 0 ? -1 : 1;
+            cents += sg * pitch_mod_cents(route_out(c, r), (uint8_t)clampi(a * sg, 0, 127));
         }
     }
     return cents;
 }
 
-/* the bit test at the destination, the call only for a send (most patches have none: a call a destination a voice
+/* the bit test at the destination, the call only for a route (most patches have few: a call a destination a voice
  * tick is what the FM1's XIP code would pay) */
 #define send_sum(c, d, scale) ((((c)->sends >> (d)) & 1u) ? send_sum_any((c), (d), (scale)) : 0)
 #define send_cents(c, d) ((((c)->sends >> (d)) & 1u) ? send_cents_any((c), (d)) : 0)
 
-/* AMP LEVEL's sends: each a gain as AMP MOD's (amount 0 full level, full the slot alone sets it; a negative send the
- * slot turned over), multiplied together */
+/* AMP LEVEL's routes: each a gain as AMP MOD's (amount 0 full level, full the signal alone sets it; a negative route
+ * the signal turned over), multiplied together */
 static SEND_COLD int32_t send_gain(const SourceCtx *c) {
     int32_t g = -1;                                 /* (none yet: the first is taken as it is, no rounding) */
-    for (unsigned i = 0; i < NMODSEND; i++) {
-        uint8_t b = c->eng->send[i].dest;
-        if (MSEND_DEST(b) == MDST_AMP_LEVEL && MSEND_SLOT(b) < NMODSLOT) {
-            int a = bip(c->eng->send[i].amount) * 2;
-            int32_t d = (int32_t)clampi(a < 0 ? -a : a, 0, 127) * 258, l = slot_output(c, MSEND_SLOT(b), 0);
+    for (unsigned i = 0; i < NROUTE; i++) {
+        const ModRoute *r = &c->eng->route[i];
+        if (r->dest == MDST_AMP_LEVEL && r->src != MSRC_NONE) {
+            int a = bip(r->amount) * 2;
+            int32_t d = (int32_t)clampi(a < 0 ? -a : a, 0, 127) * 258, l = route_out(c, r);
             l = clamp32(a < 0 ? 32767 - l : l, 0, 32767);
             int32_t t = clamp32(32767 - d + ((l * d) >> 15), 0, 32767);
             g = g < 0 ? t : (g * t) >> 15;
@@ -314,7 +222,7 @@ static SEND_COLD int32_t send_gain(const SourceCtx *c) {
     return g < 0 ? 32767 : g;
 }
 
-/* The layer's MFX plays the layer's sum, so its sends follow one voice: the newest sounding (as the MOD page's portal
+/* The layer's MFX plays the layer's sum, so its routes follow one voice: the newest sounding (as the MOD page's portal
  * does), a tick behind. With none sounding they hold, so a tail rings out as it was; with no MFX send they are 0. */
 static __attribute__((noinline)) void mfx_mod_follow(unsigned l, uint32_t sends, uint32_t hi) {
     int best = -1;
@@ -368,10 +276,10 @@ static int32_t vel_level_q15(uint8_t amt, int velocity) {
 }
 
 /* DEPTH MOD (2026-10-26): an LFO's depth, as AMP MOD sets the amp's level: amount 0 full depth, 127 the source alone
- * (unipolar; the keyboard from its bottom to its top). An LFO or a MOD slot reads as none: depth is worked out before
- * the LFOs it would scale. */
+ * (unipolar; the keyboard from its bottom to its top). An LFO reads as none: depth is worked out before the LFOs it
+ * would scale. */
 static int32_t lfo_depth_q15(const SourceCtx *c, uint8_t src, uint8_t amt) {
-    if (amt == 0u || src == MSRC_NONE || (src >= MSRC_LFO1 && src <= MSRC_MODSLOT4)) return GAIN_UNITY;
+    if (amt == 0u || src == MSRC_NONE || (src >= MSRC_LFO1 && src <= MSRC_LFO3)) return GAIN_UNITY;
     int32_t s = resolve_source(c, src, 0), d = (int32_t)amt * 258;
     s = clamp32(source_level_q15(c->eng, src, s), 0, GAIN_UNITY);
     return clamp32(GAIN_UNITY - d + ((s * d) >> 15), 0, GAIN_UNITY);
@@ -460,31 +368,17 @@ static void glide_knobs(unsigned l) {
 /* a glided knob in Q8 knob units */
 static inline int32_t glide_q8(int32_t g_q16) { return g_q16 >> 8; }
 
-/* The slot the screen shows runs once more at the end of a pass, after every real reader of it: a slot nothing
- * reads still has a value to show, and one something does read answers from that pass's cache, so the sound is
- * unchanged. */
-static void watch_slot(const SourceCtx *c) {
-    if (synth_mod_watch >= 0 && synth_mod_watch < (int)NMODSLOT)
-        slot_output(c, synth_mod_watch, 0);
-}
-
-int32_t synth_mod_layer_out(int layer, int slot) {
-    return layer >= 0 && layer < (int)NLAYER && slot >= 0 && slot < (int)NMODSLOT ? layer_mod_fn[layer][slot].out_q15 : 0;
-}
-
 void synth_voice_begin_tick(uint32_t frame) {
     tune_cents_now = instrument_tune_cents();       /* once a tick, not once a voice */
     tuning_now = PERF_TUNING(&perf_state);
     tuning_root_now = PERF_TUNING_ROOT(&perf_state);
     if (engine_state[0].analog | engine_state[1].analog)
         analog_begin_tick();                        /* ANALOG's warm-up drift, shared by every voice (nothing to drift: skipped) */
-    layer_mod_pass++;                                               /* the LFO1 pass is a pass of its own */
     for (unsigned l = 0; l < NLAYER; l++)
-        layer_sends[l] = send_mask(&engine_state[l], &layer_sends_hi[l]);
+        layer_sends[l] = route_mask(&engine_state[l], &layer_sends_hi[l]);
     update_global_lfo1(frame);
     for (unsigned l = 0; l < NLAYER; l++) {
         SourceCtx c = {&engine_state[l], (int)l, NULL, NULL, 0, layer_sends[l]};
-        watch_slot(&c);
         refresh_osc_mixer(l);
         glide_knobs(l);
         mfx_mod_follow(l, c.sends, layer_sends_hi[l]);
@@ -623,7 +517,6 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const EngineState *e = &engine_state[voice->layer];
     SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1]};
     uint8_t arch = voice->arch;
-    voice->mod_pass++;                                              /* this voice's pass: its slots run afresh */
     SPROF_DECL;
     SPROF_START();
 
@@ -876,7 +769,6 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     }
     voice->glide_mod = (int16_t)((c.sends >> MDST_GLIDE) & 1u ?        /* GLIDE: read by the next glide step */
                                  clampi((int)(send_sum_any(&c, MDST_GLIDE, 2) >> 15), -127, 127) : 0);
-    watch_slot(&c);
 }
 
 /* ------------------------------------------------------------------ render, one function per architecture --- */

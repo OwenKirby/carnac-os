@@ -20,8 +20,8 @@
 #include "attacks.h"                /* ATK_COUNT: the ATTACK sample's width */
 
 /* the current layout of each kind: 1..0xFE */
-#define FREC_VER_ENGINE 13u          /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; 9: the filters' DRIVE, SH-2 for the SVF, one MS-20 (2026-10-21); 10: VEL > LEVEL, LFO DEPTH MOD, the cutoff MOD AMOUNT 0..127, the envelope flags packed (2026-10-26); 11: the MFX and 4 reserved bytes (2026-11-03, the format bump; nothing older migrates: before V1 patches may go); 12: every byte at its own bit width (ENG_W, 2026-11-03), room after for fields added at the end; 13: MOD4, the sources renumbered (RANDOM, POLY AT), a send's destination 6 bits, VEL > ATTACK (2026-11-03) */
-#define FREC_VER_PERF   13u          /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4; 8: the patches' v9 (proto/sh2-filter builds); 9: the arp's v5 (2026-10-21); 10: the patches' v10 (2026-10-26); 11: the patches\' v11, REV PREDELAY removed, the MIX page\'s bytes and 16 reserved (2026-11-03; nothing older migrates); 12: the patches' v12; 13: the patches' v13 */
+#define FREC_VER_ENGINE 14u          /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; 9: the filters' DRIVE, SH-2 for the SVF, one MS-20 (2026-10-21); 10: VEL > LEVEL, LFO DEPTH MOD, the cutoff MOD AMOUNT 0..127, the envelope flags packed (2026-10-26); 11: the MFX and 4 reserved bytes (2026-11-03, the format bump; nothing older migrates: before V1 patches may go); 12: every byte at its own bit width (ENG_W, 2026-11-03), room after for fields added at the end; 13: MOD4, the sources renumbered (RANDOM, POLY AT), a send's destination 6 bits, VEL > ATTACK (2026-11-03); 14: the mod matrix, NROUTE routes (SOURCE, VIA, DEST, AMOUNT) for the MOD slots and sends, MOD1..4 gone from the sources (2026-11-11) */
+#define FREC_VER_PERF   14u          /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4; 8: the patches' v9 (proto/sh2-filter builds); 9: the arp's v5 (2026-10-21); 10: the patches' v10 (2026-10-26); 11: the patches\' v11, REV PREDELAY removed, the MIX page\'s bytes and 16 reserved (2026-11-03; nothing older migrates); 12: the patches' v12; 13: the patches' v13; 14: the patches' v14 */
 #define FREC_VER_SEQ    3u           /* SequencerLane[SEQ_NLANE], one sequencer slot (SEQ_SETTINGS); 2: scale, scale_root; 3: the 32-slot bank (2026-10-17, the lane unchanged: the 128-slot bank's chunks are left out, so the factory sequences show) */
 #define FREC_VER_ARP    5u           /* ArpState, one arp slot (ARP_SEQ); 2: chord_root (a MIDI note) and the 24-way variation; 3: TIE, accents; 4: each step's RATE where its gate was, the pattern's GATE where TIME DIVISION was ; 5: RATE the notes' rate, TIMING the steps' length (in LAYER's byte), HOLD the first style, its strum none / up / down (older arps do not migrate) */
 #define FREC_VER_GLOBAL 1u           /* GlobalSystemConfig */
@@ -103,7 +103,7 @@ static inline uint8_t frec_stored_version(const uint8_t *rec) { return rec[0]; }
  * centre; a level whose old behaviour was full is stored inverted (127 - v). A reserved byte taken by a feature obeys
  * the same rule. A field that cannot have a do-nothing 0 needs a version bump and a migration instead. */
 #define EW_V 7u                      /* a 0..127 value (VAL_MAX) */
-#define EW_SRC 5u                    /* a mod source, MSRC_* (MSRC_COUNT 19 of 32) */
+#define EW_SRC 5u                    /* a mod source, MSRC_* (MSRC_COUNT 15 of 32) */
 #define EW_SW 1u                     /* a 0 / 1 switch */
 #define EW_OSC EW_V, EW_V, EW_V, EW_V, 8u /* WAVE: a wave code, PCM waves from 64 */, EW_SRC, EW_V, EW_SRC, EW_V, EW_SW
 #define EW_OSCMIX EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_V, EW_SRC, 3u /* XMOD_* */, EW_V, EW_SRC, EW_V,                   \
@@ -113,9 +113,8 @@ static inline uint8_t frec_stored_version(const uint8_t *rec) { return rec[0]; }
 #define EW_FLTMIX EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_SRC, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_SRC, EW_V
 #define EW_ENV EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_SW, EW_SW, EW_V, EW_SW
 #define EW_LFO EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_V, EW_SW, EW_V, EW_SW
-#define EW_MOD EW_SRC, 4u /* MFN_* */, EW_SRC, EW_V
 #define EW_AMP EW_V, EW_V, EW_V, EW_V, EW_SRC, EW_SRC, EW_V, 3u /* DRIVE_* */
-#define EW_SEND 8u, EW_V          /* a MOD SEND: MDST_* | slot << 6 (8 bits), its amount */
+#define EW_ROUTE EW_SRC, EW_SRC, 6u /* MDST_* */, EW_V   /* a route: SOURCE, VIA, DEST, AMOUNT */
 #define EW_MFX 5u /* MFX_* */, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V, EW_V
 #define EW_X3(a) a, a, a
 #define EW_X4(a) a, a, a, a
@@ -124,18 +123,18 @@ static inline uint8_t frec_stored_version(const uint8_t *rec) { return rec[0]; }
 PS_STATIC_ASSERT(EW_BYTES(EW_OSC) == sizeof(OscParams) && EW_BYTES(EW_OSCMIX) == sizeof(OscMixerParams) &&
                  EW_BYTES(EW_FILTER) == sizeof(FilterParams) && EW_BYTES(EW_FLTMIX) == sizeof(FilterMixerParams) &&
                  EW_BYTES(EW_ENV) == sizeof(EnvParams) && EW_BYTES(EW_LFO) == sizeof(LfoParams) &&
-                 EW_BYTES(EW_MOD) == sizeof(ModSlotParams) && EW_BYTES(EW_AMP) == sizeof(AmpParams) &&
-                 EW_BYTES(EW_MFX) == sizeof(MfxParams) && EW_BYTES(EW_SEND) == sizeof(ModSendParams) && EW_BYTES(EW_NAME) == NAME_LEN, "a width per stored byte");
+                 EW_BYTES(EW_AMP) == sizeof(AmpParams) && EW_BYTES(EW_MFX) == sizeof(MfxParams) &&
+                 EW_BYTES(EW_ROUTE) == sizeof(ModRoute) && EW_BYTES(EW_NAME) == NAME_LEN, "a width per stored byte");
 PS_STATIC_ASSERT(MSRC_COUNT <= 32u && XMOD_COUNT <= 8u && SUBOCT_COUNT <= 4u && SUBWAVE_COUNT <= 8u && ATK_COUNT <= 64u &&
-                 ATKTRK_COUNT <= 4u && FLT_COUNT <= 8u && MFN_COUNT <= 16u && DRIVE_COUNT <= 8u && MFX_COUNT <= 32u &&
+                 ATKTRK_COUNT <= 4u && FLT_COUNT <= 8u && DRIVE_COUNT <= 8u && MFX_COUNT <= 32u &&
                  VARCH_COUNT <= 16u && CHAR_MAP_LEN <= 64u && NOSC == 2u && NFILTER == 2u && NENV == 3u && NLFO == 3u &&
-                 NMODSLOT == 4u && ENGINE_RESERVED == 1u && NMODSEND == 12u && MDST_COUNT <= 64u, "every list fits its width; the repeats below");
+                 ENGINE_RESERVED == 1u && NROUTE == 12u && MDST_COUNT <= 64u, "every list fits its width; the repeats below");
 static const uint8_t ENG_W[] = {
-    EW_OSC, EW_OSC, EW_OSCMIX, EW_FILTER, EW_FILTER, EW_FLTMIX, EW_X3(EW_ENV), EW_X3(EW_LFO), EW_X4(EW_MOD), EW_AMP,
+    EW_OSC, EW_OSC, EW_OSCMIX, EW_FILTER, EW_FILTER, EW_FLTMIX, EW_X3(EW_ENV), EW_X3(EW_LFO), EW_AMP,
     4u /* arch, VARCH_* */, EW_NAME, EW_V /* ANALOG */, EW_V, EW_V /* KEY TRACK */, EW_X3(EW_V) /* VEL > LEVEL */,
     EW_X3(EW_SRC) /* DEPTH MOD SRC */, EW_X3(EW_V) /* DEPTH MOD AMT */, EW_MFX, EW_X3(8u) /* noise HARMONIC, its mod source and amount (2026-11-06, were reserved: same widths) */,
     8u /* reserved */,
-    EW_X4(EW_X3(EW_SEND)) /* the MOD SENDS (2026-11-03, added at the end: no bump) */
+    EW_X4(EW_X3(EW_ROUTE)) /* the mod matrix (2026-11-11, v14) */
 };
 PS_STATIC_ASSERT(sizeof ENG_W == sizeof(EngineState), "ENG_W: one width per EngineState byte, in order");
 

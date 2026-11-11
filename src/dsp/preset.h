@@ -38,11 +38,9 @@ void preset_defaults(void);
  * keep what was saved (the FM1's PERF TEST) */
 void live_defaults(void);
 void engine_defaults(EngineState *e);
-/* MOD SENDS (2026-11-03): each destination's own source and amount and the parameter it moves, as EngineState offsets
- * (0xFF none), by MDST_*; and a patch whose destinations name a MOD slot as their own source turned into the same as
- * sends (the factory patches: a destination page no longer offers the slots; an odd 0..127 amount rounds up a step) */
+/* the mod matrix's destinations: each one's own source and amount and the parameter it moves, as EngineState offsets
+ * (0xFF none), by MDST_* */
 extern const uint8_t mdst_ofs[MDST_COUNT][3];
-void engine_slot_routes_to_sends(EngineState *e);   /* one layer's factory patch (the HOME browser measures a patch against it) */
 void perf_defaults(MasterPerformancePreset *p);   /* the performance's own settings as live_defaults sets them */
 
 /* live layer -> patch slot. The layer keeps playing its live sound; the slot holds a copy */

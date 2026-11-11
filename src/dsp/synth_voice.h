@@ -99,13 +99,7 @@ void update_global_lfo1(uint32_t frame);
 /* LFO1 playhead of each layer (LFO1 runs once per layer, not per voice). */
 extern LfoRuntimeState global_lfo1_state[NLAYER];
 
-/* The mod slot the screen shows (0..NMODSLOT-1), -1 for none: each control pass also runs it, last, so its output
- * (voice->mod_fn[slot].out_q15, or synth_mod_layer_out with no voice) is live even when nothing reads it. Set by the
- * UI; one extra slot a pass. */
-extern int8_t synth_mod_watch;
-/* the MOD SENDS to each layer's DELAY / REVERB SEND, knob units (-127..127): the newest sounding voice's, a tick behind
+/* the routes to each layer's DELAY / REVERB SEND, knob units (-127..127): the newest sounding voice's, a tick behind
  * (synth_runtime.c adds them to AMP's sends; 0 with none) */
 extern int16_t synth_fx_send_mod[NLAYER][2];
 
-/* A slot's output from the layer's voice-less pass (LFO1, no voice sources), Q15 */
-int32_t synth_mod_layer_out(int layer, int slot);

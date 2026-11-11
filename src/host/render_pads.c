@@ -29,8 +29,6 @@ extern const uint32_t pcm_image_pads_len;
     V_(filter[i].morph, mo), V_(filter[i].cutoff, cut), V_(filter[i].resonance, res), V_(filter[i].mod_amt, 2 * (amt))
 #define V_ENV(i, a, d, s, r) V_(env[i].attack, a), V_(env[i].decay, d), V_(env[i].sustain, s), V_(env[i].release, r)
 #define V_LFO(i, sh, rt) V_(lfo[i].shape, sh), V_(lfo[i].rate, rt)
-#define V_SLOT(i, a, fn, b, amt) V_(mod[i].src_a, MSRC_##a), V_(mod[i].func, MFN_##fn), V_(mod[i].src_b, MSRC_##b), \
-    V_(mod[i].amount, FP_BIP(amt))
 #define V_AMP(drv, ds, rs) V_(amp.drive, drv), V_(amp.delay_send, ds), V_(amp.reverb_send, rs)
 #define V_KT(i, kt) V_(filter_key_track[i], kt)
 #define V_VIB(rt, dl) V_LFO(1, 0, rt), V_(lfo[1].delay, dl), V_(lfo[1].fade, FP_BIP(40)), V_(lfo[1].key_reset, 1)

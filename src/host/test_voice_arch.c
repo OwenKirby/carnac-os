@@ -97,11 +97,11 @@ static void base_patch(EngineState *e, uint8_t arch)
 }
 
 
-/* MOD SENDS (2026-11-03): a send sounds as the destination's own source set to the slot at the send's amount would.
- * The left channel of a held chord, the slot LFO1 alone (amount 100), each way; and an own source plus a send adds. */
+/* THE MOD MATRIX (2026-11-11): a route sounds as the destination's own source set to the route's source at the route's
+ * amount would (as a MOD SEND did). The left channel of a held chord, LFO1, each way; an own source plus a route adds. */
 #define SEND_N 8192
 static int32_t send_out[2][SEND_N];
-typedef void (*SendTweak)(EngineState *e, int way);   /* way 0: the old route (own source = MOD1), 1: a send */
+typedef void (*SendTweak)(EngineState *e, int way);   /* way 0: the own source (LFO1), 1: a route */
 static void send_take(uint8_t arch, SendTweak tw, int way, int32_t *out)
 {
     synth_init();
@@ -109,7 +109,6 @@ static void send_take(uint8_t arch, SendTweak tw, int way, int32_t *out)
     base_patch(e, arch);
     e->filter[0].mod_src = MSRC_NONE;
     e->filter[0].mod_amt = 0;
-    e->mod[0] = (ModSlotParams){MSRC_LFO1, MFN_ADD, MSRC_NONE, 100};
     e->lfo[0].rate = 90;
     tw(e, way);
     synth_midi_3(0x90, 48, 100);
@@ -119,46 +118,45 @@ static void send_take(uint8_t arch, SendTweak tw, int way, int32_t *out)
         for (int i = 0; i < 64; i++) out[n + i] = buf[2 * i];
     }
 }
-static void send1(EngineState *e, uint8_t dest, int amt)
+static void send1(EngineState *e, uint8_t dest, int amt)   /* route 0: LFO1 to dest */
 {
-    e->send[0].dest = (uint8_t)(dest | 0u << MSEND_SLOT_SHIFT);
-    e->send[0].amount = (uint8_t)(BIPOLAR_CENTER + amt);
+    e->route[0] = (ModRoute){MSRC_LFO1, MSRC_NONE, dest, (uint8_t)(BIPOLAR_CENTER + amt)};
 }
 static void tw_cut(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_F1_CUTOFF, 50); else { e->filter[0].mod_src = MSRC_MODSLOT1; e->filter[0].mod_amt = 100; }
+    if (way) send1(e, MDST_F1_CUTOFF, 50); else { e->filter[0].mod_src = MSRC_LFO1; e->filter[0].mod_amt = 100; }
 }
 static void tw_pitch(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_OSC1_PITCH, 50); else { e->osc[0].pitch_mod_src = MSRC_MODSLOT1; e->osc[0].pitch_mod_amt = 100; }
+    if (way) send1(e, MDST_OSC1_PITCH, 50); else { e->osc[0].pitch_mod_src = MSRC_LFO1; e->osc[0].pitch_mod_amt = 100; }
 }
 static void tw_morph(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_F1_MORPH, -30); else { e->filter[0].morph_mod_src = MSRC_MODSLOT1; e->filter[0].morph_mod_amt = 64 - 30; }
+    if (way) send1(e, MDST_F1_MORPH, -30); else { e->filter[0].morph_mod_src = MSRC_LFO1; e->filter[0].morph_mod_amt = 64 - 30; }
 }
 static void tw_pan(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_PAN, 40); else { e->amp.pan_mod_src = MSRC_MODSLOT1; e->amp.pan_mod_depth = 80; }
+    if (way) send1(e, MDST_PAN, 40); else { e->amp.pan_mod_src = MSRC_LFO1; e->amp.pan_mod_depth = 80; }
 }
 static void tw_scan(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_OSC1_SCAN, 45); else { e->osc[0].scan_mod_src = MSRC_MODSLOT1; e->osc[0].scan_mod_amt = 90; }
+    if (way) send1(e, MDST_OSC1_SCAN, 45); else { e->osc[0].scan_mod_src = MSRC_LFO1; e->osc[0].scan_mod_amt = 90; }
 }
-static void tw_lfo2(EngineState *e, int way)   /* LFO2 on the cutoff, its speed swept by MOD1 */
+static void tw_lfo2(EngineState *e, int way)   /* LFO2 on the cutoff, its speed swept by LFO1 */
 {
     e->filter[0].mod_src = MSRC_LFO2; e->filter[0].mod_amt = 90; e->lfo[1].rate = 60;
-    if (way) send1(e, MDST_LFO2_SPEED, 40); else { e->lfo[1].speed_mod_src = MSRC_MODSLOT1; e->lfo[1].speed_mod_amt = 64 + 40; }
+    if (way) send1(e, MDST_LFO2_SPEED, 40); else { e->lfo[1].speed_mod_src = MSRC_LFO1; e->lfo[1].speed_mod_amt = 64 + 40; }
 }
 static void tw_amp(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_AMP_LEVEL, 50); else { e->amp.amp_mod_src = MSRC_MODSLOT1; e->amp.amp_mod_depth = 100; }
+    if (way) send1(e, MDST_AMP_LEVEL, 50); else { e->amp.amp_mod_src = MSRC_LFO1; e->amp.amp_mod_depth = 100; }
 }
 static void tw_both(EngineState *e, int way)   /* ENV2 on the cutoff a little, plus a send (way 1) or not (way 0) */
 {
     e->filter[0].mod_src = MSRC_ENV2; e->filter[0].mod_amt = 20;
     if (way) send1(e, MDST_F1_CUTOFF, 50);
 }
-static void tw_mfx_k1(EngineState *e, int way)   /* STONE PHASER, MOD1 on its MANUAL (way 1) or not */
+static void tw_mfx_k1(EngineState *e, int way)   /* STONE PHASER, LFO1 on its MANUAL (way 1) or not */
 {
     e->mfx = (MfxParams){MFX_STONE_PHASER, {40, 0, 64, 127}, 0, {0, 0}};
     if (way) send1(e, MDST_MFX_K1, 60);
@@ -168,16 +166,24 @@ static void tw_mfx_ps(EngineState *e, int way)   /* PITCH SHIFT: a send to its P
     e->mfx = (MfxParams){MFX_PITCH_SHIFT, {12, 75, 0, 64}, 127, {30, 0}};
     if (way) send1(e, MDST_MFX_K1, 60);
 }
-static void tw_mod4(EngineState *e, int way)   /* MOD4 (2026-11-03) as MOD1: the same slot, the same send */
+static void tw_mod4(EngineState *e, int way)   /* the last route as the first: the same signal */
 {
+    send1(e, MDST_F1_CUTOFF, 50);
     if (way) {
-        e->mod[3] = e->mod[0];
-        e->mod[0] = (ModSlotParams){MSRC_NONE, MFN_ADD, MSRC_NONE, BIPOLAR_CENTER};
-        e->send[0].dest = (uint8_t)(MDST_F1_CUTOFF | 3u << MSEND_SLOT_SHIFT);
-        e->send[0].amount = (uint8_t)(BIPOLAR_CENTER + 50);
-    } else {
-        send1(e, MDST_F1_CUTOFF, 50);
+        e->route[NROUTE - 1u] = e->route[0];
+        e->route[0] = (ModRoute){MSRC_NONE, MSRC_NONE, MDST_NONE, BIPOLAR_CENTER};
     }
+}
+static void tw_via_up(EngineState *e, int way)   /* VIA the wheel at full is the route without a VIA */
+{
+    send1(e, MDST_F1_CUTOFF, 50);
+    if (way) e->route[0].via = MSRC_MODWHEEL;
+    synth_midi_3(0xB0, 1, 127);
+}
+static void tw_via_down(EngineState *e, int way)   /* VIA the wheel at 0 is no route */
+{
+    if (way) { send1(e, MDST_F1_CUTOFF, 50); e->route[0].via = MSRC_MODWHEEL; }
+    synth_midi_3(0xB0, 1, 0);
 }
 /* the destinations with no own source of their own (2026-11-03): way 1 a send, way 0 none; the sound must change */
 static void tw_res(EngineState *e, int way) { e->filter[0].resonance = 40; if (way) send1(e, MDST_F1_RES, 60); }
@@ -714,34 +720,6 @@ int main(void)
         CHECK(z[3] == z[2], "RAST: C4 in tune (%d vs %d crossings)", (int)z[3], (int)z[2]);
     }
 
-    /* MOD slot A*B with a source missing (2026-10-17): the missing one is the product's 1, so one source passes
-     * through; both missing give 0. LFO1 is the layer-level source that runs with no voice. */
-    {
-        static const struct { uint8_t a, b; int live; const char *what; } C[] = {
-            {MSRC_LFO1, MSRC_NONE, 1, "A only"}, {MSRC_NONE, MSRC_LFO1, 1, "B only"}, {MSRC_NONE, MSRC_NONE, 0, "none"},
-        };
-        for (unsigned k = 0; k < sizeof(C) / sizeof(C[0]); k++) {
-            int32_t peak = 0;
-            synth_init();
-            base_patch(&engine_state[0], VARCH_SINGLE);
-            engine_state[0].lfo[0].rate = 100;
-            engine_state[0].mod[0].src_a = C[k].a;
-            engine_state[0].mod[0].src_b = C[k].b;
-            engine_state[0].mod[0].func = MFN_MUL;
-            engine_state[0].mod[0].amount = 127;
-            synth_mod_watch = 0;
-            for (int i = 0; i < 64; i++) {
-                int32_t o;
-                render(256);
-                o = synth_mod_layer_out(0, 0);
-                if (o < 0) o = -o;
-                if (o > peak) peak = o;
-            }
-            synth_mod_watch = -1;
-            CHECK(C[k].live ? peak > 8000 : peak == 0, "MOD slot a*b, %s: peak %d", C[k].what, (int)peak);
-        }
-    }
-
     /* VEL > LEVEL (2026-10-26): ENV1's sets how much quieter a soft note is (0: none); ENV2's scales ENV2 for the note.
      * DEPTH MOD: 127 on the mod wheel, the wheel down stops LFO2, up gives it full; an LFO as the source reads as none */
     {
@@ -807,11 +785,22 @@ int main(void)
         send_same("MFX PITCH", VARCH_DUAL_OSC, tw_mfx_ps);   /* (way 0: no send; a list knob takes none) */
         send_take(VARCH_DUAL_OSC, tw_mfx_k1, 0, send_out[0]);
         send_take(VARCH_DUAL_OSC, tw_mfx_k1, 1, send_out[1]);
-        CHECK(memcmp(send_out[0], send_out[1], sizeof send_out[0]) != 0, "MOD SEND: MOD1 on the phaser's MANUAL changed nothing");
+        CHECK(memcmp(send_out[0], send_out[1], sizeof send_out[0]) != 0, "ROUTE: LFO1 on the phaser's MANUAL changed nothing");
         send_take(VARCH_DUAL_OSC, tw_both, 0, send_out[0]);
         send_take(VARCH_DUAL_OSC, tw_both, 1, send_out[1]);
-        CHECK(memcmp(send_out[0], send_out[1], sizeof send_out[0]) != 0, "MOD SEND: a send on top of ENV2 changed nothing");
-        send_same("MOD4", VARCH_DUAL_OSC, tw_mod4);
+        CHECK(memcmp(send_out[0], send_out[1], sizeof send_out[0]) != 0, "ROUTE: a route on top of ENV2 changed nothing");
+        send_same("LAST ROUTE", VARCH_DUAL_OSC, tw_mod4);
+        send_same("VIA WHEEL 0", VARCH_DUAL_OSC, tw_via_down);
+        send_take(VARCH_DUAL_OSC, tw_via_up, 0, send_out[0]);   /* (the wheel at 127 is 32766 of 32767: near, not bit-equal) */
+        send_take(VARCH_DUAL_OSC, tw_via_up, 1, send_out[1]);
+        {
+            double d = 0, s = 0;
+            for (int i = 0; i < SEND_N; i++) {
+                d += fabs((double)send_out[0][i] - send_out[1][i]);
+                s += fabs((double)send_out[0][i]);
+            }
+            CHECK(s > 0 && d < 0.01 * s, "ROUTE: VIA the wheel at full is not the plain route (%.4f)", s > 0 ? d / s : 1.0);
+        }
         send_differs("F1 RESONANCE", tw_res);
         send_differs("F2 DRIVE", tw_drive2);
         send_differs("DELAY SEND", tw_dly);
@@ -824,8 +813,10 @@ int main(void)
         for (int k = 0; k < 3; k++) {
             synth_init();
             base_patch(&engine_state[0], VARCH_DUAL_OSC);
-            engine_state[0].mod[0] = (ModSlotParams){MSRC_VELOCITY, MFN_ADD, MSRC_NONE, 127};
-            if (k) send1(&engine_state[0], MDST_GLIDE, k == 1 ? -50 : 50);
+            if (k) {
+                send1(&engine_state[0], MDST_GLIDE, k == 1 ? -50 : 50);
+                engine_state[0].route[0].src = MSRC_VELOCITY;
+            }
             perf_state.porta_time[0] = 70;
             perf_state.porta_mode[0] = PORTA_CONST_RATE;
             synth_midi_3(0x90, 48, 127);

@@ -26,17 +26,6 @@ typedef struct {
     LfoRuntimeState engines[2]; // Index 0 = LFO2 playhead, Index 1 = LFO3 playhead
 } PolyLfoVoiceArray;
 
-/* State of one mod slot (spec 4.5) that has memory from one sample to the next: sample & hold, lag and the
- * latch of smpleBonA. tick is the control pass it last ran in, so a slot read twice in one pass runs once. */
-typedef struct {
-    int32_t out_q15;      /* the slot's output for frame tick */
-    int32_t held_q15;     /* lag: the slewed value; smpleBonA: the latched value of B */
-    uint32_t tick;
-    uint8_t prev_side;    /* smpleBonA: which side of the midpoint A was on last tick */
-    uint8_t init;         /* held_q15 / prev_side have a value */
-    uint8_t busy;         /* set while the slot is evaluating, so a loop through its sources reads 0 */
-} ModFnState;
-
 /* aligned (so padded) to a 64-byte cache line (2026-10-16): the two cores render alternate voices (synth_runtime.c
  * CORE1_VOICES), so no line holds two cores' voices (a precaution, as X0X's mailbox: fx.c FX_LINE) */
 typedef struct __attribute__((aligned(64))) {
@@ -58,8 +47,6 @@ typedef struct __attribute__((aligned(64))) {
     // FIXED: Directly binds to the explicit structure layout container type
     PolyLfoVoiceArray poly_lfos;
 
-    ModFnState mod_fn[NMODSLOT];  // memory of the MODSLOT functions that keep state (spec 4.5)
-    uint32_t mod_pass;            // this voice's control pass count, the key of mod_fn's cache (per voice: two cores)
     int32_t glide_q16;            // portamento: pitch offset from the target note, Q16 cents, decays to 0
     int32_t glide_step_q16;       // portamento: how far glide_q16 moves toward 0 each sample (applied a tick at a time)
     int detune_cents;             // UNISON_STACK: this voice's offset from the note
@@ -125,7 +112,6 @@ int check_if_any_other_voice_held(int current_voice_index, uint8_t layer);
 void voice_allocator_init(void);
 
 /* Clears one mod slot's memory on this voice (a note-on that retriggers the voice starts the slot fresh). */
-void voice_mod_fn_reset(SynthVoiceNode *v, int slot);
 
 #endif
 

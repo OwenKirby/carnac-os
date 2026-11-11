@@ -87,7 +87,6 @@ enum {
     UIKNOB_BIP,                      /* stored 0..127, shown -64..+63 */
     UIKNOB_OCT,                      /* stored 0..127, shown -3..+3 */
     UIKNOB_SRC,                      /* a mod_source_list index (n_enum entries) */
-    UIKNOB_FN,                       /* a function_list index (n_enum entries) */
     UIKNOB_PERF,                     /* a HOME performance controller sent as MIDI (velocity, bend, mod wheel): the byte is
                                       * UIStateMachine.perf_knob, which the knob handler writes as it sends the message */
     UIKNOB_SEQ,                      /* a SEQ step value: read ui_sm_seq_knob_get, write ui_sm_seq_knob_set / _turn */
@@ -144,7 +143,7 @@ typedef union {
     ArpState arp;                    /* ARP_SEQ: the live arp pattern */
     WholePerformance whole;          /* WHOLE_PERF: the performance and everything it plays */
 } UiClipboard;
-PS_STATIC_ASSERT(sizeof(UiClipboard) == 1010u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD), then 24 (MOD SENDS), then 8 (MOD4) */
+PS_STATIC_ASSERT(sizeof(UiClipboard) == 1026u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD), then 24 (MOD SENDS), then 8 (MOD4), then 16 (the mod matrix) */
 /* spec 1: the name characters; MasterPerformancePreset.name holds indices into it (0 = space) */
 #define UI_CHAR_MAP " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/"
 /* 5.1: the play controllers. LAYER's knobs (2026-10-17): VELOCITY, MOD WHEEL, CC1, (2026-10-21) PORTA TIME, not CC2;
@@ -186,14 +185,12 @@ typedef struct {
     UiSlotQuery slot_query;          /* ui_sm_attach_store; NULL: slots read UISLOT_UNKNOWN */
     void *slot_ctx;
     uint8_t perf_knob[UIPERF_COUNT]; /* 5.1 HOME knobs 1..3 as last sent (velocity, bend 64 = centre, mod wheel) */
-    uint8_t mod_slot;                /* the MOD page's SLOT (knob 4), 0..NMODSLOT-1: the slot its knobs and sends edit */
     uint8_t sub6_knob;               /* the OSCMIXER's SUB WAVE knob: its step, from sub_octave + sub_waveform each
                                       * ui_sm_knob, back into them in ui_sm_knob_written */
     Krec *rec;                       /* the REC page's loop (ui_sm_attach_rec); NULL: REC only on SEQ / ARP */
     uint8_t rec_ask;                 /* the confirm popup asks DOUBLE (1) or CLEAR (2) for the loop; 0: not the loop's */
     uint8_t rec_msg;                 /* a word over the loop for rec_msg_ms: 1 UNDO, 2 NOTHING TO UNDO, 3 FULL */
     uint16_t rec_msg_ms;
-    uint8_t sends_full;              /* 1: a send turned up found the pool full (the popup says so), until the next turn */
     /* the data the menu rows edit; owned by the caller, must stay valid while the machine runs */
     MasterPerformancePreset *perf;
     EngineState *engine[NLAYER];
@@ -282,15 +279,10 @@ void ui_sm_tick(UIStateMachine *sm, uint16_t ms);
 /* 1 while a SAVE press would act, so its button flashes: the save page with an ACTION armed (SAVE when the page opens:
  * the button is the shortcut to it), or the confirm popup waiting for SAVE */
 uint8_t ui_sm_save_armed(const UIStateMachine *sm);
-/* a MOD page row (a destination, 2026-10-17): fed by this slot, by another source, or by nothing. Turning the amount
- * of one not fed by this slot routes it here (from 0); its value reads 0 and its text the source it has now */
-enum { UIMOD_NONE, UIMOD_HERE, UIMOD_OTHER };      /* a MOD page row: no send, the SLOT's send, only another slot's */
-uint8_t ui_sm_mod_route(const UIStateMachine *sm, uint8_t row);
-/* MOD SENDS (2026-11-03, PresetStructures.h ModSendParams) */
-uint8_t ui_sm_mod_slot(const UIStateMachine *sm);                        /* the MOD page's SLOT, 0..NMODSLOT-1 */
-int8_t ui_sm_send(const EngineState *e, uint8_t slot, uint8_t dest);   /* slot's send to MDST_* dest, -64..+63, 0 none */
-uint8_t ui_sm_dest_slots(const EngineState *e, uint8_t dest);          /* bit s: slot s sends to dest */
-uint8_t ui_sm_dest_live(const UIStateMachine *sm, uint8_t layer, uint8_t dest);   /* can take a send (MFX knobs: an
+/* THE MOD MATRIX (2026-11-11, PresetStructures.h ModRoute) */
+uint8_t ui_sm_route_sel(const UIStateMachine *sm);       /* the route the MOD MATRIX's knobs edit (the cursor's) */
+uint8_t ui_sm_dest_routes(const EngineState *e, uint8_t dest);   /* routes in use to MDST_* dest */
+uint8_t ui_sm_dest_live(const UIStateMachine *sm, uint8_t layer, uint8_t dest);   /* can take a route (MFX knobs: an
                                                                      * MFX on, not a list knob) */
 uint8_t ui_sm_row_dest(const UIStateMachine *sm, uint8_t row);   /* the MDST_* a row of the page is (MOD) or belongs to (its
                                                              * source, amount or the parameter it moves), 0 none */

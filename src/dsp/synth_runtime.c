@@ -292,8 +292,6 @@ SYNTH_COLD static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note
     adsr_note_on_legato(&v->amp_env, &e->env[0], other_held);
     adsr_note_on_legato(&v->mod_env, &e->env[1], other_held);
     adsr_note_on_legato(&v->aux_env, &e->env[2], other_held);
-    for (int s = 0; s < (int)NMODSLOT; s++)
-        voice_mod_fn_reset(v, s);
 
     /* KEY RESET (spec 4.4): LFO2 and LFO3 of this voice restart at their phase start if they ask for it. */
     lfo_key_reset(&e->lfo[1], &v->poly_lfos.engines[0]);
