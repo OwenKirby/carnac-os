@@ -537,7 +537,7 @@ typedef struct {
 /* arp_chords.c's genres used here (test_preset_store checks the names) */
 enum { FG_TRAD_MAJ = 6, FG_TRAD_MIN_1 = 7, FG_TRAD_MIN_2 = 8, FG_OCT = 13, FG_4TH = 14, FG_5TH = 15, FG_MIN = 17,
        FG_M7 = 18, FG_MIN7 = 19, FG_MIN9 = 21, FG_POP_INV = 24, FG_CINE_1 = 32, FG_CINE_2 = 33, FG_CINE_3 = 34,
-       FG_CINE_5 = 36, FG_CINE_6 = 37, FG_CLASSICAL_1 = 77, FG_MODERN_1 = 81 };
+       FG_CINE_5 = 36, FG_CINE_6 = 37, FG_CLASSICAL_1 = 94, FG_MODERN_1 = 98 };
 #define FA_T ARP_CHORD_TIE
 /* chord keys */
 enum { FA_F2 = 41, FA_G2 = 43, FA_AB2 = 44, FA_A2 = 45, FA_BB2 = 46, FA_B2 = 47, FA_C3 = 48, FA_D3 = 50, FA_EB3 = 51,

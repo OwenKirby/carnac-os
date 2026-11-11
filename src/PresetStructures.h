@@ -230,7 +230,7 @@ static inline void seq_lane_set_event(SequencerLane *lane, uint8_t event_type)
 #define ARP_CHORD_TIE 126u           /* chord_root of a TIE step: the chord before it carries on (8.1) */
 #define ARP_ROOT_IS_CHORD(r) ((r) < ARP_CHORD_TIE)   /* a chord key's note, 0..125 */
 #define ARP_NOCT 4u                  /* octave_range 0..3 = the pattern spans 1..4 octaves */
-#define ARP_NVAR 24u                 /* variation: 8.3 rhythm_variation_table row r, column c (A / B) = r * 2 + c */
+#define ARP_NVAR 25u                 /* variation: 8.3 rhythm_variation_table row r, column c (A / B) = r * 2 + c; 24: ALL, every cell struck */
 enum {                               /* style (knob 3, "phrase category"): the order a step's strikes take the notes */
     ARPSTYLE_HOLD,                   /* the chord struck once and held while the steps after it play the same chord (not
                                       * again on the clock); RHYTHM is its strum then: 0 none, 1 up, 2 down, its notes
@@ -299,7 +299,7 @@ static inline uint8_t arp_rate_of_div(uint8_t div)
     return R[div < ARPDIV_COUNT ? div : (uint8_t)ARP_TIMING_DEFAULT];
 }
 #define ARP_ACCENT_DEFAULT 120u
-#define ARP_GENRE_DEFAULT 83u        /* arp_chords.h ARP_GENRE_PHRYGIAN (asserted there) */
+#define ARP_GENRE_DEFAULT 100u       /* arp_chords.h ARP_GENRE_PHRYGIAN (asserted there) */
 static inline void arp_defaults(ArpState *a)
 {
     uint8_t i;

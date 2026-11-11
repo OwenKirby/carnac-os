@@ -3,7 +3,7 @@
  * (the 8 captured steps, the menu list) and 8.3 (each step's rhythm).
  *
  *   y   0..20   header: ARP, its transport (carp_playing) and the playing step, REC and LATCH when on, the clock
- *   y  21..53   knob cards: RATE, OCTAVE, STYLE, RHYTHM (STRUM under HOLD) (the live dial values a capture copies)
+ *   y  21..53   knob cards: RATE, OCTAVE, STYLE, VARIATION (STRUM under HOLD) (the live dial values a capture copies)
  *   y  56..124  menu list: LAYER, TIMING, GATE, SEQ LENGTH, TRANSPOSE MAQ, GENRE BANK, ACCENT VEL (the cursor row in
  *               white; 6 at a time, the window scrolling with the cursor)
  *   y 127..143  the chord sounding (the playing step's or the chord key's) as names and standing stones (laid out by

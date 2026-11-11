@@ -146,14 +146,14 @@ PS_STATIC_ASSERT(sizeof(SAVE_TARGET_NAMES) / sizeof(SAVE_TARGET_NAMES[0]) == UIS
 PS_STATIC_ASSERT(sizeof(NAME_POS_NAMES) / sizeof(NAME_POS_NAMES[0]) == NAME_LEN, "one name per name position");
 PS_STATIC_ASSERT(sizeof(CHAR_NAMES) / sizeof(CHAR_NAMES[0]) == CHAR_MAP_LEN && sizeof(UI_CHAR_MAP) == CHAR_MAP_LEN + 1u,
                  "one name per character");
-/* 2.2 ARP knobs: RATE (ARPRATE_NAMES), OCTAVE RANGE, STYLE (arp_seq.h; HOLD first, 2026-10-21), RHYTHM (8.3 row and
+/* 2.2 ARP knobs: RATE (ARPRATE_NAMES), OCTAVE RANGE, STYLE (arp_seq.h; HOLD first, 2026-10-21), VARIATION (8.3 row and
  * column: A / B, T for the triplet B column; a HOLD step's strum, carp_hold_strum, under STYLE HOLD) */
 static const char *const ARPOCT_NAMES[] = {"1 OCT", "2 OCT", "3 OCT", "4 OCT"};
 static const char *const ARPSTYLE_NAMES[] = {"HOLD", "BLOCK", "UP", "DOWN", "UP-DN", "DN-UP", "RANDOM", "STRUM UP",
                                              "STRUM DN"};
-static const char *const ARPVAR_NAMES[] = {
-    "01A", "01B", "02A", "02B", "03A", "03B", "04A", "04B", "05A", "05B", "06A", "06B",
-    "07A", "07T", "08A", "08T", "09A", "09T", "10A", "10T", "11A", "11T", "12A", "12T",
+static const char *const ARPVAR_NAMES[] = {       /* the J-6's style.variation: 4.nn = its style 4 (our A), 5.nn = style 5 (our B / T) */
+    "4.01", "5.01", "4.02", "5.02", "4.03", "5.03", "4.04", "5.04", "4.05", "5.05", "4.06", "5.06",
+    "4.07", "5.07", "4.08", "5.08", "4.09", "5.09", "4.10", "5.10", "4.11", "5.11", "4.12", "5.12", "ALL",
 };
 PS_STATIC_ASSERT(sizeof(ARPOCT_NAMES) / sizeof(ARPOCT_NAMES[0]) == ARP_NOCT, "one name per octave range");
 PS_STATIC_ASSERT(sizeof(ARPSTYLE_NAMES) / sizeof(ARPSTYLE_NAMES[0]) == ARPSTYLE_COUNT, "one name per ARPSTYLE_*");
@@ -677,7 +677,7 @@ static const UiKnob EFFECTS_KNOBS[4] = {
 /* 2.2 ARP (chord page): the live dial values a capture copies into a step (UIStateMachine.arp_knob, by index) */
 static const UiKnob ARP_KNOBS[4] = {
     {"RATE", 0, UIKNOB_LIST, ARPRATE_COUNT, ARPRATE_NAMES}, {"OCTAVE", 1, UIKNOB_LIST, ARP_NOCT, ARPOCT_NAMES},
-    {"STYLE", 2, UIKNOB_LIST, ARPSTYLE_COUNT, ARPSTYLE_NAMES}, {"RHYTHM", 3, UIKNOB_LIST, ARP_NVAR, ARPVAR_NAMES},
+    {"STYLE", 2, UIKNOB_LIST, ARPSTYLE_COUNT, ARPSTYLE_NAMES}, {"VARIATION", 3, UIKNOB_LIST, ARP_NVAR, ARPVAR_NAMES},
 };
 /* LAYER (2026-10-17): the play controllers. VELOCITY is the keys' own; MOD WHEEL goes out as CC 1; CC1 sets the
  * CUSTOMCC1 mod source directly (no CC number needed). Knob 4 (2026-10-21, was CC2): the focused layer's PORTA TIME,
@@ -2048,7 +2048,7 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
     v = sm->arp_knob[knob] <= lim[knob] ? sm->arp_knob[knob] : lim[knob];
     sm->arp_knob[knob] = v;
     if (sm->arp_knob[2] == ARPSTYLE_HOLD && sm->arp_knob[3] >= ARP_NSTRUM) {
-        sm->arp_knob[3] = ARP_NSTRUM - 1u;           /* HOLD: RHYTHM is the strum, none / up / down */
+        sm->arp_knob[3] = ARP_NSTRUM - 1u;           /* HOLD: VARIATION is the strum, none / up / down */
         if (knob == 3u)
             v = sm->arp_knob[3];
     }

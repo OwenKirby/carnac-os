@@ -19,7 +19,7 @@ static int fails;
 #define QUARTER 22050u               /* 24 ticks at 120 BPM */
 #define CELL 5512u                   /* a quarter's 4 cells: 5512.5 frames */
 #define NEV 4096
-#define G_UTIL_MAJ 16u               /* arp_genre_names: Utility_Maj */
+#define G_UTIL_MAJ 18u               /* arp_genre_names: Utility_M7, a 4-note chord on every key (the J-6's Utility_Maj is a triad) */
 #define G_TRAD_MAJ 6u
 #define FM1_LOW 53u                  /* F3, the FM1's lowest key */
 
@@ -106,16 +106,23 @@ int main(void)
     int g, p, i, k;
     uint8_t c[ARP_CHORD_NOTES], cells[CARP_NCELL], n;
 
-    /* ---- the chord bank (8.3): 4 ascending voices on the key, spec rows kept ---- */
+    /* ---- the chord bank: the Roland J-6's 100 chord sets (manual pp. 25-33), 1..4 ascending notes a key ---- */
     for (g = 0; g < (int)ARP_GENRE_COUNT; g++)
         for (p = 0; p < 12; p++) {
-            uint8_t iv[ARP_CHORD_NOTES];
-            arp_chord_iv((uint8_t)g, (uint8_t)p, iv);
-            CHECK(iv[0] == 0 && iv[1] > 0 && iv[2] > iv[1] && iv[3] > iv[2] && iv[3] <= 40,
-                  "%s pc %d: %u %u %u %u", arp_genre_names[g], p, iv[0], iv[1], iv[2], iv[3]);
+            int8_t off[ARP_CHORD_NOTES];
+            uint8_t m = arp_chord_off((uint8_t)g, (uint8_t)p, off), q;
+            CHECK(m >= 1 && m <= ARP_CHORD_NOTES, "%s pc %d: %u notes", arp_genre_names[g], p, m);
+            for (q = 1; q < m; q++)
+                CHECK(off[q] > off[q - 1] && off[q] - off[0] <= 40, "%s pc %d: voice %u", arp_genre_names[g], p, q);
         }
     CHECK(strcmp(arp_genre_names[0], "Pop_1") == 0 && strcmp(arp_genre_names[ARP_GENRE_COUNT - 2u], "Modern_2") == 0 &&
-          strcmp(arp_genre_names[G_UTIL_MAJ], "Utility_Maj") == 0, "8.2 genre order");
+          strcmp(arp_genre_names[G_UTIL_MAJ], "Utility_M7") == 0, "J-6 genre order");
+    n = carp_chord_notes(0, 48, c);              /* J-6 set 1 on C: Cadd9 = C3 G3 D4 E4 */
+    CHECK(n == 4 && c[0] == 48 && c[1] == 55 && c[2] == 62 && c[3] == 64, "Pop_1 C3 = the J-6's Cadd9");
+    n = carp_chord_notes(0, 53, c);              /* .. on F: FM9 = F2 A3 E4 G4, a key an octave up plays it there */
+    CHECK(n == 4 && c[0] == 53 && c[1] == 69 && c[2] == 76 && c[3] == 79, "Pop_1 F3 = the J-6's FM9 an octave up");
+    n = carp_chord_notes(13, 60, c);             /* Oct Stack: 2 notes, C4 and C5 */
+    CHECK(n == 2 && c[0] == 72 && c[1] == 84, "Oct_Stack C4 = a two-note stack (%u)", n);
     CHECK(strcmp(arp_genre_names[ARP_GENRE_PHRYGIAN], "Phrygian") == 0 && (arp_genre_scale[ARP_GENRE_PHRYGIAN] & 15u) ==
           SEQSCALE_PHRYGIAN, "Phrygian after the spec's list, on the Phrygian scale");
     { ArpState d; arp_defaults(&d);
@@ -133,6 +140,7 @@ int main(void)
     CHECK(carp_rhythm(8, cells) == 4 && cells[0] == 1 && cells[1] == 2 && cells[2] == 1 && cells[3] == 0, "05A = o ~ o _");
     CHECK(carp_rhythm(13, cells) == 3 && cells[0] == 1 && cells[1] == 0 && cells[2] == 0, "07T = o _ _, 3 cells");
     CHECK(carp_rhythm(11, cells) == 4, "06B is straight: 4 cells");
+    CHECK(carp_rhythm(24, cells) == 4 && cells[0] == 1 && cells[1] == 1 && cells[2] == 1 && cells[3] == 1, "ALL = o o o o");
     CHECK(carp_div_ticks(ARPDIV_2) == 192 && carp_div_ticks(ARPDIV_1_4) == 24 && carp_div_ticks(ARPDIV_1_4T) == 16 &&
           carp_div_ticks(ARPDIV_1_32) == 3 && carp_div_ticks(ARPDIV_1_32T) == 2, "TIMING in pulses");
 
@@ -309,7 +317,7 @@ int main(void)
         *kb = ARPSTYLE_DOWN; ui_sm_knob_written(&sm, UIPAGE_ARP, 2);
         kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 3, &info);
         *kb = 13; ui_sm_knob_written(&sm, UIPAGE_ARP, 3);
-        CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 3), "07T") == 0, "RHYTHM text");
+        CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 3), "5.07") == 0, "VARIATION text (the J-6's style 5, variation 07)");
         ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);                 /* B4 = step 3 */
         ui_sm_arp_key(&sm, 21, FM1_LOW + 21u, 1, 100);                 /* D5 = step 5 */
         ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 1, 90);                    /* A3 */

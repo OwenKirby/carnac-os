@@ -77,7 +77,7 @@ static void pattern(void)
     }
     arp_state.sequence_length = 6;
     arp_state.gate_length = 80;
-    arp_state.current_genre_bank = 66;               /* Neo_Soul_1 */
+    arp_state.current_genre_bank = 71;               /* Neo_Soul_1 */
     maq_init(&q, lanes, &perf_state, sink);
     carp_init(&a, &arp_state, &perf_state, sink);
     ui_sm_init(&sm, &perf_state, &engine_state[0], &engine_state[1], lanes, &arp_state);

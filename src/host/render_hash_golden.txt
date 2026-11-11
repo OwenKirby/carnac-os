@@ -53,12 +53,12 @@ arch 8 noise 1 slots 1  ed76679c
 arch 8 noise 2 slots 0  cb5cc035
 arch 8 noise 2 slots 1  cc006acf
 dual layer  bad905f0
-seq ext 0 block 32  a746bfac
-seq ext 0 block 7  cc334a41
-seq ext 0 block 128  46b99939
-seq ext 1 block 32  e69b93b3
-seq ext 1 block 7  20849167
-seq ext 1 block 128  94673cbf
+seq ext 0 block 32  8f96c6fa
+seq ext 0 block 7  5ba978ff
+seq ext 0 block 128  6712b960
+seq ext 1 block 32  8b5bebdd
+seq ext 1 block 7  66e20a87
+seq ext 1 block 128  49c46597
 mfx L1 1 L2 1  4e353866
 mfx L1 2 L2 2  3a66a63e
 mfx L1 3 L2 3  b3d9c9f1

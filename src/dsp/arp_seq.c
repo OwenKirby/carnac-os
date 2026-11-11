@@ -27,7 +27,8 @@ static const uint8_t CARP_RHYTHM[12][2][4] = {
     {{1, 0, 1, 1}, {1, 0, 1, 0}},    /* 11, B triplet */
     {{0, 1, 1, 1}, {0, 1, 1, 0}},    /* 12, B triplet */
 };
-PS_STATIC_ASSERT(ARP_NVAR == 2u * 12u, "one variation per rhythm table row and column");
+#define CARP_VAR_ALL 24u             /* after the table: every cell struck (a steady arpeggio, a chord repeated at RATE) */
+PS_STATIC_ASSERT(ARP_NVAR == 2u * 12u + 1u, "one variation per rhythm table row and column, then ALL");
 
 /* 8.2 TIME DIVISION (TIMING) in 24 PPQN pulses: 2, 1, 1/2, 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T (whole notes) */
 static const uint8_t CARP_DIV_TICKS[ARPDIV_COUNT] = {192u, 96u, 48u, 24u, 16u, 12u, 8u, 6u, 4u, 3u, 2u};
@@ -41,9 +42,9 @@ uint16_t carp_div_ticks(uint8_t division)
 uint8_t carp_rhythm(uint8_t variation, uint8_t cells[CARP_NCELL])
 {
     uint8_t v = variation < ARP_NVAR ? variation : (uint8_t)0u, row = (uint8_t)(v >> 1), col = (uint8_t)(v & 1u), i;
-    uint8_t n = col && row >= 6u ? (uint8_t)3u : (uint8_t)CARP_NCELL;
+    uint8_t n = col && row >= 6u && v != CARP_VAR_ALL ? (uint8_t)3u : (uint8_t)CARP_NCELL;
     for (i = 0u; i < CARP_NCELL; i++)
-        cells[i] = i < n ? CARP_RHYTHM[row][col][i] : (uint8_t)CARP_CELL_REST;
+        cells[i] = v == CARP_VAR_ALL ? (uint8_t)CARP_CELL_STRIKE : i < n ? CARP_RHYTHM[row][col][i] : (uint8_t)CARP_CELL_REST;
     return n;
 }
 
@@ -55,15 +56,15 @@ uint8_t carp_hold_strum(uint8_t variation, uint8_t *up)
 
 uint8_t carp_chord_notes(uint8_t genre, uint8_t root, uint8_t out[ARP_CHORD_NOTES])
 {
-    uint8_t iv[ARP_CHORD_NOTES];
-    uint8_t i, n = 0u;
-    uint16_t v;
+    int8_t off[ARP_CHORD_NOTES];
+    uint8_t i, n = 0u, m;
+    int16_t v;
     if (genre >= ARP_GENRE_COUNT) genre = 0u;
     if (root > VAL_MAX) root = VAL_MAX;
-    arp_chord_iv(genre, (uint8_t)(root % 12u), iv);
-    for (i = 0u; i < ARP_CHORD_NOTES; i++) {         /* ascending in the table, so ascending here */
-        v = (uint16_t)(root + iv[i]);
-        if (v <= VAL_MAX)
+    m = arp_chord_off(genre, (uint8_t)(root % 12u), off);
+    for (i = 0u; i < m; i++) {                       /* ascending in the table, so ascending here */
+        v = (int16_t)(root + off[i]);
+        if (v >= 0 && v <= (int16_t)VAL_MAX)
             out[n++] = (uint8_t)v;
     }
     return n;
