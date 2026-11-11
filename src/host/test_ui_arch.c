@@ -204,6 +204,30 @@ int main(void)
     /* SPREAD: spread, sub wave, sub, noise level on the knobs (2026-11-11); the spread mod's source and amount rows */
     engine_state[0].arch = VARCH_SPREAD;
     ui_sm_enforce(&sm);
+    {                                                /* OSC1 (2026-11-11): FINE TUNE knob 3 always, KEY TRACK only with two oscillators */
+        UiKnobInfo i;
+        uint8_t pg = sm.page;
+        sm.page = UIPAGE_OSC1;
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSC1, 0, 2, &i) == &engine_state[0].osc[0].fine && i.kind == UIKNOB_FINE &&
+              find_row("FINE TUNE") < 0 && find_row("SCAN MOD AMT") >= 0 && find_row("KEY TRACK") < 0,
+              "SINGLE OSC1: FINE TUNE knob 3, SCAN MOD AMT a row, no KEY TRACK");
+        engine_state[0].arch = VARCH_DUAL_OSC;
+        ui_sm_enforce(&sm);
+        sm.page = UIPAGE_OSC1;
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSC1, 0, 2, &i) == &engine_state[0].osc[0].fine && find_row("KEY TRACK") >= 0 &&
+              find_row("SCAN MOD AMT") >= 0, "DUAL OSC OSC1: FINE TUNE knob 3, KEY TRACK and SCAN MOD AMT rows");
+        engine_state[0].arch = VARCH_DUAL_FILTER;    /* one oscillator: no KEY TRACK (BINAURAL too) */
+        ui_sm_enforce(&sm);
+        sm.page = UIPAGE_OSC1;
+        CHECK(find_row("KEY TRACK") < 0, "DUAL FILTER OSC1: no KEY TRACK");
+        engine_state[0].arch = VARCH_BINAURAL;
+        ui_sm_enforce(&sm);
+        sm.page = UIPAGE_OSC1;
+        CHECK(find_row("KEY TRACK") < 0, "BINAURAL OSC1: no KEY TRACK");
+        engine_state[0].arch = VARCH_SPREAD;
+        ui_sm_enforce(&sm);
+        sm.page = pg;
+    }
     dump("OSCMIX SPREAD"); knobs(UIPAGE_OSCMIX, "OSCMIX SPREAD");
     {
         UiKnobInfo i;

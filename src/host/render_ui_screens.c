@@ -190,13 +190,14 @@ int main(int argc, char **argv)
     shot(dir, "osc1");
     go(UIPAGE_OSC2);
     shot(dir, "osc2");
-    {                                                /* FINE TUNE (2026-10-17): +-7 semitones; SINGLE has SCAN AMT on knob 3 */
+    {                                                /* FINE TUNE (2026-10-17): +-7 semitones, knob 3 in every architecture;
+                                                      * KEY TRACK only with two oscillators (2026-11-11) */
         uint8_t keep = e->arch;
         e->osc[0].fine = 100;                        /* +229 cents */
         ui_sm_tick(&sm, UI_ROWPOP_MS);
         go(UIPAGE_OSC1);
         shot(dir, "osc1_fine");
-        e->arch = VARCH_SINGLE;
+        e->arch = VARCH_SPREAD;
         ui_sm_enforce(&sm);
         go(UIPAGE_OSC1);
         shot(dir, "osc1_single");

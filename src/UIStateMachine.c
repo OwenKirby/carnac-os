@@ -193,15 +193,15 @@ PS_STATIC_ASSERT(sizeof(SEQMODE_NAMES) / sizeof(SEQMODE_NAMES[0]) == SEQ_MODE_CO
 PS_STATIC_ASSERT(sizeof(VARCH_NAMES) / sizeof(VARCH_NAMES[0]) == VARCH_COUNT, "one name per VARCH_*");
 
 /* OSC1 / OSC2: knobs 1..4 are not rows (3: the knob frame cannot be highlighted); sync last, OSC2 only */
-/* SINGLE, SPREAD and STRIKE (2026-10-17): knob 3 is SCAN AMT, so FINE TUNE is a row there (OSC_KNOBS_SCAN) */
-#define A_SCANKNOB ((uint16_t)(VARCH_BIT(VARCH_SINGLE) | VARCH_BIT(VARCH_SPREAD) | VARCH_BIT(VARCH_STRIKE)))
+/* FINE TUNE is knob 3 in every architecture, SCAN MOD AMT a row (2026-11-11, user). KEY TRACK only with two
+ * oscillators (DUAL OSC, STACK, FULL): one drones or tracks partly against the other (FM); with one it is superfluous. */
+#define A_KTRACK ((uint16_t)(A(DUAL_OSC) | A(STACK) | A(FULL)))
 static const UiRow OSC_ROWS[] = {
     {"WAVE", OFS(OscParams, wavebank), 0, 255, RK_WAVE, 0, NULL, A_ALL},
-    {"FINE TUNE", OFS(OscParams, fine), 0, VAL_MAX, RK_FINE, 0, NULL, A_SCANKNOB},
     {"SCAN MOD SRC", OFS(OscParams, scan_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"SCAN MOD AMT", OFS(OscParams, scan_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, (uint16_t)(VARCH_ALL & ~A_SCANKNOB)},
+    {"SCAN MOD AMT", OFS(OscParams, scan_mod_amt), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"PCH MOD SRC", OFS(OscParams, pitch_mod_src), 0, SRC_MAX, RK_BYTE, 0, MSRC_NAMES, A_ALL},
-    {"KEY TRACK", OFS(OscParams, key_track), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"KEY TRACK", OFS(OscParams, key_track), 0, VAL_MAX, RK_BYTE, 0, NULL, A_KTRACK},
     {"OSC SYNC", OFS(OscParams, sync), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
 };
 /* OSCMIXER (4.1): a parameter on one of the architecture's knobs (OSCMIX_KNOBS) has no row there. Balance and
@@ -593,10 +593,6 @@ typedef struct {
 static const UiKnob OSC_KNOBS[4] = {
     KOSC(scan, "WAVE SCAN", UIKNOB_RAW), KOSC(octave, "OCTAVE", UIKNOB_OCT),
     KOSC(fine, "FINE TUNE", UIKNOB_FINE), KOSC(pitch_mod_amt, "PITCH MOD", UIKNOB_RAW),
-};
-static const UiKnob OSC_KNOBS_SCAN[4] = {   /* SINGLE / SPREAD / STRIKE: the scan's mod amount on knob 3 */
-    KOSC(scan, "WAVE SCAN", UIKNOB_RAW), KOSC(octave, "OCTAVE", UIKNOB_OCT),
-    KOSC(scan_mod_amt, "SCAN AMT", UIKNOB_RAW), KOSC(pitch_mod_amt, "PITCH MOD", UIKNOB_RAW),
 };
 /* OSCMIXER by architecture (2026-11-11, user layout). With one oscillator: knob 2 SUB WAVE, 3 SUB LEVEL, 4 NOISE
  * (SPREAD's spread on knob 1, its mod a row); BINAURAL keeps the right ear's knobs 1 / 2, SUB WAVE on 4, the noise a
@@ -2699,8 +2695,7 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     if (knob < 4u && page < UIPAGE_COUNT && ui_sm_page_visible(sm, page, layer)) {
         switch (page) {
         case UIPAGE_OSC1: case UIPAGE_OSC2:
-            k = page == UIPAGE_OSC2 && !varch_uses_osc2(a) ? &NOISE_KNOBS[knob] :
-                (VARCH_BIT(a) & A_SCANKNOB) != 0u ? &OSC_KNOBS_SCAN[knob] : &OSC_KNOBS[knob];
+            k = page == UIPAGE_OSC2 && !varch_uses_osc2(a) ? &NOISE_KNOBS[knob] : &OSC_KNOBS[knob];
             break;
         case UIPAGE_OSCMIX: k = &OSCMIX_KNOBS[a][knob]; break;
         case UIPAGE_FILTER1: case UIPAGE_FILTER2: k = &FILTER_KNOBS[knob]; break;
