@@ -88,7 +88,7 @@ void pool_range(uint8_t layer, int *first, int *count) {
     static uint8_t cache_n[NLAYER];
     uint32_t key = (uint32_t)mode | (uint32_t)(perf_state.voice_mode[0] & 7u) << 2 | (uint32_t)(perf_state.voice_mode[1] & 7u) << 5 |
                    (uint32_t)varch_voice_cost(&engine_state[0]) << 8 | (uint32_t)varch_voice_cost(&engine_state[1]) << 16 |
-                   (uint32_t)(engine_state[0].mfx.type != 0u) << 24 | (uint32_t)(engine_state[1].mfx.type != 0u) << 25;
+                   (uint32_t)(engine_state[0].mfx.type & 15u) << 24 | (uint32_t)(engine_state[1].mfx.type & 15u) << 28;   /* (the MFX is priced by type) */
     int n[NLAYER];
     if (key != cache_key) {
         for (uint8_t l = 0; l < NLAYER; l++)

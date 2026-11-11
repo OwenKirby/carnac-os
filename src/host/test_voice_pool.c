@@ -6,6 +6,7 @@
 #include "voice_allocator.h"
 #include "preset.h"
 #include "dsp/synth_runtime.h"
+#include "dsp/mfx.h"
 
 #define P VMODE_POLY_REUSE
 static int fails;
@@ -56,7 +57,34 @@ int main(void)
               varch_voice_cost(&e));
     }
 
-    /* an MFX takes 5 tenths off a core: SPREAD (13) 4 a core is 52, over the 51 left: 6 voices; SINGLE and STACK keep theirs */
+    /* the MFX is priced by type (2026-11-11): the price table covers every type, and one layer's costs a fixed part + half */
+    CHECK(MFX_COUNT == 13, "the MFX price table (PresetStructures.h mfx_full_cost) has 13 entries, MFX_COUNT is %d", (int)MFX_COUNT);
+    CHECK(mfx_full_cost(MFX_OFF) == 0 && mfx_full_cost(MFX_STONE_PHASER) == 8 && mfx_full_cost(MFX_METAL) == 20 &&
+          mfx_full_cost(MFX_ENS_PHASER) == 13 && mfx_full_cost(MFX_BBD_ECHO) == 8, "MFX full costs");
+    {
+        EngineState ph = mk(VARCH_SPREAD, 0, FLT_MULTI, 0), br = ph, no = ph;
+        ph.mfx.type = MFX_STONE_PHASER;
+        br.mfx.type = MFX_METAL;
+        CHECK(voice_overhead(&ph, &no, 1) == 7 && voice_overhead(&no, &ph, 1) == 7, "one phaser: 3 + 4 (%u)", voice_overhead(&ph, &no, 1));
+        CHECK(voice_overhead(&br, &no, 1) == 13, "one BRONZE AGE: 3 + 10 (%u)", voice_overhead(&br, &no, 1));
+        CHECK(voice_overhead(&ph, &ph, 1) == 8, "two phasers: the dearer (%u)", voice_overhead(&ph, &ph, 1));
+        CHECK(voice_overhead(&br, &br, 1) == 20, "two BRONZE AGE: 20 (%u)", voice_overhead(&br, &br, 1));
+        CHECK(voice_overhead(&ph, &br, 1) == 22 && voice_overhead(&br, &ph, 1) == 22,
+              "a phaser beside a BRONZE AGE costs the BRONZE AGE's full price + 2 (%u)", voice_overhead(&ph, &br, 1));
+        CHECK(voice_overhead(&br, &br, 0) == 13, "SINGL: only layer 1's MFX runs (%u)", voice_overhead(&br, &br, 0));
+        /* a BRONZE AGE on STACK (15): 43 a core left, 2 a core: 4 voices; SINGLE (10) 4 a core still fits */
+        e = mk(VARCH_STACK, 0, FLT_MULTI, 0); e.mfx.type = MFX_METAL;
+        CHECK(varch_voice_cap(&e) == 4, "STACK + BRONZE AGE: cap %u, want 4", varch_voice_cap(&e));
+        e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0); e.mfx.type = MFX_METAL;
+        CHECK(varch_voice_cap(&e) == 8, "SINGLE + BRONZE AGE: cap %u, want 8", varch_voice_cap(&e));
+        /* two STACK layers with a BRONZE AGE each: 36 a core left, 2 + 2 */
+        EngineState sb = mk(VARCH_STACK, 0, FLT_MULTI, 0);
+        sb.mfx.type = MFX_METAL;
+        CHECK(lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 0) == 2 && lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 1) == 2,
+              "STACK + STACK, BRONZE AGE on both: 2 + 2 (%u + %u)", lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 0),
+              lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 1));
+    }
+    /* a phaser takes 7 tenths off a core: SPREAD (13) 4 a core is 52, over the 49 left: 6 voices; SINGLE and STACK keep theirs */
     e = mk(VARCH_SPREAD, 40, FLT_MULTI, 0); e.mfx.type = 1;
     CHECK(varch_voice_cap(&e) == 6, "SPREAD + MFX: cap %u, want 6", varch_voice_cap(&e));
     e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0); e.mfx.type = 1;

@@ -57,7 +57,7 @@ static void wt_to_flash(void)
     pt_wt_on = 0;
 }
 
-enum { K_IDLE, K_HELD, K_SEQ, K_RS, K_REC, K_ALL };   /* K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS; K_REC: K_SEQ with
+enum { K_IDLE, K_HELD, K_SEQ, K_RS, K_REC, K_ALL, K_LOOP };   /* K_LOOP (2026-11-11): a played loop, not a torture: see loop_slot; K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS; K_REC: K_SEQ with
                                                        * the REC page's loop playing too; K_ALL: K_REC with the chord held (every
                                                        * note source at once, 2026-11-06) */
 enum { P_SETUP, P_SETTLE, P_MEASURE };
@@ -84,6 +84,8 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
                                       * middle (the faders' ramps), LOOP TONE dark (the delay's feedback low-pass), both
                                       * cross-feeds high (the loop) */
 #define F_AIR (1u << 26)            /* with F_HEAVY: noise COLOUR at AIR (the whistle, 2026-11-05) instead of 20 */
+#define F_MFX2T(t) ((uint32_t)(t) << 28)   /* with F_MFX2: layer 2's own type (MFX_*) instead of a copy of layer 1's */
+#define F_LONGREL (1u << 27)        /* both envelopes' RELEASE 110: every note rings on as a tail (a pad's) */
 #define F_MFXEQ (1u << 25)           /* BRONZE AGE with its EQ off noon (DIST 120, the scooped render's: every band run) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define F_FX_ANY (F_FX_MOD | F_FX_CEL | F_FX_TUM | F_FX_SPR)
@@ -248,6 +250,38 @@ static const PtScen SCEN[] = {
     {"ALL HOME", K_ALL, VARCH_SINGLE, FLT_FORMANT, F_HEAVY, UIPAGE_HOME1},
     {"ALL SPRD CEL", K_ALL, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
     {"ALL DUALOSC CEL", K_ALL, VARCH_DUAL_OSC, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
+    /* LOOP (2026-11-11): DUAL, layer 1 a one-note-a-step sequence, layer 2 a pad ARP, 120 BPM, long releases, TUMULUS +
+     * PING PONG; the same patch on both layers (what the user's STACK + DUAL complaint plays) */
+    {"LOOP SPREAD", K_LOOP, VARCH_SPREAD, FLT_MULTI, F_LONGREL | F_FX_TUM, UIPAGE_HOME1},
+    {"LOOP DUALOSC", K_LOOP, VARCH_DUAL_OSC, FLT_MULTI, F_LONGREL | F_FX_TUM, UIPAGE_HOME1},
+    {"LOOP STACK", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM, UIPAGE_HOME1},
+    {"LOOP STACK H", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_HEAVY, UIPAGE_HOME1},
+    {"LOOP STACK MFX1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX, UIPAGE_HOME1},
+    {"LOOP STACK MFX2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2, UIPAGE_HOME1},
+    {"LOOP STACK SH2", K_LOOP, VARCH_STACK, FLT_SH2, F_LONGREL | F_FX_TUM, UIPAGE_HOME1},
+    /* the MFX in the loop (2026-11-11): one layer or both, the same type or two (the second type is layer 2's) */
+    {"LOOP BRNZ1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX | F_MFXT(MFX_METAL), UIPAGE_HOME1},
+    {"LOOP BRNZ2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_METAL), UIPAGE_HOME1},
+    {"LOOP BRNZ EQ2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_METAL) | F_MFXEQ, UIPAGE_HOME1},
+    {"LOOP PHSR+BRNZ", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_STONE_PHASER) | F_MFX2T(MFX_METAL), UIPAGE_HOME1},
+    {"LOOP BRNZ+PHSR", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_METAL) | F_MFX2T(MFX_STONE_PHASER), UIPAGE_HOME1},
+    {"LOOP ENPH1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX | F_MFXT(MFX_ENS_PHASER), UIPAGE_HOME1},
+    {"LOOP ENPH2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_ENS_PHASER), UIPAGE_HOME1},
+    {"LOOP ENS+PHSR", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_ENSEMBLE) | F_MFX2T(MFX_STONE_PHASER), UIPAGE_HOME1},
+    {"LOOP ENPH+BRNZ", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_ENS_PHASER) | F_MFX2T(MFX_METAL), UIPAGE_HOME1},
+    /* every MFX type's full cost (both layers: each whole on its own core, so the wall cost is one layer's: the voice pool's
+     * mfx price, PresetStructures.h) and, for three, the one-layer cost that checks the model (a fixed part + half) */
+    {"LOOP ENSM1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX | F_MFXT(MFX_ENSEMBLE), UIPAGE_HOME1},
+    {"LOOP ENSM2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_ENSEMBLE), UIPAGE_HOME1},
+    {"LOOP CHOR2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_CHORUS), UIPAGE_HOME1},
+    {"LOOP TFLG2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_TAPE_FLANGER), UIPAGE_HOME1},
+    {"LOOP BBDF2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_BBD_FLANGER), UIPAGE_HOME1},
+    {"LOOP PSHF2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_PITCH_SHIFT), UIPAGE_HOME1},
+    {"LOOP ECHO1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX | F_MFXT(MFX_BBD_ECHO), UIPAGE_HOME1},
+    {"LOOP ECHO2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_BBD_ECHO), UIPAGE_HOME1},
+    {"LOOP HARP1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX | F_MFXT(MFX_WIND_HARP), UIPAGE_HOME1},
+    {"LOOP HARP2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_WIND_HARP), UIPAGE_HOME1},
+    {"LOOP STON2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_RINGING_STONES), UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -346,6 +380,8 @@ static void patch(EngineState *e, const PtScen *s)
     e->filter[0].mod_amt = 72;
     e->filter[0].flavour = e->filter[1].flavour = s->flavour;
     e->filter[0].resonance = e->filter[1].resonance = 90;
+    if (s->flags & F_LONGREL)
+        e->env[0].release = e->env[1].release = 110;
     if (s->flags & F_HP)
         e->filter[0].morph = e->filter[1].morph = 110;
     if (s->flags & F_HEAVY) {
@@ -413,6 +449,38 @@ static void seq_slot(void)
     arp_set_timing(&arp_state, ARPDIV_1_32);
 }
 
+/* K_LOOP: what a player leaves running. Layer 1: one NOTE lane, one note a 1/16 step (a bass line, 16 steps, a rest in
+ * every fourth). Layer 2: the ARP over four pad chords, each step a bar's beat (TIMING 1/4, 16th notes, up two octaves).
+ * 120 BPM (int_tempo 80: 40 + the value). No ratchet, no second lane. */
+static void loop_slot(void)
+{
+    static const uint8_t LINE[SEQ_NSTEP] = {36, 36, 43, 0, 41, 41, 48, 0, 39, 39, 46, 0, 38, 43, 41, 0};
+    static const uint8_t ROOT[4] = {48, 53, 55, 50};
+    uint8_t i;
+    perf_state.perf_mode = PERF_DUAL_SYNTH;
+    perf_state.int_tempo = 80;
+    seq_lanes[0].event_type = SEQEV_NOTE;
+    seq_lanes[0].target_mask = SEQ_TGT_L1;
+    seq_lanes[0].prescale = SEQ_PRESCALE_1_16;
+    for (i = 0; i < SEQ_NSTEP; i++) {
+        seq_lanes[0].steps[i].note_buffer[0] = LINE[i] ? LINE[i] : 36u;
+        seq_lanes[0].steps[i].note_buffer[1] = seq_lanes[0].steps[i].note_buffer[2] = seq_lanes[0].steps[i].note_buffer[3] = SEQ_NOTE_NULL;
+        seq_lanes[0].steps[i].flags = LINE[i] ? 0u : SEQ_FLAG_MUTE;               /* (a muted step: the rest) */
+    }
+    for (i = 0; i < ARP_NSTEP; i++) {
+        ArpChordStep *st = &arp_state.steps[i];
+        st->chord_root = (uint8_t)ROOT[i & 3u];
+        st->rate = ARPRATE_1_16;
+        st->octave_range = 1;
+        st->style = ARPSTYLE_UP;
+        st->variation = 0;
+    }
+    arp_state.sequence_length = 4;
+    arp_state.gate_length = 96;
+    arp_set_layer(&arp_state, ARPLAYER_L2);
+    arp_set_timing(&arp_state, ARPDIV_1_4);
+}
+
 /* a two-bar loop in the REC page's recorder, playing: eighth notes up a scale and a held triad on each bar's top (22
  * notes), as a played-in loop would be */
 static void rec_loop(void)
@@ -455,6 +523,10 @@ static void setup(const PtScen *s)
         patch(&engine_state[1], s);
         seq_slot();
     }
+    if (s->kind == K_LOOP) {
+        patch(&engine_state[1], s);
+        loop_slot();
+    }
     MFX_PARAMS(0).type = MFX_PARAMS(1).type = MFX_OFF;
     if (s->flags & (F_MFX | F_MFX2)) {
         static const MfxParams MP[MFX_COUNT] = {
@@ -477,7 +549,8 @@ static void setup(const PtScen *s)
             MFX_PARAMS(0) = EQ;
         }
         if (s->flags & F_MFX2) {
-            MFX_PARAMS(1) = MFX_PARAMS(0);
+            uint32_t t2 = (s->flags >> 28) & 0xFu;
+            MFX_PARAMS(1) = t2 ? MP[t2 < MFX_COUNT ? t2 : MFX_STONE_PHASER] : MFX_PARAMS(0);
             perf_state.perf_mode = PERF_DUAL_SYNTH;
         }
     }
@@ -506,7 +579,7 @@ static void setup(const PtScen *s)
         for (i = 0; i < n; i++)
             synth_midi_3(0x90, (uint8_t)(48 + i * 3), (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
     }
-    if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL) {
+    if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL || s->kind == K_LOOP) {
         maq_set_playing(synth_seq(), 1);
         carp_set_playing(synth_arp(), 1);           /* (the ARP has its own transport since 2026-10-17) */
     }

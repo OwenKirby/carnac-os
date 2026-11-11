@@ -628,12 +628,32 @@ static inline uint8_t voice_core_cost(uint8_t wa, uint8_t na, uint8_t wb, uint8_
     return (uint8_t)(t > 255u ? 255u : t);
 }
 
-/* An MFX on a layer takes a share of the pass whatever is played (measured under load, 2026-11-04: any MFX costs 5 to 10
- * points, the floor 5): VOICE_MFX_COST tenths off each core's share for every layer that runs one. */
-#define VOICE_MFX_COST 5u
+/* THE MFX IS PRICED BY TYPE (2026-11-11). It runs after the voices, so what it costs comes off every core's share. Measured
+ * on the FM1 (PERF TEST LOOP rows, STACK dual loop, docs/mfx-cost-model.md): the cost depends on the type AND on how many
+ * layers run one, because of how the runtime schedules them (synth_runtime.c):
+ *  - one MFX on: its two sides split across the cores: a fixed part (the plan, ~3) + half its full cost;
+ *  - both on: each whole on its own core, in parallel: the dearer one's full cost, + ~2 when the types differ.
+ * A phaser on one layer and a BRONZE AGE on the other therefore costs what BRONZE AGE on both does. The full costs, tenths
+ * (1 tenth = 0.95 pass points), are the both-layers rows less the loop without one, rounded up. (BBD ECHO does not split
+ * across the cores: one layer costs the same as both; the one-layer price over-charges it by ~3.) */
+#define VOICE_MFX_FIXED 3u
+#define VOICE_MFX_DIFF 2u
+static inline uint8_t mfx_full_cost(uint8_t type)
+{
+    /* by MFX_* (dsp/mfx.h; test_voice_pool.c checks the count): OFF, STONE PHASER, ENSEMBLE, ENS+PHASER, CHORUS, TAPE FLANGER,
+     * BBD FLANGER, PITCH SHIFT, BBD ECHO, BRONZE AGE (METAL), WIND HARP, RINGING STONES, BULLROARER */
+    static const uint8_t X[13] = {0, 8, 11, 13, 9, 11, 9, 10, 8, 20, 11, 11, 10};
+    return X[type < 13u ? type : 0u];
+}
 static inline uint8_t voice_overhead(const EngineState *l1, const EngineState *l2, uint8_t both_layers)
 {
-    return (uint8_t)(VOICE_MFX_COST * ((l1->mfx.type != 0u) + (both_layers && l2->mfx.type != 0u)));
+    uint8_t ta = l1->mfx.type, tb = both_layers ? l2->mfx.type : 0u;
+    uint8_t xa = mfx_full_cost(ta), xb = mfx_full_cost(tb);
+    if (ta && tb)
+        return (uint8_t)((xa > xb ? xa : xb) + (ta != tb ? VOICE_MFX_DIFF : 0u));
+    if (ta || tb)
+        return (uint8_t)(VOICE_MFX_FIXED + ((ta ? xa : xb) + 1u) / 2u);
+    return 0;
 }
 
 /* The most voices one patch may sound alone: the most one core's share of them can carry. */
