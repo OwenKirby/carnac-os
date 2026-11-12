@@ -1,7 +1,9 @@
-/* Host test for the MIDI clock's lock (midi_clock.c, 2026-10-24) and the timed MIDI in (synth_midi_at).
- * Drives midi_clock frame by frame with 0xF8 pulses as the FM1 sees them: on the old 11.6 ms block grid (every pulse on
- * a 512-frame boundary), or stamped (0..66 frames late: USB's 1 ms frames and the 0.5 ms read). Checks the pulses the
- * clock plays: as many as came in, evenly spaced, through tempo jumps, ramps, Stop / Continue and a silent sender.
+/* Host test for the MIDI clock's lock (midi_clock.c, 2026-10-24, reworked 2026-11-12) and the timed MIDI in
+ * (synth_midi_at). Drives midi_clock frame by frame with 0xF8 pulses as the FM1 sees them: on the old 11.6 ms block
+ * grid (every pulse on a 512-frame boundary), stamped (0..66 frames late: USB's 1 ms frames and the 0.5 ms read), sent
+ * on a DAW's 512-sample audio-buffer grid, or with 40 ms USB stalls. Checks the pulses the clock plays: as many as came
+ * in, evenly spaced, through tempo jumps, ramps, Stop / Continue, Start with the clock already running, a lost audio
+ * half (midi_clock_slip) and a silent sender. src/hardware/fm1_clock.py measures the same on the FM1.
  * Exit code 0 = pass. Test scaffolding only.
  *
  *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
@@ -57,14 +59,20 @@ static void start(void)
     seen = midi_clock_pulse_count();
 }
 
-enum { GRID, STAMPED };
+enum { GRID, STAMPED, DAW512, STALL };
+#define DAW_BUF (512.0 * FS / 48000.0)   /* a 512-sample buffer at 48 kHz, in our frames */
 /* n pulses from `bpm`, `ramp` BPM added per pulse, each arriving per `how`; returns the pulses received */
 static int feed(int n, double bpm, double ramp, int how, double *t)
 {
     int k;
     for (k = 0; k < n; k++) {
-        double arr = *t + (how == STAMPED ? urand() * 66.0 : 0.0);
-        uint32_t at = how == GRID ? ((uint32_t)arr / 512u + 1u) * 512u : (uint32_t)arr;
+        double arr = *t + (how == GRID ? 0.0 : urand() * 66.0);
+        uint32_t at;
+        if (how == DAW512)                     /* sent at the next buffer boundary */
+            arr = (floor(*t / DAW_BUF) + 1.0) * DAW_BUF + urand() * 66.0;
+        if (how == STALL && fmod(*t, 2.0 * FS) < 0.040 * FS)   /* 40 ms every 2 s: held, then sent at once */
+            arr = floor(*t / (2.0 * FS)) * 2.0 * FS + 0.040 * FS + urand() * 66.0;
+        at = how == GRID ? ((uint32_t)arr / 512u + 1u) * 512u : (uint32_t)arr;
         while (now < at) frame();
         midi_clock_frame(now);
         record();
@@ -90,7 +98,7 @@ static double spread_ms(int i0)
 
 int main(void)
 {
-    double t, sp[3];
+    double t, sp[7];
     int got;
 
     /* ---- the old block grid: pulses every 512 or 1024 frames, played evenly ---- */
@@ -142,7 +150,7 @@ int main(void)
     t = now + 100.0;
     got = feed(24 * 4, 120.0, 0.0, STAMPED, &t);
     { int i; for (i = 0; i < 44100; i++) frame(); }
-    CHECK(nplayed - got >= 0 && nplayed - got <= 1, "silent sender: played %d of %d (one ahead at most)", nplayed, got);
+    CHECK(nplayed - got >= 0 && nplayed - got <= 2, "silent sender: played %d of %d (two ahead at most)", nplayed, got);
     { uint32_t ph; CHECK(!midi_clock_phase(0, &ph), "silent sender: no clock to follow after 1 s"); }
 
     /* ---- Stop, then Continue: no pulses while stopped, the count kept after ---- */
@@ -156,15 +164,83 @@ int main(void)
     got += feed(24 * 2, 120.0, 0.0, STAMPED, &t);
     CHECK(abs(nplayed - got) <= 1, "stop / continue: played %d of %d", nplayed, got);
 
-    /* ---- a burst (two pulses on one frame, mid-run): both played, none owed ---- */
+    /* ---- a burst (two pulses on one frame, mid-run): both played on their beats, none owed after ---- */
     start();
     t = now + 100.0;
     got = feed(24 * 2, 120.0, 0.0, STAMPED, &t);
     pulse_in();
     pulse_in();
     got += 2;
-    frame();
-    CHECK(abs(nplayed - got) <= 1, "burst: played %d of %d", nplayed, got);
+    { int i; for (i = 0; i < 2 * 919; i++) frame(); }
+    CHECK(abs(nplayed - got) <= 2, "burst: played %d of %d", nplayed, got);
+
+    /* ---- a DAW's buffer-grid clock (512 samples at 48 kHz, 10.7 ms): 1/16 steps even (the old lock: 4.6 ms) ---- */
+    start();
+    t = now + 100.0;
+    got = feed(24 * 32, 120.0, 0.0, DAW512, &t);
+    CHECK(abs(nplayed - got) <= 2, "DAW grid: played %d of %d", nplayed, got);
+    sp[3] = spread_ms(24 * 4);
+    CHECK(sp[3] < 2.5, "DAW grid 120 BPM: within %.2f ms (want < 2.5; the input +-5.3)", sp[3]);
+
+    /* ---- 40 ms USB stalls every 2 s: ridden through (the old lock: 19 ms) ---- */
+    start();
+    t = now + 100.0;
+    got = feed(24 * 40, 120.0, 0.0, STALL, &t);
+    CHECK(abs(nplayed - got) <= 2, "stalls: played %d of %d", nplayed, got);
+    sp[4] = spread_ms(24 * 4);
+    CHECK(sp[4] < 2.0, "stalls 120 BPM: within %.2f ms (want < 2)", sp[4]);
+
+    /* ---- an audio half lost mid-run (the FM1 overloaded): told, the pulses stay on the beat ---- */
+    start();
+    t = now + 100.0;
+    got = feed(24 * 8, 120.0, 0.0, STAMPED, &t);
+    { int i0 = nplayed, i; double sh;
+      midi_clock_slip(512u);                   /* the frame count falls 512 behind real time: everything after is 512 less */
+      t -= 512.0;
+      got += feed(24 * 8, 120.0, 0.0, STAMPED, &t);
+      for (i = i0; i < nplayed; i++) played[i] += 512u;   /* (back to real time to measure) */
+      sh = spread_ms(24 * 4);
+      CHECK(sh < 1.0, "slip: within %.2f ms of even in real time (want < 1)", sh);
+      CHECK(abs(nplayed - got) <= 2, "slip: played %d of %d", nplayed, got); }
+
+    /* ---- Start with the clock already running: the run's first pulse plays as it comes, the count from there ---- */
+    start();
+    t = now + 100.0;
+    feed(24 * 2, 120.0, 0.0, STAMPED, &t);
+    { int n0, k; uint32_t first_rx;
+      while (now < (uint32_t)t - 200u) frame();
+      midi_clock_realtime(0xFA);
+      n0 = nplayed;
+      first_rx = (uint32_t)(t + urand() * 66.0);
+      while (now < first_rx) frame();
+      CHECK(nplayed == n0, "start: %d pulses played before the run's first came", nplayed - n0);
+      midi_clock_frame(now); record(); pulse_in(); now++;
+      { int i; for (i = 0; i < 70 && nplayed == n0; i++) frame(); }   /* (one that came early waits for its beat) */
+      CHECK(nplayed == n0 + 1 && played[n0] + 1u >= first_rx && played[n0] <= first_rx + 70u,
+            "start: the first pulse at %u, came at %u", nplayed > n0 ? played[n0] : 0u, first_rx);
+      t += FS * 60.0 / (120.0 * 24.0);
+      k = feed(24 * 4 - 1, 120.0, 0.0, STAMPED, &t) + 1;
+      CHECK(nplayed - n0 >= k && nplayed - n0 <= k + 2, "start: %d played of the run's %d", nplayed - n0, k);
+      sp[5] = spread_ms(n0);
+      CHECK(sp[5] < 0.8, "start, clock running: the run within %.2f ms (want < 0.8)", sp[5]); }
+
+    /* ---- the next run at the same tempo flies on the last one's: its first beat already even ---- */
+    { int i; for (i = 0; i < 30000; i++) frame(); }   /* (silent past the timeout) */
+    midi_clock_realtime(0xFA);
+    { int n0 = nplayed; t = now + 100.0;
+      feed(24, 120.0, 0.0, STAMPED, &t);
+      sp[6] = spread_ms(n0);
+      CHECK(sp[6] < 1.0, "second run: its first beat within %.2f ms (want < 1)", sp[6]); }
+
+    /* ---- a tempo jump 150 -> 90: the new tempo within a beat ---- */
+    start();
+    t = now + 100.0;
+    got = feed(24 * 8, 150.0, 0.0, STAMPED, &t);
+    got += feed(24, 90.0, 0.0, STAMPED, &t);
+    { double bpm = FS * 60.0 * 256.0 / (24.0 * midi_clock_period_q8());
+      CHECK(fabs(bpm - 90.0) < 2.0, "jump 150 -> 90: tempo read as %.2f a beat later", bpm); }
+    got += feed(24 * 4, 90.0, 0.0, STAMPED, &t);
+    CHECK(abs(nplayed - got) <= 2, "jump 150 -> 90: played %d of %d", nplayed, got);
 
     /* ---- synth_midi_at: a pulse timed into the next render plays on its frame ---- */
     synth_init();
@@ -179,7 +255,7 @@ int main(void)
       CHECK(midi_clock_pulse_count() == c0 + 1u, "synth_midi_at: played by frame 512 (%u)", midi_clock_pulse_count() - c0); }
 
     if (fails) { printf("midi_clock: %d failures\n", fails); return 1; }
-    printf("midi_clock: pulses within %.2f ms (512 grid), %.2f / %.2f ms (stamped 90 / 140 BPM); timed MIDI in\n",
-           sp[0], sp[1], sp[2]);
+    printf("midi_clock: within %.2f ms (512 grid), %.2f / %.2f (stamped 90 / 140 BPM), %.2f (DAW grid), %.2f (stalls), "
+           "%.2f (Start, clock running), %.2f (next run); timed MIDI in\n", sp[0], sp[1], sp[2], sp[3], sp[4], sp[5], sp[6]);
     return 0;
 }

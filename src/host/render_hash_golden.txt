@@ -56,9 +56,9 @@ dual layer  bad905f0
 seq ext 0 block 32  8f96c6fa
 seq ext 0 block 7  5ba978ff
 seq ext 0 block 128  6712b960
-seq ext 1 block 32  8b5bebdd
-seq ext 1 block 7  66e20a87
-seq ext 1 block 128  49c46597
+seq ext 1 block 32  fa53a427
+seq ext 1 block 7  96a8b06c
+seq ext 1 block 128  67c0dfec
 mfx L1 1 L2 1  4e353866
 mfx L1 2 L2 2  3a66a63e
 mfx L1 3 L2 3  ba800e52

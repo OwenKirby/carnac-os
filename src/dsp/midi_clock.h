@@ -54,4 +54,29 @@ uint8_t midi_clock_is_external(void);
 uint32_t midi_clock_start_count(void);
 uint8_t midi_clock_ext_running(void);
 
+/* The clock probe (2026-11-12, src/hardware/fm1_clock.py): while armed, the frame of every 0xF8 the clock is handed
+ * (rx) and of every pulse it plays (play), MIDI clock only, MIDI_CLOCK_LOG_N of each, then it stops logging; the
+ * transport messages (and slips: status 0x10 | halves, at the first frame moved) with the rx count they came after;
+ * and the lock's own events. Not armed it costs a load a
+ * pulse. `force_ext` 1 makes the clock follow MIDI whatever CLOCK SOURCE says, 2 the internal clock (the probe's runs:
+ * the setting and its saved copy are never touched). */
+#define MIDI_CLOCK_LOG_N 1024u
+#define MIDI_CLOCK_LOG_EV 32u
+typedef struct {
+    uint32_t rx[MIDI_CLOCK_LOG_N], play[MIDI_CLOCK_LOG_N];
+    uint32_t ev_frame[MIDI_CLOCK_LOG_EV];
+    uint16_t ev_rx[MIDI_CLOCK_LOG_EV];
+    uint8_t ev_status[MIDI_CLOCK_LOG_EV];
+    uint16_t nrx, nplay;
+    uint8_t nev, armed, force_ext;
+    uint16_t relocks, clipped, owed, acquires;   /* tempo re-measures, errors clipped, pulses played late, runs locked */
+} MidiClockLog;
+extern MidiClockLog midi_clock_log;
+void midi_clock_log_arm(uint8_t force_ext);
+
+/* The FM1 lost an audio half (or n frames): its frame count fell behind real time by n. The MIDI clock's lock moves its
+ * predictions with it, so the pulses that fell in the lost frames play at once and the rest stay on the beat
+ * (src/hardware/synth_main_fm1.c, midi_drain). */
+void midi_clock_slip(uint32_t n);
+
 #endif

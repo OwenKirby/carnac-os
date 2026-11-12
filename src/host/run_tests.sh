@@ -48,6 +48,7 @@ build mfx src/host/test_mfx.c src/dsp/mfx.c src/dsp/preset.c && run mfx "$OUT/mf
 build ui_arch $DSP src/UIStateMachine.c src/host/test_ui_arch.c && run ui_arch "$OUT/ui_arch.exe"
 build ui_rows_fit $DSP src/host/test_ui_rows_fit.c && run ui_rows_fit "$OUT/ui_rows_fit.exe"
 build midi_clock $DSP src/host/test_midi_clock.c && run midi_clock "$OUT/midi_clock.exe"
+build clock_replay $DSP src/host/clock_replay.c && run clock_replay sh -c "printf 'p 5000\np 5919\np 6838\n' | '$OUT/clock_replay.exe' | grep -q 6838 && echo 'clock_replay (fm1_clock.py replay) plays a capture'"
 build maq_seq $DSP src/UIStateMachine.c src/host/test_maq_seq.c && run maq_seq "$OUT/maq_seq.exe"
 build arp_seq $DSP src/UIStateMachine.c src/host/test_arp_seq.c && run arp_seq "$OUT/arp_seq.exe"
 build krec src/dsp/krec.c src/host/test_krec.c && run krec "$OUT/krec.exe"

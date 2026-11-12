@@ -168,10 +168,22 @@ static uint8_t safe_mode;
  * the TIMER5 ISR) is stamped with the time it was read (midi_stamp), and the MIDI is read during the render too
  * (midi_in_render), so no stamp waits for a render to end. Each half then plays the packets read during the half
  * before it, each at its own frame (synth_midi_at): a constant 2 halves (23.2 ms) from arrival to sound, within the
- * 0.5 ms of the read, where it used to be 11.6..23.2 ms, every packet on a half's first frame. */
-#define HALF_TICKS (HALF_FRAMES * 1000000u / 44118u * FM1_TICKS_PER_US)   /* a half at the I2S's 44,117.6 Hz */
+ * 0.5 ms of the read, where it used to be 11.6..23.2 ms, every packet on a half's first frame.
+ * Real time in frames (2026-11-12): the I2S runs at exactly 24 MHz / 544 (44,117.647 Hz: fm1_clock.py measured
+ * 544.0000 ticks a frame), so the stamps map onto frames by that, from an anchor: a synth frame paired with the tick
+ * its half began at, the earliest seen (ISR entry latency only ever adds; it was mapped by the jittery span between
+ * ISR entries before, which also squeezed a lost half's stamps into one). A half that begins 3/4 of a half or more past
+ * the anchor's prediction means the render fell behind real time (an overload lost a half): the anchor moves on by the
+ * halves lost and the MIDI clock is told (midi_clock_slip), so its pulses stay on the sender's beat. The anchor creeps
+ * to the earliest entry of every 256 halves (~3 s), so no rate error can build up into a false slip. */
+#define TICKS_PER_FRAME 544u
+#define HALF_TICKS (HALF_FRAMES * TICKS_PER_FRAME)       /* 278,528: a half */
 static uint32_t midi_stamp_q[MQ], midi_stamp_w;   /* fm1_ticks() at each queued packet's read, by queue index */
-static uint32_t half_t;                             /* fm1_ticks() at the start of the last half */
+static uint32_t anc_t, anc_f;                       /* the anchor: tick, synth frame */
+static uint8_t anc_ok;
+static int32_t anc_dmin;                            /* the earliest entry (ticks past the anchor) of this window */
+static uint32_t anc_n;                              /* halves in this window */
+static uint32_t clk_slips;                          /* halves lost (told to the clock) since boot */
 
 static void midi_stamp(void)                        /* TIMER5, after each read: the packets it queued */
 {
@@ -193,24 +205,54 @@ static void midi_in_render(void)
 #endif
 }
 
+/* The clock probe's raw side (2026-11-12, fm1_clock.py): fm1_ticks() at each 0xF8's read, while the probe is armed */
+static uint32_t clk_stamp[MIDI_CLOCK_LOG_N] SYNTH_POOL;
+static uint32_t clk_nstamp;
+
 /* The packets read before this half began (t0) into the synth, timed into it (USB-MIDI event packets, byte 0 = cable
  * / CIN). ISR only. */
 static void midi_drain(uint32_t t0)
 {
-    uint32_t pkt, guard = 64, prev = half_t, span = t0 - half_t;
-    half_t = t0;
-    if (span < HALF_TICKS / 2u || span > 2u * HALF_TICKS) {   /* the first half, or one missed: a nominal one */
-        span = HALF_TICKS;
-        prev = t0 - HALF_TICKS;
+    uint32_t pkt, guard = 64, f0 = synth_frame(), nom;
+    int32_t d;
+    if (!anc_ok) {
+        anc_t = t0;
+        anc_f = f0;
+        anc_ok = 1;
+        anc_dmin = 0x7FFFFFFF;
+    }
+    nom = anc_t + (f0 - anc_f) * TICKS_PER_FRAME;   /* (mod 2^32: only differences are taken) */
+    d = (int32_t)(t0 - nom);                        /* how late this half began against the anchor */
+    if (d < 0) {                                    /* earlier than ever: the anchor moves back to it */
+        anc_t += (uint32_t)d;
+        nom = t0;
+        d = 0;
+    } else if (d >= (int32_t)(HALF_TICKS * 3u / 4u)) {   /* the render fell behind real time: halves lost */
+        uint32_t n = ((uint32_t)d + HALF_TICKS / 4u) / HALF_TICKS;
+        anc_t += n * HALF_TICKS;
+        nom += n * HALF_TICKS;
+        d -= (int32_t)(n * HALF_TICKS);
+        clk_slips += n;
+        midi_clock_slip(n * HALF_FRAMES);
+    }
+    if (d < anc_dmin)
+        anc_dmin = d;
+    if (++anc_n >= 256u) {                          /* creep to the window's earliest entry */
+        if (anc_dmin > 0 && anc_dmin < (int32_t)(HALF_TICKS / 4u))
+            anc_t += (uint32_t)anc_dmin;
+        anc_n = 0;
+        anc_dmin = 0x7FFFFFFF;
     }
     while (guard-- && mi_r != mi_w) {
-        uint32_t s = midi_stamp_q[mi_r % MQ], off = s - prev, delay, cin;
+        uint32_t s = midi_stamp_q[mi_r % MQ], delay, cin;
+        int32_t rel = (int32_t)(s - nom), fr;       /* ticks from this half's real start (< 0: read before it) */
         uint8_t st;
         if ((int32_t)(s - t0) >= 0)
             break;                                  /* read in this half: the next one plays it */
-        if ((int32_t)off < 0)
-            off = 0;                                /* (left over from a missed half: at once) */
-        delay = off >= span ? HALF_FRAMES - 1u : off * HALF_FRAMES / span;
+        /* played a half after its real-time frame: frame f0 + HALF_FRAMES + rel / 544 (floor) */
+        fr = rel >= 0 ? rel / (int32_t)TICKS_PER_FRAME : -((-rel + (int32_t)TICKS_PER_FRAME - 1) / (int32_t)TICKS_PER_FRAME);
+        fr += (int32_t)HALF_FRAMES;
+        delay = fr < 0 ? 0u : fr > (int32_t)HALF_FRAMES - 1 ? HALF_FRAMES - 1u : (uint32_t)fr;
         if (!plat_midi_in(&pkt))
             break;
         cin = pkt & 0x0Fu;
@@ -221,8 +263,11 @@ static void midi_drain(uint32_t t0)
                 d2 = instrument_velocity(d2);       /* GLOBAL > VEL CURVE (0 stays a note-off) */
             synth_midi_at(delay, st, (uint8_t)((pkt >> 16) & 0x7Fu), d2);
         }
-        else if (cin == 0xFu && st >= 0xF8u)                               /* realtime: clock, start, stop */
+        else if (cin == 0xFu && st >= 0xF8u) {                             /* realtime: clock, start, stop */
+            if (st == 0xF8u && midi_clock_log.armed && clk_nstamp < MIDI_CLOCK_LOG_N)
+                clk_stamp[clk_nstamp++] = s;
             synth_midi_at(delay, st, 0, 0);
+        }
     }
 }
 
@@ -422,6 +467,12 @@ enum { ED_STATS = 46 };
 /* debugging (2026-10-16, the reverb buzz): [1, slot] load that performance (as the Preset Encoder does); [2, 0 / 1]
  * the reverb's back on core 1 / core 0; [3] the effects reset (fx_init) -> rc 0 */
 enum { ED_DEBUG = 47 };
+/* the clock probe (2026-11-12, src/hardware/fm1_clock.py, midi_clock.h): [0] its state; [1, force] arm it (force 1:
+ * follow the MIDI clock whatever CLOCK SOURCE says, until [3]); [2, which, i lo, i hi] 32 entries from i of the
+ * received frames (0), played frames (1), raw read ticks (2), transport events (3: frame, status | rx count << 8);
+ * 16 for events; [3] disarm, CLOCK SOURCE followed again; [4, on] the MAQ and the ARP started (1) or stopped (0),
+ * as PLAY does; [5, force] arm with force 2: the internal clock whatever CLOCK SOURCE says (load comparisons). Values 35 bits each, 7 at a time, low first. */
+enum { ED_SYNC = 48 };
 
 static uint8_t ed_out[288];
 static uint32_t ed_n;
@@ -498,6 +549,56 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         syn_unlock();
         ed_b(0);
         break;
+    case ED_SYNC: {
+        const MidiClockLog *g = &midi_clock_log;
+        if (na >= 1u && a[0] == 1u) {
+            syn_lock();
+            clk_nstamp = 0;
+            midi_clock_log_arm((uint8_t)(na >= 2u && a[1]));
+            syn_unlock();
+        } else if (na >= 1u && a[0] == 3u) {
+            syn_lock();
+            midi_clock_log.armed = 0;
+            midi_clock_log.force_ext = 0;
+            syn_unlock();
+        } else if (na >= 2u && a[0] == 4u) {
+            syn_lock();
+            maq_set_playing(synth_seq(), a[1] ? 1u : 0u);
+            carp_set_playing(synth_arp(), a[1] ? 1u : 0u);
+            syn_unlock();
+        } else if (na >= 2u && a[0] == 5u) {
+            syn_lock();
+            clk_nstamp = 0;
+            midi_clock_log_arm((uint8_t)(a[1] == 2u ? 2u : a[1] ? 1u : 0u));
+            syn_unlock();
+        }
+        if (na >= 4u && a[0] == 2u) {
+            uint32_t which = a[1], from = a[2] | (uint32_t)a[3] << 7, v;
+            ed_b(which);
+            for (i = from; i < from + (which == 3u ? 16u : 32u) && i < (which == 3u ? MIDI_CLOCK_LOG_EV : MIDI_CLOCK_LOG_N); i++) {
+                uint32_t k;
+                if (which == 3u) {                  /* two values an event: its frame, then status | rx count << 8 */
+                    for (k = 0; k < 5u; k++)
+                        ed_b(g->ev_frame[i] >> (7u * k));
+                    v = g->ev_status[i] | (uint32_t)g->ev_rx[i] << 8;
+                } else {
+                    v = which == 0u ? g->rx[i] : which == 1u ? g->play[i] : clk_stamp[i];
+                }
+                for (k = 0; k < 5u; k++)
+                    ed_b(v >> (7u * k));
+            }
+        } else {
+            uint32_t v[15], k;
+            v[0] = g->armed; v[1] = g->nrx; v[2] = g->nplay; v[3] = clk_nstamp; v[4] = g->nev;
+            v[5] = g->relocks; v[6] = g->clipped; v[7] = g->owed; v[8] = g->acquires;
+            v[9] = midi_clock_period_q8(); v[10] = g->force_ext; v[11] = midi_clock_is_external();
+            v[12] = midi_clock_ext_running(); v[13] = FM1_TICKS_PER_US; v[14] = clk_slips;
+            for (i = 0; i < 15u; i++)
+                for (k = 0; k < 5u; k++)
+                    ed_b(v[i] >> (7u * k));
+        }
+        break;
+    }
     case ED_STATS: {                                /* + the levels since the last read and the live settings */
         uint32_t v[30], i, k, nv = 0, c1 = 0;
         int32_t lv[4];
