@@ -108,7 +108,7 @@ static int32_t resolve_source_any(const SourceCtx *c, int src, int depth) {
     switch (src) {
     case MSRC_VELOCITY:   return in ? in->velocity * 258 : 0;
     case MSRC_KEYBOARD:   return in ? (in->note - 60) * 512 : 0;      /* bipolar, C4 = 0 */
-    case MSRC_MODWHEEL:   return in ? in->mod_wheel * 258 : 0;
+    case MSRC_MODWHEEL:   return in ? ctrl_wheel_q15[in->mod_wheel & 127u] : 0;   /* (squared: a tapered pot) */
     case MSRC_AFTERTOUCH: return in ? in->aftertouch * 258 : 0;
     case MSRC_RANDOM:     return v ? v->rand_q15 : 0;                 /* bipolar, a value per note */
     case MSRC_POLY_AT:                                                 /* the note's own, else the channel's */
@@ -209,10 +209,25 @@ static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
     return cents;
 }
 
+/* the cutoff routes to d (2026-11-12), as send_sum's scale 2 but through ENV > CUTOFF's square taper: the route's
+ * size squared, its sign kept, so a small route is a fine one and a full one sweeps the whole range */
+static SEND_COLD int32_t send_cut_any(const SourceCtx *c, unsigned d) {
+    int32_t s = 0;
+    for (unsigned i = 0; i < NROUTE; i++) {
+        const ModRoute *r = &c->eng->route[i];
+        if (r->dest == d && r->src != MSRC_NONE) {
+            int a = bip(r->amount) * 2, t = ctrl_cut_env_depth[a < 0 ? (a < -127 ? 127 : -a) : a];
+            s += (route_out(c, r) * (a < 0 ? -t : t)) >> 4;
+        }
+    }
+    return s;
+}
+
 /* the bit test at the destination, the call only for a route (most patches have few: a call a destination a voice
  * tick is what the FM1's XIP code would pay) */
 #define send_sum(c, d, scale) (ROUTE_BIT(c, d) ? send_sum_any((c), (d), (scale)) : 0)
 #define send_cents(c, d) (ROUTE_BIT(c, d) ? send_cents_any((c), (d)) : 0)
+#define send_cut(c, d) (ROUTE_BIT(c, d) ? send_cut_any((c), (d)) : 0)
 
 /* AMP LEVEL's and the LFO DEPTHs' routes: each a gain as TREMOLO's (amount 0 full level, full the signal alone sets
  * it; a negative route the signal turned over), multiplied together */
@@ -467,12 +482,13 @@ static int cutoff_q8(const SourceCtx *c, int fi, int32_t mod_q8) {   /* FILTER f
 
 /* a filter's ENV2 > CUTOFF (its fixed path, knob 4: 0..127), LFO1 > CUTOFF (the LFO1 page's FILTER AMT, every filter)
  * and routes, as a Q8 cutoff offset. Kept in Q8 so the filter interpolates between the table steps and a modulated
- * cutoff does not zipper. */
+ * cutoff does not zipper. The depths are tapered (2026-11-12, ctrl_tables.h): ENV and the routes squared to the whole
+ * range, LFO1 an S-curve to 3.6 octaves */
 static int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f, int fi) {
-    int32_t m = f->mod_amt ? resolve_source(c, MSRC_ENV2, 0) * (int32_t)f->mod_amt : 0;
+    int32_t m = f->mod_amt ? (resolve_source(c, MSRC_ENV2, 0) * ctrl_cut_env_depth[f->mod_amt & 127u]) >> 4 : 0;
     if (c->eng->lfo1_filter)
-        m += resolve_source(c, MSRC_LFO1, 0) * (int32_t)c->eng->lfo1_filter;
-    return (m + (fi ? send_sum(c, MDST_F2_CUTOFF, 2) : send_sum(c, MDST_F1_CUTOFF, 2))) >> 8;
+        m += (resolve_source(c, MSRC_LFO1, 0) * ctrl_cut_lfo_depth[c->eng->lfo1_filter & 127u]) >> 4;
+    return (m + (fi ? send_cut(c, MDST_F2_CUTOFF) : send_cut(c, MDST_F1_CUTOFF))) >> 8;
 }
 
 /* A FILTER page's type morph plus its routes, the knob's way round (dsp/filter.h) */
@@ -694,7 +710,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     }
     case VARCH_STACK: {
         /* ENV3 is hardwired to both cutoffs (FILTER MIXER knob 4), on top of each filter's own mod */
-        int32_t env3_q8 = (resolve_source(&c, MSRC_ENV3, 0) * bip(fm->env3_cutoff)) >> 7;
+        int a3 = bip(fm->env3_cutoff) * 2, t3 = ctrl_cut_env_depth[a3 < 0 ? (a3 < -127 ? 127 : -a3) : a3];
+        int32_t env3_q8 = (resolve_source(&c, MSRC_ENV3, 0) * (a3 < 0 ? -t3 : t3)) >> 12;   /* (ENV > CUTOFF's taper) */
         filter_prepare_one(&core[0], &c, f1, 0, cutoff_q8(&c, 0, f1_mod_q8 + env3_q8), an_res1, snap);
         filter_prepare_one(&core[1], &c, f2, 1, cutoff_q8(&c, 1, filter_mod_q8(&c, f2, 1) + env3_q8 + an_cut2), an_res2,
                            snap);

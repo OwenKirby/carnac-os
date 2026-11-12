@@ -1276,7 +1276,7 @@ static int32_t pu_env_w(uint8_t t) { return 4 + ((int32_t)t * t * 56) / 16129; }
  * the sustain held 24 units (unit widths as the ENV page's, pu_env_w) */
 static int32_t pu_env_at(const EnvParams *p, int32_t t)
 {
-    int32_t wa = pu_env_w(p->attack), wd = pu_env_w(p->decay), wr = pu_env_w(p->release), s = (p->sustain * 256) / 127, u;
+    int32_t wa = pu_env_w(p->attack), wd = pu_env_w(p->decay), wr = pu_env_w(p->release), s = adsr_sustain_q15(p->sustain) >> 7, u;
     if (t < wa) { u = 256 - (t * 256) / wa; return 256 - (u * u >> 8); }
     t -= wa;
     if (t < wd) { u = 256 - (t * 256) / wd; return s + (((256 - s) * (u * u >> 8)) >> 8); }
@@ -1432,7 +1432,7 @@ static void pu_env_xs(const EnvParams *p, int32_t *xs)
 static void pu_viz_env(const UIStateMachine *sm, uint8_t i)
 {
     const EnvParams *p = &sm->engine[sm->s.active_synth_layer]->env[i];
-    int32_t xs[5], x, u, w, lv, s = ((int32_t)(p->sustain > VAL_MAX ? VAL_MAX : p->sustain) << 15) / 127;
+    int32_t xs[5], x, u, w, lv, s = adsr_sustain_q15(p->sustain);
     uint8_t inv = (uint8_t)(i > 0u && p->invert);
     pu_env_xs(p, xs);
     for (x = 0; x < PV_W; x++) {
@@ -1468,7 +1468,7 @@ static int32_t pu_track_env(const UIStateMachine *sm, uint8_t i)
     a = pu_env_of(&poly_bank[v], i);
     pu_env_xs(p, xs);
     l = a->level_q15 < 0 ? 0 : a->level_q15 > 32767 ? 32767 : a->level_q15;
-    s = ((int32_t)(p->sustain > VAL_MAX ? VAL_MAX : p->sustain) << 15) / 127;
+    s = adsr_sustain_q15(p->sustain);
     switch (a->state) {
     case STATE_ATTACK: return xs[0] + (((xs[1] - xs[0]) * l) >> 15);
     case STATE_DECAY: return s >= 32767 ? xs[2] : xs[1] + (((xs[2] - xs[1]) * (32767 - l)) / (32767 - s + 1));

@@ -83,13 +83,14 @@ static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STA
 static void base_patch(EngineState *e, uint8_t arch)
 {
     e->arch = arch;
-    e->env[0].attack = 0; e->env[0].sustain = 100; e->env[0].release = 20;
-    e->env[1].attack = 0; e->env[1].sustain = 100; e->env[1].release = 20;
+    e->env[0].attack = 0; e->env[0].sustain = 79; e->env[0].release = 20;   /* (79: the level 100 held before the */
+    e->env[1].attack = 0; e->env[1].sustain = 79; e->env[1].release = 20;   /* SUSTAIN law, 2026-11-12) */
     e->oscmix.spread = 60;
     e->oscmix.xmod_amt = 20;
     e->osc[1].wavebank = 3;
     /* LFO1 on the filter cutoff so BINAURAL's phase offset has something to shift (a route since 2026-11-11) */
-    e->route[NROUTE - 1u] = (ModRoute){MSRC_LFO1, MSRC_NONE, MDST_F1_CUTOFF, BIPOLAR_CENTER + 56, VAL_MAX};
+    e->route[NROUTE - 1u] = (ModRoute){MSRC_LFO1, MSRC_NONE, MDST_F1_CUTOFF, BIPOLAR_CENTER + 42, VAL_MAX};   /* (42: +56's
+                                     * swing under the cutoff routes' square taper, 2026-11-12) */
     e->filter[0].cutoff = 70;
     e->filter[1].cutoff = 90;
     e->lfo[0].rate = 70;
@@ -173,9 +174,9 @@ static void tw_lfo2_pitch(EngineState *e, int way)   /* LFO2 > PITCH (OSC knob 3
     e->lfo[1].rate = 80;
     if (way) route0(e, MSRC_LFO2, MDST_OSC1_PITCH, 30); else e->osc[0].lfo2_pitch = 60;
 }
-static void tw_lfo1_filter(EngineState *e, int way)   /* the LFO1 page's FILTER AMT as a route from LFO1 */
-{
-    if (way) send1(e, MDST_F1_CUTOFF, 40); else e->lfo1_filter = 80;
+static void tw_lfo1_filter(EngineState *e, int way)   /* the LFO1 page's FILTER AMT, or none (2026-11-12: its S-curve */
+{                                                        /* taper is its own, no route sounds the same) */
+    if (way) e->lfo1_filter = 80;
 }
 static void tw_mfx_k1(EngineState *e, int way)   /* STONE PHASER, LFO1 on its MANUAL (way 1) or not */
 {
@@ -796,7 +797,7 @@ int main(void)
         send_differs("HARMONIC", tw_harm);
         send_differs("ENV2>PITCH", tw_env2_pitch);
         send_same("LFO2>PITCH", VARCH_DUAL_OSC, tw_lfo2_pitch);
-        send_same("LFO1 FILTER", VARCH_DUAL_OSC, tw_lfo1_filter);
+        send_differs("LFO1 FILTER", tw_lfo1_filter);
         send_same("PITCH (both)", VARCH_DUAL_OSC, tw_pitch_both);
         send_same("OSC1 SCAN", VARCH_DUAL_OSC, tw_scan);
         send_differs("LFO2 SPEED", tw_lfo2);
