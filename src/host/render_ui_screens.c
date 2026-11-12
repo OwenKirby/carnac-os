@@ -312,56 +312,79 @@ int main(int argc, char **argv)
     go(UIPAGE_LFO3);
     shot(dir, "lfo3");
 
-    /* MOD MATRIX (2026-11-11): routes made with the knobs on + NEW ROUTE, their AMOUNT on the Algorithm Encoder; a
-     * route cleared by its knobs closes up the list */
+    /* MOD MATRIX (2026-11-12): routes made with the knobs on + ROUTE, sorted by SOURCE as they are made (the cursor
+     * goes with each), their AMOUNT on the Algorithm Encoder; + ROUTE starts from the source of the group the cursor
+     * was in; a route cleared by its knobs closes up the list when the cursor leaves */
     e->filter[0].mod_amt = 20;
     go(UIPAGE_MOD);
     {
-        static const struct { uint8_t src, via, dest; int8_t amt; const char *label; } R[] = {
-            {MSRC_LFO2, MSRC_MODWHEEL, MDST_F1_CUTOFF, 40, "LFO2*WHL>CUT1"}, {MSRC_ENV3, MSRC_NONE, MDST_OSC1_PITCH, 30, "ENV3>PCH1"},
-            {MSRC_RANDOM, MSRC_NONE, MDST_PAN, -20, "RND>PAN"}, {MSRC_LFO1, MSRC_VELOCITY, MDST_F1_CUTOFF, -12, "LFO1*VEL>CUT1"},
+        static const struct { uint8_t src, via, dest; int8_t amt; } R[] = {
+            {MSRC_LFO2, MSRC_MODWHEEL, MDST_F1_CUTOFF, 40}, {MSRC_ENV3, MSRC_NONE, MDST_OSC1_PITCH, 30},
+            {MSRC_RANDOM, MSRC_NONE, MDST_PAN, -20}, {MSRC_LFO1, MSRC_VELOCITY, MDST_F1_CUTOFF, -12},
         };
-        uint8_t k, r;
+        static const struct { uint8_t src; const char *label; } SORTED[] = {
+            {MSRC_RANDOM, "PAN"}, {MSRC_ENV3, "OSC1 PCH"}, {MSRC_LFO1, "F1 CUTOFF"}, {MSRC_LFO2, "F1 CUTOFF"},
+            {MSRC_LFO2, "PAN"},
+        };
+        uint8_t k, *p;
         UiKnobInfo info;
-        if (ui_sm_row_count(&sm) != 1u || strcmp(ui_sm_row_label(&sm, 0), "+ NEW ROUTE") != 0) {
-            printf("FAIL: an empty MOD MATRIX should show + NEW ROUTE only (%u rows)\n", ui_sm_row_count(&sm));
+        if (ui_sm_row_count(&sm) != 1u || strcmp(ui_sm_row_label(&sm, 0), "+ ROUTE") != 0) {
+            printf("FAIL: an empty MOD MATRIX should show + ROUTE only (%u rows)\n", ui_sm_row_count(&sm));
             fails = 1;
         }
         for (k = 0; k < sizeof R / sizeof R[0]; k++) {
-            uint8_t *p;
-            ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(k - sm.s.current_param_focus));   /* + NEW ROUTE */
+            ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(ui_sm_row_count(&sm) - 1u - sm.s.current_param_focus));   /* + ROUTE */
             p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &info); *p = R[k].src; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
             p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 1, &info); *p = R[k].via; ui_sm_knob_written(&sm, UIPAGE_MOD, 1);
             p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &info); *p = R[k].dest; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
             ui_sm_handle(&sm, UIEV_ALGO_ENC, R[k].amt);
             ui_sm_tick(&sm, UI_ROWPOP_MS);
-            if (strcmp(ui_sm_row_label(&sm, k), R[k].label) != 0 || e->route[k].amount != BIPOLAR_CENTER + R[k].amt) {
-                printf("FAIL: route %u reads %s, amount %d\n", k, ui_sm_row_label(&sm, k),
-                       (int)e->route[k].amount - (int)BIPOLAR_CENTER);
+            if (e->route[ui_sm_route_sel(&sm)].src != R[k].src || e->route[ui_sm_route_sel(&sm)].amount != BIPOLAR_CENTER + R[k].amt) {
+                printf("FAIL: route %u: the cursor did not follow it into its group\n", k);
                 fails = 1;
             }
         }
-        if (ui_sm_row_count(&sm) != 5u || strcmp(ui_sm_row_label(&sm, 4), "+ NEW ROUTE") != 0) {
-            printf("FAIL: four routes and + NEW ROUTE should show (%u rows)\n", ui_sm_row_count(&sm));
+        /* + ROUTE from the LFO2 group: DEST alone makes an LFO2 route */
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(3 - sm.s.current_param_focus));
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &info);
+        if (*p != MSRC_LFO2) { printf("FAIL: + ROUTE should offer LFO2, the group above (%u)\n", *p); fails = 1; }
+        for (i = 0; i < 40; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
+        shot(dir, "mod_new");
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &info); *p = MDST_PAN; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 18);
+        ui_sm_tick(&sm, UI_ROWPOP_MS);
+        for (k = 0; k < sizeof SORTED / sizeof SORTED[0]; k++)
+            if (e->route[k].src != SORTED[k].src || strcmp(ui_sm_row_label(&sm, k), SORTED[k].label) != 0) {
+                printf("FAIL: row %u reads %s (source %u), not %s\n", k, ui_sm_row_label(&sm, k), e->route[k].src,
+                       SORTED[k].label);
+                fails = 1;
+            }
+        if (ui_sm_row_count(&sm) != 6u || strcmp(ui_sm_row_label(&sm, 5), "+ ROUTE") != 0) {
+            printf("FAIL: five routes and + ROUTE should show (%u rows)\n", ui_sm_row_count(&sm));
             fails = 1;
         }
-        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(0 - sm.s.current_param_focus));
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(3 - sm.s.current_param_focus));   /* LFO2*WHL > F1 CUTOFF */
         for (i = 0; i < 40; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
         shot(dir, "mod1");
-        ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);         /* LFO2*WHL>CUT1 +45, the popup up */
-        if (!sm.rowpop || e->route[0].amount != BIPOLAR_CENTER + 45) { printf("FAIL: the Algorithm Encoder did not set the route's AMOUNT\n"); fails = 1; }
+        for (i = 0; i < 9; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
+        shot(dir, "mod1b");                          /* (the sparks further along) */
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(1 - sm.s.current_param_focus));   /* ENV3 > OSC1 PCH */
+        for (i = 0; i < 4; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
+        shot(dir, "mod_env");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);       /* LFO2*WHL > F1 CUTOFF */
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);         /* +45, the popup up */
+        if (!sm.rowpop || e->route[3].amount != BIPOLAR_CENTER + 45) { printf("FAIL: the Algorithm Encoder did not set the route's AMOUNT\n"); fails = 1; }
         shot(dir, "mod1_rowpop");
         ui_sm_tick(&sm, UI_ROWPOP_MS);
-        /* .. route 3 (RND>PAN) cleared: SOURCE and DEST NONE, the last route moves up */
-        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(2 - sm.s.current_param_focus));
-        r = ui_sm_route_sel(&sm);
-        {
-            uint8_t *p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &info); *p = MSRC_NONE; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
-            p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &info); *p = MDST_NONE; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
-        }
-        if (r != 2u || ui_sm_row_count(&sm) != 4u || e->route[2].src != MSRC_LFO1 || e->route[3].src != MSRC_NONE) {
-            printf("FAIL: a cleared route should close up the list (%u rows, route 2 source %u)\n", ui_sm_row_count(&sm),
-                   e->route[2].src);
+        /* .. RND > PAN cleared: SOURCE and DEST NONE; gone when the cursor leaves, the rest move up */
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(0 - sm.s.current_param_focus));
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &info); *p = MSRC_NONE; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &info); *p = MDST_NONE; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        if (ui_sm_row_count(&sm) != 5u || e->route[0].src != MSRC_ENV3 || e->route[4].src != MSRC_NONE) {
+            printf("FAIL: a cleared route should close up the list (%u rows, route 0 source %u)\n", ui_sm_row_count(&sm),
+                   e->route[0].src);
             fails = 1;
         }
         shot(dir, "mod_packed");

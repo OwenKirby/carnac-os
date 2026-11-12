@@ -387,13 +387,13 @@ static int32_t pu_voice_pan(const SynthVoiceNode *n)
 /* ------------------------------------------------------------- pages --- */
 static const char *const PU_TITLE[UIPAGE_COUNT] = {
     "OSC 1", "OSC 2", "OSC MIX", "FILTER 1", "FILTER 2", "FLT MIX", "ENV 1", "ENV 2", "ENV 3", "LFO 1", "LFO 2", "LFO 3",
-    "MOD MATRIX", "MFX", "AMP", "EFFECTS", "MIX", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "ARP", "SAVE",
+    "MOD MATRIX", "AMP", "MFX", "EFFECTS", "MIX", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "ARP", "SAVE",
     "SEQ", "REC",
 };
 /* the first page and size of each section (UIStateMachine.c SECTION_FIRST / SECTION_COUNT, by page) */
 static void pu_section(uint8_t page, uint8_t *first, uint8_t *n)
 {
-    static const uint8_t F[] = {UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_AMP,
+    static const uint8_t F[] = {UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_EFFECTS,
                                 UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ, UIPAGE_COUNT};
     uint32_t i;
     for (i = 0; F[i + 1] != UIPAGE_COUNT && page >= F[i + 1]; i++) {}
@@ -402,7 +402,7 @@ static void pu_section(uint8_t page, uint8_t *first, uint8_t *n)
 }
 
 /* the pages whose parameters belong to a layer (the header names it) */
-static uint8_t pu_layer_page(uint8_t page) { return (uint8_t)(page <= UIPAGE_AMP); }
+static uint8_t pu_layer_page(uint8_t page) { return (uint8_t)(page <= UIPAGE_MFX); }
 
 /* the palette every page is drawn in (ui_seq_draw.c spec 3 note): GLOBAL > THEME's, whichever layer is in focus.
  * SAMHAIN is seq_palette_set's (ORANGE, or RED for the host's text checks) */
@@ -415,7 +415,7 @@ static uint8_t pu_page_pal(const UIStateMachine *sm)
 /* each page's name in the header's list of its section's pages */
 static const char *const PU_TAB[UIPAGE_COUNT] = {
     "OSC1", "OSC2", "OSCMIX", "FLT1", "FLT2", "FLTMIX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3",
-    "MATRIX", "MFX", "AMP", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ", "REC",
+    "MATRIX", "AMP", "MFX", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ", "REC",
 };
 #define PU_TAB_GAP 8                 /* between two pages' names */
 /* OSC2's place is the NOISE page while the layer has one oscillator (2026-11-06) */
@@ -714,6 +714,41 @@ static const char *pu_row_text(const UIStateMachine *sm, uint8_t r, char *b)
     return b;
 }
 
+/* a MOD MATRIX route row (2026-11-12): the routes come sorted by SOURCE, each source's group under one small stone
+ * with the source's name beside it (on the group's first row, and on the top row when the list has scrolled into a
+ * group), a ley line down from the stone on the group's other rows; then the destination's full name and, after a
+ * knot, the VIA small. + ROUTE (aimed: + its destination) across the row */
+#define PU_MR_SX 4                   /* the stone */
+#define PU_MR_SW 6
+#define PU_MR_X 42                   /* the destination's name */
+static void pu_mod_row(const UIStateMachine *sm, uint8_t r, uint8_t ri, uint8_t top, int32_t y, uint16_t lc,
+                       int32_t vw)
+{
+    const EngineState *e = sm->engine[sm->s.active_synth_layer];
+    const ModRoute *m = &e->route[ri];
+    const char *l = ui_sm_row_label(sm, r), *s;
+    uint8_t pr = r > 0u ? ui_sm_row_route(sm, (uint8_t)(r - 1u)) : (uint8_t)NROUTE, a;
+    int32_t x, k;
+    if (m->src == MSRC_NONE) {
+        pu_rune_n(6, y + 1, l, lc, 2, (214 - vw) / 12, 0);
+        return;
+    }
+    if (top || pr >= NROUTE || e->route[pr].src != m->src) {
+        s = ui_sm_src_short(m->src);
+        sq_stone(PU_MR_SX, y + PU_ROW_H - 2, PU_MR_SW, PU_ROW_H - 5, PU_ROW_H - 5, lc, (uint32_t)(m->src * 13 + 5), 0u, 0u);
+        pu_rune_n(PU_MR_SX + PU_MR_SW + 3, y + 6, s, lc, 1, 4, 0);
+    } else {
+        for (k = y; k < y + PU_ROW_H; k += 2)
+            cv_pset(PU_MR_SX + PU_MR_SW / 2, k, lc);
+    }
+    x = pu_rune_n(PU_MR_X, y + 1, l, lc, 2, 9, 0);
+    if (m->via != MSRC_NONE && m->via < MSRC_COUNT) {
+        for (a = 0u; a < 64u; a += 4u)
+            cv_pset(pu_px(x + 7, 3, a), pu_py(y + 10, 3, a), lc);
+        pu_rune_n(x + 12, y + 6, ui_sm_src_short(m->via), lc, 1, 4, 0);
+    }
+}
+
 /* label left, value right; greyed rows dim; the cursor row on the noisy ground, in white; a scroll bar on the right
  * when the page has more rows than fit */
 static void pu_draw_save_menu(const UIStateMachine *sm);
@@ -749,11 +784,14 @@ static void pu_draw_menu(const UIStateMachine *sm)
              * longest value keep to (src/host/test_ui_rows_fit.c); past that the label is cut */
             const char *l = ui_sm_row_label(sm, r), *t = pu_row_text(sm, r, b);
             int32_t nt = pu_strlen(t), vw = PU_RUNE_N_W(nt, 2);
-            uint8_t d = ui_sm_row_dest(sm, r);
+            uint8_t d = ui_sm_row_dest(sm, r), ri = ui_sm_row_route(sm, r);
             if (d != MDST_NONE && sm->page != UIPAGE_MOD)   /* the routes here: stones before the value */
                 pu_send_stones(230 - vw - 8, y + PU_ROW_H, ui_sm_dest_routes(sm->engine[sm->s.active_synth_layer], d),
                                cur ? SQC(BG) : SQC(DIM), 1);
-            pu_rune_n(6, y + 1, l, lc, 2, (214 - vw) / 12, 0);
+            if (ri < NROUTE)
+                pu_mod_row(sm, r, ri, (uint8_t)(i == 0u), y, lc, vw);
+            else
+                pu_rune_n(6, y + 1, l, lc, 2, (214 - vw) / 12, 0);
             pu_rune_n(230 - vw, y + 1, t, vc, 2, nt, 0);
         }
     }
@@ -2744,6 +2782,166 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
     }
 }
 
+/* -------------------------------------------------------- MOD MATRIX --- */
+/* The ley-line map under the routes (2026-11-12): the sources the routes use down the left, their destinations down
+ * the right (in page order), a line a route. The cursor's route burns bright, the other lines from its source show,
+ * the rest lie faint; a VIA ties a knot halfway, open as wide as its VIA DEPTH. Sparks run the cursor's source's
+ * lines: an LFO's at its own rate, an envelope's out and back with its level, the rest a burst on each new note. On
+ * + ROUTE the source it would take stands lit. */
+#define PM_SX 40                     /* the sources' stones */
+#define PM_DX 198                    /* the destinations' */
+#define PM_BURST 16u                 /* frames a note's burst runs */
+static uint32_t pm_frame, pm_burst_at = 0xFFFFFFFFu, pm_age;
+static int32_t pm_voice = -1;
+
+/* node i of n down the map */
+static int32_t pm_y(int32_t i, int32_t n) { return 6 + (60 * (2 * i + 1)) / (2 * (n > 0 ? n : 1)); }
+
+/* where along its lines the source's sparks are (0..255 each, *n of them; 0: none now) */
+static uint32_t pm_sparks(const UIStateMachine *sm, uint8_t src, int32_t *t)
+{
+    uint8_t layer = sm->s.active_synth_layer;
+    int32_t v = pu_voice(layer);
+    if (src >= MSRC_LFO1 && src <= MSRC_LFO3) {
+        const LfoRuntimeState *st = pu_lfo_state(sm, (uint8_t)(src - MSRC_LFO1));
+        if (st == 0)
+            return 0u;
+        t[0] = (int32_t)(st->phase_accumulator >> 24);
+        t[1] = (t[0] + 128) & 255;
+        return 2u;
+    }
+    if (v < 0)
+        return 0u;
+    if (src >= MSRC_ENV1 && src <= MSRC_ENV3) {
+        int32_t l = pu_env_of(&poly_bank[v], (uint8_t)(src - MSRC_ENV1))->level_q15;
+        t[0] = l <= 0 ? 0 : l >= 32767 ? 255 : l >> 7;
+        return t[0] > 4 ? 1u : 0u;
+    }
+    if (pm_frame - pm_burst_at >= PM_BURST)
+        return 0u;
+    t[0] = (int32_t)((pm_frame - pm_burst_at) * 256u / PM_BURST);
+    return 1u;
+}
+
+/* a new note on the layer: the bursts start (once a frame, from pu_viz_live) */
+static void pm_tick(const UIStateMachine *sm)
+{
+    int32_t v = pu_voice(sm->s.active_synth_layer);
+    pm_frame++;
+    if (v >= 0 && (v != pm_voice || poly_bank[v].age_counter < pm_age))
+        pm_burst_at = pm_frame;
+    pm_voice = v;
+    pm_age = v >= 0 ? poly_bank[v].age_counter : 0u;
+}
+
+/* the point at t (0..256) along a line from (x0, y0) to (x1, y1), leaving and arriving level */
+static void pm_at(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t t, int32_t *x, int32_t *y)
+{
+    int32_t s = 256 - t, b1 = 3 * s * s / 256 * t / 256, b2 = 3 * s * t / 256 * t / 256, b3 = t * t / 256 * t / 256;
+    int32_t cx0 = x0 + 56, cx1 = x1 - 56;
+    *x = (s * s / 256 * s / 256 * x0 + b1 * cx0 + b2 * cx1 + b3 * x1) / 256;
+    *y = (s * s / 256 * s / 256 * y0 + b1 * y0 + b2 * y1 + b3 * y1) / 256;
+}
+
+static void pu_viz_mod(const UIStateMachine *sm)
+{
+    const EngineState *e = sm->engine[sm->s.active_synth_layer];
+    uint8_t srcs[MSRC_COUNT], ns = 0u, dsts[MDST_COUNT], nd = 0u, cr = ui_sm_row_route(sm, sm->s.current_param_focus);
+    uint8_t lit = MSRC_NONE, ldst = MDST_NONE, i, j, k, used[MSRC_COUNT] = {0}, dused[MDST_COUNT] = {0};
+    int32_t sy[MSRC_COUNT], dy[MDST_COUNT], t[2], n, x, y, px, py, step;
+    if (cr < NROUTE) {
+        lit = e->route[cr].src != MSRC_NONE ? e->route[cr].src : sm->route_hint;
+        ldst = e->route[cr].dest;
+    }
+    for (i = 0u; i < NROUTE; i++)
+        if (e->route[i].src != MSRC_NONE && e->route[i].src < MSRC_COUNT) {
+            used[e->route[i].src] = 1u;
+            if (e->route[i].dest < MDST_COUNT)
+                dused[e->route[i].dest] = 1u;
+        }
+    if (lit < MSRC_COUNT && lit != MSRC_NONE)
+        used[lit] = 1u;
+    if (ldst < MDST_COUNT && ldst != MDST_NONE)
+        dused[ldst] = 1u;
+    for (i = 1u; i < MSRC_COUNT; i++)
+        if (used[i]) srcs[ns++] = i;
+    for (i = 1u; i < MDST_COUNT; i++)
+        if (dused[i]) dsts[nd++] = i;
+    if (ns == 0u) {
+        sq_text_in(0, 30 + CAP_IN(S, 13), 240, &AF_S, "NO ROUTES", SQC(DIM), SQC(BG));
+        return;
+    }
+    for (i = 0u; i < ns; i++) sy[srcs[i]] = pm_y(i, ns);
+    for (i = 0u; i < nd; i++) dy[dsts[i]] = pm_y(i, nd);
+    /* the lines: faint first, then the lit source's, then the cursor's route on top */
+    for (k = 0u; k < 3u; k++)
+        for (i = 0u; i < NROUTE; i++) {
+            const ModRoute *m = &e->route[i];
+            uint8_t lv = (uint8_t)(i == cr ? 2u : m->src == lit ? 1u : 0u);
+            uint16_t c = lv == 2u ? SQC(THEME) : lv == 1u ? SQC(MID) : PUC_STONE;
+            if (lv != k || m->src == MSRC_NONE || m->src >= MSRC_COUNT || m->dest == MDST_NONE || m->dest >= MDST_COUNT)
+                continue;
+            for (step = 0, px = PM_SX + 4, py = sy[m->src]; step <= 256; step += 8) {
+                pm_at(PM_SX + 4, sy[m->src], PM_DX - 1, dy[m->dest], step, &x, &y);
+                if (lv || (step & 8))                /* (the faint ones dotted) */
+                    cv_line(px, py, x, y, c);
+                if (lv == 2u)
+                    cv_line(px, py + 1, x, y + 1, c);
+                px = x; py = y;
+            }
+            if (m->via != MSRC_NONE && m->via < MSRC_COUNT) {   /* the knot: open as the VIA DEPTH */
+                int32_t r = 2 + (int32_t)m->via_depth * 4 / VAL_MAX;
+                uint8_t a;
+                pm_at(PM_SX + 4, sy[m->src], PM_DX - 1, dy[m->dest], 128, &x, &y);
+                cv_rect(x - r, y - r, 2 * r + 1, 2 * r + 1, SQC(BG));
+                for (a = 0u; a < 64u; a += 2u)
+                    cv_pset(pu_px(x, r, a), pu_py(y, r, a), c);
+            }
+        }
+    /* the sparks on the lit source's lines */
+    n = lit < MSRC_COUNT && lit != MSRC_NONE ? (int32_t)pm_sparks(sm, lit, t) : 0;
+    for (i = 0u; i < NROUTE; i++) {
+        const ModRoute *m = &e->route[i];
+        if (m->src != lit || m->src == MSRC_NONE || m->dest == MDST_NONE || m->dest >= MDST_COUNT)
+            continue;
+        for (j = 0u; j < (uint8_t)n; j++) {
+            pm_at(PM_SX + 4, sy[m->src], PM_DX - 1, dy[m->dest], t[j], &x, &y);
+            cv_rect(x - 1, y - 1, 3, 3, SQC(HI));
+            pm_at(PM_SX + 4, sy[m->src], PM_DX - 1, dy[m->dest], t[j] > 12 ? t[j] - 12 : 0, &px, &py);
+            cv_line(px, py, x, y, SQC(ACCENT));
+        }
+    }
+    /* the stones and their names (when they have room, or are lit) */
+    for (i = 0u; i < ns; i++) {
+        uint8_t s = srcs[i], on = (uint8_t)(s == lit);
+        const char *nm = ui_sm_src_short(s);
+        sq_stone(PM_SX - 3, sy[s] + 4, 7, 8, 8, on ? SQC(THEME) : SQC(DIM), (uint32_t)(s * 7 + 3), 0u, 0u);
+        if (on || ns <= 6u)
+            pu_rune_n(PM_SX - 7 - PU_RUNE_N_W(pu_strlen(nm), 1), sy[s] - 4, nm, on ? SQC(HI) : SQC(MID), 1, 4, 0);
+    }
+    for (i = 0u; i < nd; i++) {
+        uint8_t d = dsts[i], on = (uint8_t)(d == ldst);
+        sq_stone(PM_DX, dy[d] + 4, 7, 8, 8, on ? SQC(THEME) : SQC(DIM), (uint32_t)(d * 5 + 1), 0u, 0u);
+        if (on || nd <= 6u)
+            pu_rune_n(PM_DX + 11, dy[d] - 4, ui_sm_dest_short(d), on ? SQC(HI) : SQC(MID), 1, 4, 0);
+    }
+}
+
+/* the map's live inputs: the cursor's route, + ROUTE's source and where the sparks are */
+static uint32_t pm_sig(const UIStateMachine *sm, uint32_t h)
+{
+    const EngineState *e = sm->engine[sm->s.active_synth_layer];
+    uint8_t cr = ui_sm_row_route(sm, sm->s.current_param_focus), lit = MSRC_NONE;
+    int32_t t[2] = {0, 0};
+    uint32_t n;
+    pm_tick(sm);
+    if (cr < NROUTE)
+        lit = e->route[cr].src != MSRC_NONE ? e->route[cr].src : sm->route_hint;
+    n = lit != MSRC_NONE && lit < MSRC_COUNT ? pm_sparks(sm, lit, t) : 0u;
+    h = sq_mix(h, (uint32_t)cr | (uint32_t)sm->route_hint << 8 | n << 16);
+    return sq_mix(h, (uint32_t)(t[0] >> 2) | (uint32_t)(t[1] >> 2) << 8);
+}
+
 /* ============================================================== entry === */
 /* the visualizer's own inputs beyond the page's data: live values, quantised */
 static uint32_t pu_viz_live(UIStateMachine *sm, uint32_t h)
@@ -2763,7 +2961,7 @@ static uint32_t pu_viz_live(UIStateMachine *sm, uint32_t h)
         return sq_mix(h, (uint32_t)pu_osc_morph(sm, 1u, &voice) >> 6);
     case UIPAGE_MOD: {
         const EngineState *e = sm->engine[sm->s.active_synth_layer];
-        return sq_mix_bytes(h, (const uint8_t *)e->route, sizeof e->route);
+        return pm_sig(sm, sq_mix_bytes(h, (const uint8_t *)e->route, sizeof e->route));
     }
     case UIPAGE_AMP: case UIPAGE_HOME1: case UIPAGE_HOME2:
         return pu_voices_sig(h);
@@ -2799,6 +2997,7 @@ static void pu_draw_viz(UIStateMachine *sm)
     case UIPAGE_FLTMIX: pu_viz_fltmix(sm); break;
     case UIPAGE_ENV1: case UIPAGE_ENV2: case UIPAGE_ENV3: pu_viz_env(sm, (uint8_t)(page - UIPAGE_ENV1)); break;
     case UIPAGE_LFO1: case UIPAGE_LFO2: case UIPAGE_LFO3: pu_viz_lfo(sm, (uint8_t)(page - UIPAGE_LFO1)); break;
+    case UIPAGE_MOD: pu_viz_mod(sm); break;
     case UIPAGE_AMP: pu_viz_amp(sm); break;
     case UIPAGE_EFFECTS: pu_viz_fx(sm); break;
     case UIPAGE_MIX: pu_viz_mix(sm); break;

@@ -994,7 +994,6 @@ static void (*const render_arch[VARCH_COUNT])(SynthVoiceNode *, float *, int) = 
     render_dual_filter,  /* DUAL FILTER */
     render_stack,        /* STACK */
     render_binaural,     /* BINAURAL */
-    render_single,       /* STRIKE (retired 2026-11-04: loads as SPREAD; never reached) */
     render_full,         /* FULL */
     render_dual_osc,     /* DUAL SPREAD (retired 2026-11-06: loads as DUAL OSC; never reached) */
 };

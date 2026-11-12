@@ -51,13 +51,13 @@ enum {                               /* the FM1's transport buttons, outside spe
 
 /* ------------------------------------------------------------ pages --- */
 enum {
-    UIPAGE_OSC1, UIPAGE_OSC2, UIPAGE_OSCMIX,                      /* FX (ATTACK went with STRIKE, 2026-11-04) */
+    UIPAGE_OSC1, UIPAGE_OSC2, UIPAGE_OSCMIX,                      /* FX */
     UIPAGE_FILTER1, UIPAGE_FILTER2, UIPAGE_FLTMIX,                /* SEL */
     UIPAGE_ENV1, UIPAGE_ENV2, UIPAGE_ENV3,                        /* ENV */
     UIPAGE_LFO1, UIPAGE_LFO2, UIPAGE_LFO3,                        /* LFO */
-    UIPAGE_MOD, UIPAGE_MFX,                                       /* EDIT (2026-11-03): the MOD page (one; its SLOT knob
-                                                                   * picks the slot), the layer's MFX (2026-11-01) */
-    UIPAGE_AMP, UIPAGE_EFFECTS, UIPAGE_MIX,                       /* GLO (MIX 2026-11-02: the performance's live mix) */
+    UIPAGE_MOD, UIPAGE_AMP, UIPAGE_MFX,                           /* EDIT (2026-11-12, the signal's order): the MOD
+                                                                   * MATRIX, the layer's AMP, its MFX (2026-11-01) */
+    UIPAGE_EFFECTS, UIPAGE_MIX,                                   /* GLO (MIX 2026-11-02: the performance's live mix) */
     UIPAGE_HOME1, UIPAGE_HOME2, UIPAGE_HOME3,                     /* HOME: LAYER (5.3 View 1 / 2 by layer focus), ZONES
                                                                    * (View 3), */
     UIPAGE_PERF, UIPAGE_GLOBAL,                                   /* .. the performance browser (6.1), GLOBAL
@@ -192,6 +192,9 @@ typedef struct {
     uint8_t knob_touched_page;
     uint8_t sub6_knob;               /* the OSCMIXER's SUB WAVE knob: its step, from sub_octave + sub_waveform each
                                       * ui_sm_knob, back into them in ui_sm_knob_written */
+    uint8_t mod_src;                 /* the MOD MATRIX's SOURCE knob: the route's source, or on + ROUTE route_hint (the
+                                      * same way as sub6_knob) */
+    uint8_t route_hint;              /* the source + ROUTE starts from: the group the cursor was last in (2026-11-12) */
     Krec *rec;                       /* the REC page's loop (ui_sm_attach_rec); NULL: REC only on SEQ / ARP */
     uint8_t rec_ask;                 /* the confirm popup asks DOUBLE (1) or CLEAR (2) for the loop; 0: not the loop's */
     uint8_t rec_msg;                 /* a word over the loop for rec_msg_ms: 1 UNDO, 2 NOTHING TO UNDO, 3 FULL */
@@ -286,6 +289,10 @@ void ui_sm_tick(UIStateMachine *sm, uint16_t ms);
 uint8_t ui_sm_save_armed(const UIStateMachine *sm);
 /* THE MOD MATRIX (2026-11-11, PresetStructures.h ModRoute) */
 uint8_t ui_sm_route_sel(const UIStateMachine *sm);       /* the route the MOD MATRIX's knobs edit (the cursor's) */
+uint8_t ui_sm_row_route(const UIStateMachine *sm, uint8_t row);   /* the route a MOD MATRIX row shows, NROUTE none */
+const char *ui_sm_src_short(uint8_t src);                  /* a source's short name, "LFO2" */
+const char *ui_sm_dest_name(uint8_t dest);                 /* a destination's full name, "F1 CUTOFF" */
+const char *ui_sm_dest_short(uint8_t dest);                /* .. and its short one, "CUT1" */
 uint8_t ui_sm_dest_routes(const EngineState *e, uint8_t dest);   /* routes in use to MDST_* dest */
 uint8_t ui_sm_dest_live(const UIStateMachine *sm, uint8_t layer, uint8_t dest);   /* can take a route (MFX knobs: an
                                                                      * MFX on, not a list knob) */

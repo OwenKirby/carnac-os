@@ -80,9 +80,6 @@ enum {                               /* voice architecture, per patch: the signa
     VARCH_DUAL_FILTER,               /* OSC1 -> FILTER1 -> FILTER2 (serial .. parallel) */
     VARCH_STACK,                     /* (OSC1 -> FILTER1, amp ENV1) + (OSC2 -> FILTER2, amp ENV2), blended */
     VARCH_BINAURAL,                  /* OSC1 -> FILTER1 once per ear; the right ear is beat-offset, its LFO mod phase-offset */
-    VARCH_STRIKE,                    /* retired 2026-11-04 (was SINGLE + a one-shot attack sample): loads as SPREAD at SPREAD 0
-                                      * (varch_single_to_spread); the code stays taken so FULL / DUAL SPREAD keep theirs. The
-                                      * attack samples live on as PCM waves */
     VARCH_FULL,                      /* OSC1 + OSC2 (cross-mod) -> FILTER1 / FILTER2 (serial .. parallel): DUAL OSC into
                                       * DUAL FILTER (2026-10-26) */
     VARCH_DUAL_SPREAD,               /* retired 2026-11-06 (was OSC1 + OSC2, each as 4 detuned playheads): loads as DUAL OSC at
@@ -513,7 +510,7 @@ static inline uint8_t varch_of(const EngineState *e)
  * older firmware reads SPREAD as it is, so no record version moves. */
 static inline void varch_single_to_spread(EngineState *e)
 {
-    if (e->arch == VARCH_SINGLE || e->arch == VARCH_STRIKE) {   /* (STRIKE: its SINGLE path without the attack) */
+    if (e->arch == VARCH_SINGLE) {
         e->arch = VARCH_SPREAD;
         e->oscmix.spread = 0;
     } else if (e->arch == VARCH_DUAL_SPREAD) {           /* (retired 2026-11-06: its two oscillators without the playheads) */
@@ -567,7 +564,7 @@ static inline uint8_t varch_voice_cost(const EngineState *e)
     case VARCH_BINAURAL:    c = 16u; break;
     case VARCH_FULL:        c = 17u; break;
     case VARCH_DUAL_SPREAD: c = 12u; break;     /* (retired: loads as DUAL OSC) */
-    default:                c = 10u; break;     /* SINGLE, STRIKE (retired: load as SPREAD 0) */
+    default:                c = 10u; break;     /* SINGLE (retired: loads as SPREAD 0) */
     }
     sh2 = (uint8_t)((e->filter[0].flavour == FLT_SH2) * (bin ? 2 : 1) +
                     (varch_uses_filter2(a) && e->filter[1].flavour == FLT_SH2));

@@ -304,7 +304,7 @@ int main(void)
         ui_sm_enforce(&sm);
         for (r = 0; r < NROUTE; r++) e->route[r] = (ModRoute)ROUTE_FREE;
         e->route[0] = (ModRoute){MSRC_LFO3, MSRC_NONE, MDST_PAN, BIPOLAR_CENTER + 15, VAL_MAX};
-        press(BTN_GLO);
+        press(BTN_EDIT); press(BTN_EDIT);
         CHECK(sm.page == UIPAGE_AMP && find_row("LFO3>PAN") >= 0, "AMP: the PAN route is a row (page %u)", sm.page);
         ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(find_row("LFO3>PAN") - sm.s.current_param_focus));
         ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);
@@ -312,8 +312,8 @@ int main(void)
               (int)e->route[0].amount - 64);
         r = sm.s.current_param_focus;
         press(BTN_EDIT);
-        CHECK(sm.page == UIPAGE_MOD && ui_sm_route_sel(&sm) == 0u, "EDIT from the PAN row: its route (%u)", ui_sm_route_sel(&sm));
-        press(BTN_GLO);
+        CHECK(sm.page == UIPAGE_MFX, "EDIT from AMP (inside EDIT): MFX, no jump (%u)", sm.page);
+        press(BTN_EDIT); press(BTN_EDIT);
         CHECK(sm.page == UIPAGE_AMP && sm.s.current_param_focus == r, "AMP again: the cursor where it was (%u, %u)",
               sm.s.current_param_focus, r);
         press(BTN_SEL);                              /* FILTER1: the cutoff knob turned, then EDIT */
@@ -321,16 +321,28 @@ int main(void)
         press(BTN_EDIT);
         r = ui_sm_route_sel(&sm);
         CHECK(sm.page == UIPAGE_MOD && r == 1u && e->route[1].dest == MDST_F1_CUTOFF && e->route[1].src == MSRC_NONE &&
-              strcmp(ui_sm_row_label(&sm, sm.s.current_param_focus), "+ NEW>CUT1") == 0,
-              "EDIT from the cutoff knob: + NEW ROUTE aimed at F1 CUTOFF (route %u, %s)", r,
+              strcmp(ui_sm_row_label(&sm, sm.s.current_param_focus), "+ F1 CUTOFF") == 0,
+              "EDIT from the cutoff knob: + ROUTE aimed at F1 CUTOFF (route %u, %s)", r,
               ui_sm_row_label(&sm, sm.s.current_param_focus));
-        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &i); *p = MSRC_LFO2; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
-        CHECK(e->route[1].src == MSRC_LFO2 && find_row("+ NEW ROUTE") == 2, "a SOURCE makes it a route; + NEW ROUTE after it");
-        ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);      /* route 0 (LFO3>PAN): its SOURCE to NONE, then away */
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &i);
+        CHECK(*p == MSRC_LFO3, "+ ROUTE offers the last group's source, LFO3 (%u)", *p);
+        *p = MSRC_LFO2; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
+        CHECK(e->route[0].src == MSRC_LFO2 && e->route[0].dest == MDST_F1_CUTOFF && e->route[1].src == MSRC_LFO3 &&
+              ui_sm_route_sel(&sm) == 0u && find_row("+ ROUTE") == 2,
+              "a SOURCE makes it a route, sorted before LFO3's, the cursor with it; + ROUTE after");
+        CHECK(strcmp(ui_sm_row_label(&sm, 0), "F1 CUTOFF") == 0 && strcmp(ui_sm_row_label(&sm, 1), "PAN") == 0,
+              "MOD MATRIX rows: the destinations' full names (%s, %s)", ui_sm_row_label(&sm, 0), ui_sm_row_label(&sm, 1));
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);       /* LFO3>PAN: its SOURCE to NONE, then away */
         p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &i); *p = MSRC_NONE; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
-        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &i); *p = MDST_AMP_LEVEL; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
+        CHECK(e->route[1].src == MSRC_NONE, "a cleared route's DEST does not bring a source back (%u)", e->route[1].src);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);
         CHECK(e->route[0].src == MSRC_LFO2 && e->route[0].dest == MDST_F1_CUTOFF && e->route[1].src == MSRC_NONE &&
-              ui_sm_route_sel(&sm) == 0u, "SOURCE NONE: the route goes when the cursor leaves, the next slides under it");
+              ui_sm_route_sel(&sm) == 0u, "SOURCE NONE: the route goes when the cursor leaves");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);       /* + ROUTE under the LFO2 group: DEST alone makes an LFO2 route */
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &i); *p = MDST_PAN; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
+        CHECK(e->route[1].src == MSRC_LFO2 && e->route[1].dest == MDST_PAN && ui_sm_route_sel(&sm) == 1u,
+              "+ ROUTE takes the group's source (%u > %u)", e->route[1].src, e->route[1].dest);
         e->arch = VARCH_SPREAD;                      /* one oscillator: DEST steps over OSC2's */
         ui_sm_enforce(&sm);
         d = MDST_OSC1_PITCH;
@@ -430,16 +442,16 @@ int main(void)
     CHECK(sm.page == UIPAGE_HOME1 && sm.s.active_synth_layer == 0, "SINGL on HOME2 -> HOME1 (%u)", sm.page);
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     ui_sm_enforce(&sm);
-    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_AMP, "GLO cycles AMP -> EFFECTS -> MIX -> AMP (%u)", sm.page);
-    /* EDIT (2026-11-03): MOD -> MFX -> MOD */
+    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_EFFECTS, "GLO cycles EFFECTS -> MIX -> EFFECTS (%u)", sm.page);
+    /* EDIT (2026-11-12): MOD -> AMP -> MFX -> MOD */
     press(BTN_EDIT);
     CHECK(sm.page == UIPAGE_MOD, "EDIT -> MOD (%u)", sm.page);
-    press(BTN_EDIT); press(BTN_EDIT);
-    CHECK(sm.page == UIPAGE_MOD, "EDIT cycles MOD -> MFX -> MOD (%u)", sm.page);
+    press(BTN_EDIT); press(BTN_EDIT); press(BTN_EDIT);
+    CHECK(sm.page == UIPAGE_MOD, "EDIT cycles MOD -> AMP -> MFX -> MOD (%u)", sm.page);
     /* MFX (2026-11-01): TYPE alone at OFF, no knobs; a new type starts at its defaults, shows its own row and knobs */
-    press(BTN_EDIT);
-    CHECK(sm.page == UIPAGE_MFX, "EDIT -> MFX (%u)", sm.page);
+    press(BTN_EDIT); press(BTN_EDIT);
+    CHECK(sm.page == UIPAGE_MFX, "EDIT -> AMP -> MFX (%u)", sm.page);
     {
         UiKnobInfo info;
         MfxParams *m = ui_sm_mfx(&sm, 0);
@@ -462,8 +474,8 @@ int main(void)
         ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
         CHECK(m->type == MFX_OFF, "TYPE -> OFF");
     }
-    press(BTN_GLO); press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_EFFECTS, "GLO -> AMP -> EFFECTS (%u)", sm.page);
+    press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_EFFECTS, "GLO -> EFFECTS (%u)", sm.page);
     CHECK(find_row("DELAY HP") < 0 && find_row("DLY > REV") < 0, "EFFECTS: DELAY HP and the cross-feeds moved to MIX");
     /* MIX (2026-11-02): knob 1 BALANCE in DUAL, DRY/WET in SINGL (one byte); LOOP TONE's thinner half is DELAY HP
      * (fx_tone_sync), beside PING PONG in delay_pingpong */

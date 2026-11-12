@@ -71,11 +71,6 @@ enum { W_CHOIR = 64, W_SPIRITVOX, W_PANFLUTE, W_HORNS, W_STRENS, W_HOARFROST, W_
        W_ROCKGONG, W_RAINSTICK, W_MENHIR, W_LOGDRUM, W_WOODBLOCK };   /* the rebuilt PCM bank (2026-11-06) */
 /* Foundations' frames by SCAN (gen_foundations.py): the SH-2's VCO shapes */
 enum { F_TRI = 0, F_SAW = 18, F_SQUARE = 36, F_P35 = 54, F_P20 = 73, F_P10 = 91, F_PMIN = 109, F_SAWSQ = 127 };
-/* attacks.h's sounds, by number (attack_names) */
-enum { A_BONE_CHIFF, A_REED_CHIFF, A_HORN_BLAT, A_FLINT, A_STONE_KNOCK, A_MENHIR_THUD, A_LITHOPHONE, A_PEBBLES,
-       A_WOOD_BLOCK, A_LOG_DRUM, A_BONE_CLACK, A_FRAME_DRUM, A_SEED_RATTLE, A_CRACKLE, A_CAVE_CLAP,
-       A_BOW_PLUCK, A_MOUTH_BOW, A_POT_DRUM, A_CONCH };
-#define W_ATK(a) (32 + (a))
 enum { L_SINE = 0, L_TRI = 21, L_SAW = 43, L_SQUARE = 64, L_STEP = 85, L_SLEW = 106 };
 
 /* ================================ basses: Foundations through the SH-2 and the MS-20 ================================ */

@@ -1,6 +1,6 @@
 #pragma once
 /* The firmware's attack samples: none since 2026-11-05 (ATK_COUNT 0; they were one-shot waves, codes 32.., and a PCM
- * wave's atk_fw). Kept: the shape, for the patch format's ATTACK byte (STRIKE, retired) and the mu-law decode table. */
+ * wave's atk_fw). Kept: the shape (pcm_osc.c's ATK_COUNT paths) and the mu-law decode table. */
 #include <stdint.h>
 
 #define ATK_COUNT 0u

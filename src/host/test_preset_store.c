@@ -18,7 +18,6 @@
 #include "dsp/wavetables.h"
 #include "dsp/midi_clock.h"
 #include "dsp/seq_scale.h"
-#include "dsp/attacks.h"         /* ATK_COUNT: the factory bank's attack sounds */
 #include "dsp/arp_chords.h"
 #include "dsp/tuning.h"
 

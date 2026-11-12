@@ -78,7 +78,7 @@ static void all_off(void)
     render(44100);
 }
 
-static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL_SPREAD"};
+static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STACK", "BINAURAL", "FULL", "DUAL_SPREAD"};
 
 static void base_patch(EngineState *e, uint8_t arch)
 {
