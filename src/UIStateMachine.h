@@ -55,9 +55,9 @@ enum {
     UIPAGE_FILTER1, UIPAGE_FILTER2, UIPAGE_FLTMIX,                /* SEL */
     UIPAGE_ENV1, UIPAGE_ENV2, UIPAGE_ENV3,                        /* ENV */
     UIPAGE_LFO1, UIPAGE_LFO2, UIPAGE_LFO3,                        /* LFO */
-    UIPAGE_MOD, UIPAGE_AMP, UIPAGE_MFX,                           /* EDIT (2026-11-12, the signal's order): the MOD
-                                                                   * MATRIX, the layer's AMP, its MFX (2026-11-01) */
-    UIPAGE_EFFECTS, UIPAGE_MIX,                                   /* GLO (MIX 2026-11-02: the performance's live mix) */
+    UIPAGE_MOD, UIPAGE_AMP,                                       /* EDIT (2026-11-12): the MOD MATRIX, the layer's AMP */
+    UIPAGE_MFX, UIPAGE_EFFECTS, UIPAGE_MIX,                       /* GLO, the signal's order on: the layer's MFX
+                                                                   * (2026-11-01), EFFECTS, MIX (the live mix) */
     UIPAGE_HOME1, UIPAGE_HOME2, UIPAGE_HOME3,                     /* HOME: LAYER (5.3 View 1 / 2 by layer focus), ZONES
                                                                    * (View 3), */
     UIPAGE_PERF, UIPAGE_GLOBAL,                                   /* .. the performance browser (6.1), GLOBAL

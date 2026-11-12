@@ -312,8 +312,9 @@ int main(void)
               (int)e->route[0].amount - 64);
         r = sm.s.current_param_focus;
         press(BTN_EDIT);
-        CHECK(sm.page == UIPAGE_MFX, "EDIT from AMP (inside EDIT): MFX, no jump (%u)", sm.page);
-        press(BTN_EDIT); press(BTN_EDIT);
+        CHECK(sm.page == UIPAGE_MOD && ui_sm_route_sel(&sm) == 0u, "EDIT from AMP's PAN row: its route (%u, %u)", sm.page,
+              ui_sm_route_sel(&sm));
+        press(BTN_EDIT);
         CHECK(sm.page == UIPAGE_AMP && sm.s.current_param_focus == r, "AMP again: the cursor where it was (%u, %u)",
               sm.s.current_param_focus, r);
         press(BTN_SEL);                              /* FILTER1: the cutoff knob turned, then EDIT */
@@ -442,16 +443,18 @@ int main(void)
     CHECK(sm.page == UIPAGE_HOME1 && sm.s.active_synth_layer == 0, "SINGL on HOME2 -> HOME1 (%u)", sm.page);
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     ui_sm_enforce(&sm);
-    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_EFFECTS, "GLO cycles EFFECTS -> MIX -> EFFECTS (%u)", sm.page);
-    /* EDIT (2026-11-12): MOD -> AMP -> MFX -> MOD */
+    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_MFX, "GLO cycles MFX -> EFFECTS -> MIX -> MFX (%u)", sm.page);
+    /* EDIT (2026-11-12): MOD -> AMP -> MOD */
     press(BTN_EDIT);
     CHECK(sm.page == UIPAGE_MOD, "EDIT -> MOD (%u)", sm.page);
-    press(BTN_EDIT); press(BTN_EDIT); press(BTN_EDIT);
-    CHECK(sm.page == UIPAGE_MOD, "EDIT cycles MOD -> AMP -> MFX -> MOD (%u)", sm.page);
+    press(BTN_EDIT);
+    CHECK(sm.page == UIPAGE_AMP, "EDIT -> AMP (%u)", sm.page);
+    press(BTN_EDIT);
+    CHECK(sm.page == UIPAGE_MOD, "EDIT from AMP -> MOD (%u)", sm.page);
     /* MFX (2026-11-01): TYPE alone at OFF, no knobs; a new type starts at its defaults, shows its own row and knobs */
-    press(BTN_EDIT); press(BTN_EDIT);
-    CHECK(sm.page == UIPAGE_MFX, "EDIT -> AMP -> MFX (%u)", sm.page);
+    press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_MFX, "GLO -> MFX (%u)", sm.page);
     {
         UiKnobInfo info;
         MfxParams *m = ui_sm_mfx(&sm, 0);

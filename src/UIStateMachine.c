@@ -520,18 +520,18 @@ PS_STATIC_ASSERT(sizeof(UI_PAGES) / sizeof(UI_PAGES[0]) == UIPAGE_COUNT, "one UI
 
 /* 2.1: each section button's first submenu and how many submenus its presses cycle (HOME: 5.3, by mode) */
 static const uint8_t SECTION_FIRST[BTN_COUNT] = {
-    UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_EFFECTS,
+    UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_MFX,
     UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ
 };
 static const uint8_t SECTION_COUNT[BTN_COUNT] = {
-    3, 3, 3, 3, 3, 2, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* FX: OSC1, OSC2 / NOISE, OSCMIX. EDIT:
-                                                           * MOD, AMP, MFX. GLO: FX, MIX (2026-11-12). HOME: LAYER,
+    3, 3, 3, 3, 2, 3, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* FX: OSC1, OSC2 / NOISE, OSCMIX. EDIT:
+                                                           * MOD, AMP. GLO: MFX, FX, MIX (2026-11-12). HOME: LAYER,
                                                            * ZONES, the browser, GLOBAL */
 };
 /* each section's pages end where the next section's begin (a page dropped from the enum must shrink its count) */
 PS_STATIC_ASSERT(UIPAGE_OSC1 + 3 == UIPAGE_FILTER1 && UIPAGE_FILTER1 + 3 == UIPAGE_ENV1 &&
-                 UIPAGE_ENV1 + 3 == UIPAGE_LFO1 && UIPAGE_LFO1 + 3 == UIPAGE_MOD && UIPAGE_MOD + 3 == UIPAGE_EFFECTS &&
-                 UIPAGE_EFFECTS + 2 == UIPAGE_HOME1, "SECTION_COUNT: a section's presses stay inside its own pages");
+                 UIPAGE_ENV1 + 3 == UIPAGE_LFO1 && UIPAGE_LFO1 + 3 == UIPAGE_MOD && UIPAGE_MOD + 2 == UIPAGE_MFX &&
+                 UIPAGE_MFX + 3 == UIPAGE_HOME1, "SECTION_COUNT: a section's presses stay inside its own pages");
 /* the NOISE page: OSC2's place with one oscillator, the OSCMIXER's block */
 static const UiPage NOISE_PAGE_DEF = SYNTH(OSCMIX_ROWS, 0, oscmix, 0, OscMixerParams);   /* (no rows) */
 
@@ -1574,8 +1574,9 @@ static uint8_t jump_dest(UIStateMachine *sm, uint8_t *route)
 static void on_section(UIStateMachine *sm, uint8_t btn)
 {
     uint8_t first = SECTION_FIRST[btn], n = SECTION_COUNT[btn], k, p;
-    if (!in_section(sm->page, btn) && btn == BTN_EDIT) {   /* onto the destination's route, or a new one aimed there
-                                                          * (from AMP / MFX, inside EDIT, it cycles) */
+    if (btn == BTN_EDIT && sm->page != UIPAGE_MOD) {   /* onto the destination's route, or a new one aimed there
+                                                        * (AMP too: EDIT's other page, so its press goes to the MOD
+                                                        * MATRIX either way) */
         uint8_t ri, d = jump_dest(sm, &ri), i, row;
         EngineState *e = sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u];
         enter_page(sm, first);

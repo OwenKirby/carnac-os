@@ -393,7 +393,7 @@ static const char *const PU_TITLE[UIPAGE_COUNT] = {
 /* the first page and size of each section (UIStateMachine.c SECTION_FIRST / SECTION_COUNT, by page) */
 static void pu_section(uint8_t page, uint8_t *first, uint8_t *n)
 {
-    static const uint8_t F[] = {UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_EFFECTS,
+    static const uint8_t F[] = {UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_MFX,
                                 UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ, UIPAGE_COUNT};
     uint32_t i;
     for (i = 0; F[i + 1] != UIPAGE_COUNT && page >= F[i + 1]; i++) {}
