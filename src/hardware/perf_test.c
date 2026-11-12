@@ -384,8 +384,8 @@ static void patch(EngineState *e, const PtScen *s)
     e->env[1].sustain = 100;
     e->oscmix.spread = 60;
     e->oscmix.xmod_amt = 20;
-    e->filter[0].mod_src = MSRC_LFO1;
-    e->filter[0].mod_amt = 72;
+    e->route[3] = (ModRoute){MSRC_LFO1, MSRC_NONE, MDST_F1_CUTOFF, BIPOLAR_CENTER + 36, VAL_MAX};   /* (v13: its own
+                                                                     * source LFO1 at 72) */
     e->filter[0].flavour = e->filter[1].flavour = s->flavour;
     e->filter[0].resonance = e->filter[1].resonance = 90;
     if (s->flags & F_LONGREL)
@@ -405,10 +405,10 @@ static void patch(EngineState *e, const PtScen *s)
         e->lfo[2].rate = 40;
         e->amp.delay_send = 50;
         e->amp.reverb_send = 60;
-        e->mod[0] = (ModSlotParams){MSRC_LFO2, MFN_SAMPLE_B_ON_A, MSRC_LFO3, 120};
-        e->mod[1] = (ModSlotParams){MSRC_MODSLOT1, MFN_LAG, MSRC_ENV2, 100};
-        e->mod[2] = (ModSlotParams){MSRC_MODSLOT2, MFN_MUL, MSRC_LFO1, 110};
-        e->filter[0].mod_src = MSRC_MODSLOT3;
+        /* (2026-11-11, the mod matrix: the slots' chain became three routes, two of them with a VIA) */
+        e->route[0] = (ModRoute){MSRC_LFO2, MSRC_LFO3, MDST_F1_CUTOFF, BIPOLAR_CENTER + 40};
+        e->route[1] = (ModRoute){MSRC_ENV2, MSRC_LFO1, MDST_F1_CUTOFF, BIPOLAR_CENTER + 30};
+        e->route[2] = (ModRoute){MSRC_LFO3, MSRC_NONE, MDST_OSC1_SCAN, BIPOLAR_CENTER + 30};
         e->filter[0].mod_amt = 112;
     }
     if (s->flags & F_DRIVE) {

@@ -2,6 +2,7 @@
 #include "envelopes.h"
 #include "dsp_clamp.h"
 #include "midi_clock.h"
+#include "env_sustain.h"
 #include <stdint.h>
 
 /* Stage times. Knob k sets T = 1 ms * 20000^((k / 127)^0.75): 0 is 1 ms, 16 about 8 ms, 32 about 34 ms, 48 about
@@ -66,6 +67,8 @@ static int32_t env_step(int32_t level, int32_t target, uint32_t coef_q31) {
     return level + (int32_t)(((int64_t)(target - level) * (int64_t)coef_q31) >> 31);
 }
 
+
+int32_t adsr_sustain_q15(uint8_t sustain) { return env_sustain_q30[sustain > 127u ? 127u : sustain] >> 15; }
 
 void adsr_init(ADSR *env) {
     env->state = STATE_OFF;
@@ -162,7 +165,7 @@ int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, u
     int attack_i = clampi(p->attack + time_mod + atk_mod, 0, 127);
     int decay_i = clampi(p->decay + time_mod, 0, 127);
     int release_i = clampi(p->release + time_mod, 0, 127);
-    int32_t sustain_target = ((int32_t)p->sustain * 258) << 15;
+    int32_t sustain_target = env_sustain_q30[p->sustain > 127u ? 127u : p->sustain];   /* (the 1.6 law, 2026-11-12) */
 
     // AUTO-RETRIGGER: while the key is held, the envelope loops back into its attack every period.
     if (p->retrig_rate != 0 && env->is_key_down) {

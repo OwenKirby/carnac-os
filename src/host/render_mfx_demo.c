@@ -131,7 +131,7 @@ static void render(const char *dir, const char *name, int kind, MfxParams m, int
     }
     if (kind == SC_NOISE) {                      /* white noise at full level, no filter, no reverb */
         engine_state[0].oscmix.noise_level = 127;
-        engine_state[0].osc[0].pitch_mod_amt = 0;
+        engine_state[0].lfo1_pitch = 0;
         engine_state[0].filter[0].cutoff = 127;
         engine_state[0].amp.reverb_send = 0;
         engine_state[0].env[0].attack = 0;

@@ -18,7 +18,6 @@
 #include "dsp/wavetables.h"
 #include "dsp/midi_clock.h"
 #include "dsp/seq_scale.h"
-#include "dsp/attacks.h"         /* ATK_COUNT: the factory bank's attack sounds */
 #include "dsp/arp_chords.h"
 #include "dsp/tuning.h"
 
@@ -275,14 +274,13 @@ static void test_factory(void)
                 if (q[0] < sizeof(EngineState)) seen[q[0]] = 1;
             }
             CHECK(e->arch < VARCH_COUNT && e->filter[0].flavour < FLT_COUNT && e->filter[1].flavour < FLT_COUNT &&
-                  e->amp.drive_model < DRIVE_COUNT && e->oscmix.atk_sample < 64u /* (STRIKE's, retired) */ &&
-                  e->oscmix.atk_track < ATKTRK_COUNT && e->oscmix.xmod_type < XMOD_COUNT, "patch %u out of range", s);
+                  e->amp.drive_model < DRIVE_COUNT && e->oscmix.xmod_type < XMOD_COUNT, "patch %u out of range", s);
             for (k = 0; k < NOSC; k++)
                 CHECK(e->osc[k].wavebank < NUM_BANKS || (e->osc[k].wavebank >= 64u && e->osc[k].wavebank < 79u), "patch %u osc %u: wave %u", s, k,
                       e->osc[k].wavebank);
-            for (k = 0; k < NMODSLOT; k++)
-                CHECK(e->mod[k].src_a < MSRC_COUNT && e->mod[k].src_b < MSRC_COUNT && e->mod[k].func < MFN_COUNT,
-                      "patch %u slot %u", s, k);
+            for (k = 0; k < NROUTE; k++)
+                CHECK(e->route[k].src < MSRC_COUNT && e->route[k].via < MSRC_COUNT && e->route[k].dest < MDST_COUNT,
+                      "patch %u route %u", s, k);
         }
         {   /* stored and loaded (v12, every byte at its width): it comes back exactly, so no value is wider than its
              * field (flash_record.h ENG_W) */

@@ -42,68 +42,38 @@ void engine_defaults(EngineState *e)
 
     for (unsigned i = 0; i < NOSC; i++) {
         OscParams *o = &e->osc[i];
-        o->octave = BIPOLAR_CENTER;      /* 0 octaves */
-        o->fine = BIPOLAR_CENTER;        /* 0 cents */
-        o->scan_mod_src = MSRC_ENV3;
-        o->pitch_mod_src = MSRC_LFO1;
+        o->coarse = OSC_COARSE_ZERO;     /* TUNE: unison, 0 cents */
+        o->fine = BIPOLAR_CENTER;
+        o->env2_pitch = BIPOLAR_CENTER;  /* no pitch envelope */
         o->key_track = 127;              /* full 1V/oct */
     }
 
     e->oscmix.balance = BIPOLAR_CENTER;  /* 50/50 */
-    e->oscmix.mix_mod_src = MSRC_KEYBOARD;
-    e->oscmix.xmod_mod_src = MSRC_MODWHEEL;
-    e->oscmix.spread_mod_src = MSRC_MODWHEEL;
     e->oscmix.sub_octave = SUBOCT_DOWN1;
     e->oscmix.sub_waveform = SUBWAVE_SINE;
     e->oscmix.noise_colour = NOISE_WHITE;
-    e->oscmix.noise_mod_src = MSRC_MODWHEEL;
     e->oscmix.noise_mod_amt = BIPOLAR_CENTER;
     e->oscmix.bin_mod_phase = 64;        /* 180 deg: the ears' LFO mod alternates */
     e->oscmix.bin_beat = 32;             /* 4 Hz */
     e->oscmix.bin_scan_offset = BIPOLAR_CENTER;
-    e->oscmix.noise_col_mod_src = MSRC_MODWHEEL;
     e->oscmix.noise_col_mod_amt = BIPOLAR_CENTER;
     e->noise_harmonic = 0;               /* the resonance on the note itself */
-    e->harm_mod_src = MSRC_MODWHEEL;
-    e->harm_mod_amt = BIPOLAR_CENTER;
-    e->oscmix.atk_sample = 0;            /* STRIKE: BONE CHIFF */
-    e->oscmix.atk_level = ATK_LEVEL_DEFAULT;
-    e->oscmix.atk_tune = BIPOLAR_CENTER;
-    {
-        static const uint8_t def[8] = ATK_V8_DEFAULTS;  /* unfiltered, whole, from the start, full velocity, AUTO, no bend */
-        e->oscmix.atk_filter = def[0];
-        e->oscmix.atk_decay = def[1];
-        e->oscmix.atk_start = def[2];
-        e->oscmix.atk_vel = def[3];
-        e->oscmix.atk_track = def[4];
-        e->oscmix.atk_bend = def[5];
-        e->oscmix.atk_bend_mod_src = def[6];
-        e->oscmix.atk_bend_mod_amt = def[7];
-    }
 
     for (unsigned i = 0; i < NFILTER; i++) {
         e->filter[i].cutoff = 110;       /* open */
         e->filter[i].mod_amt = 0;        /* 0..127, positive only */
         e->filter[i].flavour = FLT_MULTI;
         e->filter[i].morph = 36;         /* LP12: as the SVF's lowpass played (FREC_VER_ENGINE 9) */
-        e->filter[i].mod_src = MSRC_ENV2;
-        e->filter[i].morph_mod_src = MSRC_LFO1;
-        e->filter[i].morph_mod_amt = BIPOLAR_CENTER;
     }
 
     e->fltmix.balance = BIPOLAR_CENTER;
     e->fltmix.balance_mod_amt = BIPOLAR_CENTER;
     e->fltmix.routing_mod_amt = BIPOLAR_CENTER;
-    e->fltmix.balance_mod_src = MSRC_ENV3;
-    e->fltmix.routing_mod_src = MSRC_ENV3;
     e->fltmix.stack_xfeed = BIPOLAR_CENTER;   /* no cross-feed */
     e->fltmix.env3_cutoff = BIPOLAR_CENTER;
     e->fltmix.bin_mod_phase = 64;        /* 180 deg */
     e->fltmix.bin_width = 127;           /* full separation */
     e->fltmix.bin_cutoff_offset = BIPOLAR_CENTER;
-    e->fltmix.bin_phase_mod_amt = BIPOLAR_CENTER;
-    e->fltmix.bin_phase_mod_src = MSRC_MODWHEEL;
-    e->fltmix.bin_cutoff_mod_src = MSRC_LFO1;
     e->fltmix.bin_cutoff_mod_amt = BIPOLAR_CENTER;
 
     for (unsigned i = 0; i < NENV; i++) {
@@ -119,19 +89,16 @@ void engine_defaults(EngineState *e)
         LfoParams *l = &e->lfo[i];
         l->rate = 64;
         l->fade = BIPOLAR_CENTER;        /* no fade */
-        l->speed_mod_src = MSRC_VELOCITY;
-        l->speed_mod_amt = BIPOLAR_CENTER;
-        e->lfo_depth_src[i] = MSRC_MODWHEEL;     /* DEPTH MOD AMT 0: full depth until it is turned up */
+        e->lfo_depth_amt[i] = 0;         /* WHEEL > DEPTH 0: full depth, the wheel does nothing (the FM1 has none) */
+    }
+    for (unsigned i = 0; i < NOSC; i++) {
+        e->lfo1_osc_amt[i] = VAL_MAX;    /* PITCH AMT reaches both oscillators whole */
     }
     e->env_vel_level[0] = ENV1_VEL_LEVEL_V9;     /* ENV1 as velocity always moved the amp; ENV2 / ENV3 none */
 
-    for (unsigned i = 0; i < NMODSLOT; i++) {
-        e->mod[i].func = MFN_ADD;
-        e->mod[i].amount = VAL_MAX;      /* LEVEL full (2026-11-03): a new slot's sends work at once */
-    }
+    for (unsigned i = 0; i < NROUTE; i++)
+        e->route[i] = (ModRoute)ROUTE_FREE;      /* every route free (SOURCE / VIA / DEST NONE), at 0 */
 
-    e->amp.pan_mod_src = MSRC_KEYBOARD;
-    e->amp.amp_mod_src = MSRC_LFO1;      /* tremolo ready on AMP MOD (2026-11-06, user); AMP MOD 0 leaves it silent */
     e->arch = VARCH_DUAL_OSC;            /* both oscillators into FILTER1: the old default path minus FILTER2 */
 }
 
@@ -220,65 +187,30 @@ void patch_load(uint8_t layer, uint8_t slot)
     perf_state.layer_patch[layer] = slot;
 }
 
-/* ---- MOD SENDS (2026-11-03) ---- */
+/* ---- the mod matrix's destinations (2026-11-11): each one's fixed path amount and the parameter it moves ---- */
 #define EOFS(member) ((uint8_t)offsetof(EngineState, member))
 #define NO 0xFFu
+#define DFLT(i) {NO, EOFS(filter[i].mod_amt), EOFS(filter[i].cutoff)}, {NO, NO, EOFS(filter[i].resonance)},                         {NO, NO, EOFS(filter[i].morph)}, {NO, NO, EOFS(filter[i].drive)}
+#define DLFO(i) {NO, NO, EOFS(lfo[i].rate)}, {NO, EOFS(lfo_depth_amt[i]), NO}
 const uint8_t mdst_ofs[MDST_COUNT][3] = {
     {NO, NO, NO},
-    {EOFS(osc[0].scan_mod_src), EOFS(osc[0].scan_mod_amt), EOFS(osc[0].scan)},
-    {EOFS(osc[0].pitch_mod_src), EOFS(osc[0].pitch_mod_amt), NO},
-    {EOFS(osc[1].scan_mod_src), EOFS(osc[1].scan_mod_amt), EOFS(osc[1].scan)},
-    {EOFS(osc[1].pitch_mod_src), EOFS(osc[1].pitch_mod_amt), NO},
-    {EOFS(oscmix.mix_mod_src), EOFS(oscmix.mix_mod_amt), EOFS(oscmix.balance)},
-    {EOFS(oscmix.xmod_mod_src), EOFS(oscmix.xmod_mod_amt), EOFS(oscmix.xmod_amt)},
-    {EOFS(oscmix.spread_mod_src), EOFS(oscmix.spread_mod_amt), EOFS(oscmix.spread)},
-    {EOFS(oscmix.noise_mod_src), EOFS(oscmix.noise_mod_amt), EOFS(oscmix.noise_level)},
-    {EOFS(oscmix.noise_col_mod_src), EOFS(oscmix.noise_col_mod_amt), EOFS(oscmix.noise_colour)},
-    {EOFS(filter[0].mod_src), EOFS(filter[0].mod_amt), EOFS(filter[0].cutoff)},
-    {EOFS(filter[0].morph_mod_src), EOFS(filter[0].morph_mod_amt), EOFS(filter[0].morph)},
-    {EOFS(filter[1].mod_src), EOFS(filter[1].mod_amt), EOFS(filter[1].cutoff)},
-    {EOFS(filter[1].morph_mod_src), EOFS(filter[1].morph_mod_amt), EOFS(filter[1].morph)},
-    {EOFS(fltmix.balance_mod_src), EOFS(fltmix.balance_mod_amt), EOFS(fltmix.balance)},
-    {EOFS(fltmix.routing_mod_src), EOFS(fltmix.routing_mod_amt), EOFS(fltmix.routing)},
-    {EOFS(fltmix.bin_phase_mod_src), EOFS(fltmix.bin_phase_mod_amt), EOFS(fltmix.bin_mod_phase)},
-    {EOFS(fltmix.bin_cutoff_mod_src), EOFS(fltmix.bin_cutoff_mod_amt), EOFS(fltmix.bin_cutoff_offset)},
-    {EOFS(lfo[0].speed_mod_src), EOFS(lfo[0].speed_mod_amt), EOFS(lfo[0].rate)},
-    {EOFS(lfo[1].speed_mod_src), EOFS(lfo[1].speed_mod_amt), EOFS(lfo[1].rate)},
-    {EOFS(lfo[2].speed_mod_src), EOFS(lfo[2].speed_mod_amt), EOFS(lfo[2].rate)},
-    {EOFS(amp.amp_mod_src), EOFS(amp.amp_mod_depth), NO},
-    {EOFS(amp.pan_mod_src), EOFS(amp.pan_mod_depth), NO},
-    {NO, NO, EOFS(filter[0].resonance)}, {NO, NO, EOFS(filter[1].resonance)},
-    {NO, NO, EOFS(filter[0].drive)}, {NO, NO, EOFS(filter[1].drive)},
+    {NO, EOFS(osc[0].scan_mod_amt), EOFS(osc[0].scan)}, {NO, EOFS(osc[0].lfo2_pitch), NO},
+    {NO, EOFS(osc[1].scan_mod_amt), EOFS(osc[1].scan)}, {NO, EOFS(osc[1].lfo2_pitch), NO},
+    {NO, NO, NO},                                            /* PITCH: both oscillators */
+    {NO, NO, EOFS(oscmix.balance)}, {NO, NO, EOFS(oscmix.xmod_amt)}, {NO, NO, EOFS(oscmix.spread)},
+    {NO, NO, EOFS(oscmix.bin_beat)},
+    {NO, EOFS(oscmix.noise_mod_amt), EOFS(oscmix.noise_level)}, {NO, EOFS(oscmix.noise_col_mod_amt), EOFS(oscmix.noise_colour)},
+    {NO, NO, EOFS(noise_harmonic)},
+    DFLT(0), DFLT(1),
+    {NO, EOFS(fltmix.balance_mod_amt), EOFS(fltmix.balance)}, {NO, EOFS(fltmix.routing_mod_amt), EOFS(fltmix.routing)},
+    {NO, NO, EOFS(fltmix.bin_mod_phase)}, {NO, EOFS(fltmix.bin_cutoff_mod_amt), EOFS(fltmix.bin_cutoff_offset)},
+    DLFO(0), DLFO(1), DLFO(2),
+    {NO, EOFS(amp.amp_mod_depth), NO}, {NO, NO, NO},         /* AMP LEVEL (TREMOLO's amount), PAN */
     {NO, NO, NO},                                            /* GLIDE: PORTA TIME is the performance's */
-    {NO, NO, EOFS(mfx.knob[0])}, {NO, NO, EOFS(mfx.knob[1])}, {NO, NO, EOFS(mfx.knob[2])}, {NO, NO, EOFS(mfx.knob[3])},
     {NO, NO, EOFS(amp.delay_send)}, {NO, NO, EOFS(amp.reverb_send)},
+    {NO, NO, EOFS(mfx.knob[0])}, {NO, NO, EOFS(mfx.knob[1])}, {NO, NO, EOFS(mfx.knob[2])}, {NO, NO, EOFS(mfx.knob[3])},
 };
+#undef DFLT
+#undef DLFO
 #undef NO
 #undef EOFS
-/* the destinations whose own amount is bipolar (64 = 0): NOISE LEVEL / COLOUR, the morphs, the FILTER MIXER's, the
- * LFO speeds; the others' run 0..127 */
-#define MDST_BIPOLAR ((1u << MDST_NOISE_LEVEL) | (1u << MDST_NOISE_COLOUR) | (1u << MDST_F1_MORPH) | \
-                      (1u << MDST_F2_MORPH) | (1u << MDST_BALANCE) | (1u << MDST_ROUTING) | (1u << MDST_PHASE) | \
-                      (1u << MDST_CUTOFF_LR) | (1u << MDST_LFO1_SPEED) | (1u << MDST_LFO2_SPEED) | (1u << MDST_LFO3_SPEED))
-
-SYNTH_COLD void engine_slot_routes_to_sends(EngineState *e)
-{
-    uint8_t *b = (uint8_t *)e;
-    unsigned d, i;
-    for (d = 1u; d < MDST_COUNT; d++) {
-        uint8_t so = mdst_ofs[d][0], ao = mdst_ofs[d][1], src;
-        int a;
-        if (so == 0xFFu || (src = b[so]) < MSRC_MODSLOT1 || src > MSRC_MODSLOT4)
-            continue;
-        a = (MDST_BIPOLAR >> d) & 1u ? (int)b[ao] - (int)BIPOLAR_CENTER : ((int)b[ao] + 1) / 2;
-        if (a > 63) a = 63;
-        for (i = 0u; i < NMODSEND && a != 0; i++)
-            if (e->send[i].dest == MDST_NONE) {
-                e->send[i].dest = (uint8_t)(d | (unsigned)(src - MSRC_MODSLOT1) << MSEND_SLOT_SHIFT);
-                e->send[i].amount = (uint8_t)((int)BIPOLAR_CENTER + a);
-                break;
-            }
-        b[so] = MSRC_NONE;
-        b[ao] = (MDST_BIPOLAR >> d) & 1u ? (uint8_t)BIPOLAR_CENTER : 0u;
-    }
-}

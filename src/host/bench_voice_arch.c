@@ -32,7 +32,7 @@ static double now_ns(void)
 #include "dsp/synth_runtime.h"
 
 static int32_t buf[64 * 2];
-static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STACK", "BINAURAL", "STRIKE", "FULL", "DUAL_SPREAD"};
+static const char *ARCH[] = {"SINGLE", "DUAL_OSC", "SPREAD", "DUAL_FILTER", "STACK", "BINAURAL", "FULL", "DUAL_SPREAD"};
 
 static double time_voices(uint8_t arch, int n, int flavour)
 {

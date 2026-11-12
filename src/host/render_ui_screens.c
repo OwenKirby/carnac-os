@@ -238,7 +238,7 @@ int main(int argc, char **argv)
         uint8_t t;
         e->arch = VARCH_STACK; e->oscmix.sub_octave = SUBOCT_DOWN1; e->oscmix.sub_waveform = SUBWAVE_SINE;
         e->oscmix.sub_level = 12; e->oscmix.noise_level = 3; e->oscmix.xmod_amt = 90; e->fltmix.balance = 64;
-        e->osc[1].octave = 82;                       /* OSC2 an octave up; plain waves (VCO) */
+        e->osc[1].coarse = OSC_COARSE_ZERO + 12;     /* OSC2 an octave up; plain waves (VCO) */
         e->osc[0].wavebank = 0; e->osc[1].wavebank = 0; e->osc[0].scan = 20; e->osc[1].scan = 0;
         ui_sm_enforce(&sm);
         for (t = 0; t < XMOD_COUNT; t++) {
@@ -249,7 +249,7 @@ int main(int argc, char **argv)
         shot(dir, "oscmix_stack_quiet");             /* no cross-mod: no ley lines, B louder */
         e->oscmix.xmod_amt = 127; e->fltmix.balance = 64;
         shot(dir, "oscmix_stack_full");
-        e->osc[1].octave = 64; e->oscmix.xmod_amt = 0; e->fltmix.balance = 64;
+        e->osc[1].coarse = OSC_COARSE_ZERO; e->oscmix.xmod_amt = 0; e->fltmix.balance = 64;
     }
 
     /* FILTER: a resonant bandpass-ish SVF, a ladder; FILTER MIXER in each architecture */
@@ -312,105 +312,84 @@ int main(int argc, char **argv)
     go(UIPAGE_LFO3);
     shot(dir, "lfo3");
 
-    /* MOD (2026-11-03, one page): LFO1 * ENV1 on MOD1, a few frames of history. Its rows are every destination, each
-     * the SLOT's send there: the Algorithm Encoder sends MOD1 to F1 CUTOFF on top of the filter's own ENV2 */
-    e->mod[0].src_a = MSRC_LFO1; e->mod[0].func = MFN_MUL; e->mod[0].src_b = MSRC_ENV1; e->mod[0].amount = 100;
-    e->mod[1] = (ModSlotParams){MSRC_LFO2, MFN_MUL, MSRC_MODWHEEL, 110};
-    e->mod[2] = (ModSlotParams){MSRC_ENV3, MFN_ADD, MSRC_NONE, 100};
-    e->mod[3] = (ModSlotParams){MSRC_RANDOM, MFN_MUL, MSRC_POLY_AT, 90};
-    e->filter[0].mod_src = MSRC_ENV2; e->filter[0].mod_amt = 20;
+    /* MOD MATRIX (2026-11-12): routes made with the knobs on + ROUTE, sorted by SOURCE as they are made (the cursor
+     * goes with each), their AMOUNT on the Algorithm Encoder; + ROUTE starts from the source of the group the cursor
+     * was in; a route cleared by its knobs closes up the list when the cursor leaves */
+    e->filter[0].mod_amt = 20;
     go(UIPAGE_MOD);
     {
-        static const struct { uint8_t slot; const char *dest; int8_t amt; } SENDS[] = {
-            {0, "F1 CUTOFF", 40}, {0, "PAN", 30}, {0, "OSC1 SCAN", -24}, {1, "OSC1 PITCH", 50}, {1, "OSC2 PITCH", 50},
-            {2, "F1 CUTOFF", -12}, {2, "NOISE LEVEL", 25}, {3, "F1 CUTOFF", 20},
+        static const struct { uint8_t src, via, dest; int8_t amt; } R[] = {
+            {MSRC_LFO2, MSRC_MODWHEEL, MDST_F1_CUTOFF, 40}, {MSRC_ENV3, MSRC_NONE, MDST_OSC1_PITCH, 30},
+            {MSRC_RANDOM, MSRC_NONE, MDST_PAN, -20}, {MSRC_LFO1, MSRC_VELOCITY, MDST_F1_CUTOFF, -12},
         };
-        uint8_t n = ui_sm_row_count(&sm), r, k, used = 0;
-        if (n < 10u) { printf("FAIL: MOD should ring every destination (%u)\n", n); fails = 1; }
-        for (k = 0; k < sizeof SENDS / sizeof SENDS[0]; k++) {
-            sm.mod_slot = SENDS[k].slot;             /* (knob 4, SLOT) */
-            for (r = 0; r < n && strcmp(ui_sm_row_label(&sm, r), SENDS[k].dest) != 0; r++) {}
-            ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(r - sm.s.current_param_focus));
-            ui_sm_handle(&sm, UIEV_ALGO_ENC, SENDS[k].amt);
-            if (ui_sm_send(e, SENDS[k].slot, ui_sm_row_dest(&sm, r)) != SENDS[k].amt) {
-                printf("FAIL: MOD%u -> %s: send %d\n", SENDS[k].slot + 1u, SENDS[k].dest,
-                       ui_sm_send(e, SENDS[k].slot, ui_sm_row_dest(&sm, r)));
+        static const struct { uint8_t src; const char *label; } SORTED[] = {
+            {MSRC_RANDOM, "PAN"}, {MSRC_ENV3, "OSC1 PCH"}, {MSRC_LFO1, "F1 CUTOFF"}, {MSRC_LFO2, "F1 CUTOFF"},
+            {MSRC_LFO2, "PAN"},
+        };
+        uint8_t k, *p;
+        UiKnobInfo info;
+        if (ui_sm_row_count(&sm) != 1u || strcmp(ui_sm_row_label(&sm, 0), "+ ROUTE") != 0) {
+            printf("FAIL: an empty MOD MATRIX should show + ROUTE only (%u rows)\n", ui_sm_row_count(&sm));
+            fails = 1;
+        }
+        for (k = 0; k < sizeof R / sizeof R[0]; k++) {
+            ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(ui_sm_row_count(&sm) - 1u - sm.s.current_param_focus));   /* + ROUTE */
+            p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &info); *p = R[k].src; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
+            p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 1, &info); *p = R[k].via; ui_sm_knob_written(&sm, UIPAGE_MOD, 1);
+            p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &info); *p = R[k].dest; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
+            ui_sm_handle(&sm, UIEV_ALGO_ENC, R[k].amt);
+            ui_sm_tick(&sm, UI_ROWPOP_MS);
+            if (e->route[ui_sm_route_sel(&sm)].src != R[k].src || e->route[ui_sm_route_sel(&sm)].amount != BIPOLAR_CENTER + R[k].amt) {
+                printf("FAIL: route %u: the cursor did not follow it into its group\n", k);
                 fails = 1;
             }
         }
-        for (k = 0; k < NMODSEND; k++) used += e->send[k].dest != MDST_NONE;
-        if (used != 8u || e->filter[0].mod_src != MSRC_ENV2 || e->filter[0].mod_amt != 20) {
-            printf("FAIL: the sends took %u entries / changed the filter's own source (%u, %u)\n", used,
-                   e->filter[0].mod_src, e->filter[0].mod_amt);
-            fails = 1;
-        }
-        sm.mod_slot = 0;
-        for (r = 0; r < n && strcmp(ui_sm_row_label(&sm, r), "F1 CUTOFF") != 0; r++) {}
-        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(r - sm.s.current_param_focus));
-        if (ui_sm_mod_route(&sm, r) != UIMOD_HERE) { printf("FAIL: F1 CUTOFF should be MOD1's\n"); fails = 1; }
-        sm.mod_slot = 1;
-        if (ui_sm_mod_route(&sm, r) != UIMOD_OTHER) { printf("FAIL: F1 CUTOFF should be another slot's for MOD2\n"); fails = 1; }
-        for (r = 0; r < n && strcmp(ui_sm_row_label(&sm, r), "MFX 1") != 0; r++) {}
-        if (r >= n || ui_sm_row_state(&sm, r) != UIROW_GREYED) { printf("FAIL: MFX 1 should be dark at OFF\n"); fails = 1; }
-        sm.mod_slot = 0;
-    }
-    for (i = 0; i < 100; i++) {
-        run(441);
-        ui_screen_draw(&sm, synth_seq(), synth_arp(), 0);
-    }
-    shot(dir, "mod1");
-    ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);             /* F1 CUTOFF +45, the popup up */
-    if (!sm.rowpop || ui_sm_send(e, 0, MDST_F1_CUTOFF) != 45) { printf("FAIL: the Algorithm Encoder did not set MOD1's send\n"); fails = 1; }
-    shot(dir, "mod1_rowpop");
-    ui_sm_tick(&sm, UI_ROWPOP_MS);
-    for (uint8_t sl = 1; sl < 4; sl++) {             /* SLOT MOD2 .. MOD4: the cove's light moves */
-        static const char *const NM[4] = {"mod1", "mod2", "mod3", "mod4"};
-        sm.mod_slot = sl;
-        for (i = 0; i < 100; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
-        shot(dir, NM[sl]);
-    }
-    sm.mod_slot = 0;
-    /* .. the MFX knobs: named after the type's, live once there is one */
-    e->mfx.type = MFX_STONE_PHASER;
-    {
-        uint8_t n = ui_sm_row_count(&sm), r;
-        for (r = 0; r < n && strcmp(ui_sm_row_label(&sm, r), "MFX MANUAL") != 0; r++) {}
-        if (r >= n || ui_sm_row_state(&sm, r) != UIROW_ACTIVE) { printf("FAIL: MFX MANUAL should be a live destination\n"); fails = 1; }
-        e->mfx.type = MFX_PITCH_SHIFT;
-        if (r >= n || ui_sm_row_state(&sm, r) != UIROW_GREYED) { printf("FAIL: PITCH SHIFT's PITCH takes no send\n"); fails = 1; }
-        e->mfx.type = MFX_OFF;
-    }
-    /* .. LEVEL 0: the slot does nothing, the cove dark */
-    e->mod[0].amount = BIPOLAR_CENTER;
-    ui_screen_draw(&sm, synth_seq(), synth_arp(), 0);
-    shot(dir, "mod1_sealed");
-    e->mod[0].amount = 100;
-    /* .. a full pool: the thirteenth send is refused, SENDS FULL in the popup */
-    {
-        uint8_t n = ui_sm_row_count(&sm), r, k, filled = 0;
-        for (r = 0; r < n && filled < 5; r++) {
-            sm.mod_slot = 1;
-            if (ui_sm_row_state(&sm, r) != UIROW_ACTIVE || ui_sm_mod_route(&sm, r) != UIMOD_NONE) continue;
-            ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(r - sm.s.current_param_focus));
-            ui_sm_handle(&sm, UIEV_ALGO_ENC, 10);
-            filled++;
-        }
-        for (k = 0, filled = 0; k < NMODSEND; k++) filled += e->send[k].dest != MDST_NONE;
-        for (r = 0; r < n && ui_sm_mod_route(&sm, r) != UIMOD_NONE; r++) {}
-        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(r - sm.s.current_param_focus));
-        ui_sm_handle(&sm, UIEV_ALGO_ENC, 10);
-        if (filled != NMODSEND || !sm.sends_full || ui_sm_send(e, 1, ui_sm_row_dest(&sm, r)) != 0) {
-            printf("FAIL: the full pool (%u) took a 13th send / no SENDS FULL\n", filled);
-            fails = 1;
-        }
-        shot(dir, "mod_full");
-        for (k = 0; k < NMODSEND; k++)               /* back to the seven */
-            if (MSEND_SLOT(e->send[k].dest) == 1u && e->send[k].amount == 64 + 10) e->send[k].dest = MDST_NONE;
+        /* + ROUTE from the LFO2 group: DEST alone makes an LFO2 route */
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(3 - sm.s.current_param_focus));
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &info);
+        if (*p != MSRC_LFO2) { printf("FAIL: + ROUTE should offer LFO2, the group above (%u)\n", *p); fails = 1; }
+        for (i = 0; i < 40; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
+        shot(dir, "mod_new");
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &info); *p = MDST_PAN; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 18);
         ui_sm_tick(&sm, UI_ROWPOP_MS);
-        sm.mod_slot = 0;
+        for (k = 0; k < sizeof SORTED / sizeof SORTED[0]; k++)
+            if (e->route[k].src != SORTED[k].src || strcmp(ui_sm_row_label(&sm, k), SORTED[k].label) != 0) {
+                printf("FAIL: row %u reads %s (source %u), not %s\n", k, ui_sm_row_label(&sm, k), e->route[k].src,
+                       SORTED[k].label);
+                fails = 1;
+            }
+        if (ui_sm_row_count(&sm) != 6u || strcmp(ui_sm_row_label(&sm, 5), "+ ROUTE") != 0) {
+            printf("FAIL: five routes and + ROUTE should show (%u rows)\n", ui_sm_row_count(&sm));
+            fails = 1;
+        }
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(3 - sm.s.current_param_focus));   /* LFO2*WHL > F1 CUTOFF */
+        for (i = 0; i < 40; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
+        shot(dir, "mod1");
+        for (i = 0; i < 9; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
+        shot(dir, "mod1b");                          /* (the sparks further along) */
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(1 - sm.s.current_param_focus));   /* ENV3 > OSC1 PCH */
+        for (i = 0; i < 4; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
+        shot(dir, "mod_env");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);       /* LFO2*WHL > F1 CUTOFF */
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);         /* +45, the popup up */
+        if (!sm.rowpop || e->route[3].amount != BIPOLAR_CENTER + 45) { printf("FAIL: the Algorithm Encoder did not set the route's AMOUNT\n"); fails = 1; }
+        shot(dir, "mod1_rowpop");
+        ui_sm_tick(&sm, UI_ROWPOP_MS);
+        /* .. RND > PAN cleared: SOURCE and DEST NONE; gone when the cursor leaves, the rest move up */
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(0 - sm.s.current_param_focus));
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &info); *p = MSRC_NONE; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 2, &info); *p = MDST_NONE; ui_sm_knob_written(&sm, UIPAGE_MOD, 2);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        if (ui_sm_row_count(&sm) != 5u || e->route[0].src != MSRC_ENV3 || e->route[4].src != MSRC_NONE) {
+            printf("FAIL: a cleared route should close up the list (%u rows, route 0 source %u)\n", ui_sm_row_count(&sm),
+                   e->route[0].src);
+            fails = 1;
+        }
+        shot(dir, "mod_packed");
     }
-    /* .. FILTER1 shows the sends: stones before MOD SRC's value, the cutoff knob's reach and ghost; the popup lists
-     * them; a destination's own source list has no MOD slots */
+    /* .. FILTER1 shows the routes: stones before MOD SRC's value, the cutoff knob's reach; the popup lists them */
     go(UIPAGE_FILTER1);
     note(0, 48, 110);
     for (i = 0; i < 40; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
@@ -419,10 +398,8 @@ int main(int argc, char **argv)
         for (r = 0; r < n && strcmp(ui_sm_row_label(&sm, r), "MOD SRC") != 0; r++) {}
         ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(r - sm.s.current_param_focus));
         shot(dir, "filter1_sends");
-        e->filter[0].mod_src = MSRC_LFO3;
-        ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
-        if (e->filter[0].mod_src != MSRC_LFO3) { printf("FAIL: MOD SRC stepped to %u, onto a slot\n", e->filter[0].mod_src); fails = 1; }   /* (v13: the slots are last) */
-        e->filter[0].mod_src = MSRC_ENV2;
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);         /* (the popup up, MOD SRC back where it was) */
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
         shot(dir, "filter1_sends_pop");
         ui_sm_tick(&sm, UI_ROWPOP_MS);
     }
@@ -432,7 +409,8 @@ int main(int argc, char **argv)
     /* AMP: DUAL, voices panned by the keyboard */
     fresh();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
-    engine_state[0].amp.pan_mod_depth = 127; engine_state[1].amp.pan_mod_depth = 127;
+    for (i = 0; i < NLAYER; i++)                    /* (the pan by the keys: a route since 2026-11-11) */
+        engine_state[i].route[0] = (ModRoute){MSRC_KEYBOARD, MSRC_NONE, MDST_PAN, 127, VAL_MAX};
     ui_sm_enforce(&sm);
     note(0, 36, 120); note(0, 60, 90); note(1, 72, 80); note(1, 96, 127);
     run(6000);
@@ -728,9 +706,7 @@ int main(int argc, char **argv)
         }
     }
     go(UIPAGE_MOD);
-    sm.mod_slot = 1;
     shot(dir, "red_mod2");
-    sm.mod_slot = 0;
 
     /* one palette for both layers: the same text checks with LAYER 2 in focus, every page still in RED; then a shot of
      * each layer's FILTER 1 (the header's L1 / L2), SEQ and HOME in the default ORANGE */

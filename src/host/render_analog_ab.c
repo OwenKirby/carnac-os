@@ -42,7 +42,7 @@ static void patch(int scene, uint8_t analog)
         e->filter[0].cutoff = 38; e->filter[0].resonance = 70; e->filter[0].mod_amt = 92;
         e->env[1].attack = 0; e->env[1].decay = 38; e->env[1].sustain = 0; e->env[1].release = 30;
         e->env[0].attack = 0; e->env[0].decay = 50; e->env[0].sustain = 80; e->env[0].release = 20;
-        e->osc[0].octave = 46;                       /* -1 octave */
+        e->osc[0].coarse = OSC_COARSE_ZERO - 12;     /* -1 octave */
         break;
     case 3:                                          /* SINGLE stabs */
         e->arch = VARCH_SINGLE;

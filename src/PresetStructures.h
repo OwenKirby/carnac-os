@@ -24,7 +24,8 @@
 #define NFILTER 2u
 #define NENV 3u                      /* ENV1 is hardwired to the amp */
 #define NLFO 3u                      /* LFO1 global, LFO2 / LFO3 per voice */
-#define NMODSLOT 4u                  /* 4.5 lists 4 (MOD 4 removed 2026-10-15, back 2026-11-03: a slot runs only when read) */
+#define NROUTE 16u                   /* the mod matrix's routes (2026-11-11, replacing the 4 MOD slots, 12 MOD SENDS and
+                                      * the pages' source pickers) */
 #define SEQ_NLANE 4u
 #define SEQ_NSTEP 16u
 #define ARP_NSTEP 8u                 /* 8.1: keys 14..21, white keys only */
@@ -35,8 +36,9 @@
                                       * patches; a performance is now a whole snapshot, WholePerformance) */
 
 /* -------------------------------------------------- shared value lists --- */
-enum {                               /* mod_source_list (4); 2026-11-03 (v13): RANDOM, POLY AT, MOD4, the per-note sources
-                                      * first, then the controllers. After V1: new sources only at the end */
+enum {                               /* mod_source_list (4); 2026-11-03 (v13): RANDOM, POLY AT, the per-note sources first,
+                                      * then the controllers; 2026-11-11 (v14): MOD1..4 gone with the slots. After V1: new
+                                      * sources only at the end */
     MSRC_NONE, MSRC_VELOCITY, MSRC_KEYBOARD,
     MSRC_RANDOM,                     /* a value per note, picked at its note-on, -1 .. +1 */
     MSRC_MODWHEEL, MSRC_AFTERTOUCH,
@@ -44,12 +46,7 @@ enum {                               /* mod_source_list (4); 2026-11-03 (v13): R
                                       * has had none reads the channel's AFTERTOUCH */
     MSRC_CUSTOMCC1, MSRC_CUSTOMCC2,
     MSRC_ENV1, MSRC_ENV2, MSRC_ENV3, MSRC_LFO1, MSRC_LFO2, MSRC_LFO3,
-    MSRC_MODSLOT1, MSRC_MODSLOT2, MSRC_MODSLOT3, MSRC_MODSLOT4,
     MSRC_COUNT
-};
-enum {                               /* function_list (4.5) */
-    MFN_MUL, MFN_ADD, MFN_SUB, MFN_MAX, MFN_MIN, MFN_SAMPLE_B_ON_A, MFN_QUANTIZE_B_TO_A,
-    MFN_ABS_DIFF, MFN_LAG, MFN_DIODE, MFN_COUNT
 };
 enum { XMOD_FM, XMOD_AM, XMOD_RING, XMOD_PM, XMOD_COUNT };                  /* OSCMIXER cross-mod type */
 enum { SUBOCT_DOWN1, SUBOCT_DOWN2, SUBOCT_COUNT };                          /* sub-oscillator offset */
@@ -83,9 +80,6 @@ enum {                               /* voice architecture, per patch: the signa
     VARCH_DUAL_FILTER,               /* OSC1 -> FILTER1 -> FILTER2 (serial .. parallel) */
     VARCH_STACK,                     /* (OSC1 -> FILTER1, amp ENV1) + (OSC2 -> FILTER2, amp ENV2), blended */
     VARCH_BINAURAL,                  /* OSC1 -> FILTER1 once per ear; the right ear is beat-offset, its LFO mod phase-offset */
-    VARCH_STRIKE,                    /* retired 2026-11-04 (was SINGLE + a one-shot attack sample): loads as SPREAD at SPREAD 0
-                                      * (varch_single_to_spread); the code stays taken so FULL / DUAL SPREAD keep theirs. The
-                                      * attack samples live on as PCM waves */
     VARCH_FULL,                      /* OSC1 + OSC2 (cross-mod) -> FILTER1 / FILTER2 (serial .. parallel): DUAL OSC into
                                       * DUAL FILTER (2026-10-26) */
     VARCH_DUAL_SPREAD,               /* retired 2026-11-06 (was OSC1 + OSC2, each as 4 detuned playheads): loads as DUAL OSC at
@@ -106,12 +100,21 @@ enum { CLKOUT_OFF, CLKOUT_USB, CLKOUT_COUNT };                            /* GLO
 #define MASTER_TUNE_MIN 14u          /* GLOBAL > MASTER TUNE: stored 14..114, 64 = A440, shown -50..+50 cents */
 #define MASTER_TUNE_MAX 114u
 
-/* OSC FINE TUNE (2026-10-17): the stored -64..+63 (64 = 0) on a square law, +-7 semitones at the ends (+-700 cents,
- * -64 held there), fine near the middle: 1 step 0.2 cents, 8 steps 11, 23 steps 92 */
+/* OSC TUNE (2026-11-11): one knob for octaves, intervals and the detune (UIStateMachine.c ui_sm_tune_turn: a slow
+ * turn steps cents, a quicker one semitones, a fast one octaves). Two bytes: COARSE semitones (OSC_COARSE_ZERO = unison,
+ * +-OSC_COARSE_MAX) and FINE cents (64 = 0, +-OSC_FINE_MAX: past it the knob rolls into the next semitone) */
+#define OSC_COARSE_ZERO 36u
+#define OSC_COARSE_MAX 36
+#define OSC_FINE_MAX 50
+static inline int32_t osc_coarse_semis(uint8_t c)
+{
+    int32_t s = (int32_t)c - (int32_t)OSC_COARSE_ZERO;
+    return s > OSC_COARSE_MAX ? OSC_COARSE_MAX : s < -OSC_COARSE_MAX ? -OSC_COARSE_MAX : s;
+}
 static inline int32_t osc_fine_cents(uint8_t v)
 {
-    int32_t b = (int32_t)v - 64, c = b * (b < 0 ? -b : b) * 700 / 3969;
-    return c > 700 ? 700 : c < -700 ? -700 : c;
+    int32_t c = (int32_t)v - 64;
+    return c > OSC_FINE_MAX ? OSC_FINE_MAX : c < -OSC_FINE_MAX ? -OSC_FINE_MAX : c;
 }
 
 /* The instrument's own settings (GLOBAL, 2026-10-17): kept across power cycles with the THEME (the FM1's settings
@@ -321,100 +324,63 @@ static inline void arp_defaults(ArpState *a)
 
 /* --------------------------------------------- engine (layer patch) --- */
 /* the parameter pages a layer owns (4.1 .. 4.6), one block per layer; (bip) = bipolar */
+/* The pages keep only the fixed paths whose source is right almost every time (2026-11-11, the mod matrix, v14):
+ * their amounts are here, their sources fixed in the engine. Everything else is a route (EngineState.route). */
 typedef struct {                     /* OSC1 / OSC2 */
     uint8_t scan;                    /* knob 1 */
-    uint8_t octave;                  /* knob 2, (bip) -3..+3 */
-    uint8_t fine;                    /* knob 3 (a row in SINGLE / SPREAD / STRIKE), (bip): osc_fine_cents, +-7 semitones */
-    uint8_t pitch_mod_amt;           /* knob 4 */
+    uint8_t coarse;                  /* knob 2 TUNE, with fine: semitones (osc_coarse_semis) */
+    uint8_t fine;                    /* knob 2 TUNE, with coarse (the next byte, ui_sm_tune_turn): cents (osc_fine_cents) */
+    uint8_t lfo2_pitch;              /* knob 3: LFO2 > PITCH (LFO1's vibrato is the LFO1 page's) */
     uint8_t wavebank;
-    uint8_t scan_mod_src;            /* MSRC_* (default ENV3) */
-    uint8_t scan_mod_amt;
-    uint8_t pitch_mod_src;           /* MSRC_* (default LFO1) */
-    uint8_t key_track;               /* (bip), default 127 = full 1V/oct */
+    uint8_t scan_mod_amt;            /* ENV3 > SCAN, a row */
+    uint8_t env2_pitch;              /* knob 4 (bip): ENV2 > PITCH, up to +-24 semitones, finer near 0 (env_pitch_cents) */
+    uint8_t key_track;               /* (bip), default 127 = full 1V/oct; shown with two oscillators */
     uint8_t sync;                    /* 0 / 1, OSC2 only */
 } OscParams;
 
 typedef struct {                     /* OSCMIXER; which knob a field sits on depends on the architecture (2.2) */
     uint8_t balance;                 /* knob 1 DUAL OSC, (bip) OSC1 .. OSC2 */
     uint8_t xmod_amt;                /* knob 2 DUAL OSC / STACK */
-    uint8_t sub_level;               /* knob 3 (knob 4 SINGLE), every architecture */
+    uint8_t sub_level;               /* knob 3, every architecture */
     uint8_t spread;                  /* knob 1 SPREAD only */
-    uint8_t mix_mod_src;             /* MSRC_* (default KEYBOARD) */
-    uint8_t mix_mod_amt;
-    uint8_t xmod_mod_src;            /* MSRC_* (default MODWHEEL) */
     uint8_t xmod_type;               /* XMOD_*, knob 1 STACK */
-    uint8_t xmod_mod_amt;
-    uint8_t spread_mod_src;          /* MSRC_* (default MODWHEEL), SPREAD only */
-    uint8_t spread_mod_amt;          /* knob 4 SPREAD only */
-    uint8_t sub_octave;              /* SUBOCT_*, knob 3 SINGLE */
+    uint8_t sub_octave;              /* SUBOCT_* (with sub_waveform: SUB WAVE's 6 steps, the next byte) */
     uint8_t sub_waveform;            /* SUBWAVE_* */
-    uint8_t noise_level;             /* knob 4 (knob 2 SINGLE / SPREAD), every architecture */
+    uint8_t noise_level;             /* NOISE LEVEL, every architecture */
     /* noise generator (4.1) */
     uint8_t noise_colour;            /* morph: WHITE 0 .. PINK 16 .. BROWN 32 .. the resonance .. AIR 127 (NOISE_*) */
-    uint8_t noise_mod_src;           /* MSRC_* (default MODWHEEL): moves the noise level */
-    uint8_t noise_mod_amt;           /* (bip) */
+    uint8_t noise_mod_amt;           /* (bip) LEVEL MOD: ENV3 > NOISE LEVEL */
     /* BINAURAL: how the right ear's oscillator differs from the left's */
     uint8_t bin_mod_phase;           /* knob 1: LFO phase offset of the right ear's pitch / scan mod, 0..127 = 0..357 deg */
     uint8_t bin_beat;                /* knob 2: right ear pitch offset, 0..127 = 0..15.875 Hz in 0.125 Hz steps */
     uint8_t bin_scan_offset;         /* (bip): right ear wavetable scan offset */
-    /* noise colour modulation (4.1) */
-    uint8_t noise_col_mod_src;       /* MSRC_* (default MODWHEEL): moves the noise colour morph */
-    uint8_t noise_col_mod_amt;       /* (bip) */
-    /* STRIKE's attack (2026-10-16, FREC_VER_ENGINE 6): which sound, its level, its tuning. A pitched sound follows
-     * OSC1's pitch, an unpitched one plays at its own rate; either way TUNE transposes it. */
-    uint8_t atk_sample;              /* knob 1 STRIKE: 0..ATK_COUNT-1 (dsp/attacks.h) */
-    uint8_t atk_level;               /* knob 2 STRIKE, default ATK_LEVEL_DEFAULT */
-    uint8_t atk_tune;                /* (bip) semitones, -24..+24 used */
-    /* 2026-10-16 (FREC_VER_ENGINE 7) */
-    uint8_t atk_filter;              /* 0 = the attack skips the filter and ENV1 (the D-50's way), 127 = all of it goes into
-                                      * FILTER1 with the oscillator (and so through ENV1 too); between: both, crossfaded */
-    uint8_t atk_decay;               /* 127 = the sound's own length; lower fades it out sooner: a time constant of
-                                      * 2 + d^2/16 ticks (64: 94 ms, 20: 10 ms, 0: under 1 ms) */
-    uint8_t atk_start;               /* where it starts: 0 = the beginning .. 127 = halfway in (skips a click, a tongue) */
-    uint8_t atk_vel;                 /* velocity to attack level: 0 = fixed, 127 = as the voice (default) */
-    uint8_t atk_track;               /* ATKTRK_*: follow the keys or not */
-    uint8_t atk_bend;                /* (bip) BEND: the attack starts this far off pitch, half a semitone a step (+-32
-                                      * semitones; + above, - below) and glides to it, a ~40 ms time constant */
-    /* 2026-10-17 (FREC_VER_ENGINE 8) */
-    uint8_t atk_bend_mod_src;        /* MSRC_* (default VELOCITY): moves BEND while the attack glides */
-    uint8_t atk_bend_mod_amt;        /* (bip) knob 4 STRIKE ATTACK: a full source adds up to +-32 semitones to BEND */
+    uint8_t noise_col_mod_amt;       /* (bip) COL MOD: ENV3 > NOISE COLOUR */
 } OscMixerParams;
-enum { ATKTRK_AUTO, ATKTRK_FIXED, ATKTRK_TRACK, ATKTRK_COUNT };   /* AUTO: pitched sounds track, the others do not.
-        * TRACK on an unpitched sound: its own pitch at C4 (60) */
 
 typedef struct {                     /* FILTER1 / FILTER2 */
     uint8_t morph;                   /* knob 1, by flavour: SH-2 and MS-20 LP -> BP -> HP, MULTI mode LP24 -> .. -> NOTCH,
                                       * FORMANT band spread (dsp/filter.h) */
     uint8_t cutoff;                  /* knob 2 */
     uint8_t resonance;               /* knob 3 */
-    uint8_t mod_amt;                 /* knob 4, (bip) */
+    uint8_t mod_amt;                 /* knob 4 ENV2 > CUTOFF, 0..127 (ENV2 INVERT for a sweep down) */
     uint8_t flavour;                 /* FLT_* */
-    uint8_t mod_src;                 /* MSRC_* (default ENV2) */
-    uint8_t morph_mod_src;           /* MSRC_* (default LFO1): moves the type morph, every architecture */
-    uint8_t morph_mod_amt;           /* (bip) */
-    uint8_t drive;                   /* the first row: the level into the circuit, 0 clean .. 127 driven hard (2026-10-21,
-                                      * FREC_VER_ENGINE 9; it was the MS-20's morph before) */
+    uint8_t drive;                   /* the first row: the level into the circuit, 0 clean .. 127 driven hard */
 } FilterParams;
 
 typedef struct {                     /* FILTER MIXER (DUAL FILTER, STACK, BINAURAL; hidden otherwise) */
     uint8_t balance;                 /* knob 1, (bip) DUAL FILTER: FILTER1 .. FILTER2; STACK: blend stack A .. B */
     uint8_t routing;                 /* knob 2 DUAL FILTER: serial .. parallel */
-    uint8_t balance_mod_amt;         /* knob 3, (bip) DUAL FILTER balance mod / STACK blend mod */
-    uint8_t routing_mod_amt;         /* knob 4, (bip) DUAL FILTER */
-    uint8_t balance_mod_src;         /* MSRC_* (default ENV3) */
-    uint8_t routing_mod_src;         /* MSRC_* (default ENV3), DUAL FILTER */
+    uint8_t balance_mod_amt;         /* knob 3, (bip): ENV3 > BALANCE (DUAL FILTER, FULL), ENV3 > BLEND (STACK) */
+    uint8_t routing_mod_amt;         /* knob 4, (bip): ENV3 > ROUTING */
     /* STACK */
-    uint8_t stack_xfeed;             /* knob 2, (bip) CROSS-FEED (2026-11-06, WIDTH's old byte): + FILTER1's output also
-                                      * into FILTER2 (so through ENV2), - FILTER2's into FILTER1 (through ENV1) */
+    uint8_t stack_xfeed;             /* knob 2, (bip) CROSS-FEED: + FILTER1's output also into FILTER2 (so through ENV2),
+                                      * - FILTER2's into FILTER1 (through ENV1) */
     uint8_t env3_cutoff;             /* knob 4, (bip): ENV3 to both filter cutoffs */
     /* BINAURAL */
     uint8_t bin_mod_phase;           /* knob 1: LFO phase offset of the right ear's filter mod, 0..127 = 0..357 deg */
     uint8_t bin_width;               /* knob 2: 0 = both ears summed (mono), 127 = full left / right separation */
     uint8_t bin_cutoff_offset;       /* knob 3, (bip): + raises the right ear's cutoff and lowers the left's */
-    uint8_t bin_phase_mod_amt;       /* knob 4, (bip): modulates both phase offsets (OSCMIXER and FILTER MIXER) */
-    uint8_t bin_phase_mod_src;       /* MSRC_* (default MODWHEEL) */
-    uint8_t bin_cutoff_mod_src;      /* MSRC_* (default LFO1): moves CUTOFF L/R */
-    uint8_t bin_cutoff_mod_amt;      /* (bip) */
+    uint8_t bin_cutoff_mod_amt;      /* knob 4, (bip): LFO1 > CUTOFF L/R (the ears' LFO offsets need LFO1) */
 } FilterMixerParams;
 
 typedef struct {                     /* ENVELOPE1..3 */
@@ -433,28 +399,16 @@ typedef struct {                     /* LFO1..3 */
     uint8_t rate;                    /* knob 2 */
     uint8_t delay;                   /* knob 3: > 100 = REL mode */
     uint8_t fade;                    /* knob 4, (bip): - fade out, + fade in */
-    uint8_t speed_mod_src;           /* MSRC_* (default VELOCITY) */
-    uint8_t speed_mod_amt;           /* (bip) */
     uint8_t clock_sync;              /* 0 / 1 */
     uint8_t phase;
     uint8_t key_reset;               /* 0 / 1 */
 } LfoParams;
 
-typedef struct {                     /* MODSLOT1..3 */
-    uint8_t src_a;                   /* knob 1, MSRC_* */
-    uint8_t func;                    /* knob 2, MFN_* */
-    uint8_t src_b;                   /* knob 3, MSRC_* */
-    uint8_t amount;                  /* knob 4, (bip) */
-} ModSlotParams;
-
 typedef struct {                     /* AMP (4.6 registry; 2.2's knob row differs) */
     uint8_t drive;                   /* knob 1 */
-    uint8_t amp_mod_depth;           /* knob 2 */
+    uint8_t amp_mod_depth;           /* knob 2 TREMOLO: LFO3 > LEVEL */
     uint8_t delay_send;              /* knob 3 */
     uint8_t reverb_send;             /* knob 4 */
-    uint8_t amp_mod_src;             /* MSRC_*: modulates the hardwired ENV1 level */
-    uint8_t pan_mod_src;             /* MSRC_* (default KEYBOARD) */
-    uint8_t pan_mod_depth;
     uint8_t drive_model;             /* DRIVE_* */
 } AmpParams;
 
@@ -468,34 +422,36 @@ typedef struct {
                                       * POLARITY (0, 1) */
 } MfxParams;
 
-/* MOD SENDS (2026-11-03): a mod slot sent straight to a destination, on top of whatever the destination's own source
- * and amount do there (the MOD page sets them). A pool of NMODSEND a patch, at most one a slot and destination; an entry
- * with dest 0 is free. The send amount works as the destination's own amount would: full (+-64) does what the
- * destination's amount at full does (a 0..127 amount: twice the send, either sign). */
-#define NMODSEND 12u
-enum {                               /* the destinations (the MOD page's order is UIStateMachine.c MOD_ROWS'). Codes
-                                      * under 32 are bits of the voices' send mask; after V1 new ones only at the end */
-    MDST_NONE, MDST_OSC1_SCAN, MDST_OSC1_PITCH, MDST_OSC2_SCAN, MDST_OSC2_PITCH, MDST_OSC_MIX, MDST_XMOD, MDST_SPREAD,
-    MDST_NOISE_LEVEL, MDST_NOISE_COLOUR, MDST_F1_CUTOFF, MDST_F1_MORPH, MDST_F2_CUTOFF, MDST_F2_MORPH,
+/* THE MOD MATRIX (2026-11-11, v14): NROUTE routes a patch, each SOURCE times VIA times AMOUNT into DEST, on top of
+ * whatever the destination's own source and amount do there (routes and fixed paths on one destination add). One
+ * source may feed any number of routes. AMOUNT works as the destination's own amount would: full (+-64) does what the
+ * destination's amount at full does (a 0..127 amount: twice the route's, either sign). A route with DEST NONE or SOURCE
+ * NONE is free. */
+enum {                               /* the destinations, in the pages' order (the DEST knob lists them so); a voice's
+                                      * route mask holds them all (SourceCtx.sends, two words). After V1: new ones at the end */
+    MDST_NONE,
+    MDST_OSC1_SCAN, MDST_OSC1_PITCH, MDST_OSC2_SCAN, MDST_OSC2_PITCH,
+    MDST_PITCH,                      /* both oscillators' pitch: the whole voice bends */
+    MDST_OSC_MIX, MDST_XMOD, MDST_SPREAD, MDST_BEAT_HZ, MDST_NOISE_LEVEL, MDST_NOISE_COLOUR, MDST_HARMONIC,
+    MDST_F1_CUTOFF, MDST_F1_RES, MDST_F1_MORPH, MDST_F1_DRIVE, MDST_F2_CUTOFF, MDST_F2_RES, MDST_F2_MORPH, MDST_F2_DRIVE,
     MDST_BALANCE,                    /* DUAL FILTER's BALANCE, STACK's BLEND A/B (one byte) */
-    MDST_ROUTING, MDST_PHASE, MDST_CUTOFF_LR, MDST_LFO1_SPEED, MDST_LFO2_SPEED, MDST_LFO3_SPEED, MDST_AMP_LEVEL,
-    MDST_PAN,
-    MDST_F1_RES, MDST_F2_RES, MDST_F1_DRIVE, MDST_F2_DRIVE,   /* (2026-11-03, v13) */
+    MDST_ROUTING, MDST_PHASE, MDST_CUTOFF_LR,
+    MDST_LFO1_SPEED, MDST_LFO1_DEPTH, MDST_LFO2_SPEED, MDST_LFO2_DEPTH, MDST_LFO3_SPEED, MDST_LFO3_DEPTH,
+    MDST_AMP_LEVEL, MDST_PAN,
     MDST_GLIDE,                      /* the layer's PORTA TIME (a performance setting), a glide's speed as it goes */
+    MDST_DLY_SEND, MDST_REV_SEND,    /* the layer's AMP DELAY / REVERB SEND (taken from the layer's sum: the newest voice's) */
     MDST_MFX_K1, MDST_MFX_K2, MDST_MFX_K3, MDST_MFX_K4,   /* the layer's MFX knobs 1..4, whatever the type names them (a
                                                          * list knob, PITCH SHIFT's PITCH, takes none; OFF: none) */
-    MDST_DLY_SEND, MDST_REV_SEND,    /* the layer's AMP DELAY / REVERB SEND (taken from the layer's sum: the newest voice's) */
     MDST_COUNT
 };
-#define MDST_VOICE_BITS 32u          /* MDST_* under this: a bit in the voices' send mask (SourceCtx.sends) */
-#define MSEND_SLOT_SHIFT 6u
-#define MSEND_DEST(b) ((uint8_t)((b) & 63u))
-#define MSEND_SLOT(b) ((uint8_t)((b) >> MSEND_SLOT_SHIFT))
 typedef struct {
-    uint8_t dest;                    /* MDST_* | the slot (0..3) << MSEND_SLOT_SHIFT; 0: a free entry. (One byte: the CC
-                                      * map's address for a slot's send, slot * 64 + destination) */
-    uint8_t amount;                  /* (bip) */
-} ModSendParams;
+    uint8_t src;                     /* MSRC_*: what moves */
+    uint8_t via;                     /* MSRC_*: multiplies the route (NONE: 1); WHEEL = a depth control, an LFO = a swell */
+    uint8_t dest;                    /* MDST_*: what is moved */
+    uint8_t amount;                  /* (bip) -64..+63 */
+    uint8_t via_depth;               /* VIA DEPTH 0..127 (2026-11-11): 0 the VIA ignored, 127 the VIA alone sets the depth */
+} ModRoute;
+#define ROUTE_FREE {MSRC_NONE, MSRC_NONE, MDST_NONE, BIPOLAR_CENTER, VAL_MAX}   /* a free route, as a new one starts */
 
 #define ENGINE_RESERVED 1u           /* spare patch bytes (v11): stored, 0 until a later feature takes one (so 0 must
                                       * mean that feature's off / default) */
@@ -508,33 +464,31 @@ typedef struct {
     FilterMixerParams fltmix;
     EnvParams env[NENV];
     LfoParams lfo[NLFO];
-    ModSlotParams mod[NMODSLOT];
     AmpParams amp;
     uint8_t arch;                    /* VARCH_*: the voice architecture, HOME View 1 / 2 (5.3) */
     uint8_t name[NAME_LEN];          /* char_map indices (0 = space), not ASCII: RENAME PATCH (6.2.1) */
     uint8_t analog;                  /* ANALOG 0..127 (LAYER page, dsp/analog.h): 0 = clean */
     uint8_t filter_key_track[NFILTER];   /* FILTER1 / FILTER2 KEY TRACK 0..127 (2026-10-21): the cutoff follows the
-                                          * keys about C4, 127 = an octave an octave. Here, not in FilterParams, so no
+                                          * keys about C4, 100 = an octave an octave (127: 127 %). Here, not in FilterParams, so no
                                           * offset moved */
     /* v10 (2026-10-26), at the end so no offset moves: */
     uint8_t env_vel_level[NENV];     /* ENV1..3 VEL > LEVEL 0..127: how far a soft note lowers the envelope's level
                                       * (0 none; ENV1's replaces the old fixed velocity-to-amp curve) */
-    uint8_t lfo_depth_src[NLFO];     /* LFO1..3 DEPTH MOD SRC, MSRC_* (no LFO or MOD slot: those read as none) */
-    uint8_t lfo_depth_amt[NLFO];     /* LFO1..3 DEPTH MOD AMT 0..127: 0 the LFO at full depth, 127 the source alone
-                                      * sets the depth (as AMP MOD) */
+    uint8_t lfo_depth_amt[NLFO];     /* LFO1..3 WHEEL > DEPTH 0..127: 0 the LFO at full depth, 127 the wheel alone sets
+                                      * the depth (as AMP MOD) */
+    /* the LFO1 page (2026-11-11, the Jupiter-6's way): LFO1's own pitch and filter amounts */
+    uint8_t lfo1_pitch;              /* knob 3 PITCH AMT: LFO1 > PITCH, both oscillators at their share below */
+    uint8_t lfo1_filter;             /* knob 4 FILTER AMT: LFO1 > CUTOFF, every filter the architecture plays */
+    uint8_t lfo1_osc_amt[NOSC];      /* rows OSC1 AMT, OSC2 AMT: each oscillator's share of PITCH AMT (127 all of it) */
     /* v11 (2026-11-03): */
     MfxParams mfx;                   /* the layer's MFX (dsp/mfx.c plays engine_state[layer].mfx) */
     /* 2026-11-06: three of the four reserved bytes (nothing moved; 0 is each one's old behaviour) */
     uint8_t noise_harmonic;          /* HARMONIC 0..127: the noise resonance on overtone 1..8 of OSC1, a stop on each */
-    uint8_t harm_mod_src;            /* MSRC_*: moves HARMONIC (fine, so a slow LFO glides between the stops) */
-    uint8_t harm_mod_amt;            /* (bip) */
     uint8_t reserved[ENGINE_RESERVED];
-    /* 2026-11-03, at the end (flash_record.h ENG_W): a v12 patch saved before reads them as free */
-    ModSendParams send[NMODSEND];    /* the MOD SENDS */
+    ModRoute route[NROUTE];          /* the mod matrix (2026-11-11, v14) */
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 235u, "EngineState layout");
-PS_STATIC_ASSERT(MDST_COUNT <= 64u && NMODSLOT <= 4u && MDST_MFX_K4 < MDST_VOICE_BITS,
-                 "a send's dest byte: 6 bits of destination, 2 of slot; the voices' destinations in the mask");
+PS_STATIC_ASSERT(sizeof(EngineState) == 233u, "EngineState layout");
+PS_STATIC_ASSERT(MDST_COUNT <= 64u, "a route's DEST in 6 bits, a voice's mask in two words");
 #define ENV1_VEL_LEVEL_V9 111u       /* ENV1 VEL > LEVEL that plays as v9's fixed curve did (-18 dB at velocity 1) */
 /* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 184 is the most that keeps 22
  * patches to a store chunk (preset_store_fm1.c: (4064 - 16) / 184), so the chunks stay where they were. Since v12
@@ -542,8 +496,6 @@ PS_STATIC_ASSERT(MDST_COUNT <= 64u && NMODSLOT <= 4u && MDST_MFX_K4 < MDST_VOICE
  * a name character; what that leaves after the last field is room for fields added at the end (see ENG_W). Older
  * patches (v11 and before) are not migrated (before V1 they may go). */
 #define ENGINE_STORED_SIZE 184u
-#define ATK_LEVEL_DEFAULT 100u
-#define ATK_V8_DEFAULTS {0u, 127u, 0u, 127u, ATKTRK_AUTO, 64u, MSRC_VELOCITY, 64u}   /* atk_filter .. atk_bend_mod_amt */
 
 /* ------------------------------------------------ voice architecture --- */
 /* an out-of-range architecture (a corrupt flash read) plays as SINGLE, the cheapest */
@@ -554,18 +506,16 @@ static inline uint8_t varch_of(const EngineState *e)
 
 /* SINGLE left the ARCH list (2026-10-26): SPREAD at SPREAD 0 renders exactly its path (osc_render_block's undetuned
  * playhead alone). A patch that still says SINGLE (a stored one, a factory one) becomes SPREAD with its spread and spread
- * mod at 0, so it sounds as it did; SINGLE ignored both, so they may hold leftovers. New patches never say SINGLE, and an
+ * at 0, so it sounds as it did; SINGLE ignored both, so they may hold leftovers. New patches never say SINGLE, and an
  * older firmware reads SPREAD as it is, so no record version moves. */
 static inline void varch_single_to_spread(EngineState *e)
 {
-    if (e->arch == VARCH_SINGLE || e->arch == VARCH_STRIKE) {   /* (STRIKE: its SINGLE path without the attack) */
+    if (e->arch == VARCH_SINGLE) {
         e->arch = VARCH_SPREAD;
         e->oscmix.spread = 0;
-        e->oscmix.spread_mod_amt = 0;
     } else if (e->arch == VARCH_DUAL_SPREAD) {           /* (retired 2026-11-06: its two oscillators without the playheads) */
         e->arch = VARCH_DUAL_OSC;
         e->oscmix.spread = 0;
-        e->oscmix.spread_mod_amt = 0;
     }
 }
 
@@ -595,18 +545,26 @@ static inline uint8_t varch_uses_fltmix(uint8_t a)
 #define VOICE_POOL 8u                /* physical voices: SINGL_SYNTH may use all of them */
 #define VOICE_CORE_COST 56u
 #define VOICE_COST_PCM_FIRST 64u     /* OscParams.wavebank from here is a PCM wave (pcm_osc.h WAVE_PCM_FIRST) */
+static inline uint8_t route_to(const EngineState *e, uint8_t dest)   /* a route in use goes to MDST_* dest */
+{
+    uint8_t i;
+    for (i = 0u; i < NROUTE; i++)
+        if (e->route[i].dest == dest && e->route[i].src != MSRC_NONE && e->route[i].amount != BIPOLAR_CENTER)
+            return 1u;
+    return 0u;
+}
 static inline uint8_t varch_voice_cost(const EngineState *e)
 {
     uint8_t a = varch_of(e), c, sh2 = 0, pcm = 0, bin = a == VARCH_BINAURAL;
     switch (a) {
-    case VARCH_SPREAD:      c = (e->oscmix.spread || e->oscmix.spread_mod_amt) ? 13u : 10u; break;
+    case VARCH_SPREAD:      c = (e->oscmix.spread || route_to(e, MDST_SPREAD)) ? 13u : 10u; break;
     case VARCH_DUAL_OSC:    c = 12u; break;
     case VARCH_DUAL_FILTER: c = 14u; break;
     case VARCH_STACK:       c = 15u; break;
     case VARCH_BINAURAL:    c = 16u; break;
     case VARCH_FULL:        c = 17u; break;
     case VARCH_DUAL_SPREAD: c = 12u; break;     /* (retired: loads as DUAL OSC) */
-    default:                c = 10u; break;     /* SINGLE, STRIKE (retired: load as SPREAD 0) */
+    default:                c = 10u; break;     /* SINGLE (retired: loads as SPREAD 0) */
     }
     sh2 = (uint8_t)((e->filter[0].flavour == FLT_SH2) * (bin ? 2 : 1) +
                     (varch_uses_filter2(a) && e->filter[1].flavour == FLT_SH2));
@@ -819,7 +777,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 1010u,"WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 1006u,"WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */

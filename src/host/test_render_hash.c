@@ -79,12 +79,13 @@ static void patch(EngineState *e, uint8_t arch, int noise, int slots)
     e->amp.delay_send = 50; e->amp.reverb_send = 60;
     if (noise) { e->oscmix.noise_level = 100; e->oscmix.noise_colour = (uint8_t)(noise * 40); }
     if (slots) {
-        e->mod[0] = (ModSlotParams){MSRC_LFO2, MFN_SAMPLE_B_ON_A, MSRC_LFO3, 120};
-        e->mod[1] = (ModSlotParams){MSRC_MODSLOT1, MFN_LAG, MSRC_ENV2, 100};
-        e->mod[2] = (ModSlotParams){MSRC_MODSLOT2, MFN_MUL, MSRC_LFO1, 110};
-        e->filter[0].mod_src = MSRC_MODSLOT3; e->filter[0].mod_amt = 112;
+        /* (2026-11-11, the mod matrix: the slots' chain became three routes, as perf_test.c's) */
+        e->route[0] = (ModRoute){MSRC_LFO2, MSRC_LFO3, MDST_F1_CUTOFF, BIPOLAR_CENTER + 40};
+        e->route[1] = (ModRoute){MSRC_ENV2, MSRC_LFO1, MDST_F1_CUTOFF, BIPOLAR_CENTER + 30};
+        e->route[2] = (ModRoute){MSRC_LFO3, MSRC_NONE, MDST_OSC1_SCAN, BIPOLAR_CENTER + 30};
+        e->filter[0].mod_amt = 112;
     } else {
-        e->filter[0].mod_src = MSRC_LFO1; e->filter[0].mod_amt = 112;
+        e->route[3] = (ModRoute){MSRC_LFO1, MSRC_NONE, MDST_F1_CUTOFF, BIPOLAR_CENTER + 56, VAL_MAX};
     }
 }
 

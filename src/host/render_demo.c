@@ -56,7 +56,7 @@ int main(int argc, char **argv)
     /* ---- the patch ---- */
     EngineState *e = &engine_state[0];
     e->osc[0].pitch_mod_src = MSRC_LFO1;
-    e->osc[0].pitch_mod_amt = 48;                 /* LFO1 pitch depth */
+    e->lfo1_pitch = 48;                          /* LFO1 pitch depth (the LFO1 page) */
     e->lfo[0].clock_sync = 1;                     /* synced to the clock */
     e->lfo[0].rate = 56;                          /* division 3 = 1/8 */
     e->lfo[0].shape = 0;                          /* sine */
