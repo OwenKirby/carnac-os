@@ -275,8 +275,7 @@ static void test_factory(void)
                 if (q[0] < sizeof(EngineState)) seen[q[0]] = 1;
             }
             CHECK(e->arch < VARCH_COUNT && e->filter[0].flavour < FLT_COUNT && e->filter[1].flavour < FLT_COUNT &&
-                  e->amp.drive_model < DRIVE_COUNT && e->oscmix.atk_sample < 64u /* (STRIKE's, retired) */ &&
-                  e->oscmix.atk_track < ATKTRK_COUNT && e->oscmix.xmod_type < XMOD_COUNT, "patch %u out of range", s);
+                  e->amp.drive_model < DRIVE_COUNT && e->oscmix.xmod_type < XMOD_COUNT, "patch %u out of range", s);
             for (k = 0; k < NOSC; k++)
                 CHECK(e->osc[k].wavebank < NUM_BANKS || (e->osc[k].wavebank >= 64u && e->osc[k].wavebank < 79u), "patch %u osc %u: wave %u", s, k,
                       e->osc[k].wavebank);

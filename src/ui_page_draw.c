@@ -137,7 +137,8 @@ static const uint8_t PU_LOGADD[17] = {255, 198, 150, 112, 82, 60, 44, 31, 22, 16
 
 /* the long knob names the 60 px cells cannot hold, as the screen shows them */
 static const char *const PU_SHORT[][2] = {
-    {"WAVE SCAN", "SCAN"}, {"PITCH MOD", "PCH MOD"}, {"NOISE COLOUR", "COLOUR"}, {"NOISE LEVEL", "NOISE"}, {"LEVEL MOD", "LVL MOD"},
+    {"WAVE SCAN", "SCAN"}, {"PITCH MOD", "PCH MOD"}, {"NOISE COLOUR", "COLOUR"}, {"NOISE LEVEL", "NOISE"}, {"LEVEL MOD", "LVL MOD"}, {"ENV2>CUTOFF", "ENV2>CUT"}, {"LFO2>PITCH", "LFO2>PCH"},
+    {"ENV2>PITCH", "ENV2>PCH"}, {"CUT L/R MOD", "L/R MOD"},
     {"CROSS-MOD", "X-MOD"}, {"XMOD TYPE", "X TYPE"}, {"SPREAD MOD", "SPR MOD"}, {"OSC PHASE", "PHASE"},
     {"TYPE MORPH", "MORPH"}, {"RESONANCE", "RESO"}, {"MOD AMOUNT", "MOD AMT"}, {"BALANCE MOD", "BAL MOD"},
     {"ROUTING MOD", "RTG MOD"}, {"BLEND A/B", "BLEND"}, {"BLEND MOD", "BLD MOD"}, {"ENV3>CUTOFF", "ENV3>CUT"},
@@ -505,12 +506,15 @@ static void pu_knob_read(UIStateMachine *sm, uint8_t page, uint8_t k, PuKnob *o,
     o->label = info.kind == UIKNOB_NONE ? "" : pu_short(info.label);
     o->kind = info.kind;
     o->none = (uint8_t)(info.kind == UIKNOB_NONE || p == NULL);
-    o->bip = (uint8_t)(info.kind == UIKNOB_BIP || info.kind == UIKNOB_OCT);
+    o->bip = (uint8_t)(info.kind == UIKNOB_BIP || info.kind == UIKNOB_TUNE);
     o->list = (uint8_t)(info.names != NULL && n > 0);
     o->text = o->none ? "" : o->list ? ui_sm_knob_text(sm, page, layer, k) : b;
     if (info.kind == UIKNOB_BPM) {                   /* INT TEMPO: 0 .. MIDI_CLOCK_TEMPO_MAX */
         if (v > (int32_t)MIDI_CLOCK_TEMPO_MAX) v = MIDI_CLOCK_TEMPO_MAX;
         o->pos = (v * 48 + MIDI_CLOCK_TEMPO_MAX / 2) / MIDI_CLOCK_TEMPO_MAX;
+    } else if (info.kind == UIKNOB_TUNE) {          /* TUNE: -36 .. +36 semitones round the dial */
+        if (v > 2 * (int32_t)OSC_COARSE_ZERO) v = 2 * (int32_t)OSC_COARSE_ZERO;
+        o->pos = (v * 48 + (int32_t)OSC_COARSE_ZERO) / (2 * (int32_t)OSC_COARSE_ZERO);
     } else if (o->list) {
         if (v > n - 1) v = n - 1;
         o->pos = n > 1 ? (v * 48 + (n - 1) / 2) / (n - 1) : 0;
@@ -520,14 +524,12 @@ static void pu_knob_read(UIStateMachine *sm, uint8_t page, uint8_t k, PuKnob *o,
     }
     if (o->none || o->list)
         return;
-    if (info.kind == UIKNOB_OCT)
-        pu_num(b, ((v - (int32_t)BIPOLAR_CENTER) * 3) / 63, 1u, 1u);   /* -3 .. +3, as the browser shows it */
+    if (info.kind == UIKNOB_TUNE)
+        ui_sm_tune_text(p, b);                                          /* TUNE: +7, -12 */
     else if (info.kind == UIKNOB_BPM)
         pu_num(b, (int32_t)MIDI_CLOCK_BPM_BASE + v, 0u, 1u);           /* INT TEMPO: 40 .. 255 */
     else if (info.kind == UIKNOB_NOTE)
         ui_sm_note_name((uint8_t)v, b);                                 /* SPLIT NOTE: C4 */
-    else if (info.kind == UIKNOB_FINE)
-        ui_sm_fine_text((uint8_t)v, b);                                 /* FINE TUNE: +125C */
     else if (info.kind == UIKNOB_DTIME)
         ui_sm_dtime_text((uint8_t)v, b);                                /* DELAY TIME: 1/8T, 472MS */
     else if (info.kind == UIKNOB_PORTA && v == 0)
@@ -942,7 +944,7 @@ static void pu_viz_stack(const UIStateMachine *sm)
     const OscMixerParams *m = &e->oscmix;
     int32_t voice, morph1 = pu_osc_morph(sm, 0, &voice), morph2 = pu_osc_morph(sm, 1, &voice);
     int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2, amt = m->xmod_amt, depth = amt * 258, col = m->noise_colour;
-    int32_t oct = (((int32_t)e->osc[1].octave * 7) >> 7) - (((int32_t)e->osc[0].octave * 7) >> 7);
+    int32_t oct = (osc_coarse_semis(e->osc[1].coarse) - osc_coarse_semis(e->osc[0].coarse)) / 12;   /* (whole octaves) */
     int32_t x, pa = 4096, pb = 4096, brown = 0, blend = e->fltmix.balance, ha, hb, gap, y;
     uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;
     uint8_t type = m->xmod_type < XMOD_COUNT ? m->xmod_type : (uint8_t)XMOD_FM;

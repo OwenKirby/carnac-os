@@ -97,24 +97,20 @@ int main(void)
               ENG_W[offsetof(EngineState, lfo[2].key_reset)] == 1u && ENG_W[offsetof(EngineState, osc[1].wavebank)] == 8u &&
               ENG_W[offsetof(EngineState, route[NROUTE - 1u].via)] == EW_SRC && ENG_W[offsetof(EngineState, arch)] == 4u &&
               ENG_W[offsetof(EngineState, name)] == 6u && ENG_W[offsetof(EngineState, analog)] == EW_V &&
-              ENG_W[offsetof(EngineState, lfo_depth_src)] == EW_SRC && ENG_W[offsetof(EngineState, mfx.type)] == 5u &&
+              ENG_W[offsetof(EngineState, lfo_depth_amt)] == EW_V && ENG_W[offsetof(EngineState, mfx.type)] == 5u &&
               ENG_W[offsetof(EngineState, reserved) + ENGINE_RESERVED - 1u] == 8u &&
               ENG_W[offsetof(EngineState, route[0].dest)] == 6u && ENG_W[sizeof e - 1u] == EW_V, "ENGINE: ENG_W out of step");
         {                                               /* a SINGLE patch loads as SPREAD at SPREAD 0 (2026-10-26) */
             memset(&e, 0, sizeof e);
             e.oscmix.spread = 70;                       /* leftovers SINGLE ignored */
-            e.oscmix.spread_mod_amt = 30;
-            e.oscmix.spread_mod_src = MSRC_LFO1;
             frec_pack(FREC_ENGINE, &e, rec);
             frec_unpack(FREC_ENGINE, rec, &back);
-            CHECK(back.arch == VARCH_SPREAD && back.oscmix.spread == 0 && back.oscmix.spread_mod_amt == 0 &&
-                  back.oscmix.spread_mod_src == MSRC_LFO1, "ENGINE: SINGLE -> SPREAD at 0 (arch %u spread %u mod %u)",
-                  back.arch, back.oscmix.spread, back.oscmix.spread_mod_amt);
+            CHECK(back.arch == VARCH_SPREAD && back.oscmix.spread == 0, "ENGINE: SINGLE -> SPREAD at 0 (arch %u spread %u)",
+                  back.arch, back.oscmix.spread);
             e.arch = VARCH_SPREAD;                      /* a SPREAD patch keeps its spread */
             frec_pack(FREC_ENGINE, &e, rec);
             frec_unpack(FREC_ENGINE, rec, &back);
-            CHECK(back.arch == VARCH_SPREAD && back.oscmix.spread == 70 && back.oscmix.spread_mod_amt == 30,
-                  "ENGINE: SPREAD patch lost its spread");
+            CHECK(back.arch == VARCH_SPREAD && back.oscmix.spread == 70, "ENGINE: SPREAD patch lost its spread");
         }
         memset(&back, 0x5A, sizeof back);
         rec[0] = 0xFFu;

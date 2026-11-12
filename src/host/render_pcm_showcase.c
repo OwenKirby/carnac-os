@@ -77,7 +77,7 @@ static void patch(uint8_t code, uint8_t scan)
     e->osc[0].wavebank = code;
     e->osc[0].scan = scan;
     e->osc[0].scan_mod_amt = 0;
-    e->osc[0].pitch_mod_amt = 0;
+    e->lfo1_pitch = 0;
     e->filter[0].cutoff = 127;
     e->filter[0].resonance = 0;
     e->filter[0].mod_amt = 0;

@@ -67,8 +67,10 @@ typedef struct {
     SynthVoiceNode *voice;       /* NULL for the LFO1 pass */
     const VoiceInput *in;        /* NULL for the LFO1 pass */
     uint32_t lfo_offset;         /* BINAURAL right ear: LFO1..3 read this far ahead (2^32 = a cycle); 0 = the voice itself */
-    uint32_t sends;              /* bit MDST_* (under MDST_VOICE_BITS): some route goes there (route_mask) */
+    uint32_t sends, sends_hi;    /* bit MDST_* (sends_hi: MDST_* - 32): some route goes there (route_mask) */
 } SourceCtx;
+/* whether a route goes to MDST_* d (d a constant at nearly every call: the word is picked at build time) */
+#define ROUTE_BIT(c, d) ((d) < 32u ? ((c)->sends >> (d)) & 1u : ((c)->sends_hi >> ((d) - 32u)) & 1u)
 
 static int32_t resolve_source_any(const SourceCtx *c, int src, int depth);
 /* Most mod sources of a patch are NONE: those read 0 without the call (the FM1 pays a call and a jump table each,
@@ -141,36 +143,43 @@ static int32_t resolve_source_any(const SourceCtx *c, int src, int depth) {
 }
 
 /* ------------------------------------------------------------- MOD MATRIX --- */
-/* (2026-11-11) A route adds SOURCE times VIA times AMOUNT to what its destination's own source and amount do there
- * (send_sum, send_cents, send_gain: through the destination's own amount, as the MOD SENDS did). Which destinations
- * have a route, as a mask, once a tick: a patch without routes pays one bit test a destination. */
+/* (2026-11-11) A route adds SOURCE times VIA times AMOUNT to what its destination's fixed path does there (send_sum,
+ * send_cents, send_gain: through the destination's own amount, as the MOD SENDS did). Which destinations have a route,
+ * as a mask in two words, once a tick: a patch without routes pays one bit test a destination. PITCH moves both
+ * oscillators, so it marks both. */
 static __attribute__((noinline)) uint32_t route_mask(const EngineState *e, uint32_t *hi) {
     uint32_t m = 0, h = 0;
     for (unsigned i = 0; i < NROUTE; i++) {
         const ModRoute *r = &e->route[i];
         unsigned d = r->dest;
-        if (r->src == MSRC_NONE || r->amount == BIPOLAR_CENTER)
+        if (r->src == MSRC_NONE || r->amount == BIPOLAR_CENTER || d >= MDST_COUNT)
             continue;
-        if (d < MDST_VOICE_BITS) m |= 1u << d;
-        else if (d < MDST_COUNT) h |= 1u << (d - MDST_VOICE_BITS);
+        if (d == MDST_PITCH) m |= (1u << MDST_OSC1_PITCH) | (1u << MDST_OSC2_PITCH);
+        else if (d < 32u) m |= 1u << d;
+        else h |= 1u << (d - 32u);
     }
     *hi = h;
     return m & ~1u;
 }
+PS_STATIC_ASSERT(MDST_COUNT <= 64u && MDST_PAN >= 32u && MDST_AMP_LEVEL < 32u, "the route mask's two words");
 /* The route helpers stay out of line and out of the hot path (2026-11-03, as the sends were): inlined at each
  * destination they grew voice_control_tick by 1.2 KB of code a patch without routes never runs, and as the tick and the
  * voice's render take turns in the FM1's I-cache, BINAURAL measured +8..10 PERF TEST points for it. */
 #define SEND_COLD __attribute__((noinline, cold))
 /* each layer's mask, worked out once a tick (synth_voice_begin_tick) before any voice reads it */
 static uint32_t layer_sends[NLAYER];
-static uint32_t layer_sends_hi[NLAYER];             /* bit (MDST_* - MDST_VOICE_BITS): the layer-wide ones, DLY / REV SEND */
+static uint32_t layer_sends_hi[NLAYER];             /* bit (MDST_* - 32): PAN, GLIDE, the FX sends, the MFX knobs */
+#define HI_MFX (15u << (MDST_MFX_K1 - 32u))
+#define HI_FX (3u << (MDST_DLY_SEND - 32u))
 int16_t synth_fx_send_mod[NLAYER][2];
 
-/* a route's signal, Q15: SOURCE times VIA (NONE: 1), a plain product */
+/* a route's signal, Q15: SOURCE times VIA (NONE: 1) at VIA DEPTH: 0 the VIA ignored, 127 SOURCE x VIA */
 static int32_t route_out(const SourceCtx *c, const ModRoute *r) {
     int32_t s = resolve_source(c, r->src, 0);
-    if (r->via != MSRC_NONE)
-        s = (s * resolve_source(c, r->via, 0)) >> 15;
+    if (r->via != MSRC_NONE && r->via_depth) {
+        int32_t d = r->via_depth >= VAL_MAX ? 32768 : (int32_t)r->via_depth * 258;   /* (127: exactly SOURCE x VIA) */
+        s = (s * (32768 - d + ((resolve_source(c, r->via, 0) * d) >> 15))) >> 15;
+    }
     return s;
 }
 
@@ -192,7 +201,7 @@ static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
     int32_t cents = 0;
     for (unsigned i = 0; i < NROUTE; i++) {
         const ModRoute *r = &c->eng->route[i];
-        if (r->dest == d && r->src != MSRC_NONE) {
+        if ((r->dest == d || r->dest == MDST_PITCH) && r->src != MSRC_NONE) {   /* (d: OSC1 / OSC2 PITCH) */
             int a = bip(r->amount) * 2, sg = a < 0 ? -1 : 1;
             cents += sg * pitch_mod_cents(route_out(c, r), (uint8_t)clampi(a * sg, 0, 127));
         }
@@ -202,16 +211,16 @@ static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
 
 /* the bit test at the destination, the call only for a route (most patches have few: a call a destination a voice
  * tick is what the FM1's XIP code would pay) */
-#define send_sum(c, d, scale) ((((c)->sends >> (d)) & 1u) ? send_sum_any((c), (d), (scale)) : 0)
-#define send_cents(c, d) ((((c)->sends >> (d)) & 1u) ? send_cents_any((c), (d)) : 0)
+#define send_sum(c, d, scale) (ROUTE_BIT(c, d) ? send_sum_any((c), (d), (scale)) : 0)
+#define send_cents(c, d) (ROUTE_BIT(c, d) ? send_cents_any((c), (d)) : 0)
 
-/* AMP LEVEL's routes: each a gain as AMP MOD's (amount 0 full level, full the signal alone sets it; a negative route
- * the signal turned over), multiplied together */
-static SEND_COLD int32_t send_gain(const SourceCtx *c) {
+/* AMP LEVEL's and the LFO DEPTHs' routes: each a gain as TREMOLO's (amount 0 full level, full the signal alone sets
+ * it; a negative route the signal turned over), multiplied together */
+static SEND_COLD int32_t send_gain(const SourceCtx *c, unsigned dest) {
     int32_t g = -1;                                 /* (none yet: the first is taken as it is, no rounding) */
     for (unsigned i = 0; i < NROUTE; i++) {
         const ModRoute *r = &c->eng->route[i];
-        if (r->dest == MDST_AMP_LEVEL && r->src != MSRC_NONE) {
+        if (r->dest == dest && r->src != MSRC_NONE) {
             int a = bip(r->amount) * 2;
             int32_t d = (int32_t)clampi(a < 0 ? -a : a, 0, 127) * 258, l = route_out(c, r);
             l = clamp32(a < 0 ? 32767 - l : l, 0, 32767);
@@ -224,13 +233,13 @@ static SEND_COLD int32_t send_gain(const SourceCtx *c) {
 
 /* The layer's MFX plays the layer's sum, so its routes follow one voice: the newest sounding (as the MOD page's portal
  * does), a tick behind. With none sounding they hold, so a tail rings out as it was; with no MFX send they are 0. */
-static __attribute__((noinline)) void mfx_mod_follow(unsigned l, uint32_t sends, uint32_t hi) {
+static __attribute__((noinline)) void mfx_mod_follow(unsigned l, uint32_t hi) {
     int best = -1;
-    if ((sends & (15u << MDST_MFX_K1)) == 0u)
+    if ((hi & HI_MFX) == 0u)
         for (int k = 0; k < 4; k++) mfx_mod_off[l][k] = 0.f;
-    if (hi == 0u)
+    if ((hi & HI_FX) == 0u)
         synth_fx_send_mod[l][0] = synth_fx_send_mod[l][1] = 0;
-    if ((sends & (15u << MDST_MFX_K1)) == 0u && hi == 0u)
+    if ((hi & (HI_MFX | HI_FX)) == 0u)
         return;
     for (int v = 0; v < POLYPHONY_VOICES; v++)
         if (!poly_bank[v].silent && poly_bank[v].layer == l &&
@@ -238,9 +247,9 @@ static __attribute__((noinline)) void mfx_mod_follow(unsigned l, uint32_t sends,
             best = v;
     if (best < 0)
         return;
-    if (sends & (15u << MDST_MFX_K1))
+    if (hi & HI_MFX)
         for (int k = 0; k < 4; k++) mfx_mod_off[l][k] = (float)poly_bank[best].mfx_mod[k];
-    if (hi)              /* (the DELAY / REVERB SEND: the same newest voice, 2026-11-03) */
+    if (hi & HI_FX)      /* (the DELAY / REVERB SEND: the same newest voice, 2026-11-03) */
         for (int k = 0; k < 2; k++) synth_fx_send_mod[l][k] = poly_bank[best].fx_mod[k];
 }
 
@@ -248,13 +257,12 @@ static __attribute__((noinline)) void mfx_mod_follow(unsigned l, uint32_t sends,
 
 void update_poly_lfo_engines(SynthVoiceNode *voice, const VoiceInput *in) {
     const EngineState *e = &engine_state[voice->layer];
-    SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1]};
+    SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1], layer_sends_hi[voice->layer & 1]};
     for (int i = 0; i < 2; i++) {
         const LfoParams *cfg = &e->lfo[i + 1];                      /* LFO2, LFO3 */
         LfoRuntimeState *state = &voice->poly_lfos.engines[i];
-        lfo_advance(cfg, state, resolve_source(&c, cfg->speed_mod_src, 0) * bip(cfg->speed_mod_amt) +
-                    send_sum(&c, MDST_LFO2_SPEED + (unsigned)i, 1), in->gate, SYNTH_CTRL_SHIFT,
-                    in->frame);                                     /* REL: waits for the key release */
+        lfo_advance(cfg, state, i ? send_sum(&c, MDST_LFO3_SPEED, 1) : send_sum(&c, MDST_LFO2_SPEED, 1), in->gate,
+                    SYNTH_CTRL_SHIFT, in->frame);                   /* REL: waits for the key release */
         /* once per tick: the shape also redraws its random values here, so it must not be read twice */
         int32_t raw = compute_morphed_lfo_fixed(state, cfg->shape);
         voice->lfo_q15[i] = (((raw * state->envelope_amp_q15) >> 15) * voice->lfo_gain_q15[i + 1]) >> 15;
@@ -285,14 +293,21 @@ static int32_t lfo_depth_q15(const SourceCtx *c, uint8_t src, uint8_t amt) {
     return clamp32(GAIN_UNITY - d + ((s * d) >> 15), 0, GAIN_UNITY);
 }
 
-/* a voice's VEL > LEVEL and DEPTH MOD gains for the tick, before anything reads its envelopes or LFOs */
+/* a voice's VEL > LEVEL and WHEEL > DEPTH gains for the tick, before anything reads its envelopes or LFOs; an LFO
+ * DEPTH route scales its depth further */
 static void voice_mod_gains(SynthVoiceNode *voice, const SourceCtx *c) {
+    static const uint8_t DEPTH[3] = {MDST_LFO1_DEPTH, MDST_LFO2_DEPTH, MDST_LFO3_DEPTH};
     const EngineState *e = c->eng;
     for (int i = 0; i < 3; i++)
         voice->env_vel_q15[i] = vel_level_q15(e->env_vel_level[i], c->in->velocity);
-    for (int i = 0; i < 3; i++)
-        voice->lfo_gain_q15[i] = lfo_depth_q15(c, e->lfo_depth_src[i], e->lfo_depth_amt[i]);
+    for (int i = 0; i < 3; i++) {
+        int32_t g = lfo_depth_q15(c, MSRC_MODWHEEL, e->lfo_depth_amt[i]);
+        if ((c->sends >> DEPTH[i]) & 1u)
+            g = (g * send_gain(c, DEPTH[i])) >> 15;
+        voice->lfo_gain_q15[i] = g;
+    }
 }
+PS_STATIC_ASSERT(MDST_LFO3_DEPTH < 32u, "the LFO DEPTHs in the mask's first word");
 
 /* Whether any voice of the layer holds its key. LFO1 is per layer, so its REL mode waits on this. */
 static int layer_key_held(uint8_t layer) {
@@ -306,9 +321,8 @@ void update_global_lfo1(uint32_t frame) {
         const EngineState *e = &engine_state[l];
         const LfoParams *cfg = &e->lfo[0];
         LfoRuntimeState *state = &global_lfo1_state[l];
-        SourceCtx c = {e, (int)l, NULL, NULL, 0, layer_sends[l]};
-        lfo_advance(cfg, state, resolve_source(&c, cfg->speed_mod_src, 0) * bip(cfg->speed_mod_amt) +
-                    send_sum(&c, MDST_LFO1_SPEED, 1), layer_key_held((uint8_t)l), SYNTH_CTRL_SHIFT, frame);
+        SourceCtx c = {e, (int)l, NULL, NULL, 0, layer_sends[l], layer_sends_hi[l]};
+        lfo_advance(cfg, state, send_sum(&c, MDST_LFO1_SPEED, 1), layer_key_held((uint8_t)l), SYNTH_CTRL_SHIFT, frame);
         int32_t raw = compute_morphed_lfo_fixed(state, cfg->shape);
         lfo1_out_q15[l] = (raw * state->envelope_amp_q15) >> 15;
     }
@@ -378,10 +392,9 @@ void synth_voice_begin_tick(uint32_t frame) {
         layer_sends[l] = route_mask(&engine_state[l], &layer_sends_hi[l]);
     update_global_lfo1(frame);
     for (unsigned l = 0; l < NLAYER; l++) {
-        SourceCtx c = {&engine_state[l], (int)l, NULL, NULL, 0, layer_sends[l]};
         refresh_osc_mixer(l);
         glide_knobs(l);
-        mfx_mod_follow(l, c.sends, layer_sends_hi[l]);
+        mfx_mod_follow(l, layer_sends_hi[l]);
     }
     knob_glide_live = 1;
 }
@@ -410,12 +423,11 @@ static int32_t key_track_q15(uint8_t kt) {
 }
 
 /* An oscillator's base note: the keyboard note (key_cents: its TUNING offset) through key track, plus transpose and
- * the octave knob. Key track can land between semitones, so the remainder comes back as cents. KEY TRACK scales the
+ * TUNE's semitones (its cents: osc_fine_cents, added by the caller). Key track can land between semitones, so the remainder comes back as cents. KEY TRACK scales the
  * tuning with the keyboard: an oscillator that does not track (a drone) stays put. */
 static void base_pitch(const OscParams *o, const VoiceInput *in, int32_t key_cents, int *note, int *cents) {
-    int octave = ((int)o->octave * 7 >> 7) - 3;                      /* knob 0..127 -> -3..+3 */
     int32_t track_cents = ((((int32_t)in->note - 60) * 100 + key_cents) * key_track_q15(o->key_track)) >> 15;
-    *note = clampi(60 + in->transpose + octave * 12 + track_cents / 100, 0, 127);
+    *note = clampi(60 + in->transpose + (int)osc_coarse_semis(o->coarse) + track_cents / 100, 0, 127);
     *cents = track_cents % 100;
 }
 
@@ -444,29 +456,32 @@ static void voice_go_silent(SynthVoiceNode *voice) {
 }
 
 /* the cutoff of a filter in Q8 knob units: knob plus a mod offset plus KEY TRACK, clamped to the whole knob (20 Hz ..
- * 14 kHz). KEY TRACK pivots on C4; a knob step is 89.3 cents, so a semitone at 127 is 286.7 Q8 = 127 * 578 / 256. */
+ * 14 kHz). KEY TRACK pivots on C4; a knob step is 89.3 cents, so a semitone at 100 (full tracking, 2026-11-11: 127 is
+ * 127 %) is 286.7 Q8 = 100 * 734 / 256. */
 static int cutoff_q8(const SourceCtx *c, int fi, int32_t mod_q8) {   /* FILTER fi's glided knob */
     int32_t kt = c->eng->filter_key_track[fi];
     if (kt != 0 && c->in)
-        mod_q8 += (((int32_t)c->in->note - 60) * kt * 578) >> 8;
+        mod_q8 += (((int32_t)c->in->note - 60) * kt * 734) >> 8;
     return clampi((int)glide_q8(knob_glide[c->layer].cutoff[fi]) + (int)mod_q8, 0, 127 << 8);
 }
 
-/* a filter's own mod source and amount (spec 4.2), as a Q8 cutoff offset: the amount 0..127, positive only (2026-10-26,
- * was bipolar; twice the steps). Kept in Q8 so the filter interpolates
- * between the table steps and a modulated cutoff does not zipper. */
+/* a filter's ENV2 > CUTOFF (its fixed path, knob 4: 0..127), LFO1 > CUTOFF (the LFO1 page's FILTER AMT, every filter)
+ * and routes, as a Q8 cutoff offset. Kept in Q8 so the filter interpolates between the table steps and a modulated
+ * cutoff does not zipper. */
 static int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f, int fi) {
-    return (resolve_source(c, f->mod_src, 0) * (int32_t)f->mod_amt + send_sum(c, fi ? MDST_F2_CUTOFF : MDST_F1_CUTOFF, 2)) >> 8;
+    int32_t m = f->mod_amt ? resolve_source(c, MSRC_ENV2, 0) * (int32_t)f->mod_amt : 0;
+    if (c->eng->lfo1_filter)
+        m += resolve_source(c, MSRC_LFO1, 0) * (int32_t)c->eng->lfo1_filter;
+    return (m + (fi ? send_sum(c, MDST_F2_CUTOFF, 2) : send_sum(c, MDST_F1_CUTOFF, 2))) >> 8;
 }
 
-/* A FILTER page's type morph plus its own mod source and amount (spec 4.2, every architecture), the knob's way round
- * (dsp/filter.h). An amount of 0 resolves no source. */
+/* A FILTER page's type morph plus its routes, the knob's way round (dsp/filter.h) */
 static int filter_morph(const SourceCtx *c, const FilterParams *f, int fi) {
     int m = (int)glide_q8(knob_glide[c->layer].morph[fi]);              /* Q8 knob units (2026-10-21) */
     unsigned d = fi ? MDST_F2_MORPH : MDST_F1_MORPH;
-    if (f->morph_mod_amt != BIPOLAR_CENTER || ((c->sends >> d) & 1u))
-        m = clampi(m + (int)((resolve_source(c, f->morph_mod_src, 0) * bip(f->morph_mod_amt) + send_sum(c, d, 1)) >> 7), 0,
-                   127 << 8);
+    (void)f;
+    if ((c->sends >> d) & 1u)
+        m = clampi(m + (int)(send_sum_any(c, d, 1) >> 7), 0, 127 << 8);
     return m;
 }
 
@@ -501,9 +516,24 @@ static uint32_t analog_freq(uint32_t f_q16, float ratio) {
  * instead of in whole knob steps, then spread continuously across the 8 morph frames. */
 static int scan_morph_q12(const SourceCtx *c, const OscParams *o, int oi, int offset_knob) {   /* OSC oi, glided */
     int32_t scan_q8 = glide_q8(knob_glide[c->layer].scan[oi]) + ((int32_t)offset_knob << 8);
-    scan_q8 += (resolve_source(c, o->scan_mod_src, 0) * o->scan_mod_amt +
-                send_sum(c, oi ? MDST_OSC2_SCAN : MDST_OSC1_SCAN, 2)) >> 7;
+    scan_q8 += ((o->scan_mod_amt ? resolve_source(c, MSRC_ENV3, 0) * o->scan_mod_amt : 0) +   /* ENV3 > SCAN */
+                (oi ? send_sum(c, MDST_OSC2_SCAN, 2) : send_sum(c, MDST_OSC1_SCAN, 2))) >> 7;
     return scan_q8_to_morph_q12(clampi(scan_q8, 0, 127 << 8));
+}
+
+/* ENV2 > PITCH (2026-11-11, OSC knob 4): the knob's -64..+63 on a square law, +-24 semitones at the ends, fine near 0 */
+static int32_t env_pitch_cents(const SourceCtx *c, uint8_t amt) {
+    int32_t b = bip(amt);
+    return b ? (resolve_source(c, MSRC_ENV2, 0) * ((b * (b < 0 ? -b : b) * 2400) >> 12)) >> 15 : 0;
+}
+
+/* an oscillator's LFO pitch: LFO1's PITCH AMT at the oscillator's share (the LFO1 page) and its own LFO2 > PITCH */
+static int32_t lfo_pitch_cents(const SourceCtx *c, const OscParams *o, int oi) {
+    const EngineState *e = c->eng;
+    int32_t cents = 0, a1 = ((int32_t)e->lfo1_pitch * e->lfo1_osc_amt[oi] + 63) / 127;
+    if (a1) cents += pitch_mod_cents(resolve_source(c, MSRC_LFO1, 0), (uint8_t)a1);
+    if (o->lfo2_pitch) cents += pitch_mod_cents(resolve_source(c, MSRC_LFO2, 0), o->lfo2_pitch);
+    return cents;
 }
 
 /* One path's mix-bus gains (MIX_L, MIX_R) from its Q15 left and right gains: the pair times `dry`. The FX sends are
@@ -515,7 +545,7 @@ static void mix_gains(float *g, int32_t l_q15, int32_t r_q15, float dry) {
 
 void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const EngineState *e = &engine_state[voice->layer];
-    SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1]};
+    SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1], layer_sends_hi[voice->layer & 1]};
     uint8_t arch = voice->arch;
     SPROF_DECL;
     SPROF_START();
@@ -563,16 +593,14 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
      * count as 0; an inverted envelope reads 1 -> 0). A unison stack and a choke fade scale the level too. */
     const AmpParams *a = &e->amp;
     int32_t amp_gain_q15 = 32767;
-    int amp_mod = a->amp_mod_src != MSRC_NONE && a->amp_mod_depth;   /* (a source at depth 0, the default LFO1: none) */
+    int amp_mod = a->amp_mod_depth != 0u;           /* TREMOLO: LFO3 > LEVEL (0: none) */
     if (amp_mod) {
         int32_t depth_q15 = (int32_t)a->amp_mod_depth * 258;
-        int32_t mod_uni_q15 = resolve_source(&c, a->amp_mod_src, 0);
-        if (src_is_inverted_env(e, a->amp_mod_src)) mod_uni_q15 += 32767;
-        mod_uni_q15 = clamp32(mod_uni_q15, 0, 32767);
+        int32_t mod_uni_q15 = clamp32(resolve_source(&c, MSRC_LFO3, 0), 0, 32767);
         amp_gain_q15 = clamp32(32767 - depth_q15 + ((mod_uni_q15 * depth_q15) >> 15), 0, 32767);
     }
     if ((c.sends >> MDST_AMP_LEVEL) & 1u)
-        amp_gain_q15 = !amp_mod ? send_gain(&c) : (amp_gain_q15 * send_gain(&c)) >> 15;
+        amp_gain_q15 = !amp_mod ? send_gain(&c, MDST_AMP_LEVEL) : (amp_gain_q15 * send_gain(&c, MDST_AMP_LEVEL)) >> 15;
     int32_t level_q15 = (amp_gain_q15 * voice->unison_gain_q15) >> 15;
     if (voice->choke) level_q15 = (level_q15 * voice->choke_q15) >> 15;
     if (analog) level_q15 = (level_q15 * an->level_q15) >> 15;      /* (a little over 32767 is fine: float from here) */
@@ -590,10 +618,9 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
 
     int note1, track1;
     base_pitch(o1, in, key_cents, &note1, &track1);
-    int32_t pitch1_cents = osc_fine_cents(o1->fine) + track1 + base_cents;
+    int32_t pitch1_cents = osc_fine_cents(o1->fine) + track1 + base_cents + env_pitch_cents(&c, o1->env2_pitch);
     uint32_t freq1_q16 = apply_cents_q16(mtof_q16(note1),
-                                         pitch1_cents + pitch_mod_cents(resolve_source(&c, o1->pitch_mod_src, 0), o1->pitch_mod_amt) +
-                                         send_cents(&c, MDST_OSC1_PITCH));
+                                         pitch1_cents + lfo_pitch_cents(&c, o1, 0) + send_cents(&c, MDST_OSC1_PITCH));
     if (analog) freq1_q16 = analog_freq(freq1_q16, an->pitch1);
     osc_select_wave(&voice->osc1, o1->wavebank);
     voice->osc1.morph_q12 = scan_morph_q12(&c, o1, 0, 0);
@@ -603,7 +630,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         int note2, track2;
         base_pitch(o2, in, key_cents, &note2, &track2);
         freq2_q16 = apply_cents_q16(mtof_q16(note2), osc_fine_cents(o2->fine) + track2 + base_cents
-                                    + pitch_mod_cents(resolve_source(&c, o2->pitch_mod_src, 0), o2->pitch_mod_amt)
+                                    + env_pitch_cents(&c, o2->env2_pitch) + lfo_pitch_cents(&c, o2, 1)
                                     + send_cents(&c, MDST_OSC2_PITCH));
         if (analog) freq2_q16 = analog_freq(freq2_q16, an->pitch2);
         osc_select_wave(&voice->osc2, o2->wavebank);
@@ -614,20 +641,19 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const OscMixerParams *mx = &e->oscmix;
     const FilterMixerParams *fm = &e->fltmix;
     int32_t balance_off = 0, xmod_off = 0, spread = 0;
-    int32_t noise_off = (resolve_source(&c, mx->noise_mod_src, 0) * bip(mx->noise_mod_amt) +
-                         send_sum(&c, MDST_NOISE_LEVEL, 1)) >> 15, colour_off = 0;
+    int32_t noise_off = 0, colour_off = 0;          /* LEVEL MOD and COL MOD: ENV3, then their routes */
+    if (mx->noise_mod_amt != BIPOLAR_CENTER || ((c.sends >> MDST_NOISE_LEVEL) & 1u))
+        noise_off = (resolve_source(&c, MSRC_ENV3, 0) * bip(mx->noise_mod_amt) + send_sum(&c, MDST_NOISE_LEVEL, 1)) >> 15;
     if (mx->noise_col_mod_amt != BIPOLAR_CENTER || ((c.sends >> MDST_NOISE_COLOUR) & 1u))
-        colour_off = (resolve_source(&c, mx->noise_col_mod_src, 0) * bip(mx->noise_col_mod_amt) +
+        colour_off = (resolve_source(&c, MSRC_ENV3, 0) * bip(mx->noise_col_mod_amt) +
                       send_sum(&c, MDST_NOISE_COLOUR, 1)) >> 15;
     if (arch == VARCH_DUAL_OSC || arch == VARCH_FULL)
-        balance_off = (resolve_source(&c, mx->mix_mod_src, 0) * mx->mix_mod_amt + send_sum(&c, MDST_OSC_MIX, 2)) >> 15;
+        balance_off = send_sum(&c, MDST_OSC_MIX, 2) >> 15;
     if (varch_uses_osc2(arch))
-        xmod_off = (resolve_source(&c, mx->xmod_mod_src, 0) * mx->xmod_mod_amt + send_sum(&c, MDST_XMOD, 2)) >> 15;
+        xmod_off = send_sum(&c, MDST_XMOD, 2) >> 15;
     if (arch == VARCH_SPREAD)
-        spread = clampi(mx->spread + ((resolve_source(&c, mx->spread_mod_src, 0) * mx->spread_mod_amt +
-                                       send_sum(&c, MDST_SPREAD, 2)) >> 15), 0, 127);
-    int32_t harm_off_q8 = e->harm_mod_amt != BIPOLAR_CENTER ?   /* HARMONIC's mod, fine: 1/256 of a knob step */
-                          (resolve_source(&c, e->harm_mod_src, 0) * bip(e->harm_mod_amt)) >> 7 : 0;
+        spread = clampi(mx->spread + (send_sum(&c, MDST_SPREAD, 2) >> 15), 0, 127);
+    int32_t harm_off_q8 = send_sum(&c, MDST_HARMONIC, 1) >> 7;   /* HARMONIC's routes, fine: 1/256 of a knob step */
     osc_mixer_prepare(&voice->mix, &osc_mixer[voice->layer], freq1_q16, freq2_q16,
                       (int)balance_off, (int)xmod_off, (int)noise_off, (int)colour_off, (int)harm_off_q8);
     osc_prepare(&voice->osc1, freq1_q16, (int)spread);
@@ -647,17 +673,16 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     /* BINAURAL: the two phase offsets, each knob plus the shared PHASE MOD, wrapping round the cycle */
     int32_t phase_mod = 0;
     if (arch == VARCH_BINAURAL)
-        phase_mod = (resolve_source(&c, fm->bin_phase_mod_src, 0) * bip(fm->bin_phase_mod_amt) +
-                     send_sum(&c, MDST_PHASE, 1)) >> 15;
+        phase_mod = send_sum(&c, MDST_PHASE, 1) >> 15;
 
     switch (arch) {
     case VARCH_DUAL_FILTER:
     case VARCH_FULL: {
-        /* FILTER MIXER: balance and routing with their own mod sources (spec 4.2) */
-        int32_t balance_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt) +
-                               send_sum(&c, MDST_BALANCE, 1)) >> 15;
-        int32_t routing_mod = (resolve_source(&c, fm->routing_mod_src, 0) * bip(fm->routing_mod_amt) +
-                               send_sum(&c, MDST_ROUTING, 1)) >> 15;
+        /* FILTER MIXER: balance and routing, ENV3 on each (knobs 3, 4), then their routes */
+        int32_t env3 = fm->balance_mod_amt != BIPOLAR_CENTER || fm->routing_mod_amt != BIPOLAR_CENTER ?
+                       resolve_source(&c, MSRC_ENV3, 0) : 0;
+        int32_t balance_mod = (env3 * bip(fm->balance_mod_amt) + send_sum(&c, MDST_BALANCE, 1)) >> 15;
+        int32_t routing_mod = (env3 * bip(fm->routing_mod_amt) + send_sum(&c, MDST_ROUTING, 1)) >> 15;
         dual_filter_prepare(&voice->synth_filters,
                             cutoff_q8(&c, 0, f1_mod_q8), res_plus(&c, 0, an_res1), filter_morph(&c, f1, 0),
                             drive_plus(&c, f1, 0), f1->flavour,
@@ -681,20 +706,20 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         SourceCtx co = c, cf = c;
         co.lfo_offset = (uint32_t)((mx->bin_mod_phase + phase_mod) & 127) << 25;
         cf.lfo_offset = (uint32_t)((fm->bin_mod_phase + phase_mod) & 127) << 25;
-        uint32_t freq_r_q16 = apply_cents_q16(mtof_q16(note1), pitch1_cents
-                                              + pitch_mod_cents(resolve_source(&co, o1->pitch_mod_src, 0), o1->pitch_mod_amt)
+        uint32_t freq_r_q16 = apply_cents_q16(mtof_q16(note1), pitch1_cents + lfo_pitch_cents(&co, o1, 0)
                                               + send_cents(&co, MDST_OSC1_PITCH));
         if (analog) freq_r_q16 = analog_freq(freq_r_q16, an->pitch2);   /* the right ear drifts on its own */
-        freq_r_q16 += (uint32_t)mx->bin_beat * BIN_BEAT_STEP_Q16;
+        freq_r_q16 += (uint32_t)clampi(mx->bin_beat + (int)(send_sum(&c, MDST_BEAT_HZ, 2) >> 15), 0, 127) *
+                      BIN_BEAT_STEP_Q16;                            /* BEAT HZ and its routes */
         if (freq_r_q16 > PITCH_MAX_Q16) freq_r_q16 = PITCH_MAX_Q16;
         osc_select_wave(&voice->osc2, o1->wavebank);
         voice->osc2.morph_q12 = scan_morph_q12(&co, o1, 0, bip(mx->bin_scan_offset));
         osc_prepare(&voice->osc2, freq_r_q16, 0);
 
-        /* CUTOFF L/R plus its own mod source and amount, in knob units, held to the knob's -64..+63 */
+        /* CUTOFF L/R plus LFO1 (CUT L/R MOD, knob 4) and its routes, in knob units, held to the knob's -64..+63 */
         int offset = bip(fm->bin_cutoff_offset);
         if (fm->bin_cutoff_mod_amt != BIPOLAR_CENTER || ((c.sends >> MDST_CUTOFF_LR) & 1u))
-            offset = clampi(offset + (int)((resolve_source(&c, fm->bin_cutoff_mod_src, 0) * bip(fm->bin_cutoff_mod_amt) +
+            offset = clampi(offset + (int)((resolve_source(&c, MSRC_LFO1, 0) * bip(fm->bin_cutoff_mod_amt) +
                                             send_sum(&c, MDST_CUTOFF_LR, 1)) >> 15), -64, 63);
         int32_t offset_q8 = (int32_t)offset << 7;                   /* up to +-32 cutoff steps per ear */
         filter_prepare_one(&core[0], &c, f1, 0, cutoff_q8(&c, 0, f1_mod_q8 - offset_q8), an_res1, snap);
@@ -720,8 +745,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
             voice->drv_s[0][0] = voice->drv_s[0][1] = voice->drv_s[1][0] = voice->drv_s[1][1] = 0.f;
         amp_drive_prepare(&voice->drv, a->drive, a->drive_model);
     }
-    int pan = clampi(in->pan + (int)((resolve_source(&c, a->pan_mod_src, 0) * a->pan_mod_depth +
-                                      send_sum(&c, MDST_PAN, 2)) >> 15), 0, 127);
+    int pan = clampi(in->pan + (int)(send_sum(&c, MDST_PAN, 2) >> 15), 0, 127);
     /* 7. AMP: the layer's routing weight and the mix gain (the delay and reverb sends: synth_runtime.c, from the
      * layer's sum) */
     float route = (float)voice->route_q15 * q15_inv;
@@ -729,8 +753,8 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     if (arch == VARCH_STACK) {
         /* FILTER MIXER: BLEND (knob 1 + its mod) weighs A against B; both sit at the one pan, the layers play as one
          * (WIDTH, which pulled them apart, removed 2026-11-06, user) */
-        int32_t blend_mod = (resolve_source(&c, fm->balance_mod_src, 0) * bip(fm->balance_mod_amt) +
-                             send_sum(&c, MDST_BALANCE, 1)) >> 15;
+        int32_t blend_mod = ((fm->balance_mod_amt != BIPOLAR_CENTER ? resolve_source(&c, MSRC_ENV3, 0) *
+                              bip(fm->balance_mod_amt) : 0) + send_sum(&c, MDST_BALANCE, 1)) >> 15;   /* ENV3 > BLEND */
         int32_t gain_b = clampi(fm->balance + (int)blend_mod, 0, 127) * 258, gain_a = 32768 - gain_b;
         int32_t pl, pr;
         amp_pan_gains(&voice->master_amp, pan, &pl, &pr);
@@ -759,15 +783,15 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         mix_gains(voice->mix_b, 0, 0, 0.f);              /* no path B (the AMP page's pan reads both) */
     }
     SPROF_LAP(SPROF_C_AMP);
-    if (c.sends & (15u << MDST_MFX_K1)) {             /* MOD SENDS to the MFX knobs: full moves a knob all the way */
+    if (c.sends_hi & HI_MFX) {                        /* routes to the MFX knobs: full moves a knob all the way */
         for (int k = 0; k < 4; k++)
             voice->mfx_mod[k] = (int16_t)clampi((int)(send_sum(&c, MDST_MFX_K1 + (unsigned)k, 2) >> 15), -127, 127);
     }
-    if (layer_sends_hi[voice->layer & 1]) {           /* .. and the DELAY / REVERB SEND, the same way */
+    if (c.sends_hi & HI_FX) {                         /* .. and the DELAY / REVERB SEND, the same way */
         for (int k = 0; k < 2; k++)
             voice->fx_mod[k] = (int16_t)clampi((int)(send_sum_any(&c, MDST_DLY_SEND + (unsigned)k, 2) >> 15), -127, 127);
     }
-    voice->glide_mod = (int16_t)((c.sends >> MDST_GLIDE) & 1u ?        /* GLIDE: read by the next glide step */
+    voice->glide_mod = (int16_t)(ROUTE_BIT(&c, MDST_GLIDE) ?           /* GLIDE: read by the next glide step */
                                  clampi((int)(send_sum_any(&c, MDST_GLIDE, 2) >> 15), -127, 127) : 0);
 }
 

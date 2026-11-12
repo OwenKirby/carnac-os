@@ -121,8 +121,8 @@ int main(void)
     press(BTN_FX); CHECK(sm.page == UIPAGE_OSC1, "FX 4 wraps to OSC1 (it went to FILTER1 after STRIKE left): %u", sm.page);
     press(BTN_FX); press(BTN_FX); CHECK(sm.page == UIPAGE_OSCMIX, "FX 3 again");
     dump("OSCMIX STACK"); knobs(UIPAGE_OSCMIX, "OSCMIX STACK");
-    CHECK(find_row("XMOD TYPE") < 0 && find_row("XMOD MOD SRC") >= 0 && find_row("MIX MOD SRC") < 0 &&
-          find_row("SPR MOD SRC") < 0, "STACK OSCMIX rows (XMOD TYPE is knob 1)");
+    CHECK(find_row("XMOD TYPE") < 0 && find_row("COL MOD") >= 0 && find_row("LEVEL MOD") >= 0 &&
+          find_row("SUB WAVE") >= 0, "STACK OSCMIX rows (XMOD TYPE is knob 1; the mods' sources fixed, 2026-11-11)");
     {
         UiKnobInfo i;
         uint8_t *p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i);
@@ -139,7 +139,7 @@ int main(void)
     press(BTN_SEL); press(BTN_SEL); press(BTN_SEL);
     CHECK(sm.page == UIPAGE_FLTMIX, "SEL to FLTMIX under STACK: %u", sm.page);
     dump("FLTMIX STACK"); knobs(UIPAGE_FLTMIX, "FLTMIX STACK");
-    CHECK(find_row("BLEND MOD SRC") >= 0 && find_row("RTG MOD SRC") < 0, "STACK FLTMIX rows");
+    CHECK(ui_sm_row_count(&sm) == 0u, "STACK FLTMIX: all on the knobs");
 
     /* switch to SINGLE while on FILTER MIXER: the page vanishes, fall back to FILTER1 */
     engine_state[0].arch = VARCH_SINGLE;
@@ -147,15 +147,14 @@ int main(void)
     CHECK(sm.page == UIPAGE_FILTER1, "SINGLE fallback from FLTMIX: %u", sm.page);
     press(BTN_SEL); CHECK(sm.page == UIPAGE_FILTER1, "SEL cycles to FILTER1 only under SINGLE: %u", sm.page);
     dump("FILTER1 SINGLE");
-    CHECK(find_row("MORPH MOD SRC") >= 0 && find_row("MORPH MOD AMT") >= 0, "FILTER page: the type morph's mod rows");
-    CHECK(ui_sm_row_text(&sm, (uint8_t)find_row("MORPH MOD AMT")) != NULL, "MORPH MOD AMT is bipolar text");
+    CHECK(find_row("MOD SRC") < 0 && find_row("MORPH MOD SRC") < 0 && ui_sm_row_count(&sm) == 3u,
+          "FILTER page: DRIVE, FLAVOUR, KEY TRACK (the pickers gone, 2026-11-11)");
     engine_state[0].filter_key_track[0] = 33u; engine_state[0].filter_key_track[1] = 99u;
     CHECK(find_row("KEY TRACK") == 2 && ui_sm_row_value(&sm, 2) == 33u, "FILTER1 KEY TRACK: the third row, its own byte");
     press(BTN_FX); press(BTN_FX);                     /* 2026-11-06: one oscillator, so OSC2's place is NOISE */
     CHECK(sm.page == UIPAGE_OSC2 && ui_sm_noise_page(&sm, sm.page, 0), "FX 2 under SINGLE: the NOISE page: %u", sm.page);
     dump("NOISE SINGLE"); knobs(UIPAGE_OSC2, "NOISE SINGLE");
-    CHECK(find_row("COL MOD SRC") == 0 && find_row("HARM MOD SRC") == 1 && find_row("HARM MOD AMT") == 2 &&
-          find_row("LVL MOD SRC") == 3 && find_row("NOISE MOD AMT") < 0 && find_row("SCAN MOD SRC") < 0, "NOISE rows");
+    CHECK(ui_sm_row_count(&sm) == 0u, "NOISE: no rows, all on the knobs (2026-11-11): %u", ui_sm_row_count(&sm));
     {
         UiKnobInfo i;
         CHECK(ui_sm_knob(&sm, UIPAGE_OSC2, 0, 0, &i) == &engine_state[0].oscmix.noise_colour && strcmp(i.label, "COLOUR") == 0 &&
@@ -163,9 +162,6 @@ int main(void)
               ui_sm_knob(&sm, UIPAGE_OSC2, 0, 2, &i) == &engine_state[0].oscmix.noise_col_mod_amt && strcmp(i.label, "COL MOD") == 0 &&
               ui_sm_knob(&sm, UIPAGE_OSC2, 0, 3, &i) == &engine_state[0].oscmix.noise_mod_amt && strcmp(i.label, "LEVEL MOD") == 0,
               "NOISE knobs (2026-11-11: the level on the OSCMIXER)");
-        engine_state[0].harm_mod_amt = 90u;
-        CHECK(ui_sm_row_value(&sm, 2) == 90u, "NOISE HARM MOD AMT: the patch's byte at its end");
-        engine_state[0].harm_mod_amt = BIPOLAR_CENTER;
     }
     press(BTN_FX);
     CHECK(sm.page == UIPAGE_OSCMIX, "FX 3 under SINGLE: OSCMIX: %u", sm.page);
@@ -204,18 +200,36 @@ int main(void)
     /* SPREAD: spread, sub wave, sub, noise level on the knobs (2026-11-11); the spread mod's source and amount rows */
     engine_state[0].arch = VARCH_SPREAD;
     ui_sm_enforce(&sm);
-    {                                                /* OSC1 (2026-11-11): FINE TUNE knob 3 always, KEY TRACK only with two oscillators */
+    {                                                /* OSC1 (2026-11-11): SCAN, TUNE, LFO2>PITCH, ENV2>PITCH; FINE OSC2's; KEY TRACK
+                                                      * only with two oscillators */
         UiKnobInfo i;
         uint8_t pg = sm.page;
         sm.page = UIPAGE_OSC1;
-        CHECK(ui_sm_knob(&sm, UIPAGE_OSC1, 0, 2, &i) == &engine_state[0].osc[0].fine && i.kind == UIKNOB_FINE &&
-              find_row("FINE TUNE") < 0 && find_row("SCAN MOD AMT") >= 0 && find_row("KEY TRACK") < 0,
-              "SINGLE OSC1: FINE TUNE knob 3, SCAN MOD AMT a row, no KEY TRACK");
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSC1, 0, 1, &i) == &engine_state[0].osc[0].coarse && i.kind == UIKNOB_TUNE &&
+              ui_sm_knob(&sm, UIPAGE_OSC1, 0, 2, &i) == &engine_state[0].osc[0].lfo2_pitch &&
+              ui_sm_knob(&sm, UIPAGE_OSC1, 0, 3, &i) == &engine_state[0].osc[0].env2_pitch &&
+              find_row("FINE") < 0 && find_row("ENV3>SCAN") >= 0 && find_row("KEY TRACK") < 0,
+              "SINGLE OSC1: SCAN, TUNE, LFO2>PITCH, ENV2>PITCH; ENV3>SCAN a row, no FINE, no KEY TRACK");
+        {                                            /* TUNE: a semitone a detent, held to +-36 */
+            uint8_t *p = ui_sm_knob(&sm, UIPAGE_OSC1, 0, 1, &i);
+            char b[12];
+            ui_sm_tune_turn(p, 1);
+            ui_sm_tune_turn(p, 1);
+            CHECK(osc_coarse_semis(*p) == 2 && strcmp(ui_sm_tune_text(p, b), "+2") == 0, "TUNE: two detents (%s)",
+                  ui_sm_tune_text(p, b));
+            ui_sm_tune_turn(p, -50);
+            CHECK(osc_coarse_semis(*p) == -36, "TUNE held at -36 (%d)", (int)osc_coarse_semis(*p));
+            *p = OSC_COARSE_ZERO;
+        }
         engine_state[0].arch = VARCH_DUAL_OSC;
         ui_sm_enforce(&sm);
         sm.page = UIPAGE_OSC1;
-        CHECK(ui_sm_knob(&sm, UIPAGE_OSC1, 0, 2, &i) == &engine_state[0].osc[0].fine && find_row("KEY TRACK") >= 0 &&
-              find_row("SCAN MOD AMT") >= 0, "DUAL OSC OSC1: FINE TUNE knob 3, KEY TRACK and SCAN MOD AMT rows");
+        CHECK(find_row("KEY TRACK") >= 0 && find_row("ENV3>SCAN") >= 0 && find_row("FINE") < 0,
+              "DUAL OSC OSC1: KEY TRACK and ENV3>SCAN rows, no FINE");
+        sm.page = UIPAGE_OSC2;
+        CHECK(find_row("FINE") == 2 && find_row("KEY TRACK") == 3 && find_row("OSC SYNC") >= 0,
+              "DUAL OSC OSC2: FINE above KEY TRACK, OSC SYNC");
+        sm.page = UIPAGE_OSC1;
         engine_state[0].arch = VARCH_DUAL_FILTER;    /* one oscillator: no KEY TRACK (BINAURAL too) */
         ui_sm_enforce(&sm);
         sm.page = UIPAGE_OSC1;
@@ -235,8 +249,7 @@ int main(void)
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == &sm.sub6_knob &&
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i) == &engine_state[0].oscmix.sub_level &&
               ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i) == &engine_state[0].oscmix.noise_level, "SPREAD knobs");
-        CHECK(find_row("NOISE LEVEL") < 0 && find_row("SPR MOD AMT") >= 0 && find_row("SPR MOD SRC") >= 0 &&
-              find_row("NOISE COLOUR") < 0 && find_row("NOISE MOD SRC") < 0 && find_row("SUB OCTAVE") < 0, "SPREAD rows");
+        CHECK(ui_sm_row_count(&sm) == 0u, "SPREAD OSCMIX: all on the knobs (its mod a route, 2026-11-11)");
     }
 
     /* BINAURAL: OSC2's place the NOISE page, FILTER2 hidden, FILTER MIXER shown with its phase knobs */
@@ -271,14 +284,65 @@ int main(void)
     press(BTN_SEL); press(BTN_SEL);
     CHECK(sm.page == UIPAGE_FLTMIX, "SEL FILTER1 -> FLTMIX under BINAURAL (skips FILTER2): %u", sm.page);
     dump("FLTMIX BINAURAL"); knobs(UIPAGE_FLTMIX, "FLTMIX BINAURAL");
-    CHECK(find_row("CUT L/R SRC") >= 0 && find_row("CUT L/R AMT") >= 0 && find_row("PHASE MOD SRC") >= 0,
-          "BINAURAL FLTMIX: CUTOFF L/R's mod rows");
+    {
+        UiKnobInfo i;
+        CHECK(ui_sm_row_count(&sm) == 0u && ui_sm_knob(&sm, UIPAGE_FLTMIX, 0, 3, &i) == &engine_state[0].fltmix.bin_cutoff_mod_amt,
+              "BINAURAL FLTMIX: knob 4 CUT L/R MOD (LFO1), no rows");
+    }
 
     /* DUAL FILTER: FILTER MIXER keeps the spec's balance / routing */
     engine_state[0].arch = VARCH_DUAL_FILTER;
     ui_sm_enforce(&sm);
     dump("FLTMIX DUAL FILTER"); knobs(UIPAGE_FLTMIX, "FLTMIX DUAL FILTER");
-    CHECK(find_row("RTG MOD SRC") >= 0 && find_row("CUT L/R SRC") < 0, "DUAL FILTER routing row, no L/R mod");
+    CHECK(ui_sm_row_count(&sm) == 0u, "DUAL FILTER FLTMIX: all on the knobs");
+    {   /* 2026-11-11: routes as rows on their pages, EDIT from a modulated parameter onto its route, each page's cursor
+         * kept, SOURCE NONE closing the list up when the cursor leaves, DEST over the architecture's destinations */
+        EngineState *e = &engine_state[0];
+        UiKnobInfo i;
+        uint8_t r, *p, d, pg0 = sm.page;
+        e->arch = VARCH_DUAL_OSC;
+        ui_sm_enforce(&sm);
+        for (r = 0; r < NROUTE; r++) e->route[r] = (ModRoute)ROUTE_FREE;
+        e->route[0] = (ModRoute){MSRC_LFO3, MSRC_NONE, MDST_PAN, BIPOLAR_CENTER + 15, VAL_MAX};
+        press(BTN_GLO);
+        CHECK(sm.page == UIPAGE_AMP && find_row("LFO3>PAN") >= 0, "AMP: the PAN route is a row (page %u)", sm.page);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(find_row("LFO3>PAN") - sm.s.current_param_focus));
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);
+        CHECK(e->route[0].amount == BIPOLAR_CENTER + 20, "AMP: the route row's AMOUNT on the Algorithm Encoder (%d)",
+              (int)e->route[0].amount - 64);
+        r = sm.s.current_param_focus;
+        press(BTN_EDIT);
+        CHECK(sm.page == UIPAGE_MOD && ui_sm_route_sel(&sm) == 0u, "EDIT from the PAN row: its route (%u)", ui_sm_route_sel(&sm));
+        press(BTN_GLO);
+        CHECK(sm.page == UIPAGE_AMP && sm.s.current_param_focus == r, "AMP again: the cursor where it was (%u, %u)",
+              sm.s.current_param_focus, r);
+        press(BTN_SEL);                              /* FILTER1: the cutoff knob turned, then EDIT */
+        ui_sm_knob_written(&sm, UIPAGE_FILTER1, 1u);
+        press(BTN_EDIT);
+        r = ui_sm_route_sel(&sm);
+        CHECK(sm.page == UIPAGE_MOD && r == 1u && e->route[1].dest == MDST_F1_CUTOFF && e->route[1].src == MSRC_NONE &&
+              strcmp(ui_sm_row_label(&sm, sm.s.current_param_focus), "+ NEW>CUT1") == 0,
+              "EDIT from the cutoff knob: + NEW ROUTE aimed at F1 CUTOFF (route %u, %s)", r,
+              ui_sm_row_label(&sm, sm.s.current_param_focus));
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &i); *p = MSRC_LFO2; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
+        CHECK(e->route[1].src == MSRC_LFO2 && find_row("+ NEW ROUTE") == 2, "a SOURCE makes it a route; + NEW ROUTE after it");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);      /* route 0 (LFO3>PAN): its SOURCE to NONE, then away */
+        p = ui_sm_knob(&sm, UIPAGE_MOD, 0, 0, &i); *p = MSRC_NONE; ui_sm_knob_written(&sm, UIPAGE_MOD, 0);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        CHECK(e->route[0].src == MSRC_LFO2 && e->route[0].dest == MDST_F1_CUTOFF && e->route[1].src == MSRC_NONE &&
+              ui_sm_route_sel(&sm) == 0u, "SOURCE NONE: the route goes when the cursor leaves, the next slides under it");
+        e->arch = VARCH_SPREAD;                      /* one oscillator: DEST steps over OSC2's */
+        ui_sm_enforce(&sm);
+        d = MDST_OSC1_PITCH;
+        ui_sm_dest_turn(&sm, &d, 1);
+        CHECK(d == MDST_PITCH, "DEST in SPREAD: OSC1 PCH -> PITCH, over OSC2's (%u)", d);
+        ui_sm_dest_turn(&sm, &d, 1);
+        CHECK(d == MDST_SPREAD, "DEST in SPREAD: PITCH -> SPREAD, over OSC MIX and CROSS-MOD (%u)", d);
+        for (r = 0; r < NROUTE; r++) e->route[r] = (ModRoute)ROUTE_FREE;
+        e->arch = VARCH_DUAL_FILTER;
+        sm.page = pg0;
+        ui_sm_enforce(&sm);
+    }
     {
         uint8_t pg = sm.page;
         sm.page = UIPAGE_FILTER2;

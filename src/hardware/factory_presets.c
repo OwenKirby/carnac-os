@@ -18,7 +18,7 @@
  * (85 = 1.6 kHz), LFO rate 0.05 Hz * 800^(k/127), LFO shape 0 sine 21 tri 43 saw 64 square 85 step 106 slew.
  * Not yet heard on the device. */
 #include <stddef.h>                 /* offsetof: the patches' settings are byte offsets into EngineState */
-#define FP_OCT(k) ((uint8_t)((k) == 0 ? 64 : 18 * ((k) + 3) + 9))
+#define FP_OCT(k) ((uint8_t)(OSC_COARSE_ZERO + 12 * (k)))   /* TUNE k octaves (2026-11-11: semitones) */
 #define FP_BIP(v) ((uint8_t)((v) + 64))
 #define FP_N 26u                         /* SAMHAIN's patches, slots 0..25 (its six STRIKE patches went with STRIKE, 2026-11-04) */
 #define FP_NPERF 8u                      /* its performances (and their sequences and arps), slots 0..7 */
@@ -41,7 +41,7 @@ static void factory_name(uint8_t *dst, const char *s)
  * 2026-10-27: the factory bank, patch slots 0..31. Each patch is engine_defaults plus the list of (byte offset, value)
  * pairs below, so a patch states every setting it changes and nothing else: about 100 bytes of flash a patch, where
  * code setting the same fields would take several times that. The values are the stored bytes (bipolar ones 64 = 0:
- * FP_BIP; octaves FP_OCT; fine tune bytes by osc_fine_cents' square law, the cents in the comment).
+ * FP_BIP; octaves FP_OCT; OSC2's fine tune bytes 64 + cents (2026-11-11), the cents in the comment).
  * Knob units: see the top of this file. A pitch mod amount a is a^2 * 4800 / 16129 cents (10 = 30 c, 13 = 50 c);
  * scan, mix, xmod, spread and pan amounts are knob units at a full source; a filter's MOD AMT a moves the cutoff a
  * knob steps at a full source (13.4 an octave); a mod slot's amount 63 is unity.
@@ -51,7 +51,7 @@ static void factory_name(uint8_t *dst, const char *s)
  * over budget (docs/fm1-measure-checklist.md). */
 #define V_(f, v) (uint8_t)offsetof(EngineState, f), (uint8_t)(v)
 #define V_END 0xFFu
-#define V_OSC(i, w, sc, oc) V_(osc[i].wavebank, w), V_(osc[i].scan, sc), V_(osc[i].octave, FP_OCT(oc))
+#define V_OSC(i, w, sc, oc) V_(osc[i].wavebank, w), V_(osc[i].scan, sc), V_(osc[i].coarse, FP_OCT(oc))
 #define V_FLT(i, fl, drv, mo, cut, res, amt) V_(filter[i].flavour, FLT_##fl), V_(filter[i].drive, drv), \
     V_(filter[i].morph, mo), V_(filter[i].cutoff, cut), V_(filter[i].resonance, res), V_(filter[i].mod_amt, 2 * (amt))
 #define V_ENV(i, a, d, s, r) V_(env[i].attack, a), V_(env[i].decay, d), V_(env[i].sustain, s), V_(env[i].release, r)
@@ -100,9 +100,10 @@ static const uint8_t FV_SIDHESUB[] = {
     V_(arch, VARCH_SINGLE),
     V_OSC(0, W_FOUND, F_TRI, -1),
     V_(oscmix.sub_level, 60), V_(oscmix.sub_waveform, SUBWAVE_SINE),
-    V_FLT(0, SH2, 50, 0, 52, 16, 30), V_(filter[0].mod_src, MSRC_MODWHEEL), V_KT(0, 40),
+    V_FLT(0, SH2, 50, 0, 52, 16, 0), V_KT(0, 40),
     V_ENV(0, 0, 90, 110, 44),
     V_AMP(0, SOFT, 8, 6), V_(analog, 24),
+    V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 30),
     V_END};
 
 /* ---- 2 BOG SQUELCH: what the peat keeps. Foundations SAW an octave down into an SH-2 driven hard, resonance near the
@@ -135,13 +136,13 @@ static const uint8_t FV_WIGHT[] = {
  * ENV2, short notes. WHEEL: the cutoff opens (ENV2 + wheel; the SAMHAIN sequence sweeps it with a lane). */
 static const uint8_t FV_CROM[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_P20, 0), V_(osc[0].scan_mod_src, MSRC_LFO1), V_(osc[0].scan_mod_amt, 30),
-    V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SINE),
+    V_OSC(0, W_FOUND, F_P20, 0), V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SINE),
     V_FLT(0, SH2, 50, 0, 50, 76, 21), V_KT(0, 50),
     V_ENV(0, 0, 64, 30, 40), V_ENV(1, 0, 54, 0, 40),
     V_LFO(0, L_TRI, 30),
     V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 21),
     V_AMP(10, TUBE, 44, 34), V_(analog, 30),
+    V_ROUTE(1, LFO1, NONE, OSC1_SCAN, 15),
     V_END};
 
 /* ---- 5 UNDERHILL: deep in the hollow hill. DUAL OSC: Foundations TRIANGLE an octave down and SQUARE two octaves
@@ -149,22 +150,22 @@ static const uint8_t FV_CROM[] = {
 static const uint8_t FV_UNDERHILL[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_FOUND, F_TRI, -1), V_OSC(1, W_FOUND, F_SQUARE, -2),
-    V_(oscmix.balance, 40), V_(oscmix.mix_mod_src, MSRC_MODWHEEL), V_(oscmix.mix_mod_amt, 40),
-    V_FLT(0, MS20, 30, 0, 44, 30, 14), V_KT(0, 40),
+    V_(oscmix.balance, 40), V_FLT(0, MS20, 30, 0, 44, 30, 14), V_KT(0, 40),
     V_ENV(0, 0, 84, 100, 40), V_ENV(1, 0, 70, 50, 40),
     V_AMP(10, SOFT, 12, 6), V_(analog, 30),
+    V_ROUTE(0, MODWHEEL, NONE, OSC_MIX, 20),
     V_END};
 
 /* ---- 6 PEAT THUMP: a stake driven into the bog. Foundations TRIANGLE an octave down, its pitch falling five semitones
  * into the note (ENV3), a driven SH-2; short, a bass that is half a drum. WHEEL: the filter opens. */
 static const uint8_t FV_PEAT[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_TRI, -1), V_(osc[0].pitch_mod_src, MSRC_ENV3), V_(osc[0].pitch_mod_amt, 40),
-    V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SINE),
+    V_OSC(0, W_FOUND, F_TRI, -1), V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SINE),
     V_FLT(0, SH2, 60, 0, 50, 30, 19), V_KT(0, 50),
     V_ENV(0, 0, 66, 0, 56), V_ENV(1, 0, 50, 0, 40), V_ENV(2, 0, 40, 0, 40),
     V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 19),
     V_AMP(20, TUBE, 16, 8), V_(analog, 20),
+    V_ROUTE(1, ENV3, NONE, OSC1_PITCH, 20),
     V_END};
 
 /* ---- 7 TUMULUS DRONE: the mound breathing. SPREAD Foundations SAW+SQUARE an octave down, the four playheads drifting
@@ -173,13 +174,12 @@ static const uint8_t FV_PEAT[] = {
 static const uint8_t FV_TUMULUS[] = {
     V_(arch, VARCH_SPREAD),
     V_OSC(0, W_FOUND, F_SAWSQ, -1),
-    V_(oscmix.spread, 60), V_(oscmix.spread_mod_src, MSRC_LFO1), V_(oscmix.spread_mod_amt, 20),
-    V_(oscmix.sub_level, 40),
-    V_FLT(0, MS20, 40, 0, 60, 60, 10), V_(filter[0].mod_src, MSRC_LFO3), V_KT(0, 40),
-    V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(50)),
+    V_(oscmix.spread, 60), V_(oscmix.sub_level, 40),
+    V_FLT(0, MS20, 40, 0, 60, 60, 0), V_KT(0, 40),
     V_ENV(0, 90, 100, 120, 100),
     V_LFO(0, L_SINE, 14), V_LFO(2, L_SLEW, 30),
     V_AMP(10, TAPE, 30, 70), V_(analog, 50),
+    V_ROUTE(0, LFO3, NONE, F1_CUTOFF, 10), V_ROUTE(1, MODWHEEL, NONE, F1_MORPH, 50), V_ROUTE(2, LFO1, NONE, SPREAD, 10),
     V_END};
 
 /* ============================================ leads ============================================ */
@@ -188,24 +188,22 @@ static const uint8_t FV_TUMULUS[] = {
  * whistling, a vibrato that waits, then blooms; a slow glide. WHEEL: the pulse thins (SCAN toward PULSE MIN). */
 static const uint8_t FV_WISP[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_P20, 0), V_(osc[0].scan_mod_src, MSRC_MODWHEEL), V_(osc[0].scan_mod_amt, 36),
-    V_(osc[0].pitch_mod_src, MSRC_LFO2), V_(osc[0].pitch_mod_amt, 9),
-    V_FLT(0, SH2, 20, 0, 80, 104, 20), V_KT(0, 80),
+    V_OSC(0, W_FOUND, F_P20, 0), V_FLT(0, SH2, 20, 0, 80, 104, 20), V_KT(0, 80),
     V_ENV(0, 20, 80, 110, 70), V_ENV(1, 30, 80, 60, 70),
     V_VIB(88, 60),
     V_AMP(0, SOFT, 40, 60), V_(analog, 40),
+    V_ROUTE(0, MODWHEEL, NONE, OSC1_SCAN, 18), V_(osc[0].lfo2_pitch, 9),
     V_END};
 
 /* ---- 9 BANSHEE: the keening at the door. Foundations SAW+SQUARE into a driven MS-20 BAND-PASS, resonance high, a
  * slow ENV2 swell, a delayed vibrato; TUBE. WHEEL: band-pass -> high-pass (a thinner shriek). */
 static const uint8_t FV_BANSHEE[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_SAWSQ, 0), V_(osc[0].pitch_mod_src, MSRC_LFO2), V_(osc[0].pitch_mod_amt, 10),
-    V_FLT(0, MS20, 70, 64, 82, 96, 24), V_KT(0, 80),
-    V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(40)),
+    V_OSC(0, W_FOUND, F_SAWSQ, 0), V_FLT(0, MS20, 70, 64, 82, 96, 24), V_KT(0, 80),
     V_ENV(0, 30, 90, 110, 70), V_ENV(1, 40, 90, 80, 70),
     V_VIB(90, 50),
     V_AMP(10, TUBE, 34, 50), V_(analog, 30),
+    V_(osc[0].lfo2_pitch, 10), V_ROUTE(0, MODWHEEL, NONE, F1_MORPH, 40),
     V_END};
 
 /* ---- 10 HAG SYNC: the Cailleach's cry. DUAL OSC, OSC2 hard-synced to OSC1 (both Foundations SAW), OSC2's pitch
@@ -214,7 +212,6 @@ static const uint8_t FV_BANSHEE[] = {
 static const uint8_t FV_HAGSYNC[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_FOUND, F_SAW, 0), V_OSC(1, W_FOUND, F_SAW, 0), V_(osc[1].sync, 1),
-    V_(osc[1].pitch_mod_src, MSRC_NONE),
     V_(oscmix.balance, 100),
     V_FLT(0, MS20, 40, 0, 88, 40, 16), V_KT(0, 64),
     V_ENV(0, 0, 90, 110, 50), V_ENV(1, 0, 76, 60, 50), V_ENV(2, 0, 76, 30, 60),
@@ -226,8 +223,7 @@ static const uint8_t FV_HAGSYNC[] = {
  * a long tail. WHEEL: vibrato (LFO2 x wheel). */
 static const uint8_t FV_GHOST[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_TRI, 1), V_(osc[0].pitch_mod_src, MSRC_NONE),
-    V_FLT(0, SH2, 0, 0, 96, 30, 0), V_KT(0, 64),
+    V_OSC(0, W_FOUND, F_TRI, 1), V_FLT(0, SH2, 0, 0, 96, 30, 0), V_KT(0, 64),
     V_ENV(0, 60, 90, 120, 90),
     V_LFO(1, L_SINE, 82),
     V_ROUTE(0, LFO2, MODWHEEL, OSC1_PITCH, 7),
@@ -249,8 +245,7 @@ static const uint8_t FV_HUNT[] = {
  * the pitch up and down (a route, LFO2 VIA WHEEL), wider and wider. Made for the delay. */
 static const uint8_t FV_SIREN[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_SQUARE, 0), V_(osc[0].pitch_mod_src, MSRC_NONE),
-    V_FLT(0, SH2, 30, 0, 90, 50, 0), V_KT(0, 64),
+    V_OSC(0, W_FOUND, F_SQUARE, 0), V_FLT(0, SH2, 30, 0, 90, 50, 0), V_KT(0, 64),
     V_ENV(0, 0, 90, 127, 70),
     V_LFO(1, L_TRI, 60),
     V_ROUTE(0, LFO2, MODWHEEL, OSC1_PITCH, 30),
@@ -265,33 +260,27 @@ static const uint8_t FV_SIREN[] = {
  * WHEEL: vibrato, and the choir's filter opens. */
 static const uint8_t FV_NEWGRANGE[] = {
     V_(arch, VARCH_STACK),
-    V_OSC(0, W_MOONSTONE, 24, 0), V_(osc[0].scan_mod_src, MSRC_ENV1), V_(osc[0].scan_mod_amt, 56),
-    V_(osc[0].pitch_mod_src, MSRC_NONE),
-    V_OSC(1, W_CHOIR, 46, 0), V_(osc[1].fine, 69 /* +4 c */), V_(osc[1].scan_mod_src, MSRC_LFO3),
-    V_(osc[1].scan_mod_amt, 44), V_(osc[1].pitch_mod_src, MSRC_NONE),
-    V_FLT(0, MULTI, 0, 36, 94, 18, 0), V_KT(0, 64),
-    V_FLT(1, MULTI, 10, 0, 78, 26, 26), V_(filter[1].mod_src, MSRC_MODWHEEL), V_KT(1, 40),
+    V_OSC(0, W_MOONSTONE, 24, 0), V_OSC(1, W_CHOIR, 46, 0), V_(osc[1].fine, 68 /* +4 c */), V_FLT(0, MULTI, 0, 36, 94, 18, 0), V_KT(0, 64),
+    V_FLT(1, MULTI, 10, 0, 78, 26, 0), V_KT(1, 40),
     V_(fltmix.balance, 68), V_(fltmix.env3_cutoff, FP_BIP(22)),
-    V_(fltmix.balance_mod_src, MSRC_LFO1), V_(fltmix.balance_mod_amt, FP_BIP(12)),
     V_ENV(0, 0, 84, 22, 88), V_ENV(1, 72, 92, 112, 96), V_ENV(2, 96, 100, 104, 96),
     V_LFO(0, L_SINE, 22), V_LFO(1, L_TRI, 86), V_LFO(2, L_SINE, 28),
     V_ROUTE(0, LFO2, MODWHEEL, OSC1_PITCH, 5), V_ROUTE(1, LFO2, MODWHEEL, OSC2_PITCH, 5),
-    V_(amp.pan_mod_src, MSRC_LFO3), V_(amp.pan_mod_depth, 30),
     V_AMP(0, SOFT, 34, 80), V_(analog, 28),
+    V_ROUTE(2, ENV1, NONE, OSC1_SCAN, 28), V_ROUTE(3, LFO3, NONE, OSC2_SCAN, 22), V_ROUTE(4, MODWHEEL, NONE, F2_CUTOFF, 26), V_ROUTE(5, LFO1, NONE, BALANCE, 12), V_ROUTE(6, LFO3, NONE, PAN, 15),
     V_END};
 
 /* ---- 15 THIN VEIL: the night the veil is thinnest. DUAL OSC (was DUAL SPREAD until 2026-11-06): Foundations SAW and PULSE 35 % 4 cents apart, LFO1 moving the saw's shape; a soft MS-20 low-pass swelling with ENV2. WHEEL: the
  * MS-20 morphs toward band-pass (the pad turns to voices). */
 static const uint8_t FV_VEIL[] = {
     V_(arch, VARCH_DUAL_OSC),
-    V_OSC(0, W_FOUND, F_SAW, 0), V_(osc[0].scan_mod_src, MSRC_LFO1), V_(osc[0].scan_mod_amt, 20),
-    V_OSC(1, W_FOUND, F_P35, 0), V_(osc[1].fine, 69 /* +4 c */),
+    V_OSC(0, W_FOUND, F_SAW, 0), V_OSC(1, W_FOUND, F_P35, 0), V_(osc[1].fine, 68 /* +4 c */),
     V_(oscmix.balance, 64),
     V_FLT(0, MS20, 20, 0, 70, 40, 16), V_KT(0, 50),
-    V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(44)),
     V_ENV(0, 80, 100, 116, 98), V_ENV(1, 90, 100, 70, 98),
     V_LFO(0, L_SINE, 14),
     V_AMP(0, SOFT, 30, 80), V_(analog, 40),
+    V_ROUTE(0, LFO1, NONE, OSC1_SCAN, 10), V_ROUTE(1, MODWHEEL, NONE, F1_MORPH, 44),
     V_END};
 
 /* ---- 16 CRYPT ORGAN: an organ nobody built, under the hill. DUAL OSC: Foundations SQUAREs at 8' and 4', an MS-20
@@ -299,12 +288,11 @@ static const uint8_t FV_VEIL[] = {
 static const uint8_t FV_CRYPT[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_FOUND, F_SQUARE, 0), V_OSC(1, W_FOUND, F_SQUARE, 1), V_(osc[1].fine, 66 /* +2 c */),
-    V_(oscmix.balance, 50), V_(oscmix.mix_mod_src, MSRC_MODWHEEL), V_(oscmix.mix_mod_amt, 40),
-    V_FLT(0, MS20, 30, 0, 92, 20, 0), V_KT(0, 64),
+    V_(oscmix.balance, 50), V_FLT(0, MS20, 30, 0, 92, 20, 0), V_KT(0, 64),
     V_ENV(0, 10, 80, 120, 50),
     V_LFO(2, L_SINE, 70),
-    V_(amp.pan_mod_src, MSRC_LFO3), V_(amp.pan_mod_depth, 30),
     V_AMP(10, TUBE, 20, 70), V_(analog, 30),
+    V_ROUTE(0, MODWHEEL, NONE, OSC_MIX, 20), V_ROUTE(1, LFO3, NONE, PAN, 15),
     V_END};
 
 /* ---- 17 CORPSE CANDLE: the light that walks to the house of the dying. DUAL OSC: a Foundations TRIANGLE RING-
@@ -312,27 +300,25 @@ static const uint8_t FV_CRYPT[] = {
  * pale tone. WHEEL: more ring. */
 static const uint8_t FV_CANDLE[] = {
     V_(arch, VARCH_DUAL_OSC),
-    V_OSC(0, W_FOUND, F_TRI, 0), V_OSC(1, W_MOONSTONE, 40, 1), V_(osc[1].fine, 122 /* +600 c */),
-    V_(oscmix.xmod_type, XMOD_RING), V_(oscmix.xmod_amt, 80), V_(oscmix.xmod_mod_src, MSRC_NONE),
-    V_FLT(0, MS20, 0, 0, 100, 10, 10), V_KT(0, 80),
+    V_OSC(0, W_FOUND, F_TRI, 0), V_(osc[1].wavebank, W_MOONSTONE), V_(osc[1].scan, 40), V_(osc[1].coarse, FP_OCT(1) + 6 /* +600 c */),
+    V_(oscmix.xmod_type, XMOD_RING), V_(oscmix.xmod_amt, 80), V_FLT(0, MS20, 0, 0, 100, 10, 10), V_KT(0, 80),
     V_ENV(0, 0, 90, 0, 90), V_(env[0].key_to_time, FP_BIP(-16)), V_ENV(1, 0, 70, 0, 70), V_ENV(2, 0, 70, 0, 70),
     V_ROUTE(0, ENV3, NONE, XMOD, 13), V_ROUTE(1, MODWHEEL, NONE, XMOD, 13),
-    V_(amp.pan_mod_depth, 30),
     V_AMP(0, SOFT, 40, 80), V_(analog, 16),
+    V_ROUTE(2, KEYBOARD, NONE, PAN, 15),
     V_END};
 
 /* ---- 18 ALL SOULS: the choir of the dead on the eve of November. SPREAD over the PCM CHOIR, the playheads wide, LFO1
  * drifting the vowel, a warm SH-2 with a little drive. WHEEL: the choir opens (SCAN ooh -> aah). */
 static const uint8_t FV_SOULS[] = {
     V_(arch, VARCH_SPREAD),
-    V_OSC(0, W_CHOIR, 20, 0), V_(osc[0].scan_mod_src, MSRC_NONE),
-    V_(oscmix.spread, 90),
+    V_OSC(0, W_CHOIR, 20, 0), V_(oscmix.spread, 90),
     V_FLT(0, SH2, 30, 0, 84, 24, 10), V_KT(0, 50),
     V_ENV(0, 80, 100, 116, 100), V_ENV(1, 80, 100, 90, 100),
     V_LFO(0, L_SINE, 12),
     V_ROUTE(0, LFO1, NONE, OSC1_SCAN, 25), V_ROUTE(1, MODWHEEL, NONE, OSC1_SCAN, 25),
-    V_(amp.pan_mod_depth, 20),
     V_AMP(0, SOFT, 24, 90), V_(analog, 30),
+    V_ROUTE(2, KEYBOARD, NONE, PAN, 10),
     V_END};
 
 /* ---- 19 OTHERWORLD: Tir na nOg glimpsed. STACK: A, the PCM STR ENS strings (SOLSTICE until 2026-11-06); B, Foundations PULSE 10 % an octave up and
@@ -340,15 +326,14 @@ static const uint8_t FV_SOULS[] = {
  * rises over the hum (A's SCAN). */
 static const uint8_t FV_OTHERWORLD[] = {
     V_(arch, VARCH_STACK),
-    V_OSC(0, W_STRENS, 30, 0), V_(osc[0].scan_mod_src, MSRC_MODWHEEL), V_(osc[0].scan_mod_amt, 90),
-    V_OSC(1, W_FOUND, F_P10, 1), V_(osc[1].fine, 59 /* -4 c */),
+    V_OSC(0, W_STRENS, 30, 0), V_OSC(1, W_FOUND, F_P10, 1), V_(osc[1].fine, 60 /* -4 c */),
     V_FLT(0, MULTI, 0, 36, 90, 10, 0),
-    V_FLT(1, MS20, 10, 64, 80, 50, 0), V_(filter[1].morph_mod_src, MSRC_LFO2), V_(filter[1].morph_mod_amt, FP_BIP(20)),
-    V_KT(1, 64),
+    V_FLT(1, MS20, 10, 64, 80, 50, 0), V_KT(1, 64),
     V_(fltmix.balance, 60),
     V_ENV(0, 80, 96, 116, 100), V_ENV(1, 96, 100, 110, 100),
     V_LFO(1, L_TRI, 24),
     V_AMP(0, SOFT, 30, 90), V_(analog, 30),
+    V_ROUTE(0, MODWHEEL, NONE, OSC1_SCAN, 45), V_ROUTE(1, LFO2, NONE, F2_MORPH, 20),
     V_END};
 
 /* ---- 20 CAIRN SPIRIT: the spirits in the cairn on Samhain night. Since 2026-11-06 (the PCM CAIRN SPIRIT left the
@@ -357,16 +342,15 @@ static const uint8_t FV_OTHERWORLD[] = {
  * through an open MULTI low-pass, under it. WHEEL: the voices open. */
 static const uint8_t FV_SPIRIT[] = {
     V_(arch, VARCH_STACK),
-    V_OSC(0, W_SPIRITVOX, 24, 0), V_(osc[0].scan_mod_src, MSRC_NONE),
-    V_OSC(1, W_PANFLUTE, 40, 0), V_(osc[1].fine, 69 /* +4 c */),
+    V_OSC(0, W_SPIRITVOX, 24, 0), V_OSC(1, W_PANFLUTE, 40, 0), V_(osc[1].fine, 68 /* +4 c */),
     V_FLT(0, SH2, 20, 0, 92, 20, 0), V_KT(0, 50),
     V_FLT(1, MULTI, 0, 0, 96, 10, 0),
     V_(fltmix.balance, 50),
     V_ENV(0, 72, 96, 116, 98),
     V_LFO(0, L_SINE, 12),
     V_ROUTE(0, LFO1, NONE, OSC1_SCAN, 21), V_ROUTE(1, MODWHEEL, NONE, OSC1_SCAN, 21),
-    V_(amp.pan_mod_depth, 20),
     V_AMP(0, SOFT, 30, 84), V_(analog, 24),
+    V_ROUTE(2, KEYBOARD, NONE, PAN, 10),
     V_END};
 
 /* ---- 21 RUNE PLUCK: a stave cut into yew. Foundations PULSE 10 % plucked through a resonant SH-2 that snaps open on
@@ -377,8 +361,8 @@ static const uint8_t FV_RUNE[] = {
     V_FLT(0, SH2, 30, 0, 60, 60, 21), V_KT(0, 64),
     V_ENV(0, 0, 74, 0, 70), V_(env[0].key_to_time, FP_BIP(-16)), V_ENV(1, 0, 56, 0, 50),
     V_ROUTE(0, MODWHEEL, NONE, F1_CUTOFF, 21),
-    V_(amp.pan_mod_depth, 30),
     V_AMP(0, SOFT, 40, 50), V_(analog, 30),
+    V_ROUTE(1, KEYBOARD, NONE, PAN, 15),
     V_END};
 
 /* ============================================ percussion ============================================ */
@@ -387,10 +371,9 @@ static const uint8_t FV_RUNE[] = {
  * octaves in a blink (ENV3), a driven SH-2, TUBE. WHEEL: the filter opens (a harder beater). */
 static const uint8_t FV_KICK[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_TRI, -2), V_(osc[0].pitch_mod_src, MSRC_ENV3), V_(osc[0].pitch_mod_amt, 90),
-    V_FLT(0, SH2, 80, 0, 60, 10, 30), V_(filter[0].mod_src, MSRC_MODWHEEL),
-    V_ENV(0, 0, 60, 0, 50), V_ENV(2, 0, 36, 0, 36),
+    V_OSC(0, W_FOUND, F_TRI, -2), V_FLT(0, SH2, 80, 0, 60, 10, 0), V_ENV(0, 0, 60, 0, 50), V_ENV(2, 0, 36, 0, 36),
     V_AMP(30, TUBE, 6, 6),
+    V_ROUTE(0, ENV3, NONE, OSC1_PITCH, 45), V_ROUTE(1, MODWHEEL, NONE, F1_CUTOFF, 30),
     V_END};
 
 /* ---- 23 HENGE STAB: the skank. DUAL OSC: a Foundations SAW and a SQUARE an octave up, a short, driven MS-20
@@ -401,9 +384,9 @@ static const uint8_t FV_STAB[] = {
     V_OSC(0, W_FOUND, F_SAW, 0), V_OSC(1, W_FOUND, F_SQUARE, 1),
     V_(oscmix.balance, 64),
     V_FLT(0, MS20, 40, 50, 84, 50, 24), V_KT(0, 64),
-    V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(40)),
     V_ENV(0, 0, 58, 0, 50), V_ENV(1, 0, 50, 0, 40),
     V_AMP(24, TUBE, 70, 40), V_(analog, 20),
+    V_ROUTE(0, MODWHEEL, NONE, F1_MORPH, 40),
     V_END};
 
 /* ---- 24 ANTLER CLAV: an antler tine struck on a sinew string. Foundations PULSE MIN through a driven MS-20
@@ -412,20 +395,19 @@ static const uint8_t FV_CLAV[] = {
     V_(arch, VARCH_SINGLE),
     V_OSC(0, W_FOUND, F_PMIN, 0),
     V_FLT(0, MS20, 50, 64, 80, 50, 30), V_KT(0, 100),
-    V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(-40)),
     V_ENV(0, 0, 60, 40, 30), V_ENV(1, 0, 48, 0, 30),
     V_AMP(10, HARD, 40, 40), V_(analog, 20),
+    V_ROUTE(0, MODWHEEL, NONE, F1_MORPH, -40),
     V_END};
 
 /* ---- 25 SPIRIT ZAP: the dub laser, a spirit passing. Foundations SQUARE an octave up, its pitch falling two and a
  * half octaves (ENV3), through an SH-2 ringing on its resonance; mostly delay. WHEEL: low-pass -> band-pass. */
 static const uint8_t FV_ZAP[] = {
     V_(arch, VARCH_SINGLE),
-    V_OSC(0, W_FOUND, F_SQUARE, 1), V_(osc[0].pitch_mod_src, MSRC_ENV3), V_(osc[0].pitch_mod_amt, 100),
-    V_FLT(0, SH2, 40, 0, 96, 110, 50), V_KT(0, 64),
-    V_(filter[0].morph_mod_src, MSRC_MODWHEEL), V_(filter[0].morph_mod_amt, FP_BIP(50)),
+    V_OSC(0, W_FOUND, F_SQUARE, 1), V_FLT(0, SH2, 40, 0, 96, 110, 50), V_KT(0, 64),
     V_ENV(0, 0, 60, 0, 56), V_ENV(1, 0, 50, 0, 50), V_ENV(2, 0, 50, 0, 50),
     V_AMP(0, SOFT, 80, 50),
+    V_ROUTE(0, ENV3, NONE, OSC1_PITCH, 50), V_ROUTE(1, MODWHEEL, NONE, F1_MORPH, 50),
     V_END};
 
 /* each patch slot: its patch, its voice mode and glide, and the effects a performance led by it uses */

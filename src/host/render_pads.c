@@ -20,11 +20,11 @@ extern const uint8_t pcm_image_pads[];
 extern const uint32_t pcm_image_pads_len;
 
 #define RATE 44100u
-#define FP_OCT(k) ((uint8_t)((k) == 0 ? 64 : 18 * ((k) + 3) + 9))
+#define FP_OCT(k) ((uint8_t)(OSC_COARSE_ZERO + 12 * (k)))
 #define FP_BIP(v) ((uint8_t)((v) + 64))
 #define V_(f, v) (uint8_t)offsetof(EngineState, f), (uint8_t)(v)
 #define V_END 0xFFu
-#define V_OSC(i, w, sc, oc) V_(osc[i].wavebank, w), V_(osc[i].scan, sc), V_(osc[i].octave, FP_OCT(oc))
+#define V_OSC(i, w, sc, oc) V_(osc[i].wavebank, w), V_(osc[i].scan, sc), V_(osc[i].coarse, FP_OCT(oc))
 #define V_FLT(i, fl, drv, mo, cut, res, amt) V_(filter[i].flavour, FLT_##fl), V_(filter[i].drive, drv), \
     V_(filter[i].morph, mo), V_(filter[i].cutoff, cut), V_(filter[i].resonance, res), V_(filter[i].mod_amt, 2 * (amt))
 #define V_ENV(i, a, d, s, r) V_(env[i].attack, a), V_(env[i].decay, d), V_(env[i].sustain, s), V_(env[i].release, r)
@@ -54,7 +54,7 @@ static const uint8_t PD_VOX[] = {
  * quick amp attack), a delayed vibrato, tape echo and a big room */
 static const uint8_t PD_PAN[] = {
     V_(arch, VARCH_DUAL_OSC), V_OSC(0, P_PAN, 30, 0), V_OSC(1, W_FOUND, F_TRI, -1), V_(oscmix.balance, 44),
-    V_(osc[0].pitch_mod_src, MSRC_LFO2), V_(osc[0].pitch_mod_amt, 6),
+    V_(osc[0].lfo2_pitch, 6),
     V_FLT(0, MULTI, 0, 0, 110, 6, 0), V_KT(0, 64),
     V_ENV(0, 2, 90, 116, 84), V_VIB(70, 40),
     V_MFX(CHORUS, 30, 40, 50, 50, 64),

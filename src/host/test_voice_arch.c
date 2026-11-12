@@ -88,26 +88,25 @@ static void base_patch(EngineState *e, uint8_t arch)
     e->oscmix.spread = 60;
     e->oscmix.xmod_amt = 20;
     e->osc[1].wavebank = 3;
-    /* LFO1 on the filter cutoff so BINAURAL's phase offset has something to shift */
-    e->filter[0].mod_src = MSRC_LFO1;
-    e->filter[0].mod_amt = 112;
+    /* LFO1 on the filter cutoff so BINAURAL's phase offset has something to shift (a route since 2026-11-11) */
+    e->route[NROUTE - 1u] = (ModRoute){MSRC_LFO1, MSRC_NONE, MDST_F1_CUTOFF, BIPOLAR_CENTER + 56, VAL_MAX};
     e->filter[0].cutoff = 70;
     e->filter[1].cutoff = 90;
     e->lfo[0].rate = 70;
 }
 
 
-/* THE MOD MATRIX (2026-11-11): a route sounds as the destination's own source set to the route's source at the route's
- * amount would (as a MOD SEND did). The left channel of a held chord, LFO1, each way; an own source plus a route adds. */
+/* THE MOD MATRIX (2026-11-11): a route from a fixed path's source sounds as that fixed path at the route's amount
+ * would (as a MOD SEND did). The left channel of a held chord, each way; a fixed path plus a route adds. */
 #define SEND_N 8192
 static int32_t send_out[2][SEND_N];
-typedef void (*SendTweak)(EngineState *e, int way);   /* way 0: the own source (LFO1), 1: a route */
+typedef void (*SendTweak)(EngineState *e, int way);   /* way 0: the fixed path (or nothing), 1: a route */
 static void send_take(uint8_t arch, SendTweak tw, int way, int32_t *out)
 {
     synth_init();
     EngineState *e = &engine_state[0];
     base_patch(e, arch);
-    e->filter[0].mod_src = MSRC_NONE;
+    e->route[NROUTE - 1u] = (ModRoute)ROUTE_FREE;
     e->filter[0].mod_amt = 0;
     e->lfo[0].rate = 90;
     tw(e, way);
@@ -118,43 +117,65 @@ static void send_take(uint8_t arch, SendTweak tw, int way, int32_t *out)
         for (int i = 0; i < 64; i++) out[n + i] = buf[2 * i];
     }
 }
-static void send1(EngineState *e, uint8_t dest, int amt)   /* route 0: LFO1 to dest */
+static void route0(EngineState *e, uint8_t src, uint8_t dest, int amt)   /* route 0: src to dest */
 {
-    e->route[0] = (ModRoute){MSRC_LFO1, MSRC_NONE, dest, (uint8_t)(BIPOLAR_CENTER + amt)};
+    e->route[0] = (ModRoute){src, MSRC_NONE, dest, (uint8_t)(BIPOLAR_CENTER + amt), VAL_MAX};
 }
+static void send1(EngineState *e, uint8_t dest, int amt) { route0(e, MSRC_LFO1, dest, amt); }
 static void tw_cut(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_F1_CUTOFF, 50); else { e->filter[0].mod_src = MSRC_LFO1; e->filter[0].mod_amt = 100; }
+    if (way) route0(e, MSRC_ENV2, MDST_F1_CUTOFF, 50); else e->filter[0].mod_amt = 100;      /* ENV2 > CUTOFF */
 }
 static void tw_pitch(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_OSC1_PITCH, 50); else { e->osc[0].pitch_mod_src = MSRC_LFO1; e->osc[0].pitch_mod_amt = 100; }
+    if (way) send1(e, MDST_OSC1_PITCH, 50);
+    else { e->lfo1_pitch = 100; e->lfo1_osc_amt[1] = 0; }   /* the LFO1 page's PITCH AMT, OSC1's share only */
 }
-static void tw_morph(EngineState *e, int way)
-{
-    if (way) send1(e, MDST_F1_MORPH, -30); else { e->filter[0].morph_mod_src = MSRC_LFO1; e->filter[0].morph_mod_amt = 64 - 30; }
-}
-static void tw_pan(EngineState *e, int way)
-{
-    if (way) send1(e, MDST_PAN, 40); else { e->amp.pan_mod_src = MSRC_LFO1; e->amp.pan_mod_depth = 80; }
-}
+static void tw_morph(EngineState *e, int way) { if (way) send1(e, MDST_F1_MORPH, -30); }   /* (no fixed path: way 0 none) */
+static void tw_pan(EngineState *e, int way) { if (way) send1(e, MDST_PAN, 40); }
 static void tw_scan(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_OSC1_SCAN, 45); else { e->osc[0].scan_mod_src = MSRC_LFO1; e->osc[0].scan_mod_amt = 90; }
+    if (way) route0(e, MSRC_ENV3, MDST_OSC1_SCAN, 45); else e->osc[0].scan_mod_amt = 90;        /* ENV3 > SCAN */
 }
-static void tw_lfo2(EngineState *e, int way)   /* LFO2 on the cutoff, its speed swept by LFO1 */
+static void tw_lfo2(EngineState *e, int way)   /* LFO2 on the cutoff (route 1), its speed swept by LFO1 (way 1) */
 {
-    e->filter[0].mod_src = MSRC_LFO2; e->filter[0].mod_amt = 90; e->lfo[1].rate = 60;
-    if (way) send1(e, MDST_LFO2_SPEED, 40); else { e->lfo[1].speed_mod_src = MSRC_LFO1; e->lfo[1].speed_mod_amt = 64 + 40; }
+    e->route[1] = (ModRoute){MSRC_LFO2, MSRC_NONE, MDST_F1_CUTOFF, BIPOLAR_CENTER + 45, VAL_MAX};
+    e->lfo[1].rate = 60;
+    if (way) send1(e, MDST_LFO2_SPEED, 40);
 }
 static void tw_amp(EngineState *e, int way)
 {
-    if (way) send1(e, MDST_AMP_LEVEL, 50); else { e->amp.amp_mod_src = MSRC_LFO1; e->amp.amp_mod_depth = 100; }
+    if (way) route0(e, MSRC_LFO3, MDST_AMP_LEVEL, 50); else e->amp.amp_mod_depth = 100;        /* TREMOLO */
+    e->lfo[2].rate = 90;
 }
-static void tw_both(EngineState *e, int way)   /* ENV2 on the cutoff a little, plus a send (way 1) or not (way 0) */
+static void tw_both(EngineState *e, int way)   /* ENV2 on the cutoff a little, plus a route (way 1) or not (way 0) */
 {
-    e->filter[0].mod_src = MSRC_ENV2; e->filter[0].mod_amt = 20;
+    e->filter[0].mod_amt = 20;
     if (way) send1(e, MDST_F1_CUTOFF, 50);
+}
+static void tw_harm(EngineState *e, int way)   /* HARMONIC (2026-11-11), with noise to hear it */
+{
+    e->oscmix.noise_level = 100; e->oscmix.noise_colour = 112; e->noise_harmonic = 40;
+    if (way) send1(e, MDST_HARMONIC, 40);
+}
+static void tw_pitch_both(EngineState *e, int way)   /* PITCH moves both oscillators as OSC1 PITCH + OSC2 PITCH */
+{
+    if (way) send1(e, MDST_PITCH, 30);
+    else { send1(e, MDST_OSC1_PITCH, 30); e->route[1] = e->route[0]; e->route[1].dest = MDST_OSC2_PITCH; }
+}
+static void tw_env2_pitch(EngineState *e, int way)   /* ENV2 > PITCH (2026-11-11, OSC knob 4) bends the note */
+{
+    e->env[1].attack = 0; e->env[1].decay = 60; e->env[1].sustain = 0;
+    if (way) e->osc[0].env2_pitch = BIPOLAR_CENTER + 40;
+}
+static void tw_lfo2_pitch(EngineState *e, int way)   /* LFO2 > PITCH (OSC knob 3) as a route from LFO2 */
+{
+    e->lfo[1].rate = 80;
+    if (way) route0(e, MSRC_LFO2, MDST_OSC1_PITCH, 30); else e->osc[0].lfo2_pitch = 60;
+}
+static void tw_lfo1_filter(EngineState *e, int way)   /* the LFO1 page's FILTER AMT as a route from LFO1 */
+{
+    if (way) send1(e, MDST_F1_CUTOFF, 40); else e->lfo1_filter = 80;
 }
 static void tw_mfx_k1(EngineState *e, int way)   /* STONE PHASER, LFO1 on its MANUAL (way 1) or not */
 {
@@ -533,8 +554,7 @@ int main(void)
         engine_state[0].filter[0].mod_amt = 0;
         engine_state[0].filter[0].cutoff = 40;
         engine_state[0].filter[0].morph = 0;
-        engine_state[0].filter[0].morph_mod_src = MSRC_MODWHEEL;
-        engine_state[0].filter[0].morph_mod_amt = 127;
+        engine_state[0].route[0] = (ModRoute){MSRC_MODWHEEL, MSRC_NONE, MDST_F1_MORPH, 127, VAL_MAX};
         synth_midi_3(0xB0, 1, 0);
         synth_midi_3(0x90, 60, 100);
         render(4096);
@@ -557,8 +577,7 @@ int main(void)
         engine_state[0].filter[0].cutoff = 0;
         engine_state[0].oscmix.noise_level = 127;
         engine_state[0].oscmix.noise_colour = NOISE_WHITE;
-        engine_state[0].oscmix.noise_col_mod_src = MSRC_MODWHEEL;
-        engine_state[0].oscmix.noise_col_mod_amt = 127;
+        engine_state[0].route[0] = (ModRoute){MSRC_MODWHEEL, MSRC_NONE, MDST_NOISE_COLOUR, 127, VAL_MAX};
         synth_midi_3(0xB0, 1, 0);
         synth_midi_3(0x90, 60, 100);
         render(4096);
@@ -581,8 +600,7 @@ int main(void)
         engine_state[0].filter[0].mod_amt = 0;
         engine_state[0].filter[0].cutoff = 60;
         engine_state[0].oscmix.bin_beat = 0;
-        engine_state[0].fltmix.bin_cutoff_mod_src = MSRC_MODWHEEL;
-        engine_state[0].fltmix.bin_cutoff_mod_amt = 127;
+        engine_state[0].route[0] = (ModRoute){MSRC_MODWHEEL, MSRC_NONE, MDST_CUTOFF_LR, 127, VAL_MAX};
         synth_midi_3(0xB0, 1, 0);
         synth_midi_3(0x90, 60, 100);
         render(4096);
@@ -743,10 +761,7 @@ int main(void)
         synth_init();
         base_patch(&engine_state[0], VARCH_SINGLE);
         engine_state[0].env_vel_level[1] = 127u;
-        engine_state[0].lfo_depth_src[1] = MSRC_MODWHEEL;
-        engine_state[0].lfo_depth_amt[1] = 127u;
-        engine_state[0].lfo_depth_src[2] = MSRC_LFO1;  /* refused: reads as none */
-        engine_state[0].lfo_depth_amt[2] = 127u;
+        engine_state[0].lfo_depth_amt[1] = 127u;     /* WHEEL > DEPTH (its source fixed, 2026-11-11) */
         engine_state[0].lfo[1].rate = 100;
         synth_midi_3(0xB0, 1, 0);
         synth_midi_3(0x90, 60, 64);
@@ -776,10 +791,15 @@ int main(void)
     {   /* MOD SENDS: each kind of destination; an own source plus a send adds */
         send_same("F1 CUTOFF", VARCH_DUAL_OSC, tw_cut);
         send_same("OSC1 PITCH", VARCH_DUAL_OSC, tw_pitch);
-        send_same("F1 MORPH", VARCH_DUAL_OSC, tw_morph);
-        send_same("PAN", VARCH_DUAL_OSC, tw_pan);
+        send_differs("F1 MORPH", tw_morph);
+        send_differs("PAN", tw_pan);
+        send_differs("HARMONIC", tw_harm);
+        send_differs("ENV2>PITCH", tw_env2_pitch);
+        send_same("LFO2>PITCH", VARCH_DUAL_OSC, tw_lfo2_pitch);
+        send_same("LFO1 FILTER", VARCH_DUAL_OSC, tw_lfo1_filter);
+        send_same("PITCH (both)", VARCH_DUAL_OSC, tw_pitch_both);
         send_same("OSC1 SCAN", VARCH_DUAL_OSC, tw_scan);
-        send_same("LFO2 SPEED", VARCH_DUAL_OSC, tw_lfo2);
+        send_differs("LFO2 SPEED", tw_lfo2);
         send_same("AMP LEVEL", VARCH_DUAL_OSC, tw_amp);
         send_same("BIN PITCH", VARCH_BINAURAL, tw_pitch);
         send_same("MFX PITCH", VARCH_DUAL_OSC, tw_mfx_ps);   /* (way 0: no send; a list knob takes none) */

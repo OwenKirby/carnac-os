@@ -85,7 +85,7 @@ static void patch(EngineState *e, uint8_t arch, int noise, int slots)
         e->route[2] = (ModRoute){MSRC_LFO3, MSRC_NONE, MDST_OSC1_SCAN, BIPOLAR_CENTER + 30};
         e->filter[0].mod_amt = 112;
     } else {
-        e->filter[0].mod_src = MSRC_LFO1; e->filter[0].mod_amt = 112;
+        e->route[3] = (ModRoute){MSRC_LFO1, MSRC_NONE, MDST_F1_CUTOFF, BIPOLAR_CENTER + 56, VAL_MAX};
     }
 }
 

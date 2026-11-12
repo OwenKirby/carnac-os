@@ -391,9 +391,20 @@ static void knob_turn(uint32_t k, int32_t d)
     UiKnobInfo info;
     uint8_t *p = ui_sm_knob(&sm, sm.page, sm.s.active_synth_layer, (uint8_t)k, &info);
     int32_t v, hi;
-    if (fm1_ms - knob_last_ms[k] < 25u)
-        d *= 4;
+    uint32_t gap = fm1_ms - knob_last_ms[k];
     knob_last_ms[k] = fm1_ms;
+    if (p && info.kind == UIKNOB_DEST) {            /* the MOD MATRIX's DEST: over the architecture's destinations */
+        ui_sm_dest_turn(&sm, p, d > 0 ? 1 : -1);
+        ui_sm_knob_written(&sm, sm.page, (uint8_t)k);
+        return;
+    }
+    if (p && info.kind == UIKNOB_TUNE) {            /* OSC TUNE: a semitone a detent */
+        ui_sm_tune_turn(p, d > 0 ? 1 : -1);
+        ui_sm_knob_written(&sm, sm.page, (uint8_t)k);
+        return;
+    }
+    if (gap < 25u)
+        d *= 4;
     if (info.kind == UIKNOB_SEQ) {
         ui_sm_seq_knob_turn(&sm, (uint8_t)k, (int8_t)(d > 127 ? 127 : d < -127 ? -127 : d));
         return;

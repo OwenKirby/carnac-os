@@ -238,7 +238,7 @@ int main(int argc, char **argv)
         uint8_t t;
         e->arch = VARCH_STACK; e->oscmix.sub_octave = SUBOCT_DOWN1; e->oscmix.sub_waveform = SUBWAVE_SINE;
         e->oscmix.sub_level = 12; e->oscmix.noise_level = 3; e->oscmix.xmod_amt = 90; e->fltmix.balance = 64;
-        e->osc[1].octave = 82;                       /* OSC2 an octave up; plain waves (VCO) */
+        e->osc[1].coarse = OSC_COARSE_ZERO + 12;     /* OSC2 an octave up; plain waves (VCO) */
         e->osc[0].wavebank = 0; e->osc[1].wavebank = 0; e->osc[0].scan = 20; e->osc[1].scan = 0;
         ui_sm_enforce(&sm);
         for (t = 0; t < XMOD_COUNT; t++) {
@@ -249,7 +249,7 @@ int main(int argc, char **argv)
         shot(dir, "oscmix_stack_quiet");             /* no cross-mod: no ley lines, B louder */
         e->oscmix.xmod_amt = 127; e->fltmix.balance = 64;
         shot(dir, "oscmix_stack_full");
-        e->osc[1].octave = 64; e->oscmix.xmod_amt = 0; e->fltmix.balance = 64;
+        e->osc[1].coarse = OSC_COARSE_ZERO; e->oscmix.xmod_amt = 0; e->fltmix.balance = 64;
     }
 
     /* FILTER: a resonant bandpass-ish SVF, a ladder; FILTER MIXER in each architecture */
@@ -314,7 +314,7 @@ int main(int argc, char **argv)
 
     /* MOD MATRIX (2026-11-11): routes made with the knobs on + NEW ROUTE, their AMOUNT on the Algorithm Encoder; a
      * route cleared by its knobs closes up the list */
-    e->filter[0].mod_src = MSRC_ENV2; e->filter[0].mod_amt = 20;
+    e->filter[0].mod_amt = 20;
     go(UIPAGE_MOD);
     {
         static const struct { uint8_t src, via, dest; int8_t amt; const char *label; } R[] = {
@@ -386,7 +386,8 @@ int main(int argc, char **argv)
     /* AMP: DUAL, voices panned by the keyboard */
     fresh();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
-    engine_state[0].amp.pan_mod_depth = 127; engine_state[1].amp.pan_mod_depth = 127;
+    for (i = 0; i < NLAYER; i++)                    /* (the pan by the keys: a route since 2026-11-11) */
+        engine_state[i].route[0] = (ModRoute){MSRC_KEYBOARD, MSRC_NONE, MDST_PAN, 127, VAL_MAX};
     ui_sm_enforce(&sm);
     note(0, 36, 120); note(0, 60, 90); note(1, 72, 80); note(1, 96, 127);
     run(6000);

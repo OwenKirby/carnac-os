@@ -384,8 +384,8 @@ static void patch(EngineState *e, const PtScen *s)
     e->env[1].sustain = 100;
     e->oscmix.spread = 60;
     e->oscmix.xmod_amt = 20;
-    e->filter[0].mod_src = MSRC_LFO1;
-    e->filter[0].mod_amt = 72;
+    e->route[3] = (ModRoute){MSRC_LFO1, MSRC_NONE, MDST_F1_CUTOFF, BIPOLAR_CENTER + 36, VAL_MAX};   /* (v13: its own
+                                                                     * source LFO1 at 72) */
     e->filter[0].flavour = e->filter[1].flavour = s->flavour;
     e->filter[0].resonance = e->filter[1].resonance = 90;
     if (s->flags & F_LONGREL)
