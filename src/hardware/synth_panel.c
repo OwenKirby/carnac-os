@@ -322,6 +322,7 @@ static uint8_t key_note[NKEYS];                     /* the note key k played (it
 static uint8_t key_ch[NKEYS];                       /* .. and its channel: a layer change keeps the note-off on it */
 static uint8_t oct_held[2], oct_used[2];            /* OCT- / OCT+ down, and used as a modifier since */
 static uint8_t home_held, home_chord;               /* HOME down; an OCT pressed since (a layer chord, not a page) */
+static uint8_t arp_btn_held, arp_btn_chord;         /* ARP down; a key pressed since on the ARP page (LATCH, not the view) */
 static uint32_t home_ms;                            /* when HOME went down */
 static uint8_t save_held, save_chord;               /* the same for SAVE: an OCT since = COPY / PASTE, not a save */
 static uint8_t rec_held, rec_done;                  /* REC down where it acts on release (the loop's); held long
@@ -367,6 +368,11 @@ static void octave_shift(int32_t d)
 static void key_edge(uint32_t k, uint32_t down)
 {
     uint8_t note = (uint8_t)(base_note() + k), taken = 0, mods;
+    if (down && arp_btn_held && sm.page == UIPAGE_ARP) {   /* ARP held + any key: LATCH on / off (2026-11-13) */
+        arp_btn_chord = 1;
+        ui_sm_arp_latch(&sm, (uint8_t)!sm.arp_latch);
+        return;
+    }
     if (keys_page()) {
         mods = (uint8_t)((oct_held[0] ? UISEQ_MOD_OCT_DOWN : 0u) | (oct_held[1] ? UISEQ_MOD_OCT_UP : 0u));
         if (oct_held[0]) oct_used[0] = 1;
@@ -492,6 +498,9 @@ static uint32_t panel_input(void)
                 save_held = 1;
                 save_chord = 0;
                 save_ms = fm1_ms;
+            } else if (i == B_ARP) {                /* acts on release too, unless a key makes it LATCH */
+                arp_btn_held = 1;
+                arp_btn_chord = 0;
             } else if (home_held && (i == B_OCTDN || i == B_OCTUP)) {
                 home_chord = 1;                     /* the layer, not the octave (refused for L2 under SINGL) */
                 ui_sm_set_layer_focus(&sm, (uint8_t)(i == B_OCTUP));
@@ -528,6 +537,14 @@ static uint32_t panel_input(void)
         ui_sm_set_hold(&sm, BTN_COUNT);
         if (!save_chord) {
             ui_sm_handle(&sm, UIEV_BUTTON, BTN_SAVE);
+            if (sm.commit_pending)
+                syn_commit();
+        }
+    }
+    if (((up >> B_ARP) & 1u) && arp_btn_held) {
+        arp_btn_held = 0;
+        if (!arp_btn_chord) {
+            ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
             if (sm.commit_pending)
                 syn_commit();
         }

@@ -333,11 +333,13 @@ static void test_factory(void)
         }
         /* the arp pattern */
         const ArpState *a = &syn_arp_bank[s];
-        CHECK(a->current_genre_bank < ARP_GENRE_COUNT && a->gate_length <= VAL_MAX && a->sequence_length == ARP_NSTEP &&
+        CHECK(a->current_genre_bank < ARP_GENRE_COUNT && a->gate_length <= VAL_MAX && a->sequence_length == ARP_LEN_DEFAULT &&
               ARP_LAYER(a) == ARPLAYER_L2 && ARP_TIMING(a) == fa->div && a->transpose_maq_option == fa->maq,
               "arp %u out of range", s);
         CHECK(ARP_ROOT_IS_CHORD(a->steps[0].chord_root), "arp %u starts on a chord", s);
-        for (i = 0; i < ARP_NSTEP; i++) {
+        for (i = ARP_LEN_DEFAULT; i < ARP_NSTEP; i++)   /* (factory patterns are 8 steps: the rest empty) */
+            CHECK(a->steps[i].chord_root == ARP_CHORD_EMPTY, "arp %u step %u past the factory's 8 not empty", s, i);
+        for (i = 0; i < ARP_LEN_DEFAULT; i++) {
             const ArpChordStep *c = &a->steps[i];
             CHECK((ARP_ROOT_IS_CHORD(c->chord_root) || c->chord_root == ARP_CHORD_TIE) && c->octave_range < ARP_NOCT &&
                   c->style < ARPSTYLE_COUNT && c->variation < ARP_NVAR && c->accent <= 1u && c->rate < ARPRATE_COUNT,

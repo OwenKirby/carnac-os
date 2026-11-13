@@ -28,6 +28,8 @@
  *   PLAY / REC                                  UIEV_TRANSPORT
  *   SELECT / ALGORITHM encoders                 UIEV_SELECT_ENC / UIEV_ALGO_ENC
  *   PRESETS encoder                             UIEV_PRESET_ENC (loads); does nothing while HOME is held
+ *   ARP (on release)                            the ARP page; on it, CHORDS <-> STEPS. Held + any key on the ARP
+ *                                               page: LATCH on / off (the key not played; ARP then does nothing)
  *   SAVE held + OCT- / OCT+                     COPY / PASTE (ui_sm_save_oct; SAVE then acts on its release, as HOME)
  *   HOME held + OCT- / OCT+                     layer focus L1 / L2 (spec 5.2 asks for a press of the PRESETS
  *                                               encoder, which the FM1's HAL does not report: no push switch is wired

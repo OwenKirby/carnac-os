@@ -21,9 +21,9 @@
 
 /* the current layout of each kind: 1..0xFE */
 #define FREC_VER_ENGINE 14u          /* EngineState, one patch (PATCH_PRESET); 2: the noise colour morph, morph / L/R mod bytes; 3: the name; 4: filter flavours reordered (MS-20 HIGH 3, FORMANT 4); 5: MOD 4 removed; 6: STRIKE's attack bytes (oscmix.atk_*); 7: five more (atk_filter .. atk_track), stored packed (engine_store_pack); 8: BEND MOD source / amount, the LFO flags packed; 9: the filters' DRIVE, SH-2 for the SVF, one MS-20 (2026-10-21); 10: VEL > LEVEL, LFO DEPTH MOD, the cutoff MOD AMOUNT 0..127, the envelope flags packed (2026-10-26); 11: the MFX and 4 reserved bytes (2026-11-03, the format bump; nothing older migrates: before V1 patches may go); 12: every byte at its own bit width (ENG_W, 2026-11-03), room after for fields added at the end; 13: MOD4, the sources renumbered (RANDOM, POLY AT), a send's destination 6 bits, VEL > ATTACK (2026-11-03); 14: the mod matrix: 16 routes (SOURCE, VIA, DEST, AMOUNT, VIA DEPTH) for the MOD slots, sends and source pickers, MOD1..4 gone from the sources, the pages' fixed paths, STRIKE's bytes gone (2026-11-11) */
-#define FREC_VER_PERF   14u          /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4; 8: the patches' v9 (proto/sh2-filter builds); 9: the arp's v5 (2026-10-21); 10: the patches' v10 (2026-10-26); 11: the patches\' v11, REV PREDELAY removed, the MIX page\'s bytes and 16 reserved (2026-11-03; nothing older migrates); 12: the patches' v12; 13: the patches' v13; 14: the patches' v14 */
+#define FREC_VER_PERF   15u          /* MasterPerformancePreset (WHOLE_PERF); 4: delay_type; 5: reverb types renumbered, PLATE and HALL removed; 6: the whole performance (WholePerformance, whole_perf_pack: + both patches packed, the sequence, the arp). It holds a patch, a sequence and an arp too, so it moves on when FREC_VER_ENGINE / _SEQ / _ARP do; 7: the arp's v4; 8: the patches' v9 (proto/sh2-filter builds); 9: the arp's v5 (2026-10-21); 10: the patches' v10 (2026-10-26); 11: the patches\' v11, REV PREDELAY removed, the MIX page\'s bytes and 16 reserved (2026-11-03; nothing older migrates); 12: the patches' v12; 13: the patches' v13; 14: the patches' v14; 15: the arp's v6, 16 steps (2026-11-13) */
 #define FREC_VER_SEQ    3u           /* SequencerLane[SEQ_NLANE], one sequencer slot (SEQ_SETTINGS); 2: scale, scale_root; 3: the 32-slot bank (2026-10-17, the lane unchanged: the 128-slot bank's chunks are left out, so the factory sequences show) */
-#define FREC_VER_ARP    5u           /* ArpState, one arp slot (ARP_SEQ); 2: chord_root (a MIDI note) and the 24-way variation; 3: TIE, accents; 4: each step's RATE where its gate was, the pattern's GATE where TIME DIVISION was ; 5: RATE the notes' rate, TIMING the steps' length (in LAYER's byte), HOLD the first style, its strum none / up / down (older arps do not migrate) */
+#define FREC_VER_ARP    6u           /* ArpState, one arp slot (ARP_SEQ); 2: chord_root (a MIDI note) and the 24-way variation; 3: TIE, accents; 4: each step's RATE where its gate was, the pattern's GATE where TIME DIVISION was ; 5: RATE the notes' rate, TIMING the steps' length (in LAYER's byte), HOLD the first style, its strum none / up / down (older arps do not migrate); 6: 16 steps (2026-11-13, ARP page 2) */
 #define FREC_VER_GLOBAL 1u           /* GlobalSystemConfig */
 
 #define FREC_HEADER 1u               /* the version byte */
@@ -42,12 +42,12 @@ typedef enum {
 #define FREC_SIZE_ENGINE (FREC_HEADER + ENGINE_STORED_SIZE)                     /* 185: packed, engine_store_pack */
 #define FREC_SIZE_PERF   (FREC_HEADER + sizeof(MasterPerformancePreset))        /* 71 */
 #define FREC_SIZE_SEQ    (FREC_HEADER + sizeof(SequencerLane) * SEQ_NLANE)      /* 417 */
-#define FREC_SIZE_ARP    (FREC_HEADER + sizeof(ArpState))                       /* 55 */
+#define FREC_SIZE_ARP    (FREC_HEADER + sizeof(ArpState))                       /* 103 */
 #define FREC_SIZE_GLOBAL (FREC_HEADER + sizeof(GlobalSystemConfig))             /* 5 */
 PS_STATIC_ASSERT(FREC_SIZE_ENGINE == 185u, "EngineState flash record");
 PS_STATIC_ASSERT(FREC_SIZE_PERF == 71u, "MasterPerformancePreset flash record");
 PS_STATIC_ASSERT(FREC_SIZE_SEQ == 417u, "sequencer slot flash record");
-PS_STATIC_ASSERT(FREC_SIZE_ARP == 55u, "ArpState flash record");
+PS_STATIC_ASSERT(FREC_SIZE_ARP == 103u, "ArpState flash record");
 PS_STATIC_ASSERT(FREC_SIZE_GLOBAL == 5u, "GlobalSystemConfig flash record");
 PS_STATIC_ASSERT(FREC_VER_ENGINE != 0u && FREC_VER_ENGINE != 0xFFu && FREC_VER_PERF != 0u && FREC_VER_PERF != 0xFFu &&
                  FREC_VER_SEQ != 0u && FREC_VER_SEQ != 0xFFu && FREC_VER_ARP != 0u && FREC_VER_ARP != 0xFFu &&
@@ -168,7 +168,7 @@ static inline void engine_store_unpack(const uint8_t *in, EngineState *e)
 /* ---- a whole performance in flash (FREC_VER_PERF 6, 2026-10-17; v11 2026-11-03): WHOLE_PERF_STORED_SIZE bytes, the performance's
  * own settings, layer 1's and layer 2's patches packed (engine_store_pack), the four sequencer lanes, the arp pattern */
 #define WHOLE_PERF_STORED_SIZE ((uint32_t)sizeof(MasterPerformancePreset) + NLAYER * ENGINE_STORED_SIZE +                                 (uint32_t)sizeof(SequencerLane) * SEQ_NLANE + (uint32_t)sizeof(ArpState))
-PS_STATIC_ASSERT(WHOLE_PERF_STORED_SIZE == 908u, "a stored whole performance");
+PS_STATIC_ASSERT(WHOLE_PERF_STORED_SIZE == 956u, "a stored whole performance");
 static inline void whole_perf_pack(const WholePerformance *w, uint8_t *out)
 {
     uint32_t l;

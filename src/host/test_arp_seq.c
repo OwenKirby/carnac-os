@@ -254,60 +254,102 @@ int main(void)
               on_note(2) == c[2], "an empty step rests, length 3 loops (%d on)", count(&la, 0x90));
     }
 
-    /* ---- keybed split (8.1) on the FM1's 27 keys, F3 .. G5 ---- */
+    /* ---- two views (2026-11-13) on the FM1's 32 keys, F3 .. C6: CHORDS every key a chord key, STEPS the 16 white
+     * keys (F3 G3 A3 B3 C4 D4 E4 F4 G4 A4 B4 C5 D5 E5 F5 G5 = keys 0 2 4 6 7 9 11 12 14 16 18 19 21 23 24 26) ---- */
     reset();
     CHECK(ui_sm_arp_key(&sm, 0, FM1_LOW, 1, 100) == 0, "not on the ARP page: plays");
-    ui_sm_goto(&sm, UIPAGE_ARP);
-    CHECK(ui_sm_arp_key(&sm, 12, FM1_LOW + 12u, 1, 100) == 1 && sm.arp_chord_key == FM1_LOW + 12u, "key 13 (F4) is a chord key");
-    ui_sm_arp_key(&sm, 12, FM1_LOW + 12u, 0, 0);
-    CHECK(ui_sm_arp_key(&sm, 13, FM1_LOW + 13u, 1, 100) == 1 && sm.arp_held == 0, "F#4: a black key in the step zone, nothing");
-    CHECK(ui_sm_arp_key(&sm, 14, FM1_LOW + 14u, 1, 100) == 1 && sm.arp_held == 0x01, "G4 = step 1");
-    ui_sm_arp_key(&sm, 14, FM1_LOW + 14u, 0, 0);
-    CHECK(ui_sm_arp_key(&sm, 26, FM1_LOW + 26u, 1, 100) == 1 && sm.arp_held == 0x80, "G5 = step 8");
+    ui_sm_arp_key(&sm, 0, FM1_LOW, 0, 0);
+    ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
+    CHECK(sm.page == UIPAGE_ARP && sm.arp_view == UIARP_CHORDS, "ARP opens the CHORDS view");
+    CHECK(strcmp(ui_sm_row_label(&sm, 0), "GENRE BANK") == 0 && ui_sm_row_count(&sm) == 4, "CHORDS: 4 rows, GENRE BANK first");
+    CHECK(ui_sm_arp_key(&sm, 31, FM1_LOW + 31u, 1, 100) == 1 && sm.arp_chord_key == FM1_LOW + 31u, "C6, the top key: a chord key");
+    ui_sm_arp_key(&sm, 31, FM1_LOW + 31u, 0, 0);
+    CHECK(ui_sm_arp_key(&sm, 20, FM1_LOW + 20u, 1, 100) == 1 && sm.arp_chord_key == FM1_LOW + 20u && sm.arp_held == 0,
+          "C#5 (a black key): a chord key too");
+    ui_sm_arp_key(&sm, 20, FM1_LOW + 20u, 0, 0);
+    CHECK(sm.arp_chord_key == CARP_NOTE_NONE, "released: silent");
+    {   /* the chord follows its key's register: the same chord an octave apart */
+        uint8_t lo[ARP_CHORD_NOTES], hi[ARP_CHORD_NOTES], nl = carp_chord_notes(arp_state.current_genre_bank, 60, lo);
+        uint8_t nh = carp_chord_notes(arp_state.current_genre_bank, 72, hi);
+        CHECK(nl == nh && nl > 0 && hi[0] == lo[0] + 12u, "C5's chord is C4's an octave up");
+    }
+    ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
+    CHECK(sm.arp_view == UIARP_STEPS && strcmp(ui_sm_row_label(&sm, sm.s.current_param_focus), "CHORD") == 0,
+          "ARP again: STEPS, the cursor on CHORD");
+    CHECK(ui_sm_arp_key(&sm, 0, FM1_LOW, 1, 100) == 1 && sm.arp_held == 0x0001 && sm.arp_sel == 0, "F3 = step 1");
+    ui_sm_arp_key(&sm, 0, FM1_LOW, 0, 0);
+    CHECK(sm.arp_held == 0 && sm.arp_sel == 0, "released: step 1 stays selected");
+    CHECK(ui_sm_arp_key(&sm, 1, FM1_LOW + 1u, 1, 100) == 1 && sm.arp_held == 0 && sm.arp_sel == 0, "F#3: a black key, nothing");
+    ui_sm_arp_key(&sm, 1, FM1_LOW + 1u, 0, 0);
+    CHECK(ui_sm_arp_key(&sm, 26, FM1_LOW + 26u, 1, 100) == 1 && sm.arp_held == 0x8000 && sm.arp_sel == 15, "G5 = step 16");
     ui_sm_arp_key(&sm, 26, FM1_LOW + 26u, 0, 0);
-    CHECK(sm.arp_held == 0 && ui_sm_arp_key(&sm, 28, FM1_LOW + 28u, 1, 100) == 0, "above the 8 step keys: plays");
-    {   /* key LEDs from F3: step keys G4 A4 B4 C5 D5 E5 F5 G5 = keys 14 16 18 19 21 23 24 26; functions G#4 LAT 15,
-         * A#4 TIE 17, C#5 CLR 20, D#5 CPY 22, F#5 ACC 25 */
-        const uint32_t FN = 1u << 15 | 1u << 17 | 1u << 20 | 1u << 22 | 1u << 25;
+    CHECK(ui_sm_arp_key(&sm, 28, FM1_LOW + 28u, 1, 100) == 1 && sm.arp_held == 0 && sm.arp_sel == 15,
+          "A5, above the 16 steps: taken, nothing");
+    ui_sm_arp_key(&sm, 28, FM1_LOW + 28u, 0, 0);
+    {   /* OCT+ held + step key n: SEQ LENGTH n, the step not selected; the LEDs 1..n, n lit */
         UiKeyLeds kl;
-        CHECK(ui_sm_key_leds(&sm, FM1_LOW, 0, &kl) && kl.lit == 0 && kl.mid == 0 && kl.dim == FN,
-              "ARP LEDs, empty pattern: the steps dark (rests), the function keys dim (%08x)", (unsigned)kl.dim);
-        arp_state.steps[1].chord_root = 60; arp_state.steps[6].chord_root = ARP_CHORD_TIE;
-        arp_state.sequence_length = 6;
-        ui_sm_arp_key(&sm, 16, FM1_LOW + 16u, 1, 100);                  /* hold step 2 */
-        ui_sm_arp_key(&sm, 15, FM1_LOW + 15u, 1, 100);                  /* LATCH on */
-        ui_sm_arp_key(&sm, 15, FM1_LOW + 15u, 0, 0);
-        ui_sm_arp_key(&sm, 25, FM1_LOW + 25u, 1, 100);                  /* ACC held (accents step 2) */
+        uint8_t len0 = arp_state.sequence_length;
+        CHECK(ui_sm_seq_key(&sm, 9, FM1_LOW + 9u, 1, UISEQ_MOD_OCT_UP) == 1 && arp_state.sequence_length == 6 &&
+              sm.arp_sel == 15 && sm.arp_held == 0, "OCT+ + D4 (step 6): SEQ LENGTH 6, selection kept");
+        ui_sm_seq_key(&sm, 9, FM1_LOW + 9u, 0, UISEQ_MOD_OCT_UP);
+        ui_sm_key_leds(&sm, FM1_LOW, UISEQ_MOD_OCT_UP, &kl);
+        CHECK(kl.lit == 1u << 9 && kl.dim == 0xD5u && kl.mid == 0, "OCT+ LEDs: steps 1..5 dim, 6 lit (%08x %08x)",
+              (unsigned)kl.lit, (unsigned)kl.dim);
+        CHECK(ui_sm_seq_key(&sm, 28, FM1_LOW + 28u, 1, UISEQ_MOD_OCT_UP) == 0 && arp_state.sequence_length == 6,
+              "OCT+ + A5 (past 16): not taken");
+        CHECK(ui_sm_seq_key(&sm, 9, FM1_LOW + 9u, 1, 0) == 0, "no OCT+: the step key goes to ui_sm_arp_key");
+        arp_state.sequence_length = len0;
+    }
+    {   /* STEPS LEDs: 1..SEQ LENGTH dim (a rest dark), the selected step mid, held lit */
+        UiKeyLeds kl;
+        ui_sm_arp_key(&sm, 0, FM1_LOW, 1, 100);
+        ui_sm_arp_key(&sm, 0, FM1_LOW, 0, 0);       /* step 1 selected */
+        CHECK(ui_sm_key_leds(&sm, FM1_LOW, 0, &kl) && kl.lit == 0 && kl.mid == 1u && kl.dim == 0,
+              "STEPS LEDs, empty pattern: step 1 (selected) mid, the rests dark (%08x %08x)", (unsigned)kl.mid, (unsigned)kl.dim);
+        arp_state.steps[1].chord_root = 60; arp_state.steps[9].chord_root = ARP_CHORD_TIE;
+        arp_state.sequence_length = 9;
+        ui_sm_arp_key(&sm, 2, FM1_LOW + 2u, 1, 100);   /* hold step 2 */
         ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
-        {   /* step 2's chord (C4's), lit in the chord zone, folded into its octave */
-            uint8_t ch[ARP_CHORD_NOTES], nc = carp_chord_notes(arp_state.current_genre_bank, 60, ch), c;
-            uint32_t zone = 0;
-            for (c = 0; c < nc; c++)
-                zone |= 1u << ((ch[c] + 12u - FM1_LOW % 12u) % 12u);
-            CHECK(nc != 0 && kl.lit == (zone | 1u << 16 | 1u << 15 | 1u << 25) && kl.dim == (FN & ~(1u << 15 | 1u << 25)) && kl.mid == 0,
-                  "held step 2, LATCH on, ACC held: lit, its chord lit in the zone; step 7's TIE past SEQ LENGTH dark (%08x %08x)",
-                  (unsigned)kl.lit, (unsigned)kl.dim);
-        }
-        ui_sm_arp_key(&sm, 25, FM1_LOW + 25u, 0, 0);
-        ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);                  /* step 3 held too: the lowest held (2) still shown */
+        CHECK(kl.lit == 1u << 2 && kl.mid == 0 && kl.dim == 0,
+              "step 2 held (and selected): lit; step 10's TIE past SEQ LENGTH dark (%08x %08x %08x)",
+              (unsigned)kl.lit, (unsigned)kl.mid, (unsigned)kl.dim);
+        ui_sm_arp_key(&sm, 2, FM1_LOW + 2u, 0, 0);
         ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
-        CHECK((kl.lit & 0x1FFFu) != 0 && sm.arp_held == 0x06, "two steps held: the lowest one's chord shown");
-        ui_sm_arp_key(&sm, 16, FM1_LOW + 16u, 0, 0);
+        CHECK(kl.mid == 1u << 2 && kl.lit == 0, "released: step 2 mid (selected)");
+        sm.arp_rec = 1; sm.arp_rec_cursor = ARP_NSTEP + 3u;
         ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
-        CHECK((kl.lit & 0x1FFFu) == 0 && (kl.dim & 0x1FFFu) == 0, "a rest step held: the chord zone dark (%08x)", (unsigned)kl.lit);
-        ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
-        ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
-        CHECK(kl.dim == ((FN & ~(1u << 15)) | 1u << 16) && kl.lit == 1u << 15, "released: step 2 (a chord) dim, LATCH still lit");
-        ui_sm_arp_key(&sm, 15, FM1_LOW + 15u, 1, 100);                  /* LATCH off */
-        ui_sm_arp_key(&sm, 15, FM1_LOW + 15u, 0, 0);
-        sm.arp_rec = 1; sm.arp_rec_cursor = 3;
-        ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
-        CHECK(kl.mid == 1u << 19 && kl.lit == 0, "stopped, REC armed: step 4 (C5), where the next chord goes, mid");
+        CHECK(kl.mid == 1u << 6 && kl.lit == 0, "stopped, REC armed: step 4 (B3), where the next chord goes, mid");
         sm.arp_rec = 0; sm.arp_rec_cursor = 0;
         arp_defaults(&arp_state);
     }
+    /* hold a step, press a later one: the steps after the held one up to it tie */
+    step(2, 57, 64, 0, ARPSTYLE_UP, 0);
+    arp_state.steps[4].accent = 1;
+    ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 1, 100);     /* step 3 held */
+    ui_sm_arp_key(&sm, 9, FM1_LOW + 9u, 1, 100);     /* + step 6 */
+    CHECK(arp_state.steps[2].chord_root == 57 && arp_state.steps[3].chord_root == ARP_CHORD_TIE &&
+          arp_state.steps[4].chord_root == ARP_CHORD_TIE && arp_state.steps[5].chord_root == ARP_CHORD_TIE &&
+          arp_state.steps[6].chord_root == ARP_CHORD_EMPTY && arp_state.steps[4].accent == 0 && sm.arp_sel == 2,
+          "step 3 held + step 6: steps 4..6 tie, step 3 stays selected");
+    ui_sm_arp_key(&sm, 9, FM1_LOW + 9u, 0, 0);
+    ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 0, 0);
+    ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);   /* step 11 held */
+    ui_sm_arp_key(&sm, 14, FM1_LOW + 14u, 1, 100);   /* + step 9, an earlier one: no tie */
+    CHECK(arp_state.steps[9].chord_root == ARP_CHORD_EMPTY && arp_state.sequence_length == ARP_LEN_DEFAULT,
+          "an earlier step pressed: no tie");
+    ui_sm_arp_key(&sm, 14, FM1_LOW + 14u, 0, 0);
+    ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
+    ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);   /* step 11 held .. */
+    ui_sm_arp_key(&sm, 21, FM1_LOW + 21u, 1, 100);   /* + step 13: past SEQ LENGTH 8, which grows to take it */
+    CHECK(arp_state.steps[11].chord_root == ARP_CHORD_TIE && arp_state.steps[12].chord_root == ARP_CHORD_TIE &&
+          arp_state.sequence_length == 13, "a tie past SEQ LENGTH lengthens the pattern (%d)", arp_state.sequence_length);
+    ui_sm_arp_key(&sm, 21, FM1_LOW + 21u, 0, 0);
+    ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
+    arp_defaults(&arp_state);
 
-    /* ---- capture: hold a step key, strike a chord key; knobs into held steps ---- */
+    /* ---- STEPS: the knobs and rows edit the selected step; CHORDS: the live dials ---- */
+    reset();
+    ui_sm_goto(&sm, UIPAGE_ARP);
     {
         UiKnobInfo info;
         uint8_t *kb;
@@ -318,61 +360,65 @@ int main(void)
         kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 3, &info);
         *kb = 13; ui_sm_knob_written(&sm, UIPAGE_ARP, 3);
         CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 3), "5.07") == 0, "VARIATION text (the J-6's style 5, variation 07)");
-        ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);                 /* B4 = step 3 */
-        ui_sm_arp_key(&sm, 21, FM1_LOW + 21u, 1, 100);                 /* D5 = step 5 */
-        ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 1, 90);                    /* A3 */
-        run(4);                      /* (a press and release between two frames would merge into the release) */
-        ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 0, 0);
-        CHECK(arp_state.steps[2].chord_root == FM1_LOW + 4u && arp_state.steps[4].chord_root == FM1_LOW + 4u &&
-              arp_state.steps[2].style == ARPSTYLE_DOWN && arp_state.steps[4].variation == 13 &&
-              arp_state.steps[2].rate == ARP_RATE_DEFAULT && arp_state.steps[0].chord_root == ARP_CHORD_EMPTY,
-              "A3 + the dials captured into steps 3 and 5 only");
+        CHECK(arp_state.steps[0].style == ARPSTYLE_UP, "CHORDS, stopped: a knob turns the live dial only");
         kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 0, &info);
         CHECK(info.kind == UIKNOB_LIST && info.n_enum == ARPRATE_COUNT && strcmp(info.label, "RATE") == 0, "knob 1: RATE");
-        *kb = ARPRATE_1_8; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
-        CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/8") == 0 && arp_state.steps[2].rate == ARPRATE_1_8 &&
-              arp_state.steps[4].rate == ARPRATE_1_8 && arp_state.steps[3].rate == ARP_RATE_DEFAULT,
-              "a knob turned with step keys held edits those steps");
-        ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
-        ui_sm_arp_key(&sm, 21, FM1_LOW + 21u, 0, 0);
-        *kb = ARPRATE_1_32; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
-        CHECK(arp_state.steps[2].rate == ARPRATE_1_8, "released: the knob edits only the live value");
         *kb = 99; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
         CHECK(sm.arp_knob[0] == ARPRATE_COUNT - 1u && strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/128") == 0,
               "RATE held to its list");
         *kb = ARP_RATE_DEFAULT; ui_sm_knob_written(&sm, UIPAGE_ARP, 0);
-        {   /* a held chord step's values on the knobs, the live dials back on release; a rest leaves them */
-            uint8_t oct0 = arp_state.steps[0].octave_range;
-            arp_state.steps[2].octave_range = 2;
-            ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);             /* step 3 (A3, 1/8, octave 2) */
-            CHECK(sm.arp_knob[0] == ARPRATE_1_8 && sm.arp_knob[1] == 2 && sm.arp_knob[2] == ARPSTYLE_DOWN &&
-                  strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/8") == 0, "step 3 held: its values on the knobs");
-            ui_sm_arp_key(&sm, 14, FM1_LOW + 14u, 1, 100);             /* + step 1 (a rest): still step 3's */
-            kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 1, &info);
-            *kb = 1; ui_sm_knob_written(&sm, UIPAGE_ARP, 1);
-            CHECK(sm.arp_knob[0] == ARPRATE_1_8 && arp_state.steps[2].octave_range == 1 &&
-                  arp_state.steps[0].octave_range == 1, "a knob turned edits the held steps");
-            ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
-            CHECK(sm.arp_knob[1] == 1, "a step key still held: the knobs stay");
-            ui_sm_arp_key(&sm, 14, FM1_LOW + 14u, 0, 0);
-            CHECK(sm.arp_knob[0] == ARP_RATE_DEFAULT && sm.arp_knob[1] == 0 && sm.arp_knob[3] == 13 &&
-                  arp_state.steps[2].octave_range == 1, "all let go: the live dials back, the step keeps its edit");
-            ui_sm_arp_key(&sm, 19, FM1_LOW + 19u, 1, 100);             /* step 4, a rest */
-            CHECK(sm.arp_knob[0] == ARP_RATE_DEFAULT && sm.arp_knob[1] == 0, "a rest held: the knobs stay live");
-            ui_sm_arp_key(&sm, 19, FM1_LOW + 19u, 0, 0);
-            ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 1, 100);
-            ui_sm_goto(&sm, UIPAGE_HOME1);
-            ui_sm_goto(&sm, UIPAGE_ARP);
-            CHECK(sm.arp_knob[0] == ARP_RATE_DEFAULT && sm.arp_knob[1] == 0, "the page left with a step held: live back");
-            ui_sm_arp_key(&sm, 18, FM1_LOW + 18u, 0, 0);
-            arp_state.steps[0].octave_range = oct0;
-            arp_state.steps[2].octave_range = 0;
-            kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 0, &info);
-        }
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);     /* STEPS, step 1 (a rest) selected */
+        CHECK(sm.arp_view == UIARP_STEPS && sm.arp_sel == 0 && sm.arp_knob[2] == ARPSTYLE_DOWN,
+              "STEPS on a rest: the knobs stay live");
+        CHECK(strcmp(ui_sm_row_text(&sm, 0), "REST") == 0 && ui_sm_row_state(&sm, 1) == UIROW_GREYED &&
+              ui_sm_row_state(&sm, 2) == UIROW_GREYED, "CHORD REST; ACCENT and CLEAR greyed on a rest");
+        ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 1, 100);   /* step 3 */
+        ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 0, 0);
+        sm.s.current_param_focus = 0;
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+        CHECK(arp_state.steps[2].chord_root == ARP_CHORD_TIE && strcmp(ui_sm_row_text(&sm, 0), "TIE") == 0, "CHORD: REST -> TIE");
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+        CHECK(arp_state.steps[2].chord_root == 48 && strcmp(ui_sm_row_text(&sm, 0), "C3") == 0 &&
+              arp_state.steps[2].style == ARPSTYLE_DOWN && arp_state.steps[2].variation == 13,
+              "TIE -> C3 (no chord before it), the live dials captured with it (%d)", arp_state.steps[2].chord_root);
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 2);
+        CHECK(arp_state.steps[2].chord_root == 50, "CHORD: +2 semitones");
+        arp_state.steps[2].octave_range = 2;
+        arp_state.steps[2].rate = ARPRATE_1_8;
+        ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 1, 100);   /* reselect: its values on the knobs */
+        ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 0, 0);
+        CHECK(sm.arp_knob[0] == ARPRATE_1_8 && sm.arp_knob[1] == 2 && sm.arp_knob[2] == ARPSTYLE_DOWN &&
+              strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 0), "1/8") == 0, "step 3 selected: its values on the knobs");
+        kb = ui_sm_knob(&sm, UIPAGE_ARP, 0, 1, &info);
+        *kb = 1; ui_sm_knob_written(&sm, UIPAGE_ARP, 1);
+        CHECK(arp_state.steps[2].octave_range == 1 && arp_state.steps[0].octave_range == 0, "a knob edits the selected step");
+        sm.s.current_param_focus = 1;                /* ACCENT */
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+        CHECK(arp_state.steps[2].accent == 1 && strcmp(ui_sm_row_text(&sm, 1), "ON") == 0, "ACCENT row: on");
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);     /* CHORDS: the live dials back */
+        CHECK(sm.arp_view == UIARP_CHORDS && sm.arp_knob[0] == ARP_RATE_DEFAULT && sm.arp_knob[1] == 0 &&
+              sm.arp_knob[3] == 13 && arp_state.steps[2].octave_range == 1, "back on CHORDS: the live dials, the step keeps its edit");
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
+        CHECK(sm.arp_sel == 2 && sm.arp_knob[1] == 1 && sm.s.current_param_focus == 1,
+              "STEPS again: the same step on the knobs, the cursor where it was");
+        ui_sm_goto(&sm, UIPAGE_HOME1);
+        CHECK(sm.arp_knob[0] == ARP_RATE_DEFAULT && sm.arp_knob[1] == 0, "the page left from STEPS: the live dials back");
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
+        CHECK(sm.page == UIPAGE_ARP && sm.arp_view == UIARP_STEPS && sm.arp_knob[1] == 1, "ARP from another page: back on STEPS");
+        sm.s.current_param_focus = 2;                /* CLEAR */
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+        CHECK(arp_state.steps[2].chord_root == ARP_CHORD_EMPTY && arp_state.steps[2].accent == 0 && sm.arp_knob[1] == 0,
+              "CLEAR: a rest, the knobs live again");
+        step(2, 57, 64, 0, ARPSTYLE_UP, 0);          /* a step's chord sounds while its key is held, stopped */
+        k = count(&la, 0x90);
+        ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 1, 90);
         run(4);
-        carp_chord_notes(arp_state.current_genre_bank, FM1_LOW + 4u, c);
-        CHECK(count(&la, 0x90) == 4 && count(&la, 0x80) == 4 && on_note(0) == c[0] && la.ev[0].d2 == 90 && all_off(&la),
-              "the chord key sounded its chord while held (%d on, %d off)", count(&la, 0x90), count(&la, 0x80));
+        ui_sm_arp_key(&sm, 4, FM1_LOW + 4u, 0, 0);
+        run(4);
+        n = carp_chord_notes(arp_state.current_genre_bank, 57, c);
+        CHECK(n > 0 && count(&la, 0x90) == k + n && on_note(k) == c[0] && la.ev[nth(&la, 0x90, k)].d2 == 90 && all_off(&la),
+              "STEPS, stopped: a step key sounds its chord while held (%d on)", count(&la, 0x90) - k);
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
     }
 
     /* ---- a chord key held while the page changes is released (no hanging chord) ---- */
@@ -391,23 +437,23 @@ int main(void)
     arp_state.transpose_maq_option = 1;
     play_on(UIPAGE_HOME1);                           /* both */
     run(QUARTER - 100u);
-    ui_sm_arp_key(&sm, 2, FM1_LOW + 2u, 1, 100);     /* the zone's third key: +2 */
+    ui_sm_arp_key(&sm, 9, FM1_LOW + 9u, 1, 100);     /* D4: C4 + 2 */
     run(4);
-    ui_sm_arp_key(&sm, 2, FM1_LOW + 2u, 0, 0);
-    CHECK(carp_transpose(&a) == 2, "playing: the chord key transposes by its place in the zone");
+    ui_sm_arp_key(&sm, 9, FM1_LOW + 9u, 0, 0);
+    CHECK(carp_transpose(&a) == 2, "playing: the chord key transposes by its distance from C4");
     { UiKeyLeds kl;
       ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
-      CHECK(kl.mid == 1u << 2 && kl.lit == 1u << 14, "playing: the transposition's chord key mid, step 1's key lit (%08x %08x)",
+      CHECK(kl.mid == 1u << 9 && kl.lit == 0, "playing: the transposition's key mid, no step keys on CHORDS (%08x %08x)",
             (unsigned)kl.mid, (unsigned)kl.lit); }
     run(200u);
-    { UiKeyLeds kl;                                   /* the notes sounding: dim, folded into the zone's first octave */
+    { UiKeyLeds kl;                                   /* the notes sounding: dim, where they are on the keybed */
       uint32_t want = 0;
       for (i = 0; i < ARP_CHORD_NOTES; i++)
-          if (a.on[i] != CARP_NOTE_NONE)
-              want |= 1u << ((a.on[i] + 12u - FM1_LOW % 12u) % 12u);
+          if (a.on[i] != CARP_NOTE_NONE && a.on[i] >= FM1_LOW && a.on[i] < FM1_LOW + 32u)
+              want |= 1u << (a.on[i] - FM1_LOW);
       ui_sm_key_leds(&sm, FM1_LOW, 0, &kl);
-      CHECK(want != 0 && (kl.dim & 0x1FFFu & ~(1u << 2)) == (want & ~(1u << 2)) && kl.mid == 1u << 2,
-            "playing: the notes sounding dim in the chord zone, the transposition still mid (%08x %08x)",
+      CHECK(want != 0 && (kl.dim & ~(1u << 9)) == (want & ~(1u << 9)) && kl.mid == 1u << 9,
+            "playing: the notes sounding dim on their keys, the transposition still mid (%08x %08x)",
             (unsigned)kl.dim, (unsigned)want); }
     k = -1;
     for (i = 0; i < la.n; i++)
@@ -427,18 +473,18 @@ int main(void)
     reset();
     ui_sm_goto(&sm, UIPAGE_ARP);
     arp_state.transpose_maq_option = 1;
-    ui_sm_arp_key(&sm, 5, FM1_LOW + 5u, 1, 100);     /* stopped: +5 */
+    ui_sm_arp_key(&sm, 12, FM1_LOW + 12u, 1, 100);   /* stopped: F4, +5 */
     run(4);
-    ui_sm_arp_key(&sm, 5, FM1_LOW + 5u, 0, 0);
+    ui_sm_arp_key(&sm, 12, FM1_LOW + 12u, 0, 0);
     CHECK(carp_transpose(&a) == 5, "empty pattern, stopped: the chord key transposes the MAQ (%d)", carp_transpose(&a));
     play_on(UIPAGE_HOME1);
     run(QUARTER + 100u);
     k = nth(&lm, 0x90, 0);
     CHECK(carp_transpose(&a) == 5 && k >= 0 && lm.ev[k].d1 == 53, "a start keeps it: the MAQ's C3 plays F3, got %d",
           k >= 0 ? lm.ev[k].d1 : -1);
-    ui_sm_arp_key(&sm, 0, FM1_LOW, 1, 100);         /* playing: back to 0 */
+    ui_sm_arp_key(&sm, 7, FM1_LOW + 7u, 1, 100);     /* playing: C4, back to 0 */
     run(4);
-    ui_sm_arp_key(&sm, 0, FM1_LOW, 0, 0);
+    ui_sm_arp_key(&sm, 7, FM1_LOW + 7u, 0, 0);
     run(QUARTER);
     k = -1;
     for (i = 0; i < lm.n; i++)
@@ -447,9 +493,9 @@ int main(void)
     play_on(UIPAGE_HOME1);
     run(2);
     arp_state.transpose_maq_option = 0;
-    ui_sm_arp_key(&sm, 5, FM1_LOW + 5u, 1, 100);
+    ui_sm_arp_key(&sm, 12, FM1_LOW + 12u, 1, 100);
     run(2);
-    ui_sm_arp_key(&sm, 5, FM1_LOW + 5u, 0, 0);
+    ui_sm_arp_key(&sm, 12, FM1_LOW + 12u, 0, 0);
     CHECK(carp_transpose(&a) == 0 && all_off(&lm) && lm.stuck == 0, "TRANSPOSE MAQ off, stopped: the key transposes nothing");
 
     /* ---- TRANSPOSE MAQ follows the chord roots, from the first sounding step, on the ARP step's own pulse ---- */
@@ -606,33 +652,16 @@ int main(void)
     play(0);
     run(2);
 
-    /* ---- function keys (the black keys among the step keys): CLEAR, COPY, TIE, ACCENT ---- */
+    /* ---- LATCH (ui_sm_arp_latch: ARP held + a key, or the LATCH row): the arpeggio outlives the key, survives a page
+     * change, stops with LATCH off ---- */
     reset();
     ui_sm_goto(&sm, UIPAGE_ARP);
 #define KEY(k, d) ui_sm_arp_key(&sm, (k), (uint8_t)(FM1_LOW + (k)), (d), 100)
 #define TAP(k) do { KEY(k, 1); run(2); KEY(k, 0); run(2); } while (0)
-    KEY(14, 1); TAP(0); KEY(14, 0);                  /* step 1 <- F3 */
-    KEY(16, 1); TAP(4); KEY(16, 0);                  /* step 2 <- A3 */
-    CHECK(arp_state.steps[0].chord_root == FM1_LOW && arp_state.steps[1].chord_root == FM1_LOW + 4u, "captures for the key tests");
-    KEY(20, 1); TAP(14); KEY(20, 0);                 /* CLEAR held, tap step 1 */
-    CHECK(arp_state.steps[0].chord_root == ARP_CHORD_EMPTY && sm.arp_held == 0, "CLEAR + step 1: a rest (and not held)");
-    KEY(22, 1); TAP(16); TAP(21); TAP(23); KEY(22, 0);   /* COPY: step 2 -> steps 5 and 6 */
-    CHECK(arp_state.steps[4].chord_root == FM1_LOW + 4u && arp_state.steps[5].chord_root == FM1_LOW + 4u &&
-          arp_state.steps[2].chord_root == ARP_CHORD_EMPTY && sm.arp_copy_src == CARP_POS_NONE, "COPY: step 2 into 5 and 6");
-    KEY(18, 1); TAP(17); KEY(18, 0);                 /* step 3 held, tap TIE */
-    CHECK(arp_state.steps[2].chord_root == ARP_CHORD_TIE, "step 3 held + TIE: a tie");
-    KEY(25, 1); TAP(16); KEY(25, 0);
-    CHECK(arp_state.steps[1].accent == 1, "ACCENT + step 2: accented");
-    KEY(16, 1); TAP(25); KEY(16, 0);
-    CHECK(arp_state.steps[1].accent == 0, "step 2 held + ACCENT: toggled off again");
-    CHECK(KEY(13, 1) == 1 && sm.arp_fn == 0 && sm.arp_latch == 0, "F#4 (below step 1) is no function key");
-    KEY(13, 0);
-
-    /* ---- LATCH: the arpeggio outlives the key, survives a page change, stops with LATCH off ---- */
-    reset();
-    ui_sm_goto(&sm, UIPAGE_ARP);
-    TAP(15);                                         /* G#4: LATCH on */
-    CHECK(sm.arp_latch == 1, "G#4 toggles LATCH");
+    sm.s.current_param_focus = 1;                    /* the LATCH row */
+    CHECK(strcmp(ui_sm_row_label(&sm, 1), "LATCH") == 0, "CHORDS row 2: LATCH");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+    CHECK(sm.arp_latch == 1 && strcmp(ui_sm_row_text(&sm, 1), "ON") == 0, "the LATCH row turns LATCH on");
     TAP(0);
     k = count(&la, 0x90);
     run(2u * QUARTER);                               /* (a live step is a quarter and a pulse) */
@@ -646,26 +675,30 @@ int main(void)
     run(2u * QUARTER);
     CHECK(count(&la, 0x90) > k, "latched: it plays on under another page");
     ui_sm_goto(&sm, UIPAGE_ARP);
-    TAP(15);                                         /* LATCH off */
+    ui_sm_arp_latch(&sm, 0);                         /* LATCH off (ARP held + a key) */
     run(QUARTER);
     k = count(&la, 0x90);
     run(QUARTER);
     CHECK(sm.arp_latch == 0 && count(&la, 0x90) == k && all_off(&la) && la.stuck == 0, "LATCH off: silent, nothing hangs");
 
-    /* ---- REC stopped: step entry fills steps 1, 2, 3 .., SEQ LENGTH follows; TIE / CLEAR / ACCENT alone record ---- */
+    /* ---- REC stopped: chords fill steps 1, 2, 3 .., SEQ LENGTH follows; a step chosen on STEPS takes the next ---- */
     reset();
     ui_sm_goto(&sm, UIPAGE_ARP);
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
     CHECK(sm.arp_rec == 1, "REC arms on the ARP page");
     TAP(0); TAP(5); TAP(7);
-    TAP(17);                                         /* TIE */
-    TAP(20);                                         /* CLEAR */
-    TAP(25);                                         /* ACCENT: the step just recorded */
     CHECK(arp_state.steps[0].chord_root == FM1_LOW && arp_state.steps[1].chord_root == FM1_LOW + 5u &&
-          arp_state.steps[2].chord_root == FM1_LOW + 7u && arp_state.steps[3].chord_root == ARP_CHORD_TIE &&
-          arp_state.steps[4].chord_root == ARP_CHORD_EMPTY && arp_state.steps[4].accent == 1 &&
-          arp_state.sequence_length == 5, "step entry: 3 chords, a tie, a rest; SEQ LENGTH 5 (%d)", arp_state.sequence_length);
+          arp_state.steps[2].chord_root == FM1_LOW + 7u && arp_state.steps[3].chord_root == ARP_CHORD_EMPTY &&
+          arp_state.sequence_length == 3, "step entry: 3 chords, SEQ LENGTH 3 (%d)", arp_state.sequence_length);
     CHECK(carp_transpose(&a) == 0 && all_off(&la), "recording transposes nothing, every audition released");
+    ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);         /* STEPS: step 10 chosen */
+    CHECK(sm.arp_rec == 1, "REC stays armed across the views");
+    TAP(16);
+    ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);         /* CHORDS: the next two chords into steps 10 and 11 */
+    TAP(2); TAP(9);
+    CHECK(arp_state.steps[9].chord_root == FM1_LOW + 2u && arp_state.steps[10].chord_root == FM1_LOW + 9u &&
+          arp_state.steps[2].chord_root == FM1_LOW + 7u && arp_state.sequence_length == 11,
+          "from step 10: steps 10 and 11, SEQ LENGTH grows to 11 (%d)", arp_state.sequence_length);
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
     CHECK(sm.arp_rec == 0, "REC again disarms");
 
@@ -865,14 +898,15 @@ int main(void)
         *kb = 1; ui_sm_knob_written(&sm, UIPAGE_ARP, 3);
         CHECK(strcmp(ui_sm_knob_text(&sm, UIPAGE_ARP, 0, 3), "UP") == 0, "STRUM UP");
     }
-    {                                                /* TIMING: the menu row after LAYER, in LAYER's byte */
+    {                                                /* TIMING: a STEPS row (the 5th), in LAYER's byte */
         reset();
-        ui_sm_goto(&sm, UIPAGE_ARP);
-        CHECK(strcmp(ui_sm_row_label(&sm, 1), "TIMING") == 0 && strcmp(ui_sm_row_text(&sm, 1), "1/4") == 0,
-              "row 2: TIMING 1/4 (%s %s)", ui_sm_row_label(&sm, 1), ui_sm_row_text(&sm, 1));
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
+        CHECK(strcmp(ui_sm_row_label(&sm, 4), "TIMING") == 0 && strcmp(ui_sm_row_text(&sm, 4), "1/4") == 0,
+              "STEPS row 5: TIMING 1/4 (%s %s)", ui_sm_row_label(&sm, 4), ui_sm_row_text(&sm, 4));
         arp_set_layer(&arp_state, ARPLAYER_L2);
         arp_set_timing(&arp_state, ARPDIV_1_32T);
-        CHECK(ARP_LAYER(&arp_state) == ARPLAYER_L2 && strcmp(ui_sm_row_text(&sm, 1), "1/32T") == 0 &&
+        CHECK(ARP_LAYER(&arp_state) == ARPLAYER_L2 && strcmp(ui_sm_row_text(&sm, 4), "1/32T") == 0 &&
               carp_div_ticks(ARP_TIMING(&arp_state)) == 2, "TIMING and LAYER share a byte, apart");
     }
 

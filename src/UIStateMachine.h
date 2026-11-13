@@ -145,7 +145,7 @@ typedef union {
     ArpState arp;                    /* ARP_SEQ: the live arp pattern */
     WholePerformance whole;          /* WHOLE_PERF: the performance and everything it plays */
 } UiClipboard;
-PS_STATIC_ASSERT(sizeof(UiClipboard) == 1006u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD), then 24 (MOD SENDS), then 8 (MOD4), then 16 (the mod matrix), then -28 (the pickers out, 16 routes), then 8 (the LFO1 page's amounts) */
+PS_STATIC_ASSERT(sizeof(UiClipboard) == 1054u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD), then 24 (MOD SENDS), then 8 (MOD4), then 16 (the mod matrix), then -28 (the pickers out, 16 routes), then 8 (the LFO1 page's amounts), then 48 (16 arp steps) */
 /* spec 1: the name characters; MasterPerformancePreset.name holds indices into it (0 = space) */
 #define UI_CHAR_MAP " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/"
 /* 5.1: the play controllers. LAYER's knobs (2026-10-17): VELOCITY, MOD WHEEL, CC1, (2026-10-21) PORTA TIME, not CC2;
@@ -216,7 +216,13 @@ typedef struct {
     uint8_t seq_cap_n;               /* .. and the notes written into it so far */
     CarpSeq *carp;                   /* the ARP engine (ui_sm_attach_arp); NULL: chord keys capture but sound nothing */
     uint8_t arp_knob[4];             /* 2.2 ARP knobs, live: RATE ARPDIV_*, OCTAVE 0..3, STYLE ARPSTYLE_*, RHYTHM 0..23 */
-    uint8_t arp_held;                /* 8.1: step keys held, bit n = step n */
+    uint8_t arp_view;                /* 2026-11-13: the ARP page's view, UIARP_CHORDS (every key a chord key) or
+                                      * UIARP_STEPS (the 16 white keys the steps); ARP on the page flips it */
+    uint8_t arp_sel;                 /* UIARP_STEPS: the step selected (its values on the knobs and the step rows) */
+    uint8_t arp_tie_from;            /* UIARP_STEPS: the step key held first (a later step key ties up to it),
+                                      * CARP_POS_NONE */
+    uint8_t arp_focus[2];            /* each view's menu cursor */
+    uint16_t arp_held;               /* UIARP_STEPS: step keys held, bit n = step n */
     uint8_t arp_peek;                /* a held step key's values are on the knobs (2026-10-25): arp_live holds the
                                       * live dials to restore when the last step key is let go */
     uint8_t arp_live[4];
@@ -224,8 +230,6 @@ typedef struct {
     uint8_t arp_chord_down;          /* the chord key physically down (its note), CARP_NOTE_NONE */
     uint8_t arp_chord_hold;          /* arp_chord_key is a live hold (latchable), not a capture's block chord */
     uint8_t arp_latch;               /* LATCH on: a chord key's hold outlives the key */
-    uint8_t arp_fn;                  /* function keys held, bit ARPFN_* */
-    uint8_t arp_copy_src;            /* COPY: the source step tapped, CARP_POS_NONE before it */
     uint8_t arp_rec;                 /* REC armed on the ARP page */
     uint8_t arp_rec_cursor;          /* stopped record: the step the next chord goes into */
     uint8_t arp_rec_last;            /* the step written last while recording (ACCENT alone toggles it), CARP_POS_NONE */
@@ -394,8 +398,11 @@ void ui_sm_dest_turn(UIStateMachine *sm, uint8_t *dest, int32_t d);
 const char *ui_sm_dtime_text(uint8_t v, char *buf);  /* DELAY TIME: "1/16T" or "472MS" (at least 7 bytes) */
 
 /* ------------------------------------------------------------- ARP --- */
-/* 8.1 function keys: the black keys among the step keys, by the step key below them (G#4 LATCH .. F#5 ACCENT) */
-enum { ARPFN_LATCH, ARPFN_TIE, ARPFN_CLEAR, ARPFN_COPY, ARPFN_ACCENT, ARPFN_COUNT, ARPFN_NONE = 0xFF };
+/* the ARP page's two views (2026-11-13): CHORDS plays (every key a chord key), STEPS edits (the 16 white keys) */
+enum { UIARP_CHORDS, UIARP_STEPS };
+#define UIARP_TRANSPOSE_ZERO 60u     /* CHORDS: C4 plays a pattern untransposed, a key below it down, above it up */
+/* LATCH on / off (ARP held + any key, or the LATCH row): a live chord key's arpeggio plays on after the key */
+void ui_sm_arp_latch(UIStateMachine *sm, uint8_t on);
 
 /* hand the machine the REC page's recorder (dsp/krec.h) */
 void ui_sm_attach_rec(UIStateMachine *sm, Krec *rec);
@@ -406,21 +413,23 @@ uint8_t ui_sm_rec_deferred(const UIStateMachine *sm);
 /* hand the machine the ARP engine (chord keys sound through it, and set its transposition) */
 void ui_sm_attach_arp(UIStateMachine *sm, CarpSeq *carp);
 
-/* A note key, on the ARP page (8.1). key: 0 = the lowest key; note: its MIDI note; down: press 1 / release 0; vel: its
- * velocity. Keys 0..12 (CARP_ZONE_KEYS, chromatic) are chord keys: a press sounds the key's chord in the GENRE BANK
- * while held; with step keys held it is captured into each of them instead (the key's note plus the four ARP knobs);
- * while the ARP plays, a press without step keys also transposes the pattern by the key's distance from key 0
- * (and the MAQ with TRANSPOSE MAQ on, which also moves the MAQ with each step's chord root; with it on, the key
- * transposes the MAQ while the MAQ alone plays too). With TRANSPOSE MAQ on and no chord in the pattern, the MAQ follows
- * the chord keys stopped as well, and PLAY keeps the key last played (with a pattern, the ARP starts untransposed). The next 8 white keys are step keys 1..8 (held: bit n of arp_held).
- * The black keys among them are function keys (ARPFN_*): LATCH toggles the latch (a chord key's live arpeggio plays on
- * after the key, until another chord key or LATCH off); TIE, CLEAR and ACCENT act on the step keys held, or on the step
- * keys tapped while they are held (TIE: the chord before carries on; CLEAR: a rest; ACCENT: toggled); COPY held, the
- * first step key tapped is the source and every later one a copy of it. With REC armed (UITR_REC) a chord key records
- * instead of playing live: transport playing, into carp_rec_step's step (the nearest), and the ARP knobs write into the
- * playing step; stopped, into steps 1, 2, 3 .. in turn, SEQ LENGTH following. TIE or CLEAR alone records a tie or a
- * rest the same way, ACCENT alone toggles the step recorded last. Returns 1 for every key of that span (the caller must
- * not play it); keys above play. Every other page: returns 0. */
+/* A note key, on the ARP page. key: 0 = the lowest key; note: its MIDI note (the octave shift in it); down: press 1 /
+ * release 0; vel: its velocity. Two views (2026-11-13, sm->arp_view):
+ *   CHORDS  every key is a chord key: a press sounds the chord of its note in the GENRE BANK, in that key's register,
+ *           arpeggiated by the live knobs while held (LATCH: on after the key). While the ARP plays, a press also
+ *           transposes the pattern by the key's distance from C4 (UIARP_TRANSPOSE_ZERO; and the MAQ with TRANSPOSE MAQ
+ *           on, which also moves the MAQ with each step's chord root; with it on, the key transposes the MAQ while the
+ *           MAQ alone plays too). With TRANSPOSE MAQ on and no chord in the pattern, the MAQ follows the chord keys
+ *           stopped as well, and PLAY keeps the key last played. With REC armed (UITR_REC) a chord key records
+ *           instead: transport playing, into carp_rec_step's step (the nearest), and the ARP knobs write into the
+ *           playing step; stopped, into the step chosen on STEPS (arp_rec_cursor), then the next in turn, SEQ LENGTH
+ *           following on the first pass.
+ *   STEPS   the 16 lowest white keys are steps 1..16. A press selects the step (arp_sel: its RATE / OCTAVE / STYLE /
+ *           RHYTHM on the knobs, its CHORD / ACCENT / CLEAR rows on the menu) and, stopped, sounds its chord while
+ *           held; with REC armed it is where the next recorded chord goes. Holding a step and pressing a later one
+ *           ties every step after the held one up to that one (TIE: the chord before carries on). The black keys and
+ *           the keys above do nothing.
+ * Returns 1 for every key of the keybed on the ARP page (the caller must not play it). Every other page: returns 0. */
 uint8_t ui_sm_arp_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t down, uint8_t vel);
 
 /* the MIDI channel (0..15) a played key goes out on: in DUAL the selected layer's, so the keys play the layer being
@@ -443,9 +452,10 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob);
  *   SEQ, OCT held the 16 white keys are the active lane's steps: its loop window dim, the boundary the next key
  *                 sets (OCT-: start, OCT+: end) lit while stopped, mid under the lit playhead while playing.
  *   SEQ record    the notes of the record step lit (the chord being built; 7.2, the keyboard plays as normal).
- *   ARP           steps 1..SEQ LENGTH dim (a rest dark), the playing, held and COPY source steps lit, stopped with
- *                 REC armed the step the next chord goes into mid; function keys dim, LATCH lit while on and TIE / CLR
- *                 / CPY / ACC while held; playing, the chord key of the transposition mid.
+ *   ARP CHORDS    every key a chord key: the notes sounding dim, where they are on the keybed; playing, the key of
+ *                 the transposition mid.
+ *   ARP STEPS     the 16 white keys are steps 1..16: 1..SEQ LENGTH dim (a rest dark), the selected step mid, the
+ *                 playing and held steps lit, stopped with REC armed the step the next chord goes into mid.
  * Returns 1 when the page drives the keys this way (the caller shows these and not its own key map), 0 on every other
  * page or under a dialog (all masks 0). */
 typedef struct { uint32_t lit, mid, dim; } UiKeyLeds;

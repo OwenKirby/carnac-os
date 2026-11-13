@@ -445,7 +445,7 @@ static void seq_slot(void)
     seq_lanes[3].prescale = 3;
     for (i = 0; i < SEQ_NSTEP; i++)
         seq_lanes[3].steps[i].value = 127;
-    for (i = 0; i < ARP_NSTEP; i++) {               /* every step a chord, strummed across 4 octaves */
+    for (i = 0; i < 8u; i++) {                       /* (8 steps, as before ARP_NSTEP 16) every step a chord, strummed across 4 octaves */
         ArpChordStep *st = &arp_state.steps[i];
         st->chord_root = (uint8_t)(55 + (i * 5) % 12);
         st->rate = ARPRATE_1_128;                    /* (TIMING 1/32: below) */
@@ -453,7 +453,7 @@ static void seq_slot(void)
         st->style = (uint8_t)(ARPSTYLE_UP + i % 7u);
         st->variation = (uint8_t)(i * 3u);
     }
-    arp_state.sequence_length = ARP_NSTEP;
+    arp_state.sequence_length = 8u;
     arp_state.gate_length = 90;
     arp_set_layer(&arp_state, ARPLAYER_BOTH);
     arp_set_timing(&arp_state, ARPDIV_1_32);

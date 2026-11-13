@@ -28,7 +28,8 @@
                                       * the pages' source pickers) */
 #define SEQ_NLANE 4u
 #define SEQ_NSTEP 16u
-#define ARP_NSTEP 8u                 /* 8.1: keys 14..21, white keys only */
+#define ARP_NSTEP 16u                /* 2026-11-13: ARP page 2's 16 white keys (was 8 keys above the chord zone) */
+#define ARP_LEN_DEFAULT 8u           /* a new pattern's SEQ LENGTH (REC grows it) */
 #define NAME_LEN 16u                 /* 6.2.1: character cursor 0..15 */
 #define CHAR_MAP_LEN 41u             /* char_map[42]: " A..Z0..9.-_/" and its NUL */
 #define PATCH_SLOTS 128u             /* stored EngineState patches; each layer plays one via layer_patch */
@@ -257,19 +258,19 @@ typedef struct {
 } ArpChordStep;
 PS_STATIC_ASSERT(sizeof(ArpChordStep) == 6u, "ArpChordStep flash layout");
 
-/* the 8-step chord pattern ARP_SEQ saves and arp_link loads; footers are the 8.2 menu list */
+/* the 16-step chord pattern ARP_SEQ saves and arp_link loads; footers are the 8.2 menu list */
 typedef struct {
     ArpChordStep steps[ARP_NSTEP];
     uint8_t layer_timing;            /* low nibble LAYER (ARPLAYER_*), high nibble TIMING (ARPDIV_*, every step's length;
                                       * FREC_VER_ARP 5, 2026-10-21): ARP_LAYER / ARP_TIMING, arp_set_layer / _timing */
     uint8_t gate_length;             /* GATE: a strike's length = its cells x (value + 1) / 128, 127 = legato (FREC_VER_ARP
                                       * 4, 2026-10-17: where TIME DIVISION was, before each step had its own RATE) */
-    uint8_t sequence_length;         /* 1..8 */
+    uint8_t sequence_length;         /* 1..16 (ARP_NSTEP) */
     uint8_t transpose_maq_option;    /* 0 / 1: the MAQ NOTE lanes follow each step's chord root and the chord key */
     uint8_t current_genre_bank;      /* arp_chords.h genre, 0..ARP_GENRE_COUNT - 1 */
     uint8_t accent_velocity;         /* 1..127: an accented step's first strike */
 } ArpState;
-PS_STATIC_ASSERT(sizeof(ArpState) == 54u, "ArpState flash layout");
+PS_STATIC_ASSERT(sizeof(ArpState) == 102u, "ArpState flash layout");
 
 /* the factory arp slot: every step empty (captured steps start from the default knob values), 1/4 steps (8.3's
  * rhythm cells are then the 16ths its table names), 8 steps, layer 2 (2026-10-26: the SEQ has layer 1), no MAQ
@@ -316,7 +317,7 @@ static inline void arp_defaults(ArpState *a)
     }
     a->layer_timing = (uint8_t)(ARPLAYER_L2 | ARP_TIMING_DEFAULT << 4);   /* L2, the SEQ's L1 (SINGL: plays on L1) */
     a->gate_length = ARP_GATE_DEFAULT;
-    a->sequence_length = ARP_NSTEP;
+    a->sequence_length = ARP_LEN_DEFAULT;
     a->transpose_maq_option = 0u;
     a->current_genre_bank = ARP_GENRE_DEFAULT;
     a->accent_velocity = ARP_ACCENT_DEFAULT;
@@ -777,7 +778,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 1006u,"WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 1054u,"WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */
