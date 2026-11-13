@@ -50,6 +50,14 @@ typedef struct {
     int32_t sxf;                    /* SPREAD's crossfade from the undetuned reads, Q15: 0 = no spread */
     uint32_t spa[4], spb[4];        /* SPREAD: each loop's four detuned read positions, Q16 samples */
     uint32_t ssa[4], ssb[4];        /* and their steps */
+    /* pcm_prepare's inputs when it last worked everything out with the loops alone sounding (2026-11-12): the same
+     * inputs again give the same results, so the tick only re-aims the weights (c_ok 0: work it out) */
+    uint32_t c_freq, c_gen;
+    int32_t c_morph;
+    float c_rate_a, c_rate_b;       /* each loop's rate at its root (step_for's first argument, B's with its factor) */
+    uint8_t c_root_a, c_root_b;
+    const uint32_t *c_ratio;        /* pcm_spread's row when it last worked its playheads out (NULL: none) */
+    uint8_t c_code, c_ok, c_hit;    /* c_hit: this tick's pcm_prepare took the cache */
 } PcmOsc;
 
 void pcm_osc_init(void);            /* the mu-law decode table, in RAM */
@@ -64,6 +72,9 @@ int32_t pcm_render_one(PcmOsc *q);
 /* audio-rate FM: this sample's frequency (Q16 Hz). Through zero (2026-11-05): below 0 the loops read backwards (the
  * attack forwards, at the speed's size); the speed against the note's own stays within +-4 */
 int32_t pcm_render_one_fm(PcmOsc *q, int32_t freq_q16);
+/* n samples of pcm_render_one_fm at freq2_q16 + 1.5 Hz per unit of (w1 * depth) >> 12 (osc_mixer_osc2's FM), the
+ * same samples, with the state in locals while only the loops sound (2026-11-12) */
+void pcm_render_fm_block(PcmOsc *q, const int32_t *w1, int depth, uint32_t freq2_q16, int32_t *out, int n);
 /* audio-rate PM (2026-11-05): this sample read `off` of a cycle (2^32 = one cycle of the note) away, as a wavetable's
  * PM offsets its phase; the positions themselves run on at the note's pitch */
 int32_t pcm_render_one_pm(PcmOsc *q, int32_t off);

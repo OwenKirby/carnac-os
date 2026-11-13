@@ -16,9 +16,12 @@ static const PcmEntry *entry_at(const uint8_t *img, uint32_t i)
     return (const PcmEntry *)(const void *)(img + PCM_HDR_SIZE + i * PCM_ENTRY_SIZE);
 }
 
+volatile uint32_t pcm_store_gen;
+
 static void list_waves(void)
 {
     uint32_t a, i;
+    pcm_store_gen++;                        /* (pcm_osc.c's per-tick cache: any wave it looked up may be gone) */
     pcm_nwaves = 0;
     for (a = 0; a < PCM_AREAS; a++)
         for (i = 0; i < pcm_n[a]; i++)

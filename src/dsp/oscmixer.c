@@ -212,11 +212,8 @@ void osc_mixer_osc2_block(const OscMixVoice *mv, const int32_t *w1, WavetableOsc
         }
         return;
     }
-    if (fm) {                                   /* FM: osc_mixer_osc2's pitch, per sample */
-        for (int i = 0; i < n; i++) {
-            int32_t fm_hz = ((int32_t)(int16_t)w1[i] * mv->depth) >> 12;
-            w2[i] = pcm_render_one_fm(&osc2->pcm, (int32_t)mv->freq2_q16 + fm_hz * 98304);   /* through zero */
-        }
+    if (fm) {                                   /* FM: osc_mixer_osc2's pitch, per sample, through zero */
+        pcm_render_fm_block(&osc2->pcm, w1, mv->depth, mv->freq2_q16, w2, n);
         osc2->center_phase += osc2->center_step * (uint32_t)n;
         return;
     }

@@ -103,5 +103,7 @@ const PcmEntry *pcm_sample(uint8_t ref, uint8_t kind, const uint8_t **data);
 /* the WAVE entries in order (area 0's, then 1's, then 2's): the PCM part of the oscillator's wave list */
 uint32_t pcm_wave_count(void);
 const PcmEntry *pcm_wave(uint32_t i);
+/* changes at every attach and detach (2026-11-12): pcm_prepare's cache of a voice's lookups is stale once it moves */
+extern volatile uint32_t pcm_store_gen;
 
 #endif

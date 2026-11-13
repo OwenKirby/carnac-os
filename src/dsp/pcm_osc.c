@@ -13,6 +13,7 @@
  * lerp beats float, which pays an int -> float conversion; fm1-cpu-profile) */
 static int16_t pcm_dec[256];
 
+
 void pcm_osc_init(void)
 {
     for (int i = 0; i < 256; i++) {
@@ -146,8 +147,58 @@ static void set_targets(PcmOsc *q, int32_t ta, int32_t tb, int32_t tk)
     q->ramp = (uint8_t)SYNTH_CTRL_PERIOD;
 }
 
+/* SCAN as the loops' crossfade, Q15 (pa / pb as set) */
+static int32_t scan_xf(const PcmOsc *q, int morph_q12)
+{
+    int32_t xf = morph_q12 >= (7 << 12) ? W1 : (int32_t)(((uint32_t)morph_q12 << 15) / (7u << 12));
+    if (!q->pb) xf = 0;
+    if (!q->pa) xf = q->pb ? W1 : 0;
+    return xf;
+}
+
+/* FM's and PM's scales for this pitch (after the steps) */
+static void pitch_scales(PcmOsc *q, uint32_t freq_q16)
+{
+    q->inv_freq = freq_q16 ? 1.f / (float)freq_q16 : 0.f;
+    {                                       /* PM: a cycle of the note is 44100 / Hz engine samples of each read */
+        float c = 44100.f * q->inv_freq * (1.f / 65536.f);   /* (Q16 Hz in inv_freq; 2^32 phase = 2^16 * 2^16) */
+        q->pm_a = (float)q->step_a * c;
+        q->pm_b = (float)q->step_b * c;
+        q->pm_k = (float)q->step_k * c;
+        q->pm_k2 = (float)q->step_k2 * c;
+    }
+}
+
 void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
 {
+    /* the same wave, pitch and SCAN as last tick, the loops alone sounding then and now (no attack, no HANDOFF tails,
+     * no note): everything below would come out as it is, so only the weights are re-aimed (2026-11-12: this function
+     * is ~1000 instructions with ~12 divides, every tick of every PCM voice) */
+    const uint32_t gen = pcm_store_gen;
+    if (q->c_ok && q->code == q->c_code && freq_q16 == q->c_freq && morph_q12 == q->c_morph &&
+        gen == q->c_gen && !q->trig && !q->pk && !q->hand) {
+        q->c_hit = 1;
+        set_targets(q, q->ta, q->tb, 0);
+        return;
+    }
+    /* the same wave, the loops alone sounding, but a new pitch (vibrato, glide, bend) or SCAN (its mod, a turn): the
+     * steps from the loops' rates and roots kept from the last full pass, the crossfade, the weights */
+    if (q->c_ok && q->code == q->c_code && gen == q->c_gen && !q->trig && !q->pk && !q->hand) {
+        q->c_hit = (uint8_t)(freq_q16 == q->c_freq);       /* (pcm_spread: the steps did not move) */
+        if (freq_q16 != q->c_freq) {
+            if (q->pa) q->step_a = step_for(q->c_rate_a, q->c_root_a, freq_q16);
+            if (q->pb) q->step_b = step_for(q->c_rate_b, q->c_root_b, freq_q16);
+            pitch_scales(q, freq_q16);
+            q->c_freq = freq_q16;
+        }
+        if (morph_q12 != q->c_morph) {
+            q->xf = scan_xf(q, morph_q12);
+            q->c_morph = morph_q12;
+        }
+        set_targets(q, q->pa ? W1 - q->xf : 0, q->pb ? q->xf : 0, 0);
+        return;
+    }
+    q->c_hit = 0;
     const uint8_t *da = NULL, *db = NULL, *dk = NULL;
     const PcmEntry *a = NULL, *b = NULL, *k = NULL;
     float k_rate = 0.f, b_mul = 1.f;
@@ -209,7 +260,9 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
         }
         q->pa = da;
         q->len_a = len;
-        q->step_a = step_for((float)a->u.s.rate * (65536.f / 44100.f), a->root, freq_q16);
+        q->c_rate_a = (float)a->u.s.rate * (65536.f / 44100.f);
+        q->c_root_a = a->root;
+        q->step_a = step_for(q->c_rate_a, a->root, freq_q16);
     } else {
         q->pa = NULL;
     }
@@ -221,14 +274,13 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
         }
         q->pb = db;
         q->len_b = len;
-        uint32_t s = step_for((float)b->u.s.rate * (65536.f / 44100.f) * b_mul, b->root, freq_q16);
-        q->step_b = s;
+        q->c_rate_b = (float)b->u.s.rate * (65536.f / 44100.f) * b_mul;
+        q->c_root_b = b->root;
+        q->step_b = step_for(q->c_rate_b, b->root, freq_q16);
     } else {
         q->pb = NULL;
     }
-    int32_t xf = morph_q12 >= (7 << 12) ? W1 : (int32_t)(((uint32_t)morph_q12 << 15) / (7u << 12));
-    if (!q->pb) xf = 0;
-    if (!q->pa) xf = q->pb ? W1 : 0;
+    int32_t xf = scan_xf(q, morph_q12);
     q->xf = xf;
     /* the attack: from the start at a new note; it stops if its wave changes under it. HANDOFF: the attack nearer
      * SCAN, chosen at the note, plays on whatever SCAN does after */
@@ -285,14 +337,7 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
         q->step_k = step_for(k_rate, k_root, freq_q16);
     if (q->pk2)
         q->step_k2 = step_for(kb_rate, kb_root, freq_q16);
-    q->inv_freq = freq_q16 ? 1.f / (float)freq_q16 : 0.f;
-    {                                       /* PM: a cycle of the note is 44100 / Hz engine samples of each read */
-        float c = 44100.f * q->inv_freq * (1.f / 65536.f);   /* (Q16 Hz in inv_freq; 2^32 phase = 2^16 * 2^16) */
-        q->pm_a = (float)q->step_a * c;
-        q->pm_b = (float)q->step_b * c;
-        q->pm_k = (float)q->step_k * c;
-        q->pm_k2 = (float)q->step_k2 * c;
-    }
+    pitch_scales(q, freq_q16);
     if (!trig && q->hand == 2 && q->pk) {   /* retaken: the loops faded out last tick; now placed to reach index 0
                                              * as the attacks end (the samples each has left, at its pace) */
         uint64_t ra = q->end_k > q->pos_k ? (uint64_t)(q->end_k - q->pos_k) : 0u;
@@ -343,14 +388,24 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
         q->sxf = 0;                         /* SPREAD's playheads restart from the new loops (pcm_spread) */
     }
     set_targets(q, ta, tb, q->pk ? (int32_t)(((int64_t)k_level * q->ksplit) >> 15) : 0);
+    q->c_ok = (uint8_t)(!q->pk && !q->hand && !q->tmul_a && !q->tmul_b);
+    q->c_code = q->code;
+    q->c_freq = freq_q16;
+    q->c_morph = morph_q12;
+    q->c_gen = gen;
 }
 
 void pcm_spread(PcmOsc *q, const uint32_t *ratio_q28, int32_t xfade_q15)
 {
+    /* pcm_prepare took its cache (the steps are last tick's) and the row and crossfade are last tick's too */
+    if (q->c_hit && ratio_q28 && ratio_q28 == q->c_ratio && xfade_q15 > 0 && xfade_q15 == q->sxf)
+        return;
+    q->c_ratio = NULL;
     if (!ratio_q28 || xfade_q15 <= 0 || (!q->pa && !q->pb)) {
         q->sxf = 0;
         return;
     }
+    q->c_ratio = ratio_q28;
     /* spread 0 -> on (or a new wave): the detuned playheads start from the undetuned ones, one coherent sound */
     if (q->sxf == 0)
         for (int h = 0; h < 4; h++) {
@@ -423,134 +478,16 @@ static inline uint32_t skip(uint32_t pos, uint32_t step, uint32_t len, int m)
 
 /* m samples while the attack plays: the attack and each loop that has weight (normally the one nearer SCAN alone;
  * the other only while it ramps out, e.g. a voice retaken while it sounds). Short: a tenth of a second a note. */
-static void render_attack(PcmOsc *q, int32_t *out, int m)
-{
-    const uint8_t *pk = q->pk, *pa = q->pa, *pb = q->pb;
-    uint32_t xk = q->pos_k, sk = q->step_k, xa = q->pos_a, sa = q->step_a, la = q->len_a, xb = q->pos_b,
-             sb = q->step_b, lb = q->len_b;
-    int32_t wk = q->wk, wa = q->wa, wb = q->wb, dk = q->dk, da = q->da, db = q->db;
-    int ramp = q->ramp;
-    int use_a = pa && (wa != 0 || (ramp && q->ta != 0)), use_b = pb && (wb != 0 || (ramp && q->tb != 0));
-    for (int i = 0; i < m; i++) {
-        int32_t y = (rd(pk, xk) * wk) >> 15;
-        xk += sk;
-        if (q->pk2 && q->pos_k2 < q->end_k2) {
-            y += (rd(q->pk2, q->pos_k2) * q->wk2) >> 15;
-            q->pos_k2 += q->step_k2;
-        }
-        if (use_a) y += (rd(pa, xa) * wa) >> 15;
-        if (use_b) y += (rd(pb, xb) * wb) >> 15;
-        if (pa) xa = wrap(xa + sa, la);
-        if (pb) xb = wrap(xb + sb, lb);
-        if (ramp) {
-            RAMP_STEP(wk, dk, q->tk);
-            RAMP_STEP(wa, da, q->ta);
-            RAMP_STEP(wb, db, q->tb);
-            ramp--;
-        }
-        out[i] = clamp15(y);
-    }
-    q->pos_k = xk; q->pos_a = xa; q->pos_b = xb;
-    q->wk = wk; q->wa = wa; q->wb = wb;
-    q->ramp = (uint8_t)ramp;
-}
 
 /* m samples of the loops while their weights ramp (SCAN moved, the attack ended): A and B crossfaded, or the one
  * that has weight alone, or silence (they keep turning) */
-static void render_ramp(PcmOsc *q, int32_t *out, int m)
-{
-    const uint8_t *pa = q->pa, *pb = q->pb;
-    uint32_t xa = q->pos_a, sa = q->step_a, la = q->len_a, xb = q->pos_b, sb = q->step_b, lb = q->len_b;
-    int32_t wa = q->wa, wb = q->wb, da = q->da, db = q->db, ta = q->ta, tb = q->tb;
-    int ramp = q->ramp;
-    int use_a = pa && (wa != 0 || ta != 0), use_b = pb && (wb != 0 || tb != 0);
-    for (int i = 0; i < m; i++) {
-        int32_t y = 0;
-        if (use_a) y += (rd(pa, xa) * wa) >> 15;
-        if (use_b) y += (rd(pb, xb) * wb) >> 15;
-        if (pa) xa = wrap(xa + sa, la);
-        if (pb) xb = wrap(xb + sb, lb);
-        if (ramp) {
-            RAMP_STEP(wa, da, ta);
-            RAMP_STEP(wb, db, tb);
-            ramp--;
-        }
-        out[i] = clamp15(y);
-    }
-    q->pos_a = xa; q->pos_b = xb;
-    q->wa = wa; q->wb = wb;
-    q->ramp = (uint8_t)ramp;
-}
 
 /* samples before a loop's position passes its end (the reads up to then need no wrap test) */
 static inline int to_end(uint32_t pos, uint32_t step, uint32_t len) { return (int)((len - pos + step - 1u) / step); }
 
 /* m samples of the loops with the weights still (most of the time): the reads alone, the wrap tested once per stretch
  * between two loop ends, no clamp (the weights add up to at most 1: the sum stays in range) */
-static void render_steady(PcmOsc *q, int32_t *out, int m)
-{
-    const uint8_t *pa = q->pa, *pb = q->pb;
-    uint32_t xa = q->pos_a, sa = q->step_a, la = q->len_a, xb = q->pos_b, sb = q->step_b, lb = q->len_b;
-    int32_t wa = q->wa, wb = q->wb;
-    int i = 0;
-    if (pa && wa && pb && wb) {
-        while (i < m) {
-            int seg = m - i, ka = to_end(xa, sa, la), kb = to_end(xb, sb, lb);
-            if (ka < seg) seg = ka;
-            if (kb < seg) seg = kb;
-            for (int k = 0; k < seg; k++) {
-                out[i++] = ((rd(pa, xa) * wa) >> 15) + ((rd(pb, xb) * wb) >> 15);
-                xa += sa;
-                xb += sb;
-            }
-            xa = wrap(xa, la);
-            xb = wrap(xb, lb);
-        }
-    } else if ((pa && wa) || (pb && wb)) {
-        int on_a = pa && wa;
-        const uint8_t *p = on_a ? pa : pb;
-        uint32_t x = on_a ? xa : xb, s = on_a ? sa : sb, l = on_a ? la : lb;
-        int32_t w = on_a ? wa : wb;
-        while (i < m) {
-            int seg = m - i, kx = to_end(x, s, l);
-            if (kx < seg) seg = kx;
-            if (w == W1) {                      /* SCAN at an end: the read alone */
-                for (int k = 0; k < seg; k++) {
-                    out[i++] = rd(p, x);
-                    x += s;
-                }
-            } else {
-                for (int k = 0; k < seg; k++) {
-                    out[i++] = (rd(p, x) * w) >> 15;
-                    x += s;
-                }
-            }
-            x = wrap(x, l);
-        }
-        if (on_a) {
-            xa = x;
-            if (pb) xb = skip(xb, sb, lb, m);
-        } else {
-            xb = x;
-            if (pa) xa = skip(xa, sa, la, m);
-        }
-    } else {
-        for (; i < m; i++) out[i] = 0;
-        if (pa) xa = skip(xa, sa, la, m);
-        if (pb) xb = skip(xb, sb, lb, m);
-    }
-    q->pos_a = xa;
-    q->pos_b = xb;
-}
 
-static void render_loops(PcmOsc *q, int32_t *out, int m)
-{
-    int r = q->ramp < m ? q->ramp : m;
-    if (r > 0)
-        render_ramp(q, out, r);
-    if (r < m)
-        render_steady(q, out + r, m - r);
-}
 
 /* m samples of SPREAD (pcm_spread): each loop read at its four detuned playheads and averaged, under the loops'
  * weights; below SPREAD_XFADE crossfaded from the undetuned reads (which always turn); the attack undetuned on top */
@@ -635,68 +572,343 @@ static void render_spread(PcmOsc *q, int32_t *out, int m)
 /* render_spread with the weights still, no attack and all four playheads live (most of the time): the positions and
  * steps in locals, the loop with no weight only skipped on at the end. Bit-exact with render_spread (no clamp: the
  * weights add up to 1, the sum stays in range). */
-static void render_spread_steady(PcmOsc *q, int32_t *out, int m)
+
+
+/* ---- the renders, one read at a time (2026-11-12)
+ * On the FM1 a load costs ~8 cycles and loads are most of a read: two mu-law bytes and their two decode-table entries.
+ * Two loops summed in one loop also ran out of registers there (three stack reloads a sample). So each read runs over
+ * the block on its own (a pass), writing or adding into out, and keeps the decoded pair under its position while the
+ * position stays between the same two samples; the next pair reuses the old right-hand sample. At the waves' rates
+ * most notes step under one sample a sample, so most samples load nothing but out. The same sums in the same order as
+ * the 2026-11-11 renders: bit-exact (test_pcm_osc, and the scratch hash of every wave, SPREAD, SCAN, attack and
+ * cross-mod case that proved it). */
+#define P_ADD 1                             /* add into out (else write) */
+#define P_UNIT 2                            /* the weight is 1: no multiply */
+#define P_WRAP 4                            /* a loop: wraps at l (else an attack, read below its end only) */
+#define P_CLAMP 8                           /* (with P_ADD) the sum clamped to +-32767: the last of two loops */
+
+/* m (> 0) samples of one read: its weight w (Q15), from x by s; returns where it got to */
+static inline __attribute__((always_inline)) uint32_t pass_i(const uint8_t *p, uint32_t x, uint32_t s, uint32_t l,
+                                                           int32_t w, int32_t *out, int m, const int mode)
+{
+    const int16_t *dec = pcm_dec;
+    uint32_t ci = x >> 16;
+    int32_t a = dec[p[ci]], d = dec[p[ci + 1u]] - a;   /* the pair under x: a, and d = b - a */
+    int i = 0;
+    while (i < m) {
+        int e = m;
+        if (mode & P_WRAP) {                /* to the loop's end, where it wraps */
+            int k = to_end(x, s, l);
+            if (k < m - i) e = i + k;
+        }
+        for (; i < e; i++) {
+            uint32_t xi = x >> 16;
+            if (xi != ci) {
+                a = xi == ci + 1u ? a + d : dec[p[xi]];
+                d = dec[p[xi + 1u]] - a;
+                ci = xi;
+            }
+            int32_t v = a + ((d * (int32_t)((x & 0xFFFFu) >> 1)) >> 15);
+            if (!(mode & P_UNIT)) v = (v * w) >> 15;
+            if (mode & P_ADD) {
+                v += out[i];
+                if (mode & P_CLAMP) v = clamp15(v);
+            }
+            out[i] = v;
+            x += s;
+        }
+        if (mode & P_WRAP) x = wrap(x, l);
+    }
+    return x;
+}
+
+static inline __attribute__((always_inline)) uint32_t pass(const uint8_t *p, uint32_t x, uint32_t s, uint32_t l,
+                                                           int32_t w, int32_t *out, int m, const int mode);
+
+/* pass() with its weight *pw ramping as RAMP_STEP does: a step after each of the ramp's samples (no test in the loop),
+ * exactly t from the ramp's end, then a plain pass for the rest of the block */
+static inline __attribute__((always_inline)) uint32_t pass_ramp_i(const uint8_t *p, uint32_t x, uint32_t s, uint32_t l,
+                                                                int32_t *pw, int32_t dw, int32_t t, int ramp,
+                                                                int32_t *out, int m, const int mode)
+{
+    const int16_t *dec = pcm_dec;
+    int32_t w = *pw;
+    const int n1 = ramp < m ? ramp : m;     /* the samples whose weight steps */
+    if (n1 > 0) {
+        uint32_t ci = x >> 16;
+        int32_t a = dec[p[ci]], d = dec[p[ci + 1u]] - a;
+        int i = 0;
+        while (i < n1) {
+            int e = n1;
+            if (mode & P_WRAP) {
+                int k = to_end(x, s, l);
+                if (k < n1 - i) e = i + k;
+            }
+            for (; i < e; i++) {
+                uint32_t xi = x >> 16;
+                if (xi != ci) {
+                    a = xi == ci + 1u ? a + d : dec[p[xi]];
+                    d = dec[p[xi + 1u]] - a;
+                    ci = xi;
+                }
+                int32_t v = ((a + ((d * (int32_t)((x & 0xFFFFu) >> 1)) >> 15)) * w) >> 15;
+                if (mode & P_ADD) {
+                    v += out[i];
+                    if (mode & P_CLAMP) v = clamp15(v);
+                }
+                out[i] = v;
+                x += s;
+                w += dw;
+            }
+            if (mode & P_WRAP) x = wrap(x, l);
+        }
+        if (n1 == ramp)
+            w = t;
+    }
+    *pw = w;
+    if (n1 < m)
+        x = pass(p, x, s, l, w, out + n1, m - n1, mode);
+    return x;
+}
+
+/* each mode's pass compiled once (2026-11-12: inlined at every call they cost ~5 KB of flash; a call a block is
+ * nothing beside a block's samples) */
+#define PASS_FN(name, mode)     static __attribute__((noinline)) uint32_t name(const uint8_t *p, uint32_t x, uint32_t s, uint32_t l, int32_t w,                                                    int32_t *out, int m) { return pass_i(p, x, s, l, w, out, m, mode); }
+PASS_FN(pass_k0, 0)
+PASS_FN(pass_ka, P_ADD)
+PASS_FN(pass_lw, P_WRAP)
+PASS_FN(pass_lu, P_WRAP | P_UNIT)
+PASS_FN(pass_la, P_WRAP | P_ADD)
+PASS_FN(pass_lua, P_WRAP | P_UNIT | P_ADD)
+PASS_FN(pass_lac, P_WRAP | P_ADD | P_CLAMP)
+#define RAMP_FN(name, mode)     static __attribute__((noinline)) uint32_t name(const uint8_t *p, uint32_t x, uint32_t s, uint32_t l, int32_t *pw,                                                    int32_t dw, int32_t t, int ramp, int32_t *out, int m)     { return pass_ramp_i(p, x, s, l, pw, dw, t, ramp, out, m, mode); }
+RAMP_FN(ramp_k0, 0)
+RAMP_FN(ramp_lw, P_WRAP)
+RAMP_FN(ramp_la, P_WRAP | P_ADD)
+RAMP_FN(ramp_lac, P_WRAP | P_ADD | P_CLAMP)
+
+/* the calls below name a mode; these pick its one copy (the mode is a constant: the switch folds away) */
+static inline __attribute__((always_inline)) uint32_t pass(const uint8_t *p, uint32_t x, uint32_t s, uint32_t l,
+                                                           int32_t w, int32_t *out, int m, const int mode)
+{
+    switch (mode) {
+    case 0: return pass_k0(p, x, s, l, w, out, m);
+    case P_ADD: return pass_ka(p, x, s, l, w, out, m);
+    case P_WRAP: return pass_lw(p, x, s, l, w, out, m);
+    case P_WRAP | P_UNIT: return pass_lu(p, x, s, l, w, out, m);
+    case P_WRAP | P_ADD: return pass_la(p, x, s, l, w, out, m);
+    case P_WRAP | P_UNIT | P_ADD: return pass_lua(p, x, s, l, w, out, m);
+    case P_WRAP | P_ADD | P_CLAMP: return pass_lac(p, x, s, l, w, out, m);
+    default: return pass_i(p, x, s, l, w, out, m, mode);
+    }
+}
+static inline __attribute__((always_inline)) uint32_t pass_ramp(const uint8_t *p, uint32_t x, uint32_t s, uint32_t l,
+                                                                int32_t *pw, int32_t dw, int32_t t, int ramp,
+                                                                int32_t *out, int m, const int mode)
+{
+    switch (mode) {
+    case 0: return ramp_k0(p, x, s, l, pw, dw, t, ramp, out, m);
+    case P_WRAP: return ramp_lw(p, x, s, l, pw, dw, t, ramp, out, m);
+    case P_WRAP | P_ADD: return ramp_la(p, x, s, l, pw, dw, t, ramp, out, m);
+    case P_WRAP | P_ADD | P_CLAMP: return ramp_lac(p, x, s, l, pw, dw, t, ramp, out, m);
+    default: return pass_ramp_i(p, x, s, l, pw, dw, t, ramp, out, m, mode);
+    }
+}
+
+/* a weight's ramp over m samples nobody reads it in */
+static inline int32_t ramp_skip(int32_t w, int32_t dw, int32_t t, int ramp, int m)
+{
+    if (ramp <= 0) return w;
+    return ramp <= m ? t : w + dw * m;
+}
+
+/* m (> 0) samples while the attack plays (the sums of the per-sample render before 2026-11-12): the attack, B's attack beside it while it lasts,
+ * each loop that has weight */
+static void render_attack(PcmOsc *q, int32_t *out, int m)
+{
+    const uint8_t *pa = q->pa, *pb = q->pb;
+    const int ramp = q->ramp;
+    int32_t wk = q->wk, wa = q->wa, wb = q->wb;
+    const int use_a = pa && (wa != 0 || (ramp && q->ta != 0)), use_b = pb && (wb != 0 || (ramp && q->tb != 0));
+    if (m <= 0)
+        return;
+    q->pos_k = pass_ramp(q->pk, q->pos_k, q->step_k, 0, &wk, q->dk, q->tk, ramp, out, m, 0);
+    if (q->pk2 && q->pos_k2 < q->end_k2) {  /* its reads while it lasts (then it stops where it ended) */
+        int k2 = to_end(q->pos_k2, q->step_k2, q->end_k2);
+        q->pos_k2 = pass(q->pk2, q->pos_k2, q->step_k2, 0, q->wk2, out, k2 < m ? k2 : m, P_ADD);
+    }
+    if (use_a) {
+        q->pos_a = pass_ramp(pa, q->pos_a, q->step_a, q->len_a, &wa, q->da, q->ta, ramp, out, m, P_WRAP | P_ADD);
+    } else {
+        if (pa) q->pos_a = skip(q->pos_a, q->step_a, q->len_a, m);
+        wa = ramp_skip(wa, q->da, q->ta, ramp, m);
+    }
+    if (use_b) {
+        q->pos_b = pass_ramp(pb, q->pos_b, q->step_b, q->len_b, &wb, q->db, q->tb, ramp, out, m, P_WRAP | P_ADD);
+    } else {
+        if (pb) q->pos_b = skip(q->pos_b, q->step_b, q->len_b, m);
+        wb = ramp_skip(wb, q->db, q->tb, ramp, m);
+    }
+    for (int i = 0; i < m; i++)
+        out[i] = clamp15(out[i]);
+    q->wk = wk; q->wa = wa; q->wb = wb;
+    q->ramp = (uint8_t)(ramp > m ? ramp - m : 0);
+}
+
+/* m (> 0) samples of the loops while their weights ramp (the per-sample render's sums) */
+static void render_ramp(PcmOsc *q, int32_t *out, int m)
+{
+    const uint8_t *pa = q->pa, *pb = q->pb;
+    const int ramp = q->ramp;
+    int32_t wa = q->wa, wb = q->wb;
+    const int use_a = pa && (wa != 0 || q->ta != 0), use_b = pb && (wb != 0 || q->tb != 0);
+    if (use_a) {
+        q->pos_a = pass_ramp(pa, q->pos_a, q->step_a, q->len_a, &wa, q->da, q->ta, ramp, out, m, P_WRAP);
+    } else {
+        if (pa) q->pos_a = skip(q->pos_a, q->step_a, q->len_a, m);
+        wa = ramp_skip(wa, q->da, q->ta, ramp, m);
+    }
+    if (use_b) {
+        if (use_a)
+            q->pos_b = pass_ramp(pb, q->pos_b, q->step_b, q->len_b, &wb, q->db, q->tb, ramp, out, m,
+                                 P_WRAP | P_ADD | P_CLAMP);
+        else
+            q->pos_b = pass_ramp(pb, q->pos_b, q->step_b, q->len_b, &wb, q->db, q->tb, ramp, out, m, P_WRAP);
+    } else {
+        if (pb) q->pos_b = skip(q->pos_b, q->step_b, q->len_b, m);
+        wb = ramp_skip(wb, q->db, q->tb, ramp, m);
+    }
+    if (!use_a && !use_b) {                 /* (B's pass clamps the sum; one loop alone stays in range: its weight is at
+                                             * most 1) */
+        for (int i = 0; i < m; i++)
+            out[i] = 0;
+    }
+    q->wa = wa; q->wb = wb;
+    q->ramp = (uint8_t)(ramp > m ? ramp - m : 0);
+}
+
+/* m (> 0) samples of the loops with the weights still (most of the time) */
+static void render_steady(PcmOsc *q, int32_t *out, int m)
+{
+    const uint8_t *pa = q->pa, *pb = q->pb;
+    const int32_t wa = q->wa, wb = q->wb;
+    const int ua = pa && wa, ub = pb && wb;
+    if (ua) {
+        if (wa == W1) q->pos_a = pass(pa, q->pos_a, q->step_a, q->len_a, W1, out, m, P_WRAP | P_UNIT);
+        else q->pos_a = pass(pa, q->pos_a, q->step_a, q->len_a, wa, out, m, P_WRAP);
+    } else if (pa) {
+        q->pos_a = skip(q->pos_a, q->step_a, q->len_a, m);
+    }
+    if (ub) {
+        if (ua) q->pos_b = pass(pb, q->pos_b, q->step_b, q->len_b, wb, out, m, P_WRAP | P_ADD);
+        else if (wb == W1) q->pos_b = pass(pb, q->pos_b, q->step_b, q->len_b, W1, out, m, P_WRAP | P_UNIT);
+        else q->pos_b = pass(pb, q->pos_b, q->step_b, q->len_b, wb, out, m, P_WRAP);
+    } else if (pb) {
+        q->pos_b = skip(q->pos_b, q->step_b, q->len_b, m);
+    }
+    if (!ua && !ub)
+        for (int i = 0; i < m; i++)
+            out[i] = 0;
+}
+
+static void render_loops(PcmOsc *q, int32_t *out, int m)
+{
+    int r = q->ramp < m ? q->ramp : m;
+    if (r > 0)
+        render_ramp(q, out, r);
+    if (r < m)
+        render_steady(q, out + r, m - r);
+}
+
+/* a loop's four SPREAD playheads summed into acc over m (<= 16) samples (RD4 before its >> 2) */
+static void spread4(const uint8_t *p, uint32_t *sp, const uint32_t *ss, uint32_t l, int32_t *acc, int m)
+{
+    sp[0] = pass(p, sp[0], ss[0], l, W1, acc, m, P_WRAP | P_UNIT);
+    for (int h = 1; h < 4; h++)
+        sp[h] = pass(p, sp[h], ss[h], l, W1, acc, m, P_WRAP | P_UNIT | P_ADD);
+}
+
+/* render_spread's sums, the weights still, over m (> 0, <= 16) samples, a playhead at a time */
+static void spread_chunk(PcmOsc *q, int32_t *out, int m)
 {
     const uint8_t *pa = q->pa, *pb = q->pb;
     const int32_t wa = q->wa, wb = q->wb, sxf = q->sxf;
-    const int ua = pa && wa != 0, ub = pb && wb != 0;
+    const int ua = pa && wa != 0, ub = pb && wb != 0, mid = sxf < W1;
+    int32_t sb[16], c[16];
+    if (ua) spread4(pa, q->spa, q->ssa, q->len_a, out, m);
+    else if (pa) for (int h = 0; h < 4; h++) q->spa[h] = skip(q->spa[h], q->ssa[h], q->len_a, m);
+    if (ub) spread4(pb, q->spb, q->ssb, q->len_b, ua ? sb : out, m);
+    else if (pb) for (int h = 0; h < 4; h++) q->spb[h] = skip(q->spb[h], q->ssb[h], q->len_b, m);
     if (ua && ub) {
-        uint32_t xa = q->pos_a, sa = q->step_a, la = q->len_a, xb = q->pos_b, sb = q->step_b, lb = q->len_b;
-        uint32_t a0 = q->spa[0], a1 = q->spa[1], a2 = q->spa[2], a3 = q->spa[3];
-        uint32_t b0 = q->spb[0], b1 = q->spb[1], b2 = q->spb[2], b3 = q->spb[3];
-        const uint32_t ta0 = q->ssa[0], ta1 = q->ssa[1], ta2 = q->ssa[2], ta3 = q->ssa[3];
-        const uint32_t tb0 = q->ssb[0], tb1 = q->ssb[1], tb2 = q->ssb[2], tb3 = q->ssb[3];
-        for (int i = 0; i < m; i++) {
-            int32_t y = ((RD4(pa, a0, a1, a2, a3) * wa) >> 15) + ((RD4(pb, b0, b1, b2, b3) * wb) >> 15);
-            if (sxf < W1) {
-                int32_t c = ((rd(pa, xa) * wa) >> 15) + ((rd(pb, xb) * wb) >> 15);
-                y = c + (((y - c) * sxf) >> 15);
-            }
-            out[i] = y;
-            xa = wrap(xa + sa, la);
-            a0 = wrap(a0 + ta0, la); a1 = wrap(a1 + ta1, la); a2 = wrap(a2 + ta2, la); a3 = wrap(a3 + ta3, la);
-            xb = wrap(xb + sb, lb);
-            b0 = wrap(b0 + tb0, lb); b1 = wrap(b1 + tb1, lb); b2 = wrap(b2 + tb2, lb); b3 = wrap(b3 + tb3, lb);
-        }
-        q->pos_a = xa; q->pos_b = xb;
-        q->spa[0] = a0; q->spa[1] = a1; q->spa[2] = a2; q->spa[3] = a3;
-        q->spb[0] = b0; q->spb[1] = b1; q->spb[2] = b2; q->spb[3] = b3;
-        return;
-    }
-    if (ua || ub) {                         /* one loop sounds (SCAN at an end, or one loop); the other turns on */
-        const uint8_t *p = ua ? pa : pb;
-        uint32_t *sp = ua ? q->spa : q->spb, *ss = ua ? q->ssa : q->ssb;
-        uint32_t x = ua ? q->pos_a : q->pos_b, s = ua ? q->step_a : q->step_b, l = ua ? q->len_a : q->len_b;
+        for (int i = 0; i < m; i++)
+            out[i] = (((out[i] >> 2) * wa) >> 15) + (((sb[i] >> 2) * wb) >> 15);
+    } else {
         const int32_t w = ua ? wa : wb;
-        uint32_t x0 = sp[0], x1 = sp[1], x2 = sp[2], x3 = sp[3];
-        const uint32_t s0 = ss[0], s1 = ss[1], s2 = ss[2], s3 = ss[3];
-        for (int i = 0; i < m; i++) {
-            int32_t y = (RD4(p, x0, x1, x2, x3) * w) >> 15;
-            if (sxf < W1) {
-                int32_t c = (rd(p, x) * w) >> 15;
-                y = c + (((y - c) * sxf) >> 15);
-            }
-            out[i] = y;
-            x = wrap(x + s, l);
-            x0 = wrap(x0 + s0, l); x1 = wrap(x1 + s1, l); x2 = wrap(x2 + s2, l); x3 = wrap(x3 + s3, l);
+        for (int i = 0; i < m; i++)
+            out[i] = ((out[i] >> 2) * w) >> 15;
+    }
+    /* the undetuned reads: the low spread's crossfade from them; above it they only turn */
+    if (ua && mid) q->pos_a = pass(pa, q->pos_a, q->step_a, q->len_a, wa, c, m, P_WRAP);
+    else if (pa) q->pos_a = skip(q->pos_a, q->step_a, q->len_a, m);
+    if (ub && mid) {
+        if (ua) q->pos_b = pass(pb, q->pos_b, q->step_b, q->len_b, wb, c, m, P_WRAP | P_ADD);
+        else q->pos_b = pass(pb, q->pos_b, q->step_b, q->len_b, wb, c, m, P_WRAP);
+    } else if (pb) {
+        q->pos_b = skip(q->pos_b, q->step_b, q->len_b, m);
+    }
+    if (mid)
+        for (int i = 0; i < m; i++)
+            out[i] = c[i] + (((out[i] - c[i]) * sxf) >> 15);
+}
+
+/* render_spread's sums while the weights ramp (SCAN moving), no attack, all four playheads live, m (> 0, <= 16)
+ * samples, m <= the ramp: the reads unweighted a pass at a time, then the weights a sample at a time */
+static void spread_ramp_chunk(PcmOsc *q, int32_t *out, int m)
+{
+    const uint8_t *pa = q->pa, *pb = q->pb;
+    const int32_t sxf = q->sxf, da = q->da, db = q->db, ta = q->ta, tb = q->tb;
+    const int mid = sxf < W1;
+    int32_t wa = q->wa, wb = q->wb, ramp = q->ramp;
+    const int use_a = pa && (wa != 0 || ta != 0), use_b = pb && (wb != 0 || tb != 0);
+    int32_t sa[16], sb[16], ca[16], cb[16];
+    if (use_a) spread4(pa, q->spa, q->ssa, q->len_a, sa, m);
+    else if (pa) for (int h = 0; h < 4; h++) q->spa[h] = skip(q->spa[h], q->ssa[h], q->len_a, m);
+    if (use_b) spread4(pb, q->spb, q->ssb, q->len_b, sb, m);
+    else if (pb) for (int h = 0; h < 4; h++) q->spb[h] = skip(q->spb[h], q->ssb[h], q->len_b, m);
+    if (use_a && mid) q->pos_a = pass(pa, q->pos_a, q->step_a, q->len_a, W1, ca, m, P_WRAP | P_UNIT);
+    else if (pa) q->pos_a = skip(q->pos_a, q->step_a, q->len_a, m);
+    if (use_b && mid) q->pos_b = pass(pb, q->pos_b, q->step_b, q->len_b, W1, cb, m, P_WRAP | P_UNIT);
+    else if (pb) q->pos_b = skip(q->pos_b, q->step_b, q->len_b, m);
+    q->wk = ramp_skip(q->wk, q->dk, q->tk, ramp, m);   /* (render_spread steps it too) */
+    for (int i = 0; i < m; i++) {
+        int32_t ya = use_a ? sa[i] : 0, yb = use_b ? sb[i] : 0;
+        int32_t y = (((ya >> 2) * wa) >> 15) + (((yb >> 2) * wb) >> 15);
+        if (mid) {
+            int32_t c = 0;
+            if (use_a) c += (ca[i] * wa) >> 15;
+            if (use_b) c += (cb[i] * wb) >> 15;
+            y = c + (((y - c) * sxf) >> 15);
         }
-        sp[0] = x0; sp[1] = x1; sp[2] = x2; sp[3] = x3;
-        if (ua) {
-            q->pos_a = x;
-            if (pb) {
-                q->pos_b = skip(q->pos_b, q->step_b, q->len_b, m);
-                for (int h = 0; h < 4; h++) q->spb[h] = skip(q->spb[h], q->ssb[h], q->len_b, m);
-            }
-        } else {
-            q->pos_b = x;
-            if (pa) {
-                q->pos_a = skip(q->pos_a, q->step_a, q->len_a, m);
-                for (int h = 0; h < 4; h++) q->spa[h] = skip(q->spa[h], q->ssa[h], q->len_a, m);
-            }
+        out[i] = clamp15(y);
+        if (ramp) {
+            wa += da; if (ramp == 1) wa = ta;
+            wb += db; if (ramp == 1) wb = tb;
+            ramp--;
         }
+    }
+    q->wa = wa; q->wb = wb;
+    q->ramp = (uint8_t)ramp;
+}
+
+/* SPREAD with the weights still, no attack and all four playheads live (most of the time) */
+static void render_spread_steady(PcmOsc *q, int32_t *out, int m)
+{
+    if (!(q->pa && q->wa != 0) && !(q->pb && q->wb != 0)) {
+        render_spread(q, out, m);           /* (no loop has weight: rare) */
         return;
     }
-    render_spread(q, out, m);               /* (no loop has weight: rare) */
+    for (int o = 0; o < m; o += 16)
+        spread_chunk(q, out + o, m - o < 16 ? m - o : 16);
 }
 
 void pcm_render_block(PcmOsc *q, int32_t *out, int n)
@@ -705,8 +917,13 @@ void pcm_render_block(PcmOsc *q, int32_t *out, int n)
     q->idle = 0;
     if (q->sxf) {
         int r = q->pk ? n : (q->ramp < n ? q->ramp : n);
-        if (r > 0)
-            render_spread(q, out, r);
+        if (r > 0) {
+            if (!q->pk && q->slive == 0xFu)
+                for (int o = 0; o < r; o += 16)
+                    spread_ramp_chunk(q, out + o, r - o < 16 ? r - o : 16);
+            else
+                render_spread(q, out, r);
+        }
         if (r < n) {
             if (q->slive == 0xFu)
                 render_spread_steady(q, out + r, n - r);
@@ -777,6 +994,43 @@ int32_t pcm_render_one_fm(PcmOsc *q, int32_t freq_q16)
     return one(q, mul > 4.f ? 4.f : mul < -4.f ? -4.f : mul);
 }
 
+void pcm_render_fm_block(PcmOsc *q, const int32_t *w1, int depth, uint32_t freq2_q16, int32_t *out, int n)
+{
+    if (q->sxf || q->pk || q->ramp) {   /* an attack or a ramp (the note's first tick): one() itself */
+        for (int i = 0; i < n; i++) {
+            int32_t fm_hz = ((int32_t)(int16_t)w1[i] * depth) >> 12;
+            out[i] = pcm_render_one_fm(q, (int32_t)freq2_q16 + fm_hz * 98304);
+        }
+        return;
+    }
+    /* the loops alone, their weights still: one()'s sums with the positions in locals */
+    const uint8_t *pa = q->pa, *pb = q->pb;
+    const int32_t wa = q->wa, wb = q->wb;
+    const int ua = pa && wa != 0, ub = pb && wb != 0;
+    const uint32_t sa = q->step_a, sb = q->step_b, la = q->len_a, lb = q->len_b;
+    const float inv = q->inv_freq;
+    uint32_t xa = q->pos_a, xb = q->pos_b;
+    q->idle = 0;
+    for (int i = 0; i < n; i++) {
+        int32_t fm_hz = ((int32_t)(int16_t)w1[i] * depth) >> 12;
+        float mul = (float)((int32_t)freq2_q16 + fm_hz * 98304) * inv;
+        mul = mul > 4.f ? 4.f : mul < -4.f ? -4.f : mul;
+        int32_t y = 0;
+        if (ua) y += (rd(pa, xa) * wa) >> 15;
+        if (ub) y += (rd(pb, xb) * wb) >> 15;
+        if (mul == 1.f) {
+            if (pa) xa = wrap(xa + sa, la);
+            if (pb) xb = wrap(xb + sb, lb);
+        } else {                            /* either way round (through zero) */
+            if (pa) xa = wrap_by(xa, (int32_t)((float)sa * mul), la);
+            if (pb) xb = wrap_by(xb, (int32_t)((float)sb * mul), lb);
+        }
+        out[i] = clamp15(y);
+    }
+    q->pos_a = xa;
+    q->pos_b = xb;
+}
+
 /* the reads moved by off of a cycle for this sample (the loops round, the attacks within their samples), then back */
 int32_t pcm_render_one_pm(PcmOsc *q, int32_t off)
 {
@@ -821,4 +1075,5 @@ void pcm_idle(PcmOsc *q, int n)
     q->pk2 = NULL;
     q->hand = 0;
     q->idle = 1;
+    q->c_ok = 0;
 }
