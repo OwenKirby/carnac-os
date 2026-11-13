@@ -64,9 +64,9 @@ enum {                               /* how a row reads and writes its value */
 #define RF_BPM (1u << 6)
 #define RF_SLOT (1u << 7)
 
-enum { ST_NONE, ST_ENGINE, ST_PERF, ST_ARP, ST_LANE, ST_MFX, ST_LIVE, ST_REC };  /* the data block a page's rows index
-                                                                          * (ST_MFX: the layer's MfxParams; ST_LIVE:
-                                                                          * dsp/fx.h fx_live, the MIX page) */
+enum { ST_NONE, ST_ENGINE, ST_PERF, ST_ARP, ST_LANE, ST_LIVE, ST_REC };  /* the data block a page's rows index
+                                                                  * (ST_LIVE: dsp/fx.h fx_live, the MIX page; AMP's
+                                                                  * MFX rows: the layer's MfxParams, row_block) */
 
 typedef struct {
     const char *label;
@@ -323,7 +323,8 @@ PS_STATIC_ASSERT(sizeof(MDEST_NAMES) / sizeof(MDEST_NAMES[0]) == MDST_COUNT &&
                  sizeof(MSRC_SHORT) / sizeof(MSRC_SHORT[0]) == MSRC_COUNT, "a name a destination and source");
 
 /* MFX (2026-11-01): the type, then its own rows (archs: here the types that show the row, a bit each). L/R PHASE and
- * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]) */
+ * WIDTH are one byte (lr), AGE and COLOUR the further rows (row[]). Since 2026-11-13 they are the end of the AMP page
+ * (amp_mfx: after AMP's own rows and routes, then the routes into the MFX), the type's row named MFX */
 static const char *const MFX_TYPE_NAMES[MFX_OFFERED] = {"OFF", "STONE PHASER", "ENSEMBLE", "ENS+PHASER", "CHORUS",
                                                               "TAPE FLANGER", "BBD FLANGER", "PITCH SHIFT",
                                                               "BBD ECHO", "BRONZE AGE", "WIND HARP",
@@ -342,7 +343,7 @@ static const char *const MFX_POLARITY_NAMES[2] = {"POSITIVE", "NEGATIVE"};
 static const char *const MFX_QE_MODE_NAMES[MFX_QE_MODES] = {"SWOOP", "DUCK"};
 #define MT(x) ((uint16_t)(1u << MFX_##x))
 static const UiRow MFX_ROWS[] = {
-    {"TYPE", OFS(MfxParams, type), 0, MFX_OFFERED - 1, RK_BYTE, 0, MFX_TYPE_NAMES, A_ALL},
+    {"MFX", OFS(MfxParams, type), 0, MFX_OFFERED - 1, RK_BYTE, 0, MFX_TYPE_NAMES, A_ALL},
     {"MODE", (uint8_t)(OFS(MfxParams, row) + MFX_R_MODE), 0, MFX_BF_MODES - 1, RK_BYTE, 0, MFX_BF_MODE_NAMES,
      MT(BBD_FLANGER)},
     {"ENV MODE", (uint8_t)(OFS(MfxParams, row) + MFX_R_MODE), 0, MFX_QE_MODES - 1, RK_BYTE, 0, MFX_QE_MODE_NAMES,
@@ -366,6 +367,7 @@ static const UiRow MFX_ROWS[] = {
     {"LEVEL", (uint8_t)(OFS(MfxParams, row) + MFX_R_MT_LEVEL), 0, VAL_MAX, RK_BYTE, 0, NULL, MT(METAL)},
     {"LOW", (uint8_t)(OFS(MfxParams, row) + MFX_R_MT_LOW), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, MT(METAL)},
 };
+#define MFX_ROW(r) ((r) >= MFX_ROWS && (r) < MFX_ROWS + sizeof MFX_ROWS / sizeof MFX_ROWS[0])
 #undef MT
 
 #define PERF(member) OFS(MasterPerformancePreset, member)
@@ -503,7 +505,6 @@ static const UiPage UI_PAGES[] = {
     SYNTH(LFO3_ROWS, NROWS(LFO3_ROWS), lfo, 2, LfoParams),
     MODPAGE,
     SYNTH(AMP_ROWS, NROWS(AMP_ROWS), amp, 0, AmpParams),
-    {MFX_ROWS, NROWS(MFX_ROWS), ST_MFX, 0, UICTX_SYNTH},
     {EFFECTS_ROWS, NROWS(EFFECTS_ROWS), ST_PERF, 0, UICTX_SYNTH},
     {MIX_ROWS, NROWS(MIX_ROWS), ST_LIVE, 0, UICTX_SYNTH},
     {HOME1_ROWS, NROWS(HOME1_ROWS), ST_PERF, 0, UICTX_SYNTH},
@@ -520,18 +521,18 @@ PS_STATIC_ASSERT(sizeof(UI_PAGES) / sizeof(UI_PAGES[0]) == UIPAGE_COUNT, "one UI
 
 /* 2.1: each section button's first submenu and how many submenus its presses cycle (HOME: 5.3, by mode) */
 static const uint8_t SECTION_FIRST[BTN_COUNT] = {
-    UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_MFX,
+    UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_EFFECTS,
     UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ
 };
 static const uint8_t SECTION_COUNT[BTN_COUNT] = {
-    3, 3, 3, 3, 2, 3, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* FX: OSC1, OSC2 / NOISE, OSCMIX. EDIT:
-                                                           * MOD, AMP. GLO: MFX, FX, MIX (2026-11-12). HOME: LAYER,
-                                                           * ZONES, the browser, GLOBAL */
+    3, 3, 3, 3, 2, 2, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* FX: OSC1, OSC2 / NOISE, OSCMIX. EDIT:
+                                                           * MOD, AMP (its MFX rows at the end). GLO: FX, MIX
+                                                           * (2026-11-13). HOME: LAYER, ZONES, the browser, GLOBAL */
 };
 /* each section's pages end where the next section's begin (a page dropped from the enum must shrink its count) */
 PS_STATIC_ASSERT(UIPAGE_OSC1 + 3 == UIPAGE_FILTER1 && UIPAGE_FILTER1 + 3 == UIPAGE_ENV1 &&
-                 UIPAGE_ENV1 + 3 == UIPAGE_LFO1 && UIPAGE_LFO1 + 3 == UIPAGE_MOD && UIPAGE_MOD + 2 == UIPAGE_MFX &&
-                 UIPAGE_MFX + 3 == UIPAGE_HOME1, "SECTION_COUNT: a section's presses stay inside its own pages");
+                 UIPAGE_ENV1 + 3 == UIPAGE_LFO1 && UIPAGE_LFO1 + 3 == UIPAGE_MOD && UIPAGE_MOD + 2 == UIPAGE_EFFECTS &&
+                 UIPAGE_EFFECTS + 2 == UIPAGE_HOME1, "SECTION_COUNT: a section's presses stay inside its own pages");
 /* the NOISE page: OSC2's place with one oscillator, the OSCMIXER's block */
 static const UiPage NOISE_PAGE_DEF = SYNTH(OSCMIX_ROWS, 0, oscmix, 0, OscMixerParams);   /* (no rows) */
 
@@ -770,6 +771,8 @@ static uint8_t row_shown(const UIStateMachine *sm, const UiPage *pg, const UiRow
                 return 0u;
         return 1u;
     }
+    if (MFX_ROW(r))                                  /* (archs: the MFX types that show it, ui_sm_row_state) */
+        return 1u;
     return (uint8_t)(pg->store != ST_ENGINE || (r->archs & VARCH_BIT(layer_arch(sm, sm->s.active_synth_layer))) != 0u);
 }
 
@@ -793,7 +796,7 @@ static uint8_t dest_page(uint8_t d, uint8_t arch)
     if (d == MDST_LFO3_SPEED || d == MDST_LFO3_DEPTH) return UIPAGE_LFO3;
     if (d == MDST_AMP_LEVEL || d == MDST_PAN || d == MDST_DLY_SEND || d == MDST_REV_SEND) return UIPAGE_AMP;
     if (d == MDST_GLIDE) return UIPAGE_HOME1;
-    if (d >= MDST_MFX_K1 && d <= MDST_MFX_K4) return UIPAGE_MFX;
+    if (d >= MDST_MFX_K1 && d <= MDST_MFX_K4) return UIPAGE_AMP;   /* (AMP's MFX group) */
     return UIPAGE_COUNT;
 }
 
@@ -827,16 +830,20 @@ void ui_sm_dest_turn(UIStateMachine *sm, uint8_t *dest, int32_t d)
     *dest = (uint8_t)v;
 }
 
+static uint8_t mdst_mfx(uint8_t d) { return (uint8_t)(d >= MDST_MFX_K1 && d <= MDST_MFX_K4); }
+
 /* routes on a page that is not the MOD MATRIX: each route in use whose destination belongs to the page, after the
- * page's own rows (2026-11-11), the Algorithm Encoder on its AMOUNT */
-static uint8_t page_routes(const UIStateMachine *sm, uint8_t *idx)
+ * page's own rows (2026-11-11), the Algorithm Encoder on its AMOUNT. mfx: the routes into AMP's MFX (after its rows),
+ * else the others */
+static uint8_t page_routes(const UIStateMachine *sm, uint8_t *idx, uint8_t mfx)
 {
     uint8_t layer = sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u, a = layer_arch(sm, layer), i, n = 0u;
     const EngineState *e = sm->engine[layer];
     if (sm->page == UIPAGE_MOD || ui_cur_page(sm)->ctx != UICTX_SYNTH)
         return 0u;
     for (i = 0u; i < NROUTE; i++)
-        if (!route_free(&e->route[i]) && dest_page(e->route[i].dest, a) == sm->page) {
+        if (!route_free(&e->route[i]) && dest_page(e->route[i].dest, a) == sm->page &&
+            mdst_mfx(e->route[i].dest) == mfx) {
             if (idx) idx[n] = i;
             n++;
         }
@@ -902,7 +909,8 @@ static uint8_t dest_at(uint8_t o, uint8_t base_only)
 }
 
 /* the shown rows of the current page: how many, and the i-th (NULL past the end); the routes into the page after its
- * own rows (page_routes) */
+ * own rows (page_routes). AMP (2026-11-13): then its MFX group, the MFX rows (a type's own hidden under the others,
+ * ui_sm_row_state) and the routes into the MFX */
 static uint8_t vis_count(const UIStateMachine *sm)
 {
     const UiPage *pg = ui_cur_page(sm);
@@ -910,7 +918,10 @@ static uint8_t vis_count(const UIStateMachine *sm)
     for (i = 0u; i < pg->nrows; i++)
         if (row_shown(sm, pg, &pg->rows[i]))
             n++;
-    return (uint8_t)(n + page_routes(sm, NULL));
+    n = (uint8_t)(n + page_routes(sm, NULL, 0u));
+    if (sm->page == UIPAGE_AMP)
+        n = (uint8_t)(n + NROWS(MFX_ROWS) + page_routes(sm, NULL, 1u));
+    return n;
 }
 
 static const UiRow *vis_row(const UIStateMachine *sm, uint8_t row)
@@ -920,9 +931,36 @@ static const UiRow *vis_row(const UIStateMachine *sm, uint8_t row)
     for (i = 0u; i < pg->nrows; i++)
         if (row_shown(sm, pg, &pg->rows[i]) && row-- == 0u)
             return &pg->rows[i];
-    n = page_routes(sm, idx);
+    n = page_routes(sm, idx, 0u);
+    if (row < n)
+        return &MOD_ROWS[idx[row]];
+    if (sm->page != UIPAGE_AMP)
+        return NULL;
+    row = (uint8_t)(row - n);
+    if (row < NROWS(MFX_ROWS))
+        return &MFX_ROWS[row];
+    row = (uint8_t)(row - NROWS(MFX_ROWS));
+    n = page_routes(sm, idx, 1u);
     return row < n ? &MOD_ROWS[idx[row]] : NULL;
 }
+
+/* AMP's MFX group: the cursor on an MFX row or a route into the MFX */
+uint8_t ui_sm_mfx_group(const UIStateMachine *sm)
+{
+    const UiRow *r;
+    if (sm->page != UIPAGE_AMP || sm->s.current_param_focus == UI_FOCUS_NONE)
+        return 0u;
+    r = vis_row(sm, sm->s.current_param_focus);
+    if (r == NULL)
+        return 0u;
+    if (MFX_ROW(r))
+        return 1u;
+    return (uint8_t)(r->kind == RK_ROUTE &&
+                     mdst_mfx(sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]
+                                  ->route[r->offset].dest));
+}
+
+const char *ui_sm_mfx_name(uint8_t type) { return MFX_TYPE_NAMES[type < MFX_OFFERED ? type : MFX_OFF]; }
 
 /* the MOD MATRIX's row of route ri (UI_FOCUS_NONE: not shown) */
 static uint8_t mod_row_of(const UIStateMachine *sm, uint8_t ri)
@@ -988,7 +1026,6 @@ static uint8_t *page_block_for(const UIStateMachine *sm, const UiPage *pg, uint8
     case ST_PERF: return (uint8_t *)sm->perf + pg->base;
     case ST_ARP: return (uint8_t *)sm->arp;
     case ST_LANE: return (uint8_t *)cur_lane(sm);
-    case ST_MFX: return (uint8_t *)ui_sm_mfx(sm, layer) + pg->base;
     case ST_LIVE: return fx_live + pg->base;
     case ST_REC: {                                   /* (no recorder attached: settings nobody plays) */
         static KrecSettings none = {64, 0, 64, 127};
@@ -1001,6 +1038,12 @@ static uint8_t *page_block_for(const UIStateMachine *sm, const UiPage *pg, uint8
 static uint8_t *page_block(const UIStateMachine *sm, const UiPage *pg)
 {
     return page_block_for(sm, pg, sm->s.active_synth_layer);
+}
+
+/* the block row r indexes: the page's, AMP's MFX rows the focused layer's MfxParams */
+static uint8_t *row_block(const UIStateMachine *sm, const UiRow *r)
+{
+    return MFX_ROW(r) ? (uint8_t *)ui_sm_mfx(sm, sm->s.active_synth_layer) : page_block(sm, ui_cur_page(sm));
 }
 
 static uint8_t row_layer(const UiRow *r) { return (r->flags & RF_LAYER2) != 0u ? 1u : 0u; }
@@ -1112,10 +1155,10 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     case RK_VOICES: return ui_sm_layer_voices(sm, row_layer(r));
     case RK_ARP_LAYER: return ARP_LAYER(sm->arp);
     case RK_ARP_TIMING: return ARP_TIMING(sm->arp);
-    case RK_BIT0: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] & 1u);
-    case RK_HIGH7: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] >> 1);
-    case RK_SUBWAVE: return sub6_get(&page_block(sm, ui_cur_page(sm))[r->offset]);
-    default: return page_block(sm, ui_cur_page(sm))[r->offset];
+    case RK_BIT0: return (uint8_t)(row_block(sm, r)[r->offset] & 1u);
+    case RK_HIGH7: return (uint8_t)(row_block(sm, r)[r->offset] >> 1);
+    case RK_SUBWAVE: return sub6_get(&row_block(sm, r)[r->offset]);
+    default: return row_block(sm, r)[r->offset];
     }
 }
 
@@ -1170,12 +1213,12 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
     case RK_ARP_LAYER: arp_set_layer(sm->arp, v); break;
     case RK_ARP_TIMING: arp_set_timing(sm->arp, v); break;
     case RK_BIT0: case RK_HIGH7: {
-        uint8_t *b = &page_block(sm, ui_cur_page(sm))[r->offset];
+        uint8_t *b = &row_block(sm, r)[r->offset];
         *b = r->kind == RK_BIT0 ? (uint8_t)((*b & 0xFEu) | (v & 1u)) : (uint8_t)((*b & 1u) | (uint8_t)(v << 1));
         break;
     }
-    case RK_SUBWAVE: sub6_set(&page_block(sm, ui_cur_page(sm))[r->offset], v); break;
-    default: page_block(sm, ui_cur_page(sm))[r->offset] = v; break;
+    case RK_SUBWAVE: sub6_set(&row_block(sm, r)[r->offset], v); break;
+    default: row_block(sm, r)[r->offset] = v; break;
     }
 }
 
@@ -1253,11 +1296,11 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
     flags = r->flags;
     /* SINGL_SYNTH: every Layer 2 parameter, and a sound design page pointed at layer 2, is un-highlightable */
     if (mode == PERF_SINGL_SYNTH &&
-        ((flags & RF_LAYER2) != 0u || ((pg->store == ST_ENGINE || pg->store == ST_MFX) && sm->s.active_synth_layer != 0u)))
+        ((flags & RF_LAYER2) != 0u || (pg->store == ST_ENGINE && sm->s.active_synth_layer != 0u)))
         return UIROW_GREYED;
     if ((r == &MIX_ROWS[0] && mode == PERF_SINGL_SYNTH) || (r == &MIX_ROWS[1] && mode != PERF_SINGL_SYNTH))
         return UIROW_HIDDEN;         /* MIX: BALANCE with two layers, DRY/WET with one */
-    if (pg->store == ST_MFX && r != &MFX_ROWS[0] &&  /* MFX: the type's own rows, none at OFF */
+    if (MFX_ROW(r) && r != &MFX_ROWS[0] &&           /* MFX: the type's own rows, none at OFF */
         (r->archs & (1u << ui_sm_mfx(sm, sm->s.active_synth_layer)->type)) == 0u)
         return UIROW_HIDDEN;
     if ((flags & RF_UNISON) != 0u && layer_vmode(sm, row_layer(r)) != VMODE_UNISON_STACK)
@@ -1571,6 +1614,14 @@ static uint8_t jump_dest(UIStateMachine *sm, uint8_t *route)
     return ui_sm_row_dest(sm, sm->s.current_param_focus);
 }
 
+/* a page button gives the page's own knobs (2026-11-13): arriving on AMP with its cursor kept in the MFX group, the
+ * cursor goes to AMP's first row, so the knobs under the fingers are always DRIVE .. REVERB SEND */
+static void own_knobs(UIStateMachine *sm)
+{
+    if (ui_sm_mfx_group(sm))
+        sm->s.current_param_focus = cursor_seek(sm, 0, 1);
+}
+
 static void on_section(UIStateMachine *sm, uint8_t btn)
 {
     uint8_t first = SECTION_FIRST[btn], n = SECTION_COUNT[btn], k, p;
@@ -1598,12 +1649,14 @@ static void on_section(UIStateMachine *sm, uint8_t btn)
     }
     if (!in_section(sm->page, btn)) {
         enter_page(sm, first);
+        own_knobs(sm);
         return;
     }
     for (k = 1u; k <= n; k++) {
         p = (uint8_t)(first + (sm->page - first + k) % n);
         if (ui_sm_page_visible(sm, p, sm->s.active_synth_layer)) {
             enter_page(sm, p);
+            own_knobs(sm);
             return;
         }
     }
@@ -2866,7 +2919,7 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
 {
     static const UiKnob none = KNONE;
     const UiKnob *k = &none;
-    uint8_t a, *block = 0;
+    uint8_t a, *block = 0, mfx = 0u;
     if (layer >= NLAYER)
         layer = 0u;
     if (page == UIPAGE_SEQ && knob < 4u) {           /* 7.1 / 7.2: a step value, written through ui_sm_seq_knob_set */
@@ -2889,12 +2942,15 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
         case UIPAGE_LFO1: k = &LFO1_KNOBS[knob]; break;
         case UIPAGE_LFO2: case UIPAGE_LFO3: k = &LFO_KNOBS[knob]; break;
         case UIPAGE_MOD: k = &MOD_KNOBS[knob]; break;
-        case UIPAGE_AMP: k = &AMP_KNOBS[knob]; break;
-        case UIPAGE_MFX: {
-            uint8_t t = ui_sm_mfx(sm, layer)->type;
-            k = &MFX_KNOBS[t < MFX_OFFERED ? t : MFX_OFF][knob];
+        case UIPAGE_AMP:             /* the cursor in its MFX group: the MFX type's knobs (2026-11-13) */
+            mfx = (uint8_t)(page == sm->page && layer == sm->s.active_synth_layer && ui_sm_mfx_group(sm));
+            if (mfx) {
+                uint8_t t = ui_sm_mfx(sm, layer)->type;
+                k = &MFX_KNOBS[t < MFX_OFFERED ? t : MFX_OFF][knob];
+            } else {
+                k = &AMP_KNOBS[knob];
+            }
             break;
-        }
         case UIPAGE_EFFECTS: k = &EFFECTS_KNOBS[knob]; break;
         case UIPAGE_MIX: k = &MIX_KNOBS[knob == 0u && perf_mode(sm) == PERF_SINGL_SYNTH ? 4u : knob]; break;
         case UIPAGE_HOME1: case UIPAGE_HOME2: k = &HOME_KNOBS[knob]; break;
@@ -2961,6 +3017,8 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
             return &sm->mod_src;
         }
     }
+    else if (mfx)
+        block = (uint8_t *)ui_sm_mfx(sm, layer);
     else
         block = page_block_for(sm, page_def(sm, page, layer), layer);
     if (block && k->names == SUBWAVE6_NAMES) {       /* SUB WAVE: two bytes, the knob turns a step (ui_sm_knob_written) */
@@ -3045,9 +3103,9 @@ uint8_t ui_sm_row_dest(const UIStateMachine *sm, uint8_t row)
     const uint8_t *e = (const uint8_t *)sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u], *p;
     if (r == NULL)
         return MDST_NONE;
-    if ((pg->store != ST_ENGINE && pg->store != ST_MFX) || sm->page == UIPAGE_MOD || r->kind != RK_BYTE)
+    if (pg->store != ST_ENGINE || sm->page == UIPAGE_MOD || r->kind != RK_BYTE)
         return MDST_NONE;
-    p = page_block(sm, pg) + r->offset;
+    p = row_block(sm, r) + r->offset;
     return p >= e && p < e + sizeof(EngineState) ? dest_at((uint8_t)(p - e), 0u) : (uint8_t)MDST_NONE;
 }
 

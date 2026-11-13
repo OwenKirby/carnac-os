@@ -387,13 +387,13 @@ static int32_t pu_voice_pan(const SynthVoiceNode *n)
 /* ------------------------------------------------------------- pages --- */
 static const char *const PU_TITLE[UIPAGE_COUNT] = {
     "OSC 1", "OSC 2", "OSC MIX", "FILTER 1", "FILTER 2", "FLT MIX", "ENV 1", "ENV 2", "ENV 3", "LFO 1", "LFO 2", "LFO 3",
-    "MOD MATRIX", "AMP", "MFX", "EFFECTS", "MIX", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "ARP", "SAVE",
+    "MOD MATRIX", "AMP", "EFFECTS", "MIX", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "ARP", "SAVE",
     "SEQ", "REC",
 };
 /* the first page and size of each section (UIStateMachine.c SECTION_FIRST / SECTION_COUNT, by page) */
 static void pu_section(uint8_t page, uint8_t *first, uint8_t *n)
 {
-    static const uint8_t F[] = {UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_MFX,
+    static const uint8_t F[] = {UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_EFFECTS,
                                 UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ, UIPAGE_COUNT};
     uint32_t i;
     for (i = 0; F[i + 1] != UIPAGE_COUNT && page >= F[i + 1]; i++) {}
@@ -402,7 +402,10 @@ static void pu_section(uint8_t page, uint8_t *first, uint8_t *n)
 }
 
 /* the pages whose parameters belong to a layer (the header names it) */
-static uint8_t pu_layer_page(uint8_t page) { return (uint8_t)(page <= UIPAGE_MFX); }
+static uint8_t pu_layer_page(uint8_t page) { return (uint8_t)(page <= UIPAGE_AMP); }
+
+/* AMP's MFX group (2026-11-13): the MFX's wind under the rows, its name in the header, its knobs */
+static uint8_t pu_mfx_view(const UIStateMachine *sm) { return ui_sm_mfx_group(sm); }
 
 /* the palette every page is drawn in (ui_seq_draw.c spec 3 note): GLOBAL > THEME's, whichever layer is in focus.
  * SAMHAIN is seq_palette_set's (ORANGE, or RED for the host's text checks) */
@@ -415,7 +418,7 @@ static uint8_t pu_page_pal(const UIStateMachine *sm)
 /* each page's name in the header's list of its section's pages */
 static const char *const PU_TAB[UIPAGE_COUNT] = {
     "OSC1", "OSC2", "OSCMIX", "FLT1", "FLT2", "FLTMIX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3",
-    "MATRIX", "AMP", "MFX", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ", "REC",
+    "MATRIX", "AMP", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ", "REC",
 };
 #define PU_TAB_GAP 8                 /* between two pages' names */
 /* OSC2's place is the NOISE page while the layer has one oscillator (2026-11-06) */
@@ -460,9 +463,14 @@ static void pu_draw_head(const UIStateMachine *sm)
     cv_begin(SQ_MOON_X, PU_HEAD_H, SQC(BG));
     pu_head_tabs(sm, SQ_HEAD_R, y);
     if (mode >= PERF_COUNT) mode = PERF_SINGL_SYNTH;
-    if (pu_layer_page(page)) {                       /* "L1  DUAL OSC" */
+    if (pu_layer_page(page)) {                       /* "L1  DUAL OSC", in AMP's MFX group "L1  MFX  CHORUS" */
         x = sq_rune(6, y, layer ? "L2" : "L1", SQC(THEME), 0) + 7;
-        sq_rune(x, y, ui_sm_arch_name(varch_of(sm->engine[layer])), SQC(MID), 0);
+        if (pu_mfx_view(sm)) {
+            x = sq_rune(x, y, "MFX", SQC(THEME), 0) + 7;
+            sq_rune(x, y, ui_sm_mfx_name(ui_sm_mfx(sm, layer)->type), SQC(MID), 0);
+        } else {
+            sq_rune(x, y, ui_sm_arch_name(varch_of(sm->engine[layer])), SQC(MID), 0);
+        }
     } else if (page >= UIPAGE_HOME1 && page <= UIPAGE_HOME3) {   /* "DUAL  L1 4V" */
         x = sq_rune(6, y, MODE[mode], SQC(THEME), 0) + 7;
         if (page != UIPAGE_HOME3) {
@@ -760,7 +768,7 @@ static void pu_draw_menu(const UIStateMachine *sm)
     uint8_t vis[PU_MENU_MAX], fi, n = pu_menu_vis(sm, vis, &fi), i, r, st, cur;
     int32_t y;
     uint16_t lc, vc;
-    cv_begin(240, sm->page == UIPAGE_MFX ? pu_mfx_rows(sm) * PU_ROW_H : PU_MENU_H, SQC(BG));   /* (MFX: the wind under) */
+    cv_begin(240, pu_mfx_view(sm) ? pu_mfx_rows(sm) * PU_ROW_H : PU_MENU_H, SQC(BG));   /* (MFX: the wind under) */
     if (sm->page == UIPAGE_SAVE_COMMIT) {            /* (its one row, the name, is drawn large) */
         pu_draw_save_menu(sm);
         cv_blit(0, PU_MENU_Y);
@@ -1648,7 +1656,7 @@ static const uint8_t PW_SH[9] = {44, 56, 38, 61, 47, 35, 53, 42, 31};         /*
 static uint32_t pw_t;                                /* the wind's clock: a step a frame while an effect runs */
 static int32_t pw_g;                                 /* the ground's row in the plain drawn now */
 
-/* the MFX page's menu rows: TYPE and the type's own */
+/* the menu rows over the MFX's wind (AMP's MFX group): as many as there are, up to the list's four */
 static int32_t pu_mfx_rows(const UIStateMachine *sm)
 {
     uint8_t vis[PU_MENU_MAX], f, n = pu_menu_vis(sm, vis, &f);
@@ -2731,7 +2739,8 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
     tt[0] = '\0';
     if (pu_layer_page(sm->page))                     /* "L1  FILTER 1" */
         pu_cat(tt, sm->s.active_synth_layer ? "L2  " : "L1  ");
-    pu_cat(tt + pu_strlen(tt), ui_sm_noise_page(sm, sm->page, sm->s.active_synth_layer) ? "NOISE" : PU_TITLE[sm->page]);
+    pu_cat(tt + pu_strlen(tt), ui_sm_noise_page(sm, sm->page, sm->s.active_synth_layer) ? "NOISE"
+                               : pu_mfx_view(sm) ? "MFX" : PU_TITLE[sm->page]);
     pu_arc_at(place, &mx, &my);
     gap = nv > 1 ? 200 / (nv - 1) : 0;
     if (gap > 26) gap = 26;
@@ -2963,10 +2972,10 @@ static uint32_t pu_viz_live(UIStateMachine *sm, uint32_t h)
         const EngineState *e = sm->engine[sm->s.active_synth_layer];
         return pm_sig(sm, sq_mix_bytes(h, (const uint8_t *)e->route, sizeof e->route));
     }
-    case UIPAGE_AMP: case UIPAGE_HOME1: case UIPAGE_HOME2:
+    case UIPAGE_AMP:
+        return pu_mfx_view(sm) ? pu_mfx_sig(sm, h) : pu_voices_sig(h);
+    case UIPAGE_HOME1: case UIPAGE_HOME2:
         return pu_voices_sig(h);
-    case UIPAGE_MFX:
-        return pu_mfx_sig(sm, h);
     case UIPAGE_MIX:
         return pu_mix_sig(sm, h);
     case UIPAGE_PERF:                                /* the dolmen measures the live patches, sequence and arp */
@@ -2982,7 +2991,7 @@ static uint32_t pu_viz_live(UIStateMachine *sm, uint32_t h)
 static void pu_draw_viz(UIStateMachine *sm)
 {
     uint8_t page = sm->page;
-    if (page == UIPAGE_MFX) {                        /* the wind: under the two rows, its own canvas */
+    if (pu_mfx_view(sm)) {                           /* the wind: under the rows, its own canvas */
         pu_viz_mfx(sm);
         return;
     }
@@ -3158,17 +3167,20 @@ static void pu_draw_hold(const UIStateMachine *sm)
 
 static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint32_t force)
 {
-    static uint8_t last_page = 0xFFu, last_layer, last_dlg, last_pop, last_pal = 0xFFu, last_hold = BTN_COUNT;
+    static uint8_t last_page = 0xFFu, last_layer, last_dlg, last_pop, last_pal = 0xFFu, last_hold = BTN_COUNT, last_mfx;
     uint8_t dlg = (uint8_t)(sm->dialog != UIDLG_NONE), moved = (uint8_t)(sm->page != last_page);
+    uint8_t mfx = pu_mfx_view(sm);                   /* (AMP's MFX group: another layout, everything again) */
     uint8_t pop = sm->browse ? 1u : sm->rowpop ? 2u : 0u;   /* the popup up: the preset list, the parameter list */
     sq_pal = pu_page_pal(sm);                        /* a change redraws everything (page_draw, seq_draw: pal_drawn) */
     uint8_t held = (uint8_t)(sm->hold == BTN_HOME || sm->hold == BTN_SAVE);
     if (!held && last_hold != BTN_COUNT)
         force = 1u;                                  /* the hold strip gone: the page under it again */
     last_hold = held ? sm->hold : (uint8_t)BTN_COUNT;
-    if (moved || sm->s.active_synth_layer != last_layer || dlg != last_dlg || pop != last_pop || sq_pal != last_pal) {
+    if (moved || sm->s.active_synth_layer != last_layer || dlg != last_dlg || pop != last_pop || sq_pal != last_pal ||
+        mfx != last_mfx) {
         if (moved)
             pu_top = 0;
+        last_mfx = mfx;
         last_pal = sq_pal;
         last_page = sm->page;
         last_layer = sm->s.active_synth_layer;

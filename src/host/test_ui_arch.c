@@ -443,8 +443,12 @@ int main(void)
     CHECK(sm.page == UIPAGE_HOME1 && sm.s.active_synth_layer == 0, "SINGL on HOME2 -> HOME1 (%u)", sm.page);
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     ui_sm_enforce(&sm);
-    press(BTN_GLO); press(BTN_GLO); press(BTN_GLO); press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_MFX, "GLO cycles MFX -> EFFECTS -> MIX -> MFX (%u)", sm.page);
+    press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_EFFECTS, "GLO from elsewhere -> EFFECTS (%u)", sm.page);
+    press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_MIX, "GLO -> MIX (%u)", sm.page);
+    press(BTN_GLO);
+    CHECK(sm.page == UIPAGE_EFFECTS, "GLO toggles MIX -> EFFECTS (2026-11-13: no MFX page) (%u)", sm.page);
     /* EDIT (2026-11-12): MOD -> AMP -> MOD */
     press(BTN_EDIT);
     CHECK(sm.page == UIPAGE_MOD, "EDIT -> MOD (%u)", sm.page);
@@ -452,25 +456,43 @@ int main(void)
     CHECK(sm.page == UIPAGE_AMP, "EDIT -> AMP (%u)", sm.page);
     press(BTN_EDIT);
     CHECK(sm.page == UIPAGE_MOD, "EDIT from AMP -> MOD (%u)", sm.page);
-    /* MFX (2026-11-01): TYPE alone at OFF, no knobs; a new type starts at its defaults, shows its own row and knobs */
-    press(BTN_GLO);
-    CHECK(sm.page == UIPAGE_MFX, "GLO -> MFX (%u)", sm.page);
+    /* MFX (2026-11-01; AMP's group of rows since 2026-11-13): the MFX row alone at OFF, no knobs; a new type starts at
+     * its defaults, shows its own rows and knobs; off the group the knobs are AMP's, and a page button gives them
+     * back */
+    press(BTN_EDIT);
+    CHECK(sm.page == UIPAGE_AMP, "EDIT -> AMP (%u)", sm.page);
     {
         UiKnobInfo info;
         MfxParams *m = ui_sm_mfx(&sm, 0);
-        int tr = find_row("TYPE"), pr = find_row("L/R PHASE"), wr = find_row("WIDTH");
-        CHECK(tr >= 0 && pr >= 0 && wr >= 0 && m->type == MFX_OFF, "MFX rows (%d %d %d), OFF", tr, pr, wr);
+        int tr = find_row("MFX"), pr = find_row("L/R PHASE"), wr = find_row("WIDTH"), dr = find_row("DRV MODEL");
+        CHECK(dr == 0 && tr > dr && pr > tr && wr > tr && m->type == MFX_OFF, "AMP rows, then MFX's (%d %d %d %d), OFF",
+              dr, tr, pr, wr);
         CHECK(ui_sm_row_state(&sm, (uint8_t)pr) == UIROW_HIDDEN && ui_sm_row_state(&sm, (uint8_t)wr) == UIROW_HIDDEN,
               "MFX OFF: no type row");
-        CHECK(ui_sm_knob(&sm, UIPAGE_MFX, 0, 0, &info) == 0 && info.kind == UIKNOB_NONE, "MFX OFF: no knobs");
-        sm.s.current_param_focus = (uint8_t)tr;
+        CHECK(!ui_sm_mfx_group(&sm) && ui_sm_knob(&sm, UIPAGE_AMP, 0, 0, &info) == &engine_state[0].amp.drive,
+              "AMP's first row: knob 1 DRIVE (%s)", info.label);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(tr - sm.s.current_param_focus));
+        CHECK(sm.s.current_param_focus == (uint8_t)tr && ui_sm_mfx_group(&sm), "Select onto MFX: the group (%u)",
+              sm.s.current_param_focus);
+        CHECK(ui_sm_knob(&sm, UIPAGE_AMP, 0, 0, &info) == 0 && info.kind == UIKNOB_NONE, "MFX OFF: no knobs");
         ui_sm_handle(&sm, UIEV_ALGO_ENC, 2);
         CHECK(m->type == MFX_ENSEMBLE && m->knob[MFX_K_AGE] == 40u && m->knob[MFX_K_RATE] == 74u && m->lr == 100u,
               "TYPE -> ENSEMBLE at its defaults (%u: %u %u, %u)", m->type, m->knob[0], m->knob[1], m->lr);
         CHECK(ui_sm_row_state(&sm, (uint8_t)wr) == UIROW_ACTIVE && ui_sm_row_state(&sm, (uint8_t)pr) == UIROW_HIDDEN,
               "ENSEMBLE: WIDTH, not L/R PHASE");
-        CHECK(ui_sm_knob(&sm, UIPAGE_MFX, 0, 2, &info) == &m->knob[MFX_K_SHIMMER] && info.label[0] == 'S',
+        CHECK(ui_sm_knob(&sm, UIPAGE_AMP, 0, 2, &info) == &m->knob[MFX_K_SHIMMER] && info.label[0] == 'S',
               "ENSEMBLE knob 3 is SHIMMER (%s)", info.label);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        CHECK(ui_sm_mfx_group(&sm) && ui_sm_knob(&sm, UIPAGE_AMP, 0, 2, &info) == &m->knob[MFX_K_SHIMMER],
+              "ENSEMBLE's own row: still the MFX's knobs");
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, -100);
+        CHECK(!ui_sm_mfx_group(&sm) && ui_sm_knob(&sm, UIPAGE_AMP, 0, 0, &info) == &engine_state[0].amp.drive,
+              "back up to DRV MODEL: AMP's knobs");
+        sm.s.current_param_focus = (uint8_t)tr;
+        press(BTN_EDIT); press(BTN_EDIT);
+        CHECK(sm.page == UIPAGE_AMP && sm.s.current_param_focus == 0u && !ui_sm_mfx_group(&sm),
+              "EDIT, EDIT back to AMP: its own knobs, not the MFX's (%u, %u)", sm.page, sm.s.current_param_focus);
+        sm.s.current_param_focus = (uint8_t)tr;
         ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
         CHECK(m->type == MFX_STONE_PHASER && m->knob[MFX_K_DEPTH] == 127u &&
               ui_sm_row_state(&sm, (uint8_t)pr) == UIROW_ACTIVE, "TYPE -> STONE PHASER: L/R PHASE, DEPTH 127");

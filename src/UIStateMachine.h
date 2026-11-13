@@ -55,9 +55,9 @@ enum {
     UIPAGE_FILTER1, UIPAGE_FILTER2, UIPAGE_FLTMIX,                /* SEL */
     UIPAGE_ENV1, UIPAGE_ENV2, UIPAGE_ENV3,                        /* ENV */
     UIPAGE_LFO1, UIPAGE_LFO2, UIPAGE_LFO3,                        /* LFO */
-    UIPAGE_MOD, UIPAGE_AMP,                                       /* EDIT (2026-11-12): the MOD MATRIX, the layer's AMP */
-    UIPAGE_MFX, UIPAGE_EFFECTS, UIPAGE_MIX,                       /* GLO, the signal's order on: the layer's MFX
-                                                                   * (2026-11-01), EFFECTS, MIX (the live mix) */
+    UIPAGE_MOD, UIPAGE_AMP,                                       /* EDIT (2026-11-12): the MOD MATRIX, the layer's AMP
+                                                                   * (its MFX a group of rows at the end, 2026-11-13) */
+    UIPAGE_EFFECTS, UIPAGE_MIX,                                   /* GLO (2026-11-13): EFFECTS <-> MIX, one press */
     UIPAGE_HOME1, UIPAGE_HOME2, UIPAGE_HOME3,                     /* HOME: LAYER (5.3 View 1 / 2 by layer focus), ZONES
                                                                    * (View 3), */
     UIPAGE_PERF, UIPAGE_GLOBAL,                                   /* .. the performance browser (6.1), GLOBAL
@@ -310,8 +310,13 @@ uint8_t ui_sm_dest_base(uint8_t dest);                     /* the EngineState of
 void ui_sm_set_hold(UIStateMachine *sm, uint8_t btn);
 /* the instrument settings GLOBAL's MASTER TUNE / VEL CURVE / CLOCK OUT rows and knobs edit (dsp/preset.c instrument) */
 void ui_sm_attach_instrument(UIStateMachine *sm, InstrumentSettings *inst);
-/* a layer's MFX settings, the MFX page's: its patch's (EngineState.mfx, v11) */
+/* a layer's MFX settings: its patch's (EngineState.mfx, v11) */
 MfxParams *ui_sm_mfx(const UIStateMachine *sm, uint8_t layer);
+/* AMP's MFX group (2026-11-13): the cursor on the MFX row, one of its type's rows or a route into it. While it is, the
+ * knobs are the MFX type's four and the Algorithm Encoder the row's (TYPE on the MFX row); a page button always gives
+ * AMP's own knobs back (the cursor off the group) */
+uint8_t ui_sm_mfx_group(const UIStateMachine *sm);
+const char *ui_sm_mfx_name(uint8_t type);
 void ui_sm_save_oct(UIStateMachine *sm, uint8_t up);
 /* what SAVE saves from this page: the save page's TARGET, else the kind the page loads (ui_sm_preset_target) */
 uint8_t ui_sm_save_kind(const UIStateMachine *sm);

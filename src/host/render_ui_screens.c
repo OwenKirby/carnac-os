@@ -90,6 +90,16 @@ static void shot(const char *dir, const char *name)
 
 static void go(uint8_t page) { ui_sm_goto(&sm, page); }
 
+/* AMP with the cursor on its MFX row (2026-11-13: the MFX is AMP's group of rows, its wind under them) */
+static void go_mfx(void)
+{
+    uint8_t r;
+    go(UIPAGE_AMP);
+    for (r = 0; r < ui_sm_row_count(&sm); r++)
+        if (strcmp(ui_sm_row_label(&sm, r), "MFX") == 0)
+            sm.s.current_param_focus = r;
+}
+
 /* ASCII into char_map indices (anything not in the map: a space) */
 static void put_name(uint8_t *dst, const char *s)
 {
@@ -425,7 +435,7 @@ int main(int argc, char **argv)
     /* MFX (2026-11-01): OFF, then STONE PHASER and ENSEMBLE with a chord held and the audio run, so the gusts stand
      * where the effect is in its sweep */
     fresh();
-    go(UIPAGE_MFX);
+    go_mfx();
     shot(dir, "mfx_off");
     note(0, 48, 100); note(0, 55, 100); note(0, 63, 100);
     MFX_PARAMS(0) = (MfxParams){MFX_STONE_PHASER, {64, 41, 100, 127}, 64};
@@ -455,6 +465,9 @@ int main(int argc, char **argv)
     MFX_PARAMS(0) = (MfxParams){MFX_BBD_ECHO, {99, 70, 110, 60}, 60, {0, 40}};
     run(44100u / 2u);
     shot(dir, "mfx_bbd_echo");
+    MFX_PARAMS(0) = (MfxParams){MFX_RINGING_STONES, {100, 60, 30, 70}, 100, {0, 0}};
+    run(44100u / 2u);
+    shot(dir, "mfx_ringing_stones");                 /* the longest name in the header, ROOT / CHORD / WIDTH rows */
     MFX_PARAMS(0).type = MFX_OFF;
     note(0, 48, 0); note(0, 55, 0); note(0, 63, 0);
 

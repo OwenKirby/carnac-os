@@ -44,6 +44,15 @@ int main(void)
             }
         }
     }
+    for (i = 0; i < NROWS(MFX_ROWS); i++) {             /* AMP's MFX group (2026-11-13: no page of its own) */
+        const UiRow *r = &MFX_ROWS[i];
+        int nl = (int)strlen(r->label), nv = value_chars(r);
+        rows++;
+        if (nl + nv > PU_ROW_CHARS) {
+            printf("too long: AMP's MFX \"%s\" (%d) + value (%d) = %d > %d\n", r->label, nl, nv, nl + nv, PU_ROW_CHARS);
+            bad++;
+        }
+    }
     if (bad)
         printf("%u of %u rows too long for 2x\n", bad, rows);
     else
