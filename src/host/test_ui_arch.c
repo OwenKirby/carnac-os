@@ -410,30 +410,63 @@ int main(void)
     perf_state.perf_mode = PERF_SINGL_SYNTH;
     ui_sm_enforce(&sm);
     CHECK(sm.page == UIPAGE_HOME1 && sm.s.active_synth_layer == 0 && ui_sm_layer_voices(&sm, 1) == 0, "SINGL reset");
-    /* the cycle: SINGL LAYER -> browser -> GLOBAL -> LAYER; DUAL LAYER -> ZONES -> browser -> GLOBAL -> LAYER */
+    /* the cycle (2026-11-13: GLOBAL and TUNING are HOME held + a key): SINGL LAYER <-> browser; DUAL LAYER -> ZONES
+     * -> browser -> LAYER */
     press(BTN_HOME);
     CHECK(sm.page == UIPAGE_PERF, "SINGL HOME1 -> browser (%u)", sm.page);
     CHECK(find_row("PERF PRESET") == 0 && find_row("PERF MODE") == 1, "the browser: PERF PRESET, PERF MODE");
     press(BTN_HOME);
-    CHECK(sm.page == UIPAGE_GLOBAL, "SINGL browser -> GLOBAL (%u)", sm.page);
-    press(BTN_HOME);
-    CHECK(sm.page == UIPAGE_HOME1, "SINGL GLOBAL -> HOME1 (%u)", sm.page);
+    CHECK(sm.page == UIPAGE_HOME1, "SINGL browser -> HOME1: a toggle (%u)", sm.page);
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     ui_sm_enforce(&sm);
     press(BTN_HOME);
     CHECK(sm.page == UIPAGE_HOME3, "DUAL HOME1 -> ZONES (%u)", sm.page);
-    press(BTN_HOME); press(BTN_HOME);
-    CHECK(sm.page == UIPAGE_GLOBAL, "DUAL ZONES -> browser -> GLOBAL (%u)", sm.page);
     press(BTN_HOME);
-    CHECK(sm.page == UIPAGE_HOME1, "DUAL GLOBAL -> HOME1 (%u)", sm.page);
+    CHECK(sm.page == UIPAGE_PERF, "DUAL ZONES -> browser (%u)", sm.page);
+    press(BTN_HOME);
+    CHECK(sm.page == UIPAGE_HOME1, "DUAL browser -> HOME1 (%u)", sm.page);
+    /* HOME held + the PIT / GLO keys: TUNING, GLOBAL; HOME from there: LAYER */
+    CHECK(ui_sm_home_key(&sm, UIHK_PIT) && sm.page == UIPAGE_TUNING, "HOME + PIT -> TUNING (%u)", sm.page);
+    CHECK(ui_sm_home_key_led(&sm, UIHK_PIT) == 2u && ui_sm_home_key_led(&sm, UIHK_GLO) == 1u &&
+          ui_sm_home_key_led(&sm, UIHK_NONE) == 0u, "HOME keys: PIT lit on TUNING, GLO dim, the rest dark");
+    CHECK(ui_sm_save_kind(&sm) == UISAVE_WHOLE_PERF, "SAVE on TUNING: the performance");
+    CHECK(ui_sm_home_key(&sm, UIHK_GLO) && sm.page == UIPAGE_GLOBAL, "HOME + GLO -> GLOBAL (%u)", sm.page);
+    CHECK(find_row("MASTER TUNE") < 0 && find_row("TUNING") < 0 && find_row("THEME") >= 0, "GLOBAL: no tuning rows");
+    press(BTN_HOME);
+    CHECK(sm.page == UIPAGE_HOME1, "GLOBAL: HOME -> LAYER (%u)", sm.page);
+    {   /* MONO: RETRIG -> LEGATO -> UNISON -> RETRIG; POLY: REUSE <-> RESET; from the other family its first */
+        uint8_t *vm = &perf_state.voice_mode[0], keep = *vm;
+        *vm = VMODE_POLY_RESET;
+        CHECK(ui_sm_home_key_led(&sm, UIHK_POLY) == 2u && ui_sm_home_key_led(&sm, UIHK_MONO) == 1u, "POLY lit");
+        ui_sm_home_key(&sm, UIHK_MONO);
+        CHECK(*vm == VMODE_MONO_RETRIG && ui_sm_home_key_led(&sm, UIHK_MONO) == 2u, "MONO from POLY: RETRIG");
+        ui_sm_home_key(&sm, UIHK_MONO);
+        CHECK(*vm == VMODE_MONO_LEGATO, "MONO: LEGATO");
+        ui_sm_home_key(&sm, UIHK_MONO);
+        CHECK(*vm == VMODE_UNISON_STACK, "MONO: UNISON");
+        ui_sm_home_key(&sm, UIHK_MONO);
+        CHECK(*vm == VMODE_MONO_RETRIG, "MONO: back to RETRIG");
+        ui_sm_home_key(&sm, UIHK_POLY);
+        CHECK(*vm == VMODE_POLY_REUSE, "POLY from MONO: REUSE");
+        ui_sm_home_key(&sm, UIHK_POLY);
+        CHECK(*vm == VMODE_POLY_RESET, "POLY: RESET");
+        ui_sm_home_key(&sm, UIHK_POLY);
+        CHECK(*vm == VMODE_POLY_REUSE && sm.page == UIPAGE_HOME1, "POLY: REUSE again, the page kept");
+        ui_sm_set_layer_focus(&sm, 1);
+        ui_sm_home_key(&sm, UIHK_MONO);
+        CHECK(perf_state.voice_mode[1] == VMODE_MONO_RETRIG && *vm == VMODE_POLY_REUSE, "L2 focus: L2's voicing");
+        ui_sm_set_layer_focus(&sm, 0);
+        perf_state.voice_mode[1] = VMODE_POLY_REUSE;
+        *vm = keep;
+    }
     /* the layer switch swaps HOME1 / HOME2 in place, the cursor on the same row; the cycle never shows both */
     sm.s.current_param_focus = 4u;   /* PORTA MODE (ANALOG is row 1 since 2026-10-21) */
     CHECK(ui_sm_set_layer_focus(&sm, 1) && sm.page == UIPAGE_HOME2 && sm.s.current_param_focus == 4u,
           "L2 focus on HOME1 -> HOME2, row kept (%u, %u)", sm.page, sm.s.current_param_focus);
     press(BTN_HOME);
     CHECK(sm.page == UIPAGE_HOME3, "HOME2 -> ZONES (%u)", sm.page);
-    press(BTN_HOME); press(BTN_HOME); press(BTN_HOME);
-    CHECK(sm.page == UIPAGE_HOME2, "L2: browser -> GLOBAL -> HOME2 (%u)", sm.page);
+    press(BTN_HOME); press(BTN_HOME);
+    CHECK(sm.page == UIPAGE_HOME2, "L2: browser -> HOME2 (%u)", sm.page);
     sm.s.current_param_focus = 4u;
     CHECK(ui_sm_set_layer_focus(&sm, 0) && sm.page == UIPAGE_HOME1 && sm.s.current_param_focus == 4u,
           "L1 focus on HOME2 -> HOME1, row kept (%u, %u)", sm.page, sm.s.current_param_focus);
@@ -610,7 +643,7 @@ int main(void)
     }
     perf_state.layer_patch[0] = 0;
 
-    printf("\nGLOBAL knob 4: INT TEMPO on the internal clock\n");
+    printf("\nGLOBAL knob 4: INT TEMPO on the internal clock; TUNING knob 1 MASTER TUNE (2026-11-13)\n");
     {
         UiKnobInfo i;
         uint8_t *p;
@@ -619,13 +652,14 @@ int main(void)
         CHECK(p == &perf_state.int_tempo && i.kind == UIKNOB_BPM && strcmp(i.label, "TEMPO") == 0,
               "INTERNAL: knob 4 edits INT TEMPO");
         ui_sm_attach_instrument(&sm, &instrument);
-        p = ui_sm_knob(&sm, UIPAGE_GLOBAL, 0, 0, &i);
-        CHECK(p == &instrument.master_tune && i.kind == UIKNOB_BIP, "knob 1: MASTER TUNE");
-        CHECK(ui_sm_knob(&sm, UIPAGE_GLOBAL, 0, 1, &i) == &instrument.vel_curve && i.n_enum == VELCURVE_COUNT &&
-              ui_sm_knob(&sm, UIPAGE_GLOBAL, 0, 2, &i) == &instrument.clock_out && i.n_enum == CLKOUT_COUNT,
-              "knobs 2, 3: VEL CURVE, CLOCK OUT");
+        p = ui_sm_knob(&sm, UIPAGE_TUNING, 0, 0, &i);
+        CHECK(p == &instrument.master_tune && i.kind == UIKNOB_BIP, "TUNING knob 1: MASTER TUNE");
+        CHECK(ui_sm_knob(&sm, UIPAGE_GLOBAL, 0, 0, &i) == &instrument.vel_curve && i.n_enum == VELCURVE_COUNT &&
+              ui_sm_knob(&sm, UIPAGE_GLOBAL, 0, 1, &i) == &instrument.clock_out && i.n_enum == CLKOUT_COUNT,
+              "GLOBAL knobs 1, 2: VEL CURVE, CLOCK OUT");
+        CHECK(ui_sm_knob(&sm, UIPAGE_GLOBAL, 0, 2, &i) == &perf_state.base_velocity, "GLOBAL knob 3: BASE VELOCITY");
         instrument.master_tune = 127u;
-        ui_sm_knob_written(&sm, UIPAGE_GLOBAL, 0u);
+        ui_sm_knob_written(&sm, UIPAGE_TUNING, 0u);
         CHECK(instrument.master_tune == MASTER_TUNE_MAX && instrument_tune_cents() == 50, "MASTER TUNE held to +50 cents");
         instrument.master_tune = 64u;
         instrument.vel_curve = VELCURVE_HARD;
@@ -640,11 +674,11 @@ int main(void)
         perf_state.clock_source = CLKSRC_INTERNAL;
     }
 
-    printf("\nGLOBAL TUNING and ROOT (2026-10-29): beside DELAY SYNC / DELAY TYPE's bit 0, ROOT only for a built-in\n");
+    printf("\nTUNING and ROOT (2026-10-29; their own page 2026-11-13): beside DELAY SYNC / DELAY TYPE's bit 0, ROOT only for a built-in\n");
     {
         uint8_t was = sm.page, r;
         int k;
-        sm.page = UIPAGE_GLOBAL;
+        sm.page = UIPAGE_TUNING;
         perf_state.delay_sync = 1u;                     /* DELAY SYNC on, TUNING EQUAL */
         perf_state.delay_type = DELAYTYPE_BBD;          /* ROOT C */
         k = find_row("ROOT");
@@ -657,6 +691,23 @@ int main(void)
         r = k >= 0 ? ui_sm_row_state(&sm, (uint8_t)k) : UIROW_HIDDEN;
         CHECK(r == UIROW_ACTIVE && strcmp(ui_sm_row_text(&sm, (uint8_t)k), "D") == 0, "JUST: ROOT D");
         CHECK(DELAY_SYNC(&perf_state) == 1u && DELAY_TYPE(&perf_state) == DELAYTYPE_BBD, "the delay's bits kept");
+        {   /* the knobs: TUNING and ROOT through their high-7 shadows, the delay's bits kept; ROOT greyed with no root */
+            UiKnobInfo i;
+            uint8_t *p = ui_sm_knob(&sm, UIPAGE_TUNING, 0, 1, &i);
+            CHECK(p != NULL && *p == TUNING_JUST && i.n_enum == TUNING_COUNT, "knob 2 reads JUST");
+            *p = TUNING_RAST;
+            ui_sm_knob_written(&sm, UIPAGE_TUNING, 1u);
+            p = ui_sm_knob(&sm, UIPAGE_TUNING, 0, 2, &i);
+            CHECK(PERF_TUNING(&perf_state) == TUNING_RAST && DELAY_SYNC(&perf_state) == 1u && p != NULL && *p == 2u,
+                  "knob 2 -> RAST, SYNC kept; knob 3 reads D");
+            *p = 9u;
+            ui_sm_knob_written(&sm, UIPAGE_TUNING, 2u);
+            CHECK(PERF_TUNING_ROOT(&perf_state) == 9u && DELAY_TYPE(&perf_state) == DELAYTYPE_BBD, "knob 3 -> A, TYPE kept");
+            p = ui_sm_knob(&sm, UIPAGE_TUNING, 0, 3, &i);
+            CHECK(p == &perf_state.bend_range && i.n_enum == 25u, "knob 4: BEND RANGE 0..24");
+            perf_state.delay_sync = 1u;
+            CHECK(ui_sm_knob(&sm, UIPAGE_TUNING, 0, 2, &i) == NULL && i.kind == UIKNOB_NONE, "EQUAL: knob 3 greyed");
+        }
         perf_state.delay_sync = (uint8_t)((TUNING_USER1 + 1) << 1);
         k = find_row("ROOT");
         CHECK(k < 0 || ui_sm_row_state(&sm, (uint8_t)k) == UIROW_HIDDEN, "USER 2: no ROOT");
@@ -679,8 +730,12 @@ int main(void)
     perf_state.layer_patch[0] = 7;                    /* a used slot */
     press(BTN_ENV);
     press(BTN_SAVE);
-    CHECK(sm.page == UIPAGE_SAVE_COMMIT && sm.save_target == UISAVE_PATCH_PRESET && sm.save_slot == 7u,
-          "SAVE on ENV1: the save page, PATCH, slot 7 (%u, %u, %u)", sm.page, sm.save_target, sm.save_slot);
+    CHECK(sm.page == UIPAGE_SAVE_COMMIT && sm.save_target == UISAVE_WHOLE_PERF && sm.save_slot == sm.perf_slot,
+          "SAVE on ENV1: the save page, PERF, its slot (2026-11-13) (%u, %u, %u)", sm.page, sm.save_target,
+          sm.save_slot);
+    sm.save_target = UISAVE_PATCH_PRESET;             /* TARGET turned to PATCH */
+    ui_sm_knob_written(&sm, UIPAGE_SAVE_COMMIT, 0);
+    CHECK(sm.save_slot == 7u, "TARGET to PATCH: the layer's patch slot 7 (%u)", sm.save_slot);
     CHECK(ui_sm_save_armed(&sm), "SAVE flashes on the save page");
     press(BTN_SAVE);
     CHECK(sm.dialog == UIDLG_CONFIRM && !sm.commit_pending, "a used slot asks first");
@@ -731,6 +786,7 @@ int main(void)
     ui_sm_save_oct(&sm, 1);
     CHECK(sm.page == UIPAGE_SAVE_COMMIT && sm.dialog == UIDLG_CONFIRM && sm.save_action == UIACT_PASTE,
           "SAVE + OCT+ on LFO1: the save page asks PASTE?");
+    CHECK(sm.save_target == UISAVE_PATCH_PRESET, ".. into a patch (a paste keeps the clipboard's kind)");
     press(BTN_SAVE);                                  /* NO */
     CHECK(sm.dialog == UIDLG_NONE && sm.save_action == UIACT_SAVE, "NO: nothing pasted, SAVE armed again");
     ui_sm_set_hold(&sm, BTN_SAVE);

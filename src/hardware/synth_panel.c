@@ -336,6 +336,15 @@ static uint32_t bend_last_ms;                       /* the last PITCH BEND deten
 #define BEND_SPRING_WAIT_MS 150u                    /* no detent this long: the bend glides back to centre */
 
 static uint8_t base_note(void) { return (uint8_t)((int32_t)KEY_F3 + 12 * octave); }
+
+/* HOME held + a black key (2026-11-13): the FM1's black keys carry legends, left to right OP1 OP2 OP3 OP4 OP5 OP6 PIT
+ * GLO MONO POLY and one bare. The labelled ones that have a job here (ui_sm_home_key) by key, whatever the octave:
+ * PIT (G#) the TUNING page, GLO (A#) GLOBAL, MONO (C#) / POLY (D#) the focused layer's voicing. Such a key is not
+ * played; its release goes nowhere (home_taken) */
+static const uint8_t HOME_KEY[27] = {
+    [15] = UIHK_PIT, [17] = UIHK_GLO, [20] = UIHK_MONO, [22] = UIHK_POLY,
+};
+static uint32_t home_taken;                         /* the keys a HOME chord took: their releases are not notes */
 static uint8_t keys_page(void) { return sm.page == UIPAGE_SEQ || sm.page == UIPAGE_ARP; }
 static uint8_t key_vel(void)
 {
@@ -368,6 +377,16 @@ static void octave_shift(int32_t d)
 static void key_edge(uint32_t k, uint32_t down)
 {
     uint8_t note = (uint8_t)(base_note() + k), taken = 0, mods;
+    if (!down && ((home_taken >> k) & 1u)) {        /* a HOME chord's key let go */
+        home_taken &= ~(1u << k);
+        return;
+    }
+    if (down && home_held && k < sizeof HOME_KEY && HOME_KEY[k] != UIHK_NONE) {
+        home_chord = 1;                             /* (HOME then does nothing on its release) */
+        home_taken |= 1u << k;
+        ui_sm_home_key(&sm, HOME_KEY[k]);
+        return;
+    }
     if (down && arp_btn_held && sm.page == UIPAGE_ARP) {   /* ARP held + any key: LATCH on / off (2026-11-13) */
         arp_btn_chord = 1;
         ui_sm_arp_latch(&sm, (uint8_t)!sm.arp_latch);
@@ -600,7 +619,7 @@ static uint32_t page_button(uint8_t page)
     if (page <= UIPAGE_LFO3) return 1u << B_LFO;
     if (page <= UIPAGE_AMP) return 1u << B_EDIT;
     if (page <= UIPAGE_MIX) return 1u << B_GLO;
-    if (page <= UIPAGE_GLOBAL) return 1u << B_HOME;                   /* HOME's views, then GLOBAL */
+    if (page <= UIPAGE_TUNING) return 1u << B_HOME;                   /* HOME's views, GLOBAL, TUNING */
     if (page == UIPAGE_ARP) return 1u << B_ARP;
     if (page == UIPAGE_SEQ) return 1u << B_SEQ;
     if (page == UIPAGE_REC) return 0u;                                 /* (REC's own LED shows the loop) */
@@ -659,6 +678,19 @@ static void panel_leds(void)
         kl.lit = kl.mid = kl.dim = 0;
     plat_glow(0);
     plat_play_red((int)rec);
+    if (home_held && fm1_ms - home_ms >= HOME_HINT_MS) {   /* HOME held: the keys it gives a job, dim, the open one
+                                                             * or the voicing's family lit; nothing else on the keys */
+        uint32_t k, lit = 0u, dim = 0u;
+        for (k = 0; k < sizeof HOME_KEY && k < NKEYS; k++) {
+            uint8_t l = ui_sm_home_key_led(&sm, HOME_KEY[k]);
+            if (l == 2u) lit |= 1u << k;
+            else if (l == 1u) dim |= 1u << k;
+        }
+        plat_keys_dim(dim);
+        plat_leds(b, lit);
+        fm1_led_dim_div = 2u;                       /* (half brightness, as the ARP's chord steps: readable) */
+        return;
+    }
     plat_keys_dim(kl.dim);
     plat_leds(b, kl.lit | kl.mid | keys_prev);
     if (sm.page == UIPAGE_ARP && kl.dim)            /* the ARP's chord steps at half brightness, not X0X's quarter */

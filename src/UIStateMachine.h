@@ -60,8 +60,9 @@ enum {
     UIPAGE_EFFECTS, UIPAGE_MIX,                                   /* GLO (2026-11-13): EFFECTS <-> MIX, one press */
     UIPAGE_HOME1, UIPAGE_HOME2, UIPAGE_HOME3,                     /* HOME: LAYER (5.3 View 1 / 2 by layer focus), ZONES
                                                                    * (View 3), */
-    UIPAGE_PERF, UIPAGE_GLOBAL,                                   /* .. the performance browser (6.1), GLOBAL
-                                                                   * (2026-10-17 order) */
+    UIPAGE_PERF,                                                  /* .. the performance browser (6.1) */
+    UIPAGE_GLOBAL, UIPAGE_TUNING,                                 /* HOME held + the GLO / PIT key (2026-11-13), out
+                                                                   * of HOME's cycle */
     UIPAGE_ARP,                                                   /* ARP: 8.2 */
     UIPAGE_SAVE_COMMIT,                                           /* SAVE: 6.2 */
     UIPAGE_SEQ,                                                   /* SEQ: 7.4 footer of the active lane */
@@ -195,6 +196,8 @@ typedef struct {
     uint8_t mod_src;                 /* the MOD MATRIX's SOURCE knob: the route's source, or on + ROUTE route_hint (the
                                       * same way as sub6_knob) */
     uint8_t route_hint;              /* the source + ROUTE starts from: the group the cursor was last in (2026-11-12) */
+    uint8_t tune_knob[2];            /* the TUNING page's TUNING and ROOT knobs: their high-7 bytes (PERF_TUNING /
+                                      * PERF_TUNING_ROOT), the same way as sub6_knob */
     Krec *rec;                       /* the REC page's loop (ui_sm_attach_rec); NULL: REC only on SEQ / ARP */
     uint8_t rec_ask;                 /* the confirm popup asks DOUBLE (1) or CLEAR (2) for the loop; 0: not the loop's */
     uint8_t rec_msg;                 /* a word over the loop for rec_msg_ms: 1 UNDO, 2 NOTHING TO UNDO, 3 FULL */
@@ -321,6 +324,18 @@ MfxParams *ui_sm_mfx(const UIStateMachine *sm, uint8_t layer);
  * AMP's own knobs back (the cursor off the group) */
 uint8_t ui_sm_mfx_group(const UIStateMachine *sm);
 const char *ui_sm_mfx_name(uint8_t type);
+
+/* HOME held + a labelled black key (2026-11-13): settings and places, never a performance action (a missed click must
+ * cost nothing). PIT: the TUNING page; GLO: GLOBAL; MONO: the focused layer's VOICING through MONO RETRIG -> MONO
+ * LEGATO -> UNISON (from a POLY mode: MONO RETRIG); POLY: POLY REUSE <-> POLY RESET (from a mono one: POLY REUSE).
+ * ui_sm_home_key returns 1 when it acted; ui_sm_home_key_led says how the key shows while HOME is held: 0 dark, 1 dim
+ * (selectable), 2 lit (the page open, or the voicing's family) */
+enum { UIHK_NONE, UIHK_PIT, UIHK_GLO, UIHK_MONO, UIHK_POLY, UIHK_COUNT };
+uint8_t ui_sm_home_key(UIStateMachine *sm, uint8_t hk);
+uint8_t ui_sm_home_key_led(const UIStateMachine *sm, uint8_t hk);
+const char *ui_sm_vmode_name(uint8_t mode);
+/* the instrument settings MASTER TUNE and the rest read (sm->inst, else the defaults) */
+const InstrumentSettings *ui_sm_instrument(const UIStateMachine *sm);
 void ui_sm_save_oct(UIStateMachine *sm, uint8_t up);
 /* what SAVE saves from this page: the save page's TARGET, else the kind the page loads (ui_sm_preset_target) */
 uint8_t ui_sm_save_kind(const UIStateMachine *sm);

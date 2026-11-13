@@ -505,9 +505,31 @@ int main(int argc, char **argv)
     go(UIPAGE_GLOBAL);
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 7);
     shot(dir, "global");
-    go(UIPAGE_GLOBAL);                            /* TUNING EQUAL: ROOT hidden, BEND RANGE right under it (2026-10-30) */
-    ui_sm_handle(&sm, UIEV_SELECT_ENC, 3);
-    shot(dir, "global_tuning");
+    /* TUNING (2026-11-13, its own page): EQUAL (ROOT hidden, the stones even), JUST from D with a chord sounding,
+     * MAQAM RAST, MEANTONE with MASTER TUNE up and a bend past the octave */
+    go(UIPAGE_TUNING);
+    shot(dir, "tuning_equal");
+    perf_state.delay_sync = (uint8_t)(TUNING_JUST << 1);
+    perf_state.delay_type = (uint8_t)(2u << 1);
+    ui_sm_enforce(&sm);
+    note(0, 62, 100); note(0, 66, 100); note(0, 69, 100);
+    run(44100u / 4u);
+    shot(dir, "tuning_just_d");
+    note(0, 62, 0); note(0, 66, 0); note(0, 69, 0);
+    run(44100u);
+    perf_state.delay_sync = (uint8_t)(TUNING_RAST << 1);
+    perf_state.delay_type = 0u;
+    shot(dir, "tuning_rast");
+    perf_state.delay_sync = (uint8_t)(TUNING_MEANTONE << 1);
+    perf_state.bend_range = 24u;
+    {
+        static InstrumentSettings in = {84u, VELCURVE_LINEAR, CLKOUT_OFF};   /* +20 cents */
+        ui_sm_attach_instrument(&sm, &in);
+        shot(dir, "tuning_meantone_up");
+        ui_sm_attach_instrument(&sm, NULL);
+    }
+    perf_state.delay_sync = 0u;
+    perf_state.bend_range = 2u;
 
     /* SAVE: the preset links, the name and the keyboard, the dialogs */
     fresh();

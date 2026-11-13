@@ -399,10 +399,6 @@ static const UiRow GLOBAL_ROWS[] = {   /* the MIDI setup first (2026-10-27, user
     {"MIDI CH LAYER1", PERF(midi_ch), 0, 15, RK_BYTE, RF_CHANNEL, NULL, A_ALL},
     {"MIDI CH LAYER2", (uint8_t)(PERF(midi_ch) + 1u), 0, 15, RK_BYTE, RF_LAYER2 | RF_CHANNEL, NULL, A_ALL},
     {"CLOCK SRC", PERF(clock_source), 0, CLKSRC_COUNT - 1, RK_BYTE, 0, CLKSRC_NAMES, A_ALL},
-    {"MASTER TUNE", INST(master_tune), MASTER_TUNE_MIN, MASTER_TUNE_MAX, RK_INST, RF_BIPOLAR, NULL, A_ALL},
-    {"TUNING", PERF(delay_sync), 0, TUNING_COUNT - 1, RK_HIGH7, 0, TUNING_NAMES, A_ALL},       /* (PERF_TUNING) */
-    {"ROOT", PERF(delay_type), 0, 11, RK_HIGH7, 0, ROOT_NAMES, A_ALL},                       /* (PERF_TUNING_ROOT) */
-    {"BEND RANGE", PERF(bend_range), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CUSTOM CC1", PERF(cc1_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CUSTOM CC2", PERF(cc2_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"VEL CURVE", INST(vel_curve), 0, VELCURVE_COUNT - 1, RK_INST, 0, VELCURVE_NAMES, A_ALL},
@@ -410,6 +406,17 @@ static const UiRow GLOBAL_ROWS[] = {   /* the MIDI setup first (2026-10-27, user
     {"CLOCK OUT", INST(clock_out), 0, CLKOUT_COUNT - 1, RK_INST, 0, CLKOUT_NAMES, A_ALL},
     {"INT TEMPO", PERF(int_tempo), 0, MIDI_CLOCK_TEMPO_MAX, RK_BYTE, RF_BPM, NULL, A_ALL},
     {"THEME", 0, 0, UITHEME_COUNT - 1, RK_THEME, 0, THEME_NAMES, A_ALL},
+};
+/* TUNING (2026-11-13, off GLOBAL; HOME held + the PIT key): everything that sets the pitch, its rows its knobs. TUNING
+ * and ROOT are the performance's (high 7 bits of delay_sync / delay_type), MASTER TUNE the instrument's, BEND RANGE
+ * semitones at full bend (synth_voice.c takes 0..24) */
+static const char *const BEND_NAMES[25] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13",
+                                           "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"};
+static const UiRow TUNING_ROWS[] = {
+    {"MASTER TUNE", INST(master_tune), MASTER_TUNE_MIN, MASTER_TUNE_MAX, RK_INST, RF_BIPOLAR, NULL, A_ALL},
+    {"TUNING", PERF(delay_sync), 0, TUNING_COUNT - 1, RK_HIGH7, 0, TUNING_NAMES, A_ALL},       /* (PERF_TUNING) */
+    {"ROOT", PERF(delay_type), 0, 11, RK_HIGH7, 0, ROOT_NAMES, A_ALL},                       /* (PERF_TUNING_ROOT) */
+    {"BEND RANGE", PERF(bend_range), 0, 24, RK_BYTE, 0, BEND_NAMES, A_ALL},
 };
 /* 5.3 View 1 / View 2: the architecture and ANALOG live in the layer's patch (RK_ENG), the rest in the performance. Since
  * 2026-10-16 they are one HOME page that follows the layer focus (View 2 = layer 2 in focus), so both keep the same
@@ -523,6 +530,7 @@ static const UiPage UI_PAGES[] = {
     {HOME3_ROWS, NROWS(HOME3_ROWS), ST_PERF, 0, UICTX_SYNTH},
     {PERF_ROWS, NROWS(PERF_ROWS), ST_PERF, 0, UICTX_SAVE},
     {GLOBAL_ROWS, NROWS(GLOBAL_ROWS), ST_PERF, 0, UICTX_SYNTH},
+    {TUNING_ROWS, NROWS(TUNING_ROWS), ST_PERF, 0, UICTX_SYNTH},
     {ARP_ROWS, NROWS(ARP_ROWS), ST_ARP, 0, UICTX_ARP},
     {SAVE_COMMIT_ROWS, NROWS(SAVE_COMMIT_ROWS), ST_NONE, 0, UICTX_SAVE},
     {SEQ_ROWS, NROWS(SEQ_ROWS), ST_LANE, 0, UICTX_SEQ},
@@ -536,9 +544,10 @@ static const uint8_t SECTION_FIRST[BTN_COUNT] = {
     UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ
 };
 static const uint8_t SECTION_COUNT[BTN_COUNT] = {
-    3, 3, 3, 3, 2, 2, UI_HOME_NVIEW_MULTI + 2u, 1, 1, 1   /* FX: OSC1, OSC2 / NOISE, OSCMIX. EDIT:
+    3, 3, 3, 3, 2, 2, UI_HOME_NVIEW_MULTI + 1u, 1, 1, 1   /* FX: OSC1, OSC2 / NOISE, OSCMIX. EDIT:
                                                            * MOD, AMP (its MFX rows at the end). GLO: FX, MIX
-                                                           * (2026-11-13). HOME: LAYER, ZONES, the browser, GLOBAL */
+                                                           * (2026-11-13). HOME: LAYER, ZONES, the browser (GLOBAL
+                                                           * and TUNING: HOME held + a key, 2026-11-13) */
 };
 /* each section's pages end where the next section's begin (a page dropped from the enum must shrink its count) */
 PS_STATIC_ASSERT(UIPAGE_OSC1 + 3 == UIPAGE_FILTER1 && UIPAGE_FILTER1 + 3 == UIPAGE_ENV1 &&
@@ -705,14 +714,22 @@ static const UiKnob SAVE_COMMIT_KNOBS[4] = {
     {"TARGET", 0, UIKNOB_LIST, UISAVE_COUNT, SAVE_TARGET_NAMES}, UIK("SLOT", 1, UIKNOB_RAW),
     {"CHAR POS", 2, UIKNOB_LIST, NAME_LEN, NAME_POS_NAMES}, {"CHARACTER", 3, UIKNOB_LIST, CHAR_MAP_LEN, CHAR_NAMES},
 };
-/* GLOBAL: knobs 1..3 the instrument's (sm->inst), knob 4 the internal clock's tempo (greyed while CLOCK SOURCE is
- * MIDI) */
-static const UiKnob GLOBAL_INST_KNOBS[3] = {
-    UIK("TUNE", INST(master_tune), UIKNOB_BIP),       /* (knob labels short: the rows have the full names) */
-    {"CURVE", INST(vel_curve), UIKNOB_LIST, VELCURVE_COUNT, VELCURVE_NAMES},
+/* GLOBAL: knobs 1 / 2 the instrument's (sm->inst), 3 BASE VELOCITY, 4 the internal clock's tempo (greyed while CLOCK
+ * SOURCE is MIDI). MASTER TUNE went to TUNING 2026-11-13 */
+static const UiKnob GLOBAL_KNOBS[4] = {
+    {"CURVE", INST(vel_curve), UIKNOB_LIST, VELCURVE_COUNT, VELCURVE_NAMES},   /* (labels short: the rows have the
+                                                                                 * full names) */
     {"CLOCK", INST(clock_out), UIKNOB_LIST, CLKOUT_COUNT, CLKOUT_NAMES},
+    UIK("BASE VEL", PERF(base_velocity), UIKNOB_RAW),
+    UIK("TEMPO", PERF(int_tempo), UIKNOB_BPM),
 };
-static const UiKnob GLOBAL_TEMPO_KNOB = UIK("TEMPO", PERF(int_tempo), UIKNOB_BPM);
+/* TUNING: its four rows; knob 1 the instrument's, 2 / 3 through tune_knob (high-7 bytes), 4 the performance's */
+static const UiKnob TUNING_KNOBS[4] = {
+    UIK("TUNE", INST(master_tune), UIKNOB_BIP),
+    {"TUNING", 0, UIKNOB_LIST, TUNING_COUNT, TUNING_NAMES},
+    {"ROOT", 1, UIKNOB_LIST, 12, ROOT_NAMES},
+    {"BEND", PERF(bend_range), UIKNOB_LIST, 25, BEND_NAMES},
+};
 #undef INST
 #undef PERF
 #undef ENGB
@@ -726,6 +743,7 @@ static InstrumentSettings *ui_inst(const UIStateMachine *sm)
 }
 
 void ui_sm_attach_instrument(UIStateMachine *sm, InstrumentSettings *inst) { sm->inst = inst; }
+const InstrumentSettings *ui_sm_instrument(const UIStateMachine *sm) { return ui_inst(sm); }
 
 /* a layer's MFX settings: its patch's (v11) */
 MfxParams *ui_sm_mfx(const UIStateMachine *sm, uint8_t layer)
@@ -1529,9 +1547,52 @@ static uint8_t section_first_of(uint8_t page)
 static void on_section(UIStateMachine *sm, uint8_t btn);
 
 /* rule 1 (5.3, 2026-10-17 order): HOME opens LAYER, then cycles ZONES (View 3, DUAL / SPLIT) -> the performance
- * browser -> GLOBAL -> LAYER. LAYER is View 1, or View 2 while layer 2 is in focus (ui_sm_page_visible,
+ * browser -> LAYER (GLOBAL and TUNING are HOME held + the GLO / PIT key since 2026-11-13). LAYER is View 1, or View 2 while layer 2 is in focus (ui_sm_page_visible,
  * ui_sm_enforce). GLOBAL moved here from GLO 2026-10-16, the browser from SAVE 2026-10-17 */
 static void on_home(UIStateMachine *sm) { on_section(sm, BTN_HOME); }
+
+/* HOME held + a labelled key (2026-11-13): a place or a setting, never a performance action */
+static uint8_t vmode_mono(uint8_t m)
+{
+    return (uint8_t)(m == VMODE_MONO_RETRIG || m == VMODE_MONO_LEGATO || m == VMODE_UNISON_STACK);
+}
+
+uint8_t ui_sm_home_key(UIStateMachine *sm, uint8_t hk)
+{
+    uint8_t layer = sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u, *m;
+    if (sm->dialog != UIDLG_NONE)
+        return 0u;
+    m = &sm->perf->voice_mode[perf_mode(sm) == PERF_SINGL_SYNTH ? 0u : layer];
+    switch (hk) {
+    case UIHK_PIT: enter_page(sm, UIPAGE_TUNING); return 1u;
+    case UIHK_GLO: enter_page(sm, UIPAGE_GLOBAL); return 1u;
+    case UIHK_MONO:                  /* RETRIG -> LEGATO -> UNISON -> RETRIG (UNISON plays one note: a mono mode) */
+        *m = !vmode_mono(*m) || *m == VMODE_UNISON_STACK ? (uint8_t)VMODE_MONO_RETRIG
+             : *m == VMODE_MONO_RETRIG ? (uint8_t)VMODE_MONO_LEGATO : (uint8_t)VMODE_UNISON_STACK;
+        break;
+    case UIHK_POLY:
+        *m = *m == VMODE_POLY_REUSE ? (uint8_t)VMODE_POLY_RESET : (uint8_t)VMODE_POLY_REUSE;
+        break;
+    default: return 0u;
+    }
+    ui_sm_enforce(sm);               /* (UNISON's rows grey or return) */
+    return 1u;
+}
+
+uint8_t ui_sm_home_key_led(const UIStateMachine *sm, uint8_t hk)
+{
+    uint8_t layer = sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u;
+    uint8_t m = sm->perf->voice_mode[perf_mode(sm) == PERF_SINGL_SYNTH ? 0u : layer];
+    switch (hk) {
+    case UIHK_PIT: return sm->page == UIPAGE_TUNING ? 2u : 1u;
+    case UIHK_GLO: return sm->page == UIPAGE_GLOBAL ? 2u : 1u;
+    case UIHK_MONO: return vmode_mono(m) ? 2u : 1u;
+    case UIHK_POLY: return vmode_mono(m) ? 1u : 2u;
+    default: return 0u;
+    }
+}
+
+const char *ui_sm_vmode_name(uint8_t mode) { return VMODE_NAMES[mode < VMODE_COUNT ? mode : VMODE_POLY_REUSE]; }
 
 /* 6.2.3 COPY: the live item of the TARGET's kind onto the clipboard (a patch: the focused layer's) */
 static void clip_copy(UIStateMachine *sm)
@@ -1590,25 +1651,39 @@ uint8_t ui_sm_save_kind(const UIStateMachine *sm)
     return sm->page == UIPAGE_SAVE_COMMIT ? sm->save_target : ui_sm_preset_target(sm);
 }
 
-/* the save page, on what this page would save and the slot it plays from (2026-10-17) */
-static void save_open(UIStateMachine *sm)
+/* the slot a TARGET plays from: the performance's, its sequence's or arp's, or the focused layer's patch */
+static uint8_t target_slot(const UIStateMachine *sm, uint8_t target)
 {
-    uint8_t target = ui_sm_preset_target(sm), slot = ui_sm_preset_slot(sm);
+    uint8_t slot;
+    switch (target) {
+    case UISAVE_SEQ_SETTINGS: slot = sm->perf->seq_link; break;
+    case UISAVE_ARP_SEQ: slot = sm->perf->arp_link; break;
+    case UISAVE_WHOLE_PERF: slot = sm->perf_slot; break;
+    default: slot = sm->perf->layer_patch[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]; break;
+    }
+    return slot < ui_sm_bank_slots(target) ? slot : 0u;
+}
+
+/* the save page, on target at the slot it plays from (2026-10-17) */
+static void save_open(UIStateMachine *sm, uint8_t target)
+{
     sm->save_from = sm->page;
     enter_page(sm, UIPAGE_SAVE_COMMIT);
     sm->save_target = target;
-    sm->save_slot = slot < ui_sm_bank_slots(target) ? slot : 0u;
+    sm->save_slot = target_slot(sm, target);
 }
 
-/* rule 2 (6, 2026-10-17): from another page SAVE opens the save page on what that page saves (a sound page: the
- * focused layer's patch; HOME: the performance; SEQ / ARP: theirs) at the slot it plays from. On the save page SAVE
+/* rule 2 (6, 2026-10-17): from another page SAVE opens the save page on what that page saves (HOME and the sound
+ * pages: the performance, since 2026-11-13 - a tweaked sound is kept in the performance, a patch is saved by turning
+ * TARGET to PATCH; SEQ / ARP: theirs) at the slot it plays from. On the save page SAVE
  * stores: at once into an empty slot, after the confirm popup into a used (or unknown) one. COPY / PASTE are SAVE held
  * + OCT- / OCT+ (ui_sm_save_oct) */
 static void on_save(UIStateMachine *sm)
 {
     char n[NAME_LEN + 1];
     if (sm->page != UIPAGE_SAVE_COMMIT) {
-        save_open(sm);
+        uint8_t t = ui_sm_preset_target(sm);
+        save_open(sm, t == UISAVE_PATCH_PRESET ? (uint8_t)UISAVE_WHOLE_PERF : t);
         return;
     }
     sm->save_action = UIACT_SAVE;
@@ -1639,7 +1714,7 @@ void ui_sm_save_oct(UIStateMachine *sm, uint8_t up)
     if (!ui_sm_paste_ok(sm))
         return;
     if (sm->page != UIPAGE_SAVE_COMMIT)
-        save_open(sm);
+        save_open(sm, sm->save_target);              /* a PASTE: what the page copies (a sound page: its patch) */
     sm->save_action = UIACT_PASTE;
     sm->dialog = UIDLG_CONFIRM;
     sm->dialog_choice = 0u;
@@ -2360,13 +2435,24 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
     uint8_t i, v;
     uint16_t held;
     if (page == UIPAGE_SAVE_COMMIT && knob == 0u) {
-        ui_sm_enforce(sm);           /* a new TARGET: RENAME greys or returns, PASTE may lose its clipboard */
+        sm->save_slot = target_slot(sm, sm->save_target);   /* a new TARGET: the slot it plays from (2026-11-13) */
+        ui_sm_enforce(sm);           /* .. RENAME greys or returns, PASTE may lose its clipboard */
         return;
     }
-    if (page == UIPAGE_GLOBAL && knob == 0u) {
+    if (page == UIPAGE_TUNING && knob == 0u) {
         InstrumentSettings *in = ui_inst(sm);
         if (in->master_tune < MASTER_TUNE_MIN) in->master_tune = MASTER_TUNE_MIN;
         if (in->master_tune > MASTER_TUNE_MAX) in->master_tune = MASTER_TUNE_MAX;
+        return;
+    }
+    if (page == UIPAGE_TUNING && (knob == 1u || knob == 2u)) {   /* back into the high 7 bits, bit 0 kept */
+        uint8_t *b = knob == 1u ? &sm->perf->delay_sync : &sm->perf->delay_type;
+        *b = (uint8_t)((*b & 1u) | (uint8_t)(sm->tune_knob[knob - 1u] << 1));
+        ui_sm_enforce(sm);           /* (ROOT's row shows or hides with the TUNING) */
+        return;
+    }
+    if (page == UIPAGE_GLOBAL && knob == 2u) {       /* BASE VELOCITY: its row's floor */
+        if (sm->perf->base_velocity < 12u) sm->perf->base_velocity = 12u;
         return;
     }
     if (page == UIPAGE_MOD) {                        /* (a route at SOURCE NONE closes up when the cursor leaves) */
@@ -2564,7 +2650,8 @@ uint8_t ui_sm_preset_target(const UIStateMachine *sm)
 {
     if (sm->page == UIPAGE_SEQ) return UISAVE_SEQ_SETTINGS;
     if (sm->page == UIPAGE_ARP) return UISAVE_ARP_SEQ;
-    if (in_section(sm->page, BTN_HOME)) return UISAVE_WHOLE_PERF;
+    if (in_section(sm->page, BTN_HOME) || sm->page == UIPAGE_GLOBAL || sm->page == UIPAGE_TUNING)
+        return UISAVE_WHOLE_PERF;
     return UISAVE_PATCH_PRESET;
 }
 
@@ -3065,10 +3152,12 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
                 k = &SAVE_COMMIT_KNOBS[knob];
             break;
         case UIPAGE_GLOBAL:
-            if (knob < 3u)
-                k = &GLOBAL_INST_KNOBS[knob];
-            else if (sm->perf->clock_source == CLKSRC_INTERNAL)
-                k = &GLOBAL_TEMPO_KNOB;
+            if (knob < 3u || sm->perf->clock_source == CLKSRC_INTERNAL)
+                k = &GLOBAL_KNOBS[knob];
+            break;
+        case UIPAGE_TUNING:          /* (ROOT greyed where its row hides: EQUAL, a USER table) */
+            if (knob != 2u || (PERF_TUNING(sm->perf) != TUNING_EQUAL && PERF_TUNING(sm->perf) < TUNING_USER1))
+                k = &TUNING_KNOBS[knob];
             break;
         default: break;
         }
@@ -3095,8 +3184,12 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
         return &sm->perf_knob[k->offset];
     if (k->kind == UIKNOB_PORTA)
         return &sm->perf->porta_time[layer < NLAYER ? layer : 0u];
-    if (page == UIPAGE_GLOBAL && knob < 3u)
+    if ((page == UIPAGE_GLOBAL && knob < 2u) || (page == UIPAGE_TUNING && knob == 0u))
         return (uint8_t *)ui_inst(sm) + k->offset;
+    if (page == UIPAGE_TUNING && (knob == 1u || knob == 2u)) {   /* TUNING / ROOT: their high 7 bits */
+        sm->tune_knob[k->offset] = k->offset ? PERF_TUNING_ROOT(sm->perf) : PERF_TUNING(sm->perf);
+        return &sm->tune_knob[k->offset];
+    }
     if (page == UIPAGE_SAVE_COMMIT) {
         uint8_t *own[4];
         own[0] = &sm->save_target;

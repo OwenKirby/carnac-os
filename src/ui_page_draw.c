@@ -71,6 +71,7 @@
 #include "dsp/pcm_osc.h"                     /* a PCM wave's name and picture on the OSC / OSCMIXER pages */
 #include "dsp/mfx.h"                         /* the MFX page: the effect's sweep as it moves (mfx_peek) */
 #include "dsp/fx.h"                          /* the MIX page: the live mix (fx_live) and the loop's level */
+#include "dsp/tuning.h"                      /* the TUNING page: each step's cents (tuning_key_cents) */
 static void rec_draw(UIStateMachine *sm, uint32_t force);   /* the REC page (ui_rec_draw.c, at the end) */
 /* ----------------------------------------------------------- colours --- */
 #define PUC_STONE SQ_STONE[sq_pal]                 /* an unlit stone (ui_seq_draw.c) */
@@ -387,14 +388,15 @@ static int32_t pu_voice_pan(const SynthVoiceNode *n)
 /* ------------------------------------------------------------- pages --- */
 static const char *const PU_TITLE[UIPAGE_COUNT] = {
     "OSC 1", "OSC 2", "OSC MIX", "FILTER 1", "FILTER 2", "FLT MIX", "ENV 1", "ENV 2", "ENV 3", "LFO 1", "LFO 2", "LFO 3",
-    "MOD MATRIX", "AMP", "EFFECTS", "MIX", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "ARP", "SAVE",
+    "MOD MATRIX", "AMP", "EFFECTS", "MIX", "HOME", "HOME", "HOME", "PERFORMANCE", "GLOBAL", "TUNING", "ARP", "SAVE",
     "SEQ", "REC",
 };
 /* the first page and size of each section (UIStateMachine.c SECTION_FIRST / SECTION_COUNT, by page) */
 static void pu_section(uint8_t page, uint8_t *first, uint8_t *n)
 {
     static const uint8_t F[] = {UIPAGE_OSC1, UIPAGE_FILTER1, UIPAGE_ENV1, UIPAGE_LFO1, UIPAGE_MOD, UIPAGE_EFFECTS,
-                                UIPAGE_HOME1, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ, UIPAGE_COUNT};
+                                UIPAGE_HOME1, UIPAGE_GLOBAL, UIPAGE_ARP, UIPAGE_SAVE_COMMIT, UIPAGE_SEQ,
+                                UIPAGE_COUNT};   /* (GLOBAL and TUNING: HOME held + a key, their tabs a pair) */
     uint32_t i;
     for (i = 0; F[i + 1] != UIPAGE_COUNT && page >= F[i + 1]; i++) {}
     *first = F[i];
@@ -418,7 +420,7 @@ static uint8_t pu_page_pal(const UIStateMachine *sm)
 /* each page's name in the header's list of its section's pages */
 static const char *const PU_TAB[UIPAGE_COUNT] = {
     "OSC1", "OSC2", "OSCMIX", "FLT1", "FLT2", "FLTMIX", "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3",
-    "MATRIX", "AMP", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "ARP", "SAVE", "SEQ", "REC",
+    "MATRIX", "AMP", "FX", "MIX", "LAYER", "LAYER", "ZONES", "PERF", "GLOBAL", "TUNING", "ARP", "SAVE", "SEQ", "REC",
 };
 #define PU_TAB_GAP 8                 /* between two pages' names */
 /* OSC2's place is the NOISE page while the layer has one oscillator (2026-11-06) */
@@ -2165,6 +2167,83 @@ static void pu_viz_global(const UIStateMachine *sm)
     }
 }
 
+/* ------------------------------------------------------------- tuning --- */
+/* TUNING (2026-11-13): the octave as a rising alignment, 13 stones from ROOT to its octave. Each step's place in equal
+ * temperament is a socket on the ground (17 px a semitone); its stone stands off it by the tuning's cents at the same
+ * scale, the pull a line on the ground, so EQUAL stands even and a just or a maqam tuning leans visibly out of line.
+ * ROOT and its octave lit, the steps sounding now in the accent, BEND RANGE a span over the row from ROOT, A4 in Hz
+ * from MASTER TUNE above it */
+#define PT_X0 16                     /* the ROOT stone's socket */
+#define PT_STEP 17                   /* px a semitone */
+
+/* the pitch classes sounding now, a bit each from ROOT (bit 12: the octave, with bit 0) */
+static uint32_t pt_sounding(uint8_t root)
+{
+    uint32_t m = 0u;
+    int32_t v;
+    for (v = 0; v < POLYPHONY_VOICES; v++) {
+        const SynthVoiceNode *n = &poly_bank[v];
+        if (n->silent || pu_voice_level(n) <= 0 || n->active_note < 0)
+            continue;
+        m |= 1u << (((n->active_note - (int32_t)root) % 12 + 12) % 12);
+    }
+    return (m & 1u) ? m | 1u << 12 : m;
+}
+
+static void pu_viz_tuning(const UIStateMachine *sm)
+{
+    char b[16], *e;
+    const MasterPerformancePreset *p = sm->perf;
+    uint8_t t = PERF_TUNING(p), root = (uint8_t)(PERF_TUNING_ROOT(p) % 12u);
+    int32_t mt = (int32_t)ui_sm_instrument(sm)->master_tune - 64, hz10, i, k, bend = p->bend_range;
+    uint32_t snd = pt_sounding(root);
+    if (t == TUNING_EQUAL || t >= TUNING_USER1)      /* (no ROOT: the table starts from C) */
+        root = 0u;
+    hz10 = 4400 + (mt * 25415) / 10000 + (mt * mt * 7339) / 10000000;   /* 440 * 2^(cents / 1200), to 0.1 Hz */
+    e = pu_cat(b, "A4 ");
+    e = pu_num(e, hz10 / 10, 0u, 1u);
+    *e++ = '.';
+    e = pu_num(e, hz10 % 10, 0u, 1u);
+    pu_cat(e, " HZ");
+    sq_text(PV_X0, 2 + CAP_IN(S, 13), &AF_S, b, mt ? SQC(THEME) : SQC(MID));
+    for (i = PV_X0; i < PV_X0 + PV_W; i++)           /* the earth */
+        pu_fog_col(i, PV_GROUND, PU_VIZ_H, 7u, PUC_STONE, PU_VIZ_Y);
+    if (bend > 0) {                                  /* BEND RANGE: the span a full bend reaches from ROOT */
+        int32_t n = bend > 12 ? 12 : bend, x1 = PT_X0 + n * PT_STEP, y = 22;
+        for (i = PT_X0; i <= x1; i += 3)
+            cv_pset(i, y, SQC(DIM));
+        cv_rect(PT_X0, y - 2, 1, 5, SQC(MID));
+        cv_rect(x1, y - 2, 1, 5, SQC(MID));
+        if (bend > 12) {                             /* (past the octave: an arrow on) */
+            cv_pset(x1 + 2, y - 1, SQC(MID));
+            cv_pset(x1 + 3, y, SQC(MID));
+            cv_pset(x1 + 2, y + 1, SQC(MID));
+        }
+    }
+    for (i = 0; i <= 12; i++) {
+        int32_t c = tuning_key_cents(t, root, (uint8_t)(60 + root + i)), sx = PT_X0 + i * PT_STEP;
+        int32_t x = sx + (c * PT_STEP + (c < 0 ? -50 : 50)) / 100, h = 16 + i * 2;
+        uint8_t lit = (uint8_t)(i == 0 || i == 12), off = (uint8_t)(c > 2 || c < -2);
+        uint16_t col = (snd >> i) & 1u ? SQC(ACCENT) : lit ? SQC(THEME) : off ? SQC(MID) : PUC_STONE;
+        cv_rect(sx, PV_GROUND + 2, 1, 2, SQC(DIM));  /* the socket: equal temperament's place */
+        if (x != sx)                                 /* the pull, along the ground */
+            for (k = x < sx ? x : sx; k <= (x < sx ? sx : x); k++)
+                cv_pset(k, PV_GROUND + 1, off ? SQC(MID) : SQC(DIM));
+        sq_stone(x - 4, PV_GROUND, 9, h, h, col, (uint32_t)(i * 7 + 3), 0u, 0u);
+    }
+}
+
+/* the TUNING picture's live inputs: MASTER TUNE (the instrument's), the cents (a USER table can arrive over MIDI), the
+ * steps sounding */
+static uint32_t pu_tuning_sig(const UIStateMachine *sm, uint32_t h)
+{
+    uint8_t t = PERF_TUNING(sm->perf), root = (uint8_t)(PERF_TUNING_ROOT(sm->perf) % 12u), i;
+    h = sq_mix(h, ui_sm_instrument(sm)->master_tune);
+    for (i = 0; i <= 12u; i++)
+        h = sq_mix(h, (uint32_t)tuning_key_cents(t, root, (uint8_t)(60 + root + i)));
+    return sq_mix(h, pt_sounding(root));
+}
+
 /* --------------------------------------------------------------- home --- */
 /* the voice pool as Carnac's alignment: 8 places falling in height, each voice's stone drawn as on AMP (its height
  * the level, layer 2's outlined in the lighter accent), an idle voice a low unlit stone; the places no layer may use
@@ -2978,6 +3057,8 @@ static uint32_t pu_viz_live(UIStateMachine *sm, uint32_t h)
         return pu_voices_sig(h);
     case UIPAGE_MIX:
         return pu_mix_sig(sm, h);
+    case UIPAGE_TUNING:
+        return pu_tuning_sig(sm, h);
     case UIPAGE_PERF:                                /* the dolmen measures the live patches, sequence and arp */
         h = sq_mix_bytes(h, (const uint8_t *)sm->engine[0], sizeof(EngineState));
         h = sq_mix_bytes(h, (const uint8_t *)sm->engine[1], sizeof(EngineState));
@@ -3011,6 +3092,7 @@ static void pu_draw_viz(UIStateMachine *sm)
     case UIPAGE_EFFECTS: pu_viz_fx(sm); break;
     case UIPAGE_MIX: pu_viz_mix(sm); break;
     case UIPAGE_GLOBAL: pu_viz_global(sm); break;
+    case UIPAGE_TUNING: pu_viz_tuning(sm); break;
     case UIPAGE_HOME1: case UIPAGE_HOME2: pu_viz_home(sm); break;
     case UIPAGE_HOME3: pu_viz_split(sm); break;
     case UIPAGE_PERF: pu_viz_preset(sm); break;
@@ -3144,10 +3226,12 @@ static void pu_draw_hold(const UIStateMachine *sm)
     pu_hewn(1, 1, 238, PU_HOLD_H - 2, 4217u, SQC(MID), 0);
     if (sm->hold == BTN_HOME) {
         uint8_t l2 = (uint8_t)(sm->s.active_synth_layer == 1u), singl = (uint8_t)(sm->perf->perf_mode == PERF_SINGL_SYNTH);
+        const char *vm = ui_sm_vmode_name(sm->perf->voice_mode[singl ? 0u : sm->s.active_synth_layer]);
         pu_cat(l, "< OCT-  L1");
         pu_cat(r, "L2  OCT+ >");
         lc = l2 ? SQC(MID) : SQC(TEXT);
         rc = singl ? SQC(DIM) : l2 ? SQC(TEXT) : SQC(MID);
+        sq_rune(120 - sq_rune_w(vm, 0) / 2, y, vm, SQC(THEME), 0);   /* the voicing HOME + MONO / POLY sets */
     } else {
         uint8_t k = ui_sm_save_kind(sm);
         UIStateMachine *m = (UIStateMachine *)sm;    /* (paste_ok reads save_target: ask it for this page's kind) */
