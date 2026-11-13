@@ -2602,7 +2602,6 @@ static int32_t pu_pop_line(int32_t y, const char *s, uint16_t c, int32_t sc, int
  * among them all. Drawn whole on each move (the list only changes when the cursor does). */
 static const char *const PU_BR_TITLE[UISAVE_COUNT] = {"ARP PATTERN", "SEQUENCE", "PATCH", "PERFORMANCE"};
 #define PU_BR_ROWS 8u                 /* the preset list's rows, at 2x (2026-11-13: 13 at 1x before) */
-#define PU_RP_ROWS 13               /* the parameter ledger's window */
 #define PU_BR_PITCH 22              /* a preset row at 2x */
 #define PU_LG_Y 30                   /* the ledger's first row */
 #define PU_LG_PITCH 13               /* a row at 1x */
@@ -2773,58 +2772,23 @@ static void pu_draw_namekb(const UIStateMachine *sm, uint32_t force)
 }
 
 /* ---------------------------------------------------------- parameters --- */
-/* While the Algorithm Encoder turns a value: the page's rows as the LEDGER (see the preset list), every row's name and
- * value, centred on the screen (a window of thirteen round the cursor on a longer page); the cursor's row on the lit
- * slab, its value at 2x, and under its name the preset's name on a slot row or the routes into the row's destination
- * ("LFO2+40 WHL-12"). Greyed rows dimmer, their stones unlit. */
+/* 2026-11-13 (the user: numbers need no popup; a list gets a focused one): while the Algorithm Encoder turns a list
+ * row (a wave, a filter type, a mode), the page's name small at the top, the parameter's at 2x under it, then the
+ * row's own options as the preset list's ledger at 2x, seven round the one it holds, that one on the lit slab; the
+ * scroll stone on the right when there are more. */
+#define PU_OP_ROWS 7
+#define PU_OP_Y 54
+
 static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
 {
-    char b[8], vb[8], tt[24];
-    uint8_t vis[32], n = ui_sm_row_count(sm), nv = 0, r, f = sm->s.current_param_focus;
-    int32_t ci = 0, i, y, oy, place = 0, first, cnt, pitch, sh, y0, lw, vw, sc;
+    char tt[24], ob[NAME_LEN + 1];
+    uint8_t f = sm->s.current_param_focus;
+    uint16_t pos = 0u, n = f < ui_sm_row_count(sm) ? ui_sm_row_options(sm, f, &pos) : (uint16_t)0u;
+    const char *lab = f < ui_sm_row_count(sm) ? ui_sm_row_label(sm, f) : "";
+    int32_t first, cnt, k, y, oy;
     uint32_t h = sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)sm->page | (uint32_t)f << 8 |
                                                      (uint32_t)sm->s.active_synth_layer << 16);
-    const char *val = "", *slot = NULL;
-    char sends[24];
-    sends[0] = '\0';
-    for (r = 0; r < n && nv < sizeof vis; r++) {
-        if (ui_sm_row_state(sm, r) == UIROW_HIDDEN)
-            continue;
-        if (r == f)
-            ci = nv;
-        vis[nv++] = r;
-    }
-    for (i = 0; i < nv; i++)                         /* (every row's value shows now) */
-        h = pu_mix_str(pu_mix_str(sq_mix(h, ui_sm_row_state(sm, vis[i])), ui_sm_row_label(sm, vis[i])),
-                       pu_row_text(sm, vis[i], vb));
-    if (f < n) {
-        val = pu_row_text(sm, f, b);
-        slot = ui_sm_row_slot_name(sm, f);           /* PERF: the preset's name under its number */
-        place = ui_sm_row_place(sm, f);
-        h = sq_mix(pu_mix_str(h, val), (uint32_t)place);
-        if (slot)
-            h = pu_mix_str(h, slot);
-        if (sm->page != UIPAGE_MOD) {                /* the routes to the row's destination, "LFO2+40 WHL-12" */
-            uint8_t d = ui_sm_row_dest(sm, f), s;
-            const EngineState *e = sm->engine[sm->s.active_synth_layer];
-            static const char *const SRC[MSRC_COUNT] = {"-", "VEL", "KEY", "RND", "WHL", "AT", "PAT", "CC1", "CC2",
-                                                        "ENV1", "ENV2", "ENV3", "LFO1", "LFO2", "LFO3"};
-            for (s = 0; d != MDST_NONE && s < NROUTE; s++) {
-                const ModRoute *r = &e->route[s];
-                char t[12];
-                if (r->dest != d || r->src == MSRC_NONE || r->src >= MSRC_COUNT || r->amount == BIPOLAR_CENTER)
-                    continue;
-                t[0] = 0;
-                pu_cat(t, SRC[r->src]);
-                pu_num(t + pu_strlen(t), (int32_t)r->amount - (int32_t)BIPOLAR_CENTER, 1u, 1u);
-                if (pu_strlen(sends) + pu_strlen(t) + 1 >= (int32_t)sizeof sends)
-                    break;
-                if (sends[0]) pu_cat(sends + pu_strlen(sends), " ");
-                pu_cat(sends + pu_strlen(sends), t);
-            }
-        }
-        h = pu_mix_str(h, sends);
-    }
+    h = pu_mix_str(sq_mix(h, (uint32_t)pos | (uint32_t)n << 16), lab);
     if (!pu_dirty(PUR_ROWPOP, h, force))
         return;
     tt[0] = '\0';
@@ -2832,50 +2796,34 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
         pu_cat(tt, sm->s.active_synth_layer ? "L2  " : "L1  ");
     pu_cat(tt + pu_strlen(tt), ui_sm_noise_page(sm, sm->page, sm->s.active_synth_layer) ? "NOISE"
                                : pu_mfx_view(sm) ? "MFX" : PU_TITLE[sm->page]);
-    cnt = nv < PU_RP_ROWS ? nv : PU_RP_ROWS;   /* a window round the cursor on a long page */
-    first = ci - cnt / 2;
-    if (first > nv - cnt) first = nv - cnt;
+    cnt = n < PU_OP_ROWS ? (int32_t)n : PU_OP_ROWS;  /* the window: the value in the middle until an end is near */
+    first = (int32_t)pos - cnt / 2;
+    if (first > (int32_t)n - cnt) first = (int32_t)n - cnt;
     if (first < 0) first = 0;
-    sh = slot || sends[0] ? 30 : 28;                 /* the pick's slab: a second line for a slot's name, the sends */
-    pitch = cnt > 1 ? (226 - PU_LG_Y - sh - 3) / (cnt - 1) : PU_LG_PITCH;
-    if (pitch > 17) pitch = 17;
-    if (pitch < PU_LG_PITCH) pitch = PU_LG_PITCH;
-    y0 = PU_LG_Y + (226 - PU_LG_Y - ((cnt - 1) * pitch + sh + 12 - pitch)) / 2;   /* the ledger centred */
-    if (y0 < PU_LG_Y) y0 = PU_LG_Y;
     for (oy = 0; oy < 240; oy += PU_POP_BAND) {
         cv_begin(240, PU_POP_BAND, SQC(BG));
         pu_tablet(4, 4, 232, 232, 77u, oy);
         pu_pop_line(16, tt, SQC(THEME), 1, oy);
-        if (!nv)
-            pu_pop_line(90, "ALL ON THE KNOBS", SQC(DIM), 1, oy);
-        y = y0;
-        for (i = first; i < first + cnt; i++) {
-            uint8_t r = vis[i], gr = (uint8_t)(ui_sm_row_state(sm, r) == UIROW_GREYED);
-            const char *lab = ui_sm_row_label(sm, r), *v = i == ci ? val : pu_row_text(sm, r, vb);
-            if (i == ci) {                           /* the cursor's row: a lit slab, its value at 2x */
-                pu_block_lit(12, y - oy, 216, sh, 0, oy, 903u);
-                lw = sq_rune_w(lab, 0);
-                vw = PU_RUNE_N_W(pu_strlen(v), 2);
-                sc = 20 + lw + 10 + vw <= 220 ? 2 : 1;
-                if (sc == 1) vw = sq_rune_w(v, 0);
-                if (slot || sends[0]) {
-                    sq_rune(20, y + 5 - oy, lab, SQC(HI), 0);
-                    sq_rune(20, y + 17 - oy, slot ? slot : sends, slot ? SQC(TEXT) : SQC(ACCENT), 0);
-                } else {
-                    sq_rune(20, y + 10 - oy, lab, SQC(HI), 0);
-                }
-                pu_rune_n(220 - vw, sc == 2 ? y + HALF_UP(sh - 18) : y + HALF_UP(sh - 9), v, SQC(HI), sc,
-                          pu_strlen(v), oy);
-                y += sh + 3;
+        pu_pop_line(30, lab, SQC(TEXT), 2, oy);
+        y = PU_OP_Y;
+        for (k = first; k < first + cnt; k++) {
+            const char *t = ui_sm_row_option(sm, f, (uint16_t)k, ob);
+            int32_t len = pu_strlen(t);
+            if (k == (int32_t)pos) {                 /* the value it holds: on the lit slab */
+                pu_block_lit(10, y - oy, 214, PU_LG_SLAB, 0, oy, 903u);
+                if (len <= 16)
+                    pu_rune_n(24, y + 4, t, SQC(HI), 2, 16, oy);
+                else
+                    pu_rune_n(24, y + 9, t, SQC(HI), 1, 32, oy);
+                y += PU_LG_SLAB + 4;
                 continue;
             }
-            sq_stone(18, y + 10 - oy, 4, 9, 9, gr ? PUC_STONE : SQC(MID), (uint32_t)r * 5u + 3u, 0u, 0u);
-            sq_rune(28, y + 1 - oy, lab, gr ? SQC(DIM) : SQC(MID), 0);
-            sq_rune(220 - sq_rune_w(v, 0), y + 1 - oy, v, gr ? SQC(DIM) : SQC(TEXT), 0);
-            y += pitch;
+            sq_stone(14, y + 18 - oy, 5, 16, 16, SQC(MID), (uint32_t)k * 5u + 3u, 0u, 0u);
+            pu_rune_n(24, y, t, SQC(MID), len <= 16 ? 2 : 1, 32, oy);
+            y += PU_BR_PITCH;
         }
-        if (nv > cnt)
-            pu_lg_scroll(ci, nv, oy);
+        if ((int32_t)n > cnt)
+            pu_lg_scroll((int32_t)pos, (int32_t)n, oy);
         cv_blit(0, (uint32_t)oy);
     }
 }

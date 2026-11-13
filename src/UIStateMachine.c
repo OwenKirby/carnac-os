@@ -2993,8 +2993,10 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         r = sm->s.current_param_focus != UI_FOCUS_NONE ? vis_row(sm, sm->s.current_param_focus) : NULL;
         if (r != NULL && r->kind != RK_SEQ_STEPS) {   /* (STEPS has no value: no popup either) */
             row_step(sm, r, arg);
-            sm->rowpop = (uint8_t)(sm->page != UIPAGE_REC);   /* (2026-10-17) the parameter, large, only while its value
-                                                              * turns (REC: its footer shows it) */
+            uint16_t pos;            /* (2026-11-13) a list's options while its value turns; a number has none (REC:
+                                      * its footer shows it) */
+            sm->rowpop = (uint8_t)(sm->page != UIPAGE_REC &&
+                                   ui_sm_row_options(sm, sm->s.current_param_focus, &pos) > 1u);
             sm->rowpop_ms = UI_ROWPOP_MS;
         }
     } else if (arg == BTN_HOME) {
@@ -3316,6 +3318,67 @@ uint8_t ui_sm_row_value(const UIStateMachine *sm, uint8_t row)
 {
     const UiRow *r = vis_row(sm, row);
     return r != NULL ? row_get(sm, r) : 0u;
+}
+
+/* 2026-11-13: a list row's options, as the Algorithm Encoder walks them (the wave list, ARCH_ORDER, the values the
+ * mode allows), for the parameter popup; 0 for a number (no popup) and for the rows whose values are not a fixed
+ * list (slots, routes, notes, SEQ TARGET's lane slots) */
+static uint8_t row_is_list(const UiRow *r)
+{
+    if (r->kind == RK_WAVE || r->kind == RK_ARCH)
+        return 1u;
+    if (r->names == NULL || (r->flags & (RF_BIPOLAR | RF_NOTE | RF_CHANNEL | RF_BPM | RF_SLOT)))
+        return 0u;
+    return (uint8_t)(r->kind != RK_SEQ_TARGET && r->kind != RK_LINK && r->kind != RK_PERF_SLOT &&
+                     r->kind != RK_ROUTE && r->kind != RK_ARP_ROOT && r->kind != RK_RENAME && r->kind != RK_REC_ACT);
+}
+
+uint16_t ui_sm_row_options(const UIStateMachine *sm, uint8_t row, uint16_t *pos)
+{
+    const UiRow *r = vis_row(sm, row);
+    uint16_t n = 0u, v, hi;
+    uint8_t cur;
+    *pos = 0u;
+    if (r == NULL || !row_is_list(r))
+        return 0u;
+    cur = row_get(sm, r);
+    if (r->kind == RK_WAVE) {
+        *pos = (uint16_t)wave_list_pos(cur);
+        return (uint16_t)wave_list_count();
+    }
+    if (r->kind == RK_ARCH) {
+        *pos = arch_pos(cur);
+        return (uint16_t)ARCH_ORDER_N;
+    }
+    hi = row_max(sm, r);
+    for (v = r->min; v <= hi; v++) {
+        if (!value_allowed(sm, r, (uint8_t)v))
+            continue;
+        if (v == cur)
+            *pos = n;
+        n++;
+    }
+    return n;
+}
+
+const char *ui_sm_row_option(const UIStateMachine *sm, uint8_t row, uint16_t k, char *buf)
+{
+    const UiRow *r = vis_row(sm, row);
+    uint16_t n = 0u, v, hi;
+    if (r == NULL || !row_is_list(r))
+        return "";
+    if (r->kind == RK_WAVE)
+        return wave_name(wave_list_code(k), buf);
+    if (r->kind == RK_ARCH)
+        return r->names != NULL && k < ARCH_ORDER_N ? r->names[ARCH_ORDER[k]] : "";
+    hi = row_max(sm, r);
+    for (v = r->min; v <= hi; v++) {
+        if (!value_allowed(sm, r, (uint8_t)v))
+            continue;
+        if (n++ == k)
+            return r->names[v];
+    }
+    return "";
 }
 
 uint8_t ui_sm_row_place(const UIStateMachine *sm, uint8_t row)

@@ -383,8 +383,8 @@ int main(int argc, char **argv)
         for (i = 0; i < 4; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
         shot(dir, "mod_env");
         ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);       /* LFO2*WHL > F1 CUTOFF */
-        ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);         /* +45, the popup up */
-        if (!sm.rowpop || e->route[3].amount != BIPOLAR_CENTER + 45) { printf("FAIL: the Algorithm Encoder did not set the route's AMOUNT\n"); fails = 1; }
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);         /* +45 (a number: no popup, 2026-11-13) */
+        if (sm.rowpop || e->route[3].amount != BIPOLAR_CENTER + 45) { printf("FAIL: the Algorithm Encoder did not set the route's AMOUNT, or a popup came up\n"); fails = 1; }
         shot(dir, "mod1_rowpop");
         ui_sm_tick(&sm, UI_ROWPOP_MS);
         /* .. RND > PAN cleared: SOURCE and DEST NONE; gone when the cursor leaves, the rest move up */
@@ -670,9 +670,13 @@ int main(int argc, char **argv)
     go(UIPAGE_FILTER1);
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);
     if (sm.rowpop) { printf("FAIL: the Select Encoder opened the parameter popup\n"); fails = 1; }
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);             /* KEY TRACK, a number: no popup (2026-11-13) */
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
+    if (sm.rowpop) { printf("FAIL: a number opened the parameter popup\n"); fails = 1; }
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);          /* FLAVOUR, a list: its options */
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
-    if (!sm.rowpop) { printf("FAIL: the Algorithm Encoder did not open the parameter popup\n"); fails = 1; }
+    if (!sm.rowpop) { printf("FAIL: the Algorithm Encoder did not open the parameter popup on a list\n"); fails = 1; }
     shot(dir, "rowpop_filter");
     ui_sm_tick(&sm, UI_ROWPOP_MS - 10u);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 3);
@@ -683,7 +687,7 @@ int main(int argc, char **argv)
     if (sm.rowpop) { printf("FAIL: the parameter list did not time out\n"); fails = 1; }
     shot(dir, "rowpop_closed");
     go(UIPAGE_HOME1);
-    ui_sm_handle(&sm, UIEV_SELECT_ENC, 30);          /* to the last rows: the longest labels */
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);           /* VOICING */
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     shot(dir, "rowpop_home");
@@ -697,6 +701,17 @@ int main(int argc, char **argv)
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     shot(dir, "rowpop_arp");
+    go(UIPAGE_OSC1);                                 /* (2026-11-13) a long list: the wave list round the wave */
+    {
+        uint8_t r, n = ui_sm_row_count(&sm);
+        for (r = 0; r < n && strcmp(ui_sm_row_label(&sm, r), "WAVE") != 0; r++) {}
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(r - sm.s.current_param_focus));
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 4);
+        if (!sm.rowpop) { printf("FAIL: WAVE did not open its list\n"); fails = 1; }
+        shot(dir, "rowpop_wave");
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, -4);
+        ui_sm_tick(&sm, UI_ROWPOP_MS);
+    }
 
     /* ARP and SEQ through the same entry point */
     fresh();
@@ -712,7 +727,7 @@ int main(int argc, char **argv)
     shot(dir, "rowpop_seq");
     ui_sm_tick(&sm, UI_ROWPOP_MS);
 
-    /* PERF: turning LAYER1 PATCH loads the next stored patch; the popup names it under its number */
+    /* PERF: turning LAYER1 PATCH loads the next stored patch (no popup: a slot, not a list) */
     fresh();
     ui_sm_attach_store(&sm, list_query, NULL);
     perf_state.perf_mode = PERF_DUAL_SYNTH;
@@ -723,7 +738,7 @@ int main(int argc, char **argv)
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     if (!sm.load_pending || sm.load_slot != 7u) { printf("FAIL: LAYER1 PATCH did not ask for patch 7\n"); fails = 1; }
     if (sm.load_pending) ui_sm_load_done(&sm, 1u);
-    shot(dir, "rowpop_perf_patch");
+    if (sm.rowpop) { printf("FAIL: a slot row opened the parameter popup\n"); fails = 1; }   /* (2026-11-13: not a list) */
     ui_sm_tick(&sm, UI_ROWPOP_MS);
 
     /* every page in RED, for the text checks: nothing cut, nothing past its canvas */

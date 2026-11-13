@@ -508,6 +508,10 @@ uint8_t ui_sm_row_count(const UIStateMachine *sm);                 /* rows on th
 const char *ui_sm_row_label(const UIStateMachine *sm, uint8_t row);
 uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row);   /* UIROW_*: only ACTIVE rows take the cursor, HIDDEN are not drawn */
 uint8_t ui_sm_row_value(const UIStateMachine *sm, uint8_t row);   /* stored 0..127, 0 for RENAME */
+/* 2026-11-13, the parameter popup: a list row's options in the Algorithm Encoder's order (pos: the value's place),
+ * 0 for a number; option k's text (buf: NAME_LEN + 1 bytes, a wave's store name) */
+uint16_t ui_sm_row_options(const UIStateMachine *sm, uint8_t row, uint16_t *pos);
+const char *ui_sm_row_option(const UIStateMachine *sm, uint8_t row, uint16_t k, char *buf);
 uint8_t ui_sm_row_place(const UIStateMachine *sm, uint8_t row);   /* the value's place in the row's range, 0..127 */
 /* the value as text (an enum name, a source name, ON / OFF, or a bipolar -64..+63), NULL for a plain number */
 const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row);
