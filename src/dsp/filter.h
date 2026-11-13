@@ -34,6 +34,16 @@ float makeup;           // MS-20, FORMANT: the output gain that undoes the drive
 float tap[5];           // MULTI, SH-2: the output's weights on the loop's input u and the four stages; MS-20: on u, s[0], s[1]
 uint8_t flavour;        // FLT_*, the circuit
 uint8_t driven;         // FORMANT: DRIVE above 0, the input clipped
+/* what the last prepare was asked for and what it worked out (2026-11-12): a tick that asks for the same resonance,
+ * morph and drive (nearly every one: they move with a knob or a route, the cutoff with every envelope and LFO) keeps
+ * what only they set (the feedback, the drive's gains, the taps), and one that asks for the same cutoff too only ramps
+ * to the kept coefficients: the same values as working them out again, bit for bit */
+uint8_t ck_ok,ck_drive; // ck_ok: the kept values are this flavour's
+uint8_t lp;             // MULTI, SH-2: the taps are the plain lowpass's (the last stage alone): the shorter loop
+int16_t ck_res,ck_morph;
+int32_t ck_cut,ck_fb;   // ck_fb: the feedback Q12 (FORMANT: the bands' gap, Q8 knob steps)
+float ck_kb,ck_a;       // FORMANT: the damping before the cutoff's taper; SH-2: the feedback, and the driven ringing's pitch before the taper
+float cn[6];            // the coefficients the last prepare ramped to (c's, then FORMANT's e's)
 } SvfCore;
 typedef struct {
 SvfCore core[2];

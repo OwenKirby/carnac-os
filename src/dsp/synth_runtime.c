@@ -687,11 +687,102 @@ static void render_voice_run(MixBus *bus, uint32_t set, uint32_t from, uint32_t 
     }
 }
 
+/* WHICH VOICES CORE 1 RENDERS, RUN BY RUN (2026-11-12). A run lasts as long as the busier core, and the fixed sets
+ * (CORE1_VOICES: the odd voices) are only even when the sounding voices happen to alternate: three notes held with the
+ * middle one let go, a layer on an odd count, a cheap layer below a dear one (DUAL: SPREAD under STACK) leave one core
+ * carrying up to a whole voice more than the other while that one waits. So each run splits the voices that sound by
+ * what they cost (the pool's price of their layer's patch, varch_voice_cost): the split whose busier core carries the
+ * least, searched over how many of each layer's voices go to core 1 (at most 9 x 9 counts). The fixed sets are kept
+ * whenever they are already as good (so a full chord renders exactly as before: the same voices into the same bus);
+ * otherwise the voices that were on core 1 stay there first, then the odd ones, so few change core. A split is worked
+ * out again only when the sounding voices, their layers or the prices change. With nothing for core 1 it is not
+ * called at all. The buses are summed in the one order as ever; a voice that changes bus changes the float sums'
+ * rounding, nothing else (measured over the render-hash scenes: 0.03 % of the samples differ, by at most 4 of 32768).
+ * SYNTH_CORE_BALANCE 0 (the default until the user has decided on that rounding change: the render hashes stay as
+ * they are): the fixed sets, exactly as before. Measured on the FM1 2026-11-13 (same build, PERF TEST): +0.1 points
+ * median with it on, the rows being even already; what it gains is for uneven DUAL / SPLIT pairs, not yet measured. */
+#ifndef SYNTH_CORE_BALANCE
+#define SYNTH_CORE_BALANCE 0
+#endif
+#if SYNTH_CORE_BALANCE
+static uint8_t layer_w[NLAYER] = {10u, 10u};   /* each layer's voice price for the pass (render_pass) */
+#endif
+static uint32_t core1_set = CORE1_VOICES & ((1u << POLYPHONY_VOICES) - 1u);   /* the run's voices on core 1 */
+#if SYNTH_CORE_BALANCE
+static uint32_t split_key = 0xFFFFFFFFu, split_set;
+#if defined(SYNTH_BAL_STAT)                    /* (host: what the fixed sets and the split each leave the busier core) */
+uint32_t synth_bal_stat[3];
+#endif
+
+static uint32_t core1_pick(uint32_t frames)
+{
+    const uint32_t all = (1u << POLYPHONY_VOICES) - 1u, odd = CORE1_VOICES & all;
+    uint32_t live = 0, lay = 0;
+    for (int v = 0; v < POLYPHONY_VOICES; v++) {
+        const SynthVoiceNode *s = &poly_bank[v];
+        if (voice_is_free(s)) continue;
+        live |= 1u << v;
+        if (s->layer == 1u) lay |= 1u << v;
+    }
+    (void)frames;
+    if (!live) return 0u;
+    uint32_t key = live | lay << 8 | (uint32_t)layer_w[0] << 16 | (uint32_t)layer_w[1] << 24;
+    if (key != split_key) {
+        const uint32_t wa = layer_w[0], wb = layer_w[1], la = live & ~lay, lb = live & lay;
+        uint32_t na = 0, nb = 0, pa = 0, pb = 0;           /* each layer's sounding voices, and those on the odd set */
+        for (int v = 0; v < POLYPHONY_VOICES; v++) {
+            na += la >> v & 1u;
+            nb += lb >> v & 1u;
+            pa += la & odd & 1u << v ? 1u : 0u;
+            pb += lb & odd & 1u << v ? 1u : 0u;
+        }
+        const uint32_t total = na * wa + nb * wb;
+        uint32_t c1 = pa * wa + pb * wb, fixed = c1 > total - c1 ? c1 : total - c1, best = fixed, bi = pa, bj = pb;
+        for (uint32_t i = 0; i <= na; i++)
+            for (uint32_t j = 0; j <= nb; j++) {
+                c1 = i * wa + j * wb;
+                /* (core 1 starts a hand-off late: a tie leaves core 0 the larger share) */
+                uint32_t m = c1 > total - c1 ? c1 : total - c1;
+                if (m < best || (m == best && best < fixed && c1 < bi * wa + bj * wb)) {
+                    best = m;
+                    bi = i;
+                    bj = j;
+                }
+            }
+        uint32_t set = odd & live;
+        if (best < fixed) {                                 /* bi of layer 1's, bj of layer 2's: last run's first, then the odd */
+            static const uint32_t pref[3] = {0u, CORE1_VOICES, 0xFFFFFFFFu};
+            set = 0;
+            for (int p = 0; p < 3; p++) {
+                uint32_t from = p == 0 ? split_set : pref[p];
+                for (int v = 0; v < POLYPHONY_VOICES; v++) {
+                    uint32_t bit = 1u << v;
+                    if (!(live & from & bit) || (set & bit)) continue;
+                    if (lay & bit) {
+                        if (bj) { set |= bit; bj--; }
+                    } else if (bi) { set |= bit; bi--; }
+                }
+            }
+        }
+        split_key = key;
+        split_set = set;
+#if defined(SYNTH_BAL_STAT)
+        synth_bal_stat[2] = fixed << 16 | best;             /* (kept for the frames below) */
+#endif
+    }
+#if defined(SYNTH_BAL_STAT)
+    synth_bal_stat[0] += (synth_bal_stat[2] >> 16) * frames;
+    synth_bal_stat[1] += (synth_bal_stat[2] & 0xFFFFu) * frames;
+#endif
+    return split_set;
+}
+#endif
+
 /* core 1's share of a run: its voice set into its own bus. Reads what core 0 holds still until it has waited. */
 static void core1_job(uint32_t arg)
 {
     (void)arg;
-    render_voice_run(&mix_bus[1], CORE1_VOICES & ((1u << POLYPHONY_VOICES) - 1u), core1_from, core1_to);
+    render_voice_run(&mix_bus[1], core1_set, core1_from, core1_to);
 }
 
 /* the effects' buffers for one pass, and core 1's job on them: the reverb's back (fx_reverb_back: the tank) */
@@ -801,11 +892,17 @@ static void voices_up_to(uint32_t frame)
 {
     if (voices_done >= frame) return;
     uint32_t all = (1u << POLYPHONY_VOICES) - 1u;
+#if SYNTH_CORE_BALANCE
+    uint32_t set1 = core1_pick(frame - voices_done);       /* (0: no voice of core 1's sounds, it is not called) */
+#else
+    uint32_t set1 = CORE1_VOICES & all;
+#endif
     core1_from = voices_done;
     core1_to = frame;
-    int on2 = core2_run && core2_run(core1_job, 0u);       /* core 1 starts on its set ... */
-    render_voice_run(&mix_bus[0], all & ~CORE1_VOICES, voices_done, frame);   /* ... while core 0 renders its own */
-    if (!on2 || core2_wait())
+    core1_set = set1;
+    int on2 = set1 && core2_run && core2_run(core1_job, 0u);   /* core 1 starts on its set ... */
+    render_voice_run(&mix_bus[0], all & ~set1, voices_done, frame);   /* ... while core 0 renders its own */
+    if (set1 && (!on2 || core2_wait()))
         core1_job(0u);                         /* one core (or the second failed): here */
     voices_done = frame;
     for (uint8_t i = 0; i < seq_qn; i++)       /* the sequencers' events that waited for this boundary, in order */
@@ -836,7 +933,19 @@ static void noise_pass_fill(uint32_t frames)
         if (want[e]) noise_shared_fill(e, frames, want[e] & 2u, want[e] & 4u);
 }
 
-static void render_pass(int32_t *out, uint32_t frames)
+/* The clock's and the sequencers' skipped frames carry over from one pass of a synth_render_q15 call to its next
+ * (2026-11-12). They were settled at every pass's end and asked afresh at the next one's first frame: the full
+ * sequencer frame and its late twin 345 times a second each, most of their code cold by then (fetched from the flash
+ * again), though nothing can reach the clock or the sequencers between the passes of one call (the UI and the MIDI
+ * input write between calls; an event inside one ends the skip as ever). So only a call's first pass starts afresh
+ * and only its last settles: the passes between are skipped through as the frames inside a pass are, by the same
+ * rules, to the same output (test_seq_idle at blocks of several passes). */
+static struct {
+    uint32_t seq_wake, seq_skip, pc_cur, pc_prev, clk_left, clk_skip, clk_pc;
+    uint8_t seq_quiet, seq_timed;
+} carry;
+
+static void render_pass(int32_t *out, uint32_t frames, int first, int last)
 {
 #if defined(SYNTH_PROF)
     uint32_t sprof_total = synth_prof_now();
@@ -860,16 +969,27 @@ static void render_pass(int32_t *out, uint32_t frames)
         }
     }
     noise_pass_fill(frames);
+#if SYNTH_CORE_BALANCE
+    for (unsigned l = 0; l < NLAYER; l++)      /* the voices' prices, for the cores' split (core1_pick) */
+        layer_w[l] = varch_voice_cost(&engine_state[l]);
+#endif
+    pool_pass = 1u;                            /* pool_range and the layer tick keep what a pass cannot change */
+    synth_voice_begin_pass();
     pass_base = sample_clock;
     voices_done = 0;
     in_pass = 1;
-    uint8_t seq_quiet = 0;                     /* the sequencers' frames skipped: 1 idle (seq_frame), till an event; 2
+    if (first) {                 /* a call's first pass: nothing skipped yet (carry, above) */
+        carry.seq_wake = carry.seq_skip = carry.pc_cur = carry.pc_prev = 0;
+        carry.clk_left = carry.clk_skip = carry.clk_pc = 0;
+        carry.seq_quiet = carry.seq_timed = 0;
+    }
+    uint8_t seq_quiet = carry.seq_quiet;       /* the sequencers' frames skipped: 1 idle (seq_frame), till an event; 2
                                                 * playing, till an event, a pulse or seq_wake (seq_next_due) ... */
-    uint8_t seq_timed = 0;
-    uint32_t seq_wake = 0;
-    uint32_t seq_skip = 0;                     /* ... this many since the last one run */
-    uint32_t pc_cur = 0, pc_prev = 0;          /* the clock's pulse count at the end of the frame before, and before that */
-    uint32_t clk_left = 0, clk_skip = 0, clk_pc = 0;       /* the internal clock's quiet frames still to skip, and skipped since its last call */
+    uint8_t seq_timed = carry.seq_timed;
+    uint32_t seq_wake = carry.seq_wake;
+    uint32_t seq_skip = carry.seq_skip;        /* ... this many since the last one run */
+    uint32_t pc_cur = carry.pc_cur, pc_prev = carry.pc_prev;   /* the clock's pulse count at the end of the frame before, and before that */
+    uint32_t clk_left = carry.clk_left, clk_skip = carry.clk_skip, clk_pc = carry.clk_pc;   /* the internal clock's quiet frames still to skip, and skipped since its last call */
     for (uint32_t f = 0; f < frames; ++f) {
         pass_frame = f;
         sample_clock = pass_base + f;
@@ -934,12 +1054,25 @@ static void render_pass(int32_t *out, uint32_t frames)
         }
         layer_ctrl_left--;
     }
-    if (clk_skip)
-        midi_clock_skipped(clk_skip, sample_clock);
-    if (seq_skip)                              /* the pass's last frame, skipped: run now (the UI reads them next) */
-        seq_frame(sample_clock, 1, pc_cur);
+    if (last) {
+        if (clk_skip)
+            midi_clock_skipped(clk_skip, sample_clock);
+        if (seq_skip)                          /* the call's last frame, skipped: run now (the UI reads them next) */
+            seq_frame(sample_clock, 1, pc_cur);
+    } else {                                   /* (the next pass of this call goes on from here) */
+        carry.seq_quiet = seq_quiet;
+        carry.seq_timed = seq_timed;
+        carry.seq_wake = seq_wake;
+        carry.seq_skip = seq_skip;
+        carry.pc_cur = pc_cur;
+        carry.pc_prev = pc_prev;
+        carry.clk_left = clk_left;
+        carry.clk_skip = clk_skip;
+        carry.clk_pc = clk_pc;
+    }
     voices_up_to(frames);
     in_pass = 0;
+    pool_pass = 0u;
     sample_clock = pass_base + frames;
     SPROF_START();
     PF_START();
@@ -1095,9 +1228,11 @@ static void render_pass(int32_t *out, uint32_t frames)
 
 void synth_render_q15(int32_t *out, uint32_t frames)
 {
+    int first = 1;
     while (frames > 0u) {
         uint32_t n = frames < RENDER_PASS_FRAMES ? frames : RENDER_PASS_FRAMES;
-        render_pass(out, n);
+        render_pass(out, n, first, frames == n);
+        first = 0;
         out += 2u * n;
         frames -= n;
     }

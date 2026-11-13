@@ -120,6 +120,1002 @@ What the host can't settle and has to be measured on a real FM1. Every number in
 
 Written by src/hardware/fm1_perf.py. Pass: avg <= 70 %, peak < 90 %, no late halves. One core, factory patch + the scenario's settings (src/hardware/perf_test.c).
 
+### 2026-11-13 07:37, CARNAC OS DEV (2 cores), done, build/fm1-ctl3: filter keeps + lowpass loops, per-pass layer tick and pool, seq/clock carry (no A/B switch; fixed core sets)
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 13.9 | 14.6 | 0 | 0 | 62.0 | 2 | pass |
+| SINGLE 1V | 24.5 | 25.8 | 0 | 1 | 61.3 | 4 | pass |
+| SINGLE | 44.9 | 46.4 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE HEAVY | 51.6 | 55.2 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC | 61.6 | 63.2 | 0 | 8 | 52.5 | 8 | pass |
+| SPREAD | 56.7 | 58.2 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL FILTER | 56.2 | 57.6 | 0 | 8 | 57.6 | 7 | pass |
+| STACK | 59.6 | 61.2 | 0 | 6 | 55.9 | 8 | pass |
+| BINAURAL | 54.3 | 55.9 | 0 | 6 | 57.2 | 1 | pass |
+| DUAL OSC HEAVY | 60.1 | 63.3 | 0 | 8 | 55.2 | 8 | pass |
+| SPREAD HEAVY | 63.2 | 68.3 | 0 | 8 | 52.6 | 9 | pass |
+| DUAL FLT HEAVY | 62.6 | 66.2 | 0 | 8 | 52.2 | 8 | pass |
+| STACK HEAVY | 58.3 | 61.3 | 0 | 6 | 57.2 | 8 | pass |
+| BINAURAL HEAVY | 64.9 | 67.7 | 0 | 6 | 51.9 | 9 | pass |
+| SINGLE LADDER | 44.9 | 46.5 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE MS20 | 43.0 | 44.8 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE SH-2 | 50.4 | 51.8 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE FORMANT | 45.0 | 46.5 | 0 | 8 | 57.6 | 1 | pass |
+| DUAL FLT LADDER | 56.2 | 57.7 | 0 | 8 | 57.5 | 7 | pass |
+| SEQ+ARP HOME | 64.2 | 70.1 | 0 | 8 | 51.5 | 10 | pass |
+| SEQ+ARP AMP | 64.3 | 70.2 | 0 | 8 | 51.2 | 12 | pass |
+| SEQ+ARP SEQ | 63.5 | 68.8 | 0 | 8 | 13.2 | 127 | pass |
+| SEQ+ARP MOD1 | 64.4 | 70.7 | 0 | 8 | 51.6 | 10 | pass |
+| LADDER FILTER PG | 44.9 | 46.5 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 57.4 | 60.7 | 0 | 8 | 57.2 | 8 | pass |
+| HEAVY CELEST+PP | 56.6 | 60.0 | 0 | 8 | 57.2 | 8 | pass |
+| SEQ+ARP CELEST+PP | 69.9 | 76.4 | 0 | 8 | 42.9 | 10 | pass |
+| SINGLE MULTI H | 51.9 | 55.7 | 0 | 8 | 57.5 | 1 | pass |
+| DUALOSC MULTI H | 60.1 | 63.8 | 0 | 8 | 55.5 | 8 | pass |
+| SPREAD MULTI H | 63.1 | 68.2 | 0 | 8 | 51.9 | 9 | pass |
+| DUALFLT MULTI H | 62.8 | 66.5 | 0 | 8 | 51.9 | 9 | pass |
+| STACK MULTI H | 58.2 | 61.3 | 0 | 6 | 57.2 | 8 | pass |
+| BINAUR MULTI H | 65.2 | 68.3 | 0 | 6 | 51.9 | 9 | pass |
+| SPREAD H CEL+PP | 68.0 | 73.3 | 0 | 8 | 47.2 | 9 | pass |
+| DUALOSC H CEL+PP | 65.2 | 69.4 | 0 | 8 | 51.6 | 9 | pass |
+| SPREAD H TUM+PP | 67.6 | 73.3 | 0 | 8 | 46.9 | 9 | pass |
+| SEQ+ARP SPRD CEL | 82.2 | 90.2 | 0 | 8 | 42.9 | 13 | FAIL |
+| HEAVY SPRING+PP | 55.9 | 59.1 | 0 | 8 | 57.6 | 8 | pass |
+| HEAVY CEL+BBD PP | 58.2 | 62.7 | 0 | 8 | 57.2 | 8 | pass |
+| SEQ+ARP SPR+BBD | 69.6 | 74.8 | 0 | 8 | 43.9 | 10 | pass |
+| SINGLE SH2 H | 57.1 | 60.7 | 0 | 8 | 57.2 | 8 | pass |
+| DUALOSC SH2 H | 65.6 | 68.9 | 0 | 8 | 51.5 | 9 | pass |
+| SPREAD SH2 H | 56.4 | 60.7 | 0 | 6 | 57.2 | 8 | pass |
+| DUALFLT SH2 H | 60.2 | 63.5 | 0 | 6 | 55.2 | 8 | pass |
+| STACK SH2 H | 51.3 | 54.2 | 0 | 4 | 57.3 | 1 | pass |
+| BINAUR SH2 H | 56.3 | 59.1 | 0 | 4 | 57.5 | 8 | pass |
+| SPREAD SH2 CEL+PP | 61.5 | 65.5 | 0 | 6 | 53.9 | 8 | pass |
+| DUALFLT SH2 CEL | 65.5 | 68.9 | 0 | 6 | 51.2 | 9 | pass |
+| SEQ+ARP SH2 CEL | 75.2 | 81.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| DUALFLT SH2 HP | 60.2 | 63.2 | 0 | 6 | 54.9 | 8 | pass |
+| BINAUR SH2 HP | 56.3 | 59.1 | 0 | 4 | 57.2 | 7 | pass |
+| SINGLE PCM | 48.4 | 50.0 | 0 | 8 | 57.6 | 1 | pass |
+| DUAL OSC PCM | 54.4 | 55.9 | 0 | 6 | 57.2 | 1 | pass |
+| SPREAD PCM | 64.1 | 65.8 | 0 | 8 | 52.2 | 8 | pass |
+| DUAL FILTER PCM | 49.4 | 51.0 | 0 | 6 | 57.3 | 1 | pass |
+| STACK PCM | 48.1 | 49.5 | 0 | 4 | 57.2 | 1 | pass |
+| BINAURAL PCM | 45.6 | 47.0 | 0 | 4 | 57.6 | 1 | pass |
+| DUALOSC MULTI H PCM | 57.5 | 58.8 | 0 | 6 | 57.2 | 8 | pass |
+| DUALFLT MULTI H PCM | 56.2 | 57.9 | 0 | 6 | 57.2 | 7 | pass |
+| BINAUR MULTI H PCM | 55.3 | 57.2 | 0 | 4 | 57.2 | 7 | pass |
+| SPREAD MULTI H PCM | 73.7 | 75.5 | 0 | 8 | 43.2 | 1 | FAIL |
+| SINGLE RS | 44.9 | 46.8 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 53.7 | 55.8 | 0 | 8 | 57.5 | 1 | pass |
+| DUALOSC RS | 61.7 | 63.4 | 0 | 8 | 52.5 | 8 | pass |
+| DUALOSC RS PCM | 66.5 | 68.3 | 0 | 6 | 49.6 | 9 | pass |
+| SEQ+ARP HOME PCM | 74.4 | 81.6 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE DRV SOFT | 49.1 | 50.7 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV HARD | 49.3 | 50.8 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV FOLD | 49.3 | 51.0 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV TAPE | 50.0 | 51.6 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV TUBE | 49.8 | 51.3 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV OD | 49.9 | 51.5 | 0 | 8 | 57.5 | 1 | pass |
+| STACK HEAVY TUBE | 64.9 | 68.2 | 0 | 6 | 51.9 | 9 | pass |
+| BINAUR HEAVY OD | 71.9 | 75.7 | 0 | 6 | 43.2 | 9 | FAIL |
+| SEQ+ARP HOME TUBE | 69.5 | 74.1 | 0 | 8 | 44.9 | 11 | pass |
+| FULL | 60.3 | 62.0 | 0 | 6 | 55.6 | 8 | pass |
+| FULL HEAVY | 59.0 | 62.4 | 0 | 6 | 56.2 | 8 | pass |
+| FULL MULTI H | 59.3 | 63.2 | 0 | 6 | 56.2 | 8 | pass |
+| FULL SH2 H | 51.9 | 55.2 | 0 | 4 | 57.6 | 1 | pass |
+| FULL H CEL+PP | 64.7 | 68.7 | 0 | 6 | 51.5 | 9 | pass |
+| FULL MULTI H PCM | 52.7 | 54.3 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 H PCM | 58.8 | 63.1 | 0 | 4 | 55.5 | 8 | pass |
+| FULL SH2 CEL+PP | 57.5 | 60.7 | 0 | 4 | 57.2 | 8 | pass |
+| IDLE PHASER | 16.4 | 17.3 | 0 | 0 | 62.0 | 3 | pass |
+| IDLE PHASER x2 | 17.8 | 18.9 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD PHASER | 50.6 | 52.1 | 0 | 6 | 57.5 | 1 | pass |
+| SPREAD H CEL PHSR | 61.7 | 66.4 | 0 | 6 | 53.5 | 9 | pass |
+| SEQ+ARP HOME PHSR2 | 70.8 | 77.0 | 0 | 8 | 43.6 | 11 | FAIL |
+| IDLE ENSEMBLE | 17.5 | 18.6 | 0 | 0 | 62.0 | 3 | pass |
+| IDLE ENSEMBLE x2 | 19.2 | 20.3 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR | 18.2 | 19.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR x2 | 20.2 | 21.1 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS | 17.0 | 18.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS x2 | 18.6 | 19.6 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL ENPH | 64.9 | 69.0 | 0 | 6 | 51.2 | 9 | pass |
+| SEQ+ARP HOME ENPH2 | 74.3 | 80.6 | 0 | 8 | 42.9 | 10 | FAIL |
+| SPREAD H CEL MIX | 77.1 | 82.6 | 0 | 8 | 43.2 | 1 | FAIL |
+| SEQ+ARP CEL MIX | 78.5 | 84.4 | 0 | 8 | 42.9 | 12 | FAIL |
+| HEAVY SPRING MIX | 64.8 | 68.2 | 0 | 8 | 51.5 | 9 | pass |
+| HEAVY CEL BBD MIX | 68.7 | 72.9 | 0 | 8 | 45.9 | 9 | pass |
+| IDLE TAPE FLANGER | 18.0 | 19.1 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE TAPE FLNG x2 | 20.2 | 21.3 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL TFLG | 64.1 | 68.8 | 0 | 6 | 51.5 | 9 | pass |
+| SEQ+ARP HOME TFLG2 | 74.6 | 80.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE BBD FLANGER | 17.2 | 18.3 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD FLNG x2 | 18.7 | 19.8 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL BBDF | 63.3 | 68.2 | 0 | 6 | 51.8 | 9 | pass |
+| IDLE PITCH SHIFT | 17.6 | 18.7 | 0 | 0 | 61.6 | 3 | pass |
+| PITCH SHIFT HELD | 50.6 | 52.4 | 0 | 8 | 57.2 | 1 | pass |
+| IDLE PITCH SHFT x2 | 19.9 | 21.4 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL PSHF | 63.0 | 67.5 | 0 | 6 | 52.2 | 9 | pass |
+| IDLE BBD ECHO | 17.4 | 18.4 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD ECHO x2 | 17.5 | 18.7 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ECHO | 62.6 | 67.0 | 0 | 6 | 52.5 | 8 | pass |
+| IDLE BRONZE AGE | 22.3 | 23.3 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE BRONZE AGE x2 | 29.0 | 30.0 | 0 | 0 | 59.6 | 4 | pass |
+| SPREAD H CEL BRNZ | 66.9 | 71.1 | 0 | 6 | 46.5 | 9 | pass |
+| SPREAD H CEL BREQ | 67.9 | 72.3 | 0 | 6 | 47.2 | 9 | pass |
+| IDLE WIND HARP | 17.5 | 18.5 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL HARP | 64.2 | 68.9 | 0 | 6 | 50.8 | 9 | pass |
+| SPREAD H CEL STON | 63.9 | 68.2 | 0 | 6 | 51.6 | 9 | pass |
+| SINGLE HEAVY AIR | 53.9 | 57.4 | 0 | 8 | 57.2 | 1 | pass |
+| BINAURAL HEAVY AIR | 67.3 | 70.4 | 0 | 6 | 47.9 | 9 | pass |
+| SPREAD H CEL+PP AIR | 70.4 | 76.3 | 0 | 8 | 43.9 | 9 | FAIL |
+| SEQ+ARP+REC HOME | 65.6 | 69.9 | 0 | 8 | 49.6 | 10 | pass |
+| SEQ+ARP+REC CELEST+P | 71.4 | 77.8 | 0 | 8 | 42.9 | 2 | FAIL |
+| ALL HOME | 64.2 | 70.4 | 0 | 8 | 52.2 | 10 | pass |
+| ALL SPRD CEL | 82.3 | 89.7 | 0 | 8 | 43.2 | 13 | FAIL |
+| ALL DUALOSC CEL | 79.3 | 86.9 | 0 | 8 | 43.2 | 12 | FAIL |
+| LOOP SPREAD | 45.5 | 49.4 | 0 | 4 | 57.3 | 2 | pass |
+| LOOP DUALOSC | 48.4 | 52.3 | 0 | 4 | 57.6 | 8 | pass |
+| LOOP STACK | 54.6 | 58.6 | 0 | 4 | 57.2 | 9 | pass |
+| LOOP STACK H | 55.1 | 59.3 | 0 | 4 | 57.2 | 9 | pass |
+| LOOP STACK MFX1 | 59.2 | 63.4 | 0 | 4 | 55.5 | 10 | pass |
+| LOOP STACK MFX2 | 60.6 | 64.8 | 0 | 4 | 55.5 | 10 | pass |
+| LOOP STACK SH2 | 60.3 | 64.5 | 0 | 4 | 55.2 | 10 | pass |
+| LOOPCH DUALOSC | 59.0 | 63.1 | 0 | 6 | 56.9 | 10 | pass |
+| LOOPCH STACK | 67.5 | 72.3 | 0 | 5 | 48.9 | 11 | pass |
+| LOOPCH STACK H | 66.3 | 71.7 | 0 | 5 | 48.9 | 11 | pass |
+| LOOPCH STACK MFX2 | 73.5 | 78.1 | 0 | 5 | 42.9 | 3 | FAIL |
+| LOOPCH STACK SH2 | 59.8 | 64.1 | 0 | 4 | 55.6 | 10 | pass |
+| LOOP BRNZ1 | 66.0 | 70.6 | 0 | 4 | 50.5 | 10 | pass |
+| LOOP BRNZ2 | 72.2 | 76.9 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP BRNZ EQ2 | 73.7 | 78.8 | 0 | 4 | 43.2 | 3 | FAIL |
+| LOOP PHSR+BRNZ | 72.2 | 76.8 | 0 | 4 | 42.9 | 2 | FAIL |
+| LOOP BRNZ+PHSR | 73.7 | 77.9 | 0 | 4 | 43.2 | 3 | FAIL |
+| LOOP ENPH1 | 63.5 | 67.2 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP ENPH2 | 65.4 | 69.6 | 0 | 4 | 50.5 | 11 | pass |
+| LOOP ENS+PHSR | 65.3 | 68.9 | 0 | 4 | 50.5 | 10 | pass |
+| LOOP ENPH+BRNZ | 74.7 | 79.0 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP ENSM1 | 62.0 | 66.0 | 0 | 4 | 53.2 | 10 | pass |
+| LOOP ENSM2 | 63.6 | 68.1 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP CHOR2 | 62.7 | 67.2 | 0 | 4 | 52.5 | 10 | pass |
+| LOOP TFLG2 | 64.3 | 67.8 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP BBDF2 | 62.2 | 66.7 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP PSHF2 | 63.7 | 67.9 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP ECHO1 | 60.3 | 64.9 | 0 | 4 | 55.2 | 10 | pass |
+| LOOP ECHO2 | 60.3 | 64.8 | 0 | 4 | 54.9 | 10 | pass |
+| LOOP HARP1 | 62.1 | 66.2 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP HARP2 | 63.9 | 68.2 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP STON2 | 63.6 | 67.7 | 0 | 4 | 52.2 | 10 | pass |
+
+### 2026-11-13 07:21, CARNAC OS DEV (2 cores), done, build/fm1-ctl2 A/B: NEW but general filter loops, no seq carry
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 14.5 | 15.2 | 0 | 0 | 62.3 | 2 | pass |
+| SINGLE 1V | 25.5 | 26.8 | 0 | 1 | 60.6 | 4 | pass |
+| SINGLE | 46.4 | 48.1 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE HEAVY | 53.1 | 56.8 | 0 | 8 | 57.5 | 1 | pass |
+| DUAL OSC | 63.0 | 64.7 | 0 | 8 | 52.2 | 8 | pass |
+| SPREAD | 57.8 | 59.4 | 0 | 8 | 56.9 | 8 | pass |
+| DUAL FILTER | 58.5 | 60.3 | 0 | 8 | 57.2 | 8 | pass |
+| STACK | 61.7 | 63.3 | 0 | 6 | 53.6 | 8 | pass |
+| BINAURAL | 56.9 | 58.5 | 0 | 6 | 57.2 | 7 | pass |
+| DUAL OSC HEAVY | 61.4 | 65.4 | 0 | 8 | 53.9 | 8 | pass |
+| SPREAD HEAVY | 64.3 | 70.2 | 0 | 8 | 51.5 | 9 | pass |
+| DUAL FLT HEAVY | 64.5 | 68.4 | 0 | 8 | 51.9 | 9 | pass |
+| STACK HEAVY | 61.5 | 65.1 | 0 | 6 | 53.6 | 8 | pass |
+| BINAURAL HEAVY | 68.0 | 71.5 | 0 | 6 | 45.9 | 9 | pass |
+| SINGLE LADDER | 46.4 | 48.2 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE MS20 | 44.6 | 46.3 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE SH-2 | 51.5 | 53.2 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE FORMANT | 46.6 | 48.4 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL FLT LADDER | 58.5 | 60.1 | 0 | 8 | 56.9 | 8 | pass |
+| SEQ+ARP HOME | 65.6 | 71.9 | 0 | 8 | 49.6 | 10 | pass |
+| SEQ+ARP AMP | 65.6 | 71.7 | 0 | 8 | 49.6 | 12 | pass |
+| SEQ+ARP SEQ | 64.9 | 70.8 | 0 | 8 | 12.4 | 127 | pass |
+| SEQ+ARP MOD1 | 65.8 | 71.7 | 0 | 8 | 48.2 | 10 | pass |
+| LADDER FILTER PG | 46.5 | 48.2 | 0 | 8 | 57.6 | 1 | pass |
+| HEAVY MOD+PP | 58.2 | 62.0 | 0 | 8 | 56.5 | 8 | pass |
+| HEAVY CELEST+PP | 57.7 | 61.9 | 0 | 8 | 57.2 | 8 | pass |
+| SEQ+ARP CELEST+PP | 70.9 | 78.1 | 0 | 8 | 43.2 | 10 | FAIL |
+| SINGLE MULTI H | 53.3 | 57.4 | 0 | 8 | 57.6 | 7 | pass |
+| DUALOSC MULTI H | 61.7 | 65.7 | 0 | 8 | 53.5 | 8 | pass |
+| SPREAD MULTI H | 64.1 | 69.7 | 0 | 8 | 51.5 | 9 | pass |
+| DUALFLT MULTI H | 65.2 | 70.3 | 0 | 8 | 51.5 | 9 | pass |
+| STACK MULTI H | 61.2 | 64.9 | 0 | 6 | 54.5 | 8 | pass |
+| BINAUR MULTI H | 68.5 | 72.1 | 0 | 6 | 45.6 | 9 | pass |
+| SPREAD H CEL+PP | 69.1 | 74.8 | 0 | 8 | 45.6 | 9 | pass |
+| DUALOSC H CEL+PP | 66.6 | 70.8 | 0 | 8 | 49.6 | 9 | pass |
+| SPREAD H TUM+PP | 68.4 | 74.2 | 0 | 8 | 47.2 | 9 | pass |
+| SEQ+ARP SPRD CEL | 83.4 | 91.8 | 0 | 8 | 42.9 | 13 | FAIL |
+| HEAVY SPRING+PP | 55.9 | 59.5 | 0 | 8 | 57.3 | 8 | pass |
+| HEAVY CEL+BBD PP | 60.6 | 65.1 | 0 | 8 | 55.5 | 8 | pass |
+| SEQ+ARP SPR+BBD | 71.4 | 78.3 | 0 | 8 | 43.2 | 10 | FAIL |
+| SINGLE SH2 H | 58.1 | 61.7 | 0 | 8 | 57.2 | 8 | pass |
+| DUALOSC SH2 H | 66.4 | 70.5 | 0 | 8 | 49.9 | 9 | pass |
+| SPREAD SH2 H | 57.4 | 62.1 | 0 | 6 | 57.2 | 8 | pass |
+| DUALFLT SH2 H | 61.8 | 65.2 | 0 | 6 | 53.9 | 8 | pass |
+| STACK SH2 H | 53.4 | 56.5 | 0 | 4 | 57.2 | 1 | pass |
+| BINAUR SH2 H | 58.7 | 61.2 | 0 | 4 | 56.5 | 8 | pass |
+| SPREAD SH2 CEL+PP | 62.3 | 66.9 | 0 | 6 | 52.9 | 9 | pass |
+| DUALFLT SH2 CEL | 66.7 | 70.3 | 0 | 6 | 48.9 | 9 | pass |
+| SEQ+ARP SH2 CEL | 75.9 | 82.4 | 0 | 8 | 42.9 | 2 | FAIL |
+| DUALFLT SH2 HP | 61.7 | 65.1 | 0 | 6 | 53.2 | 8 | pass |
+| BINAUR SH2 HP | 58.7 | 61.3 | 0 | 4 | 56.2 | 8 | pass |
+| SINGLE PCM | 49.4 | 51.2 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC PCM | 55.5 | 57.3 | 0 | 6 | 57.2 | 7 | pass |
+| SPREAD PCM | 65.2 | 66.9 | 0 | 8 | 51.9 | 9 | pass |
+| DUAL FILTER PCM | 51.1 | 52.9 | 0 | 6 | 57.2 | 1 | pass |
+| STACK PCM | 51.0 | 52.8 | 0 | 4 | 57.2 | 1 | pass |
+| BINAURAL PCM | 47.7 | 49.3 | 0 | 4 | 57.2 | 1 | pass |
+| DUALOSC MULTI H PCM | 58.7 | 60.2 | 0 | 6 | 56.2 | 8 | pass |
+| DUALFLT MULTI H PCM | 58.4 | 60.1 | 0 | 6 | 57.2 | 8 | pass |
+| BINAUR MULTI H PCM | 57.6 | 59.2 | 0 | 4 | 57.2 | 8 | pass |
+| SPREAD MULTI H PCM | 74.2 | 76.2 | 0 | 8 | 42.9 | 1 | FAIL |
+| SINGLE RS | 46.4 | 48.4 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 56.2 | 58.4 | 0 | 8 | 57.2 | 8 | pass |
+| DUALOSC RS | 63.1 | 64.6 | 0 | 8 | 51.9 | 8 | pass |
+| DUALOSC RS PCM | 70.1 | 72.4 | 0 | 6 | 43.2 | 9 | FAIL |
+| SEQ+ARP HOME PCM | 76.4 | 83.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE DRV SOFT | 51.0 | 52.7 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV HARD | 51.3 | 52.9 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV FOLD | 51.5 | 53.1 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TAPE | 52.2 | 53.8 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TUBE | 52.2 | 53.8 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV OD | 52.1 | 53.9 | 0 | 8 | 57.6 | 1 | pass |
+| STACK HEAVY TUBE | 68.8 | 73.6 | 0 | 6 | 45.9 | 9 | pass |
+| BINAUR HEAVY OD | 77.0 | 81.4 | 0 | 6 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME TUBE | 71.6 | 77.9 | 0 | 8 | 43.3 | 11 | FAIL |
+| FULL | 62.0 | 63.7 | 0 | 6 | 52.9 | 8 | pass |
+| FULL HEAVY | 60.1 | 64.2 | 0 | 6 | 55.6 | 8 | pass |
+| FULL MULTI H | 60.9 | 65.2 | 0 | 6 | 55.2 | 8 | pass |
+| FULL SH2 H | 52.9 | 56.4 | 0 | 4 | 57.2 | 1 | pass |
+| FULL H CEL+PP | 66.1 | 70.9 | 0 | 6 | 50.5 | 9 | pass |
+| FULL MULTI H PCM | 53.4 | 55.2 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 H PCM | 58.9 | 61.7 | 0 | 4 | 56.5 | 8 | pass |
+| FULL SH2 CEL+PP | 58.3 | 61.9 | 0 | 4 | 57.2 | 8 | pass |
+| IDLE PHASER | 17.2 | 18.1 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE PHASER x2 | 19.0 | 20.1 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD PHASER | 53.4 | 54.9 | 0 | 6 | 57.5 | 1 | pass |
+| SPREAD H CEL PHSR | 63.7 | 68.6 | 0 | 6 | 51.5 | 9 | pass |
+| SEQ+ARP HOME PHSR2 | 72.9 | 78.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE ENSEMBLE | 18.5 | 19.6 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENSEMBLE x2 | 20.3 | 21.3 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE ENS+PHSR | 19.2 | 20.1 | 0 | 0 | 61.2 | 3 | pass |
+| IDLE ENS+PHSR x2 | 21.3 | 22.3 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS | 18.1 | 19.2 | 0 | 0 | 61.6 | 1 | pass |
+| IDLE CHORUS x2 | 19.9 | 20.9 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ENPH | 67.1 | 71.7 | 0 | 6 | 47.5 | 9 | pass |
+| SEQ+ARP HOME ENPH2 | 76.0 | 81.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| SPREAD H CEL MIX | 78.1 | 83.8 | 0 | 8 | 43.2 | 1 | FAIL |
+| SEQ+ARP CEL MIX | 79.7 | 85.9 | 0 | 8 | 42.9 | 12 | FAIL |
+| HEAVY SPRING MIX | 65.0 | 68.4 | 0 | 8 | 50.9 | 9 | pass |
+| HEAVY CEL BBD MIX | 70.8 | 75.2 | 0 | 8 | 43.2 | 9 | FAIL |
+| IDLE TAPE FLANGER | 20.1 | 21.0 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE TAPE FLNG x2 | 22.1 | 22.9 | 0 | 0 | 61.2 | 3 | pass |
+| SPREAD H CEL TFLG | 66.8 | 71.5 | 0 | 6 | 48.2 | 9 | pass |
+| SEQ+ARP HOME TFLG2 | 75.9 | 81.4 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE BBD FLANGER | 17.8 | 18.7 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD FLNG x2 | 19.7 | 20.7 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL BBDF | 65.2 | 69.9 | 0 | 6 | 50.5 | 9 | pass |
+| IDLE PITCH SHIFT | 18.4 | 19.4 | 0 | 0 | 61.6 | 1 | pass |
+| PITCH SHIFT HELD | 52.8 | 54.7 | 0 | 8 | 57.5 | 1 | pass |
+| IDLE PITCH SHFT x2 | 21.1 | 22.3 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL PSHF | 65.0 | 70.4 | 0 | 6 | 50.5 | 9 | pass |
+| IDLE BBD ECHO | 18.0 | 19.0 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD ECHO x2 | 18.2 | 19.1 | 0 | 0 | 61.3 | 1 | pass |
+| SPREAD H CEL ECHO | 64.3 | 69.3 | 0 | 6 | 51.8 | 9 | pass |
+| IDLE BRONZE AGE | 23.2 | 24.1 | 0 | 0 | 61.3 | 4 | pass |
+| IDLE BRONZE AGE x2 | 30.2 | 31.3 | 0 | 0 | 58.2 | 4 | pass |
+| SPREAD H CEL BRNZ | 68.8 | 73.8 | 0 | 6 | 45.2 | 9 | pass |
+| SPREAD H CEL BREQ | 69.8 | 74.9 | 0 | 6 | 44.6 | 9 | pass |
+| IDLE WIND HARP | 18.4 | 19.2 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL HARP | 66.1 | 70.7 | 0 | 6 | 49.9 | 9 | pass |
+| SPREAD H CEL STON | 65.7 | 70.1 | 0 | 6 | 50.2 | 9 | pass |
+| SINGLE HEAVY AIR | 55.4 | 59.0 | 0 | 8 | 57.2 | 1 | pass |
+| BINAURAL HEAVY AIR | 70.6 | 74.4 | 0 | 6 | 43.5 | 9 | FAIL |
+| SPREAD H CEL+PP AIR | 71.3 | 77.4 | 0 | 8 | 43.2 | 9 | FAIL |
+| SEQ+ARP+REC HOME | 66.9 | 73.5 | 0 | 8 | 47.6 | 10 | pass |
+| SEQ+ARP+REC CELEST+P | 72.4 | 79.0 | 0 | 8 | 43.2 | 2 | FAIL |
+| ALL HOME | 65.5 | 72.0 | 0 | 8 | 48.6 | 11 | pass |
+| ALL SPRD CEL | 83.4 | 90.9 | 0 | 8 | 42.9 | 13 | FAIL |
+| ALL DUALOSC CEL | 81.5 | 88.9 | 0 | 8 | 43.2 | 13 | FAIL |
+| LOOP SPREAD | 47.0 | 51.7 | 0 | 4 | 57.3 | 8 | pass |
+| LOOP DUALOSC | 50.0 | 54.5 | 0 | 4 | 57.2 | 8 | pass |
+| LOOP STACK | 57.5 | 61.9 | 0 | 4 | 56.8 | 10 | pass |
+| LOOP STACK H | 59.1 | 64.1 | 0 | 4 | 56.5 | 10 | pass |
+| LOOP STACK MFX1 | 63.2 | 67.5 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP STACK MFX2 | 64.6 | 68.8 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP STACK SH2 | 62.3 | 66.2 | 0 | 4 | 52.9 | 10 | pass |
+| LOOPCH DUALOSC | 60.6 | 64.6 | 0 | 6 | 54.5 | 10 | pass |
+| LOOPCH STACK | 69.9 | 75.0 | 0 | 5 | 42.9 | 9 | pass |
+| LOOPCH STACK H | 70.6 | 76.2 | 0 | 5 | 43.5 | 11 | FAIL |
+| LOOPCH STACK MFX2 | 77.5 | 82.4 | 0 | 5 | 42.9 | 12 | FAIL |
+| LOOPCH STACK SH2 | 61.7 | 66.5 | 0 | 4 | 52.9 | 10 | pass |
+| LOOP BRNZ1 | 69.2 | 74.1 | 0 | 4 | 43.6 | 11 | pass |
+| LOOP BRNZ2 | 75.7 | 80.5 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP BRNZ EQ2 | 77.2 | 81.2 | 0 | 4 | 43.2 | 12 | FAIL |
+| LOOP PHSR+BRNZ | 76.1 | 81.1 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP BRNZ+PHSR | 77.6 | 81.7 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP ENPH1 | 67.1 | 71.0 | 0 | 4 | 49.2 | 11 | pass |
+| LOOP ENPH2 | 68.6 | 72.7 | 0 | 4 | 44.2 | 11 | pass |
+| LOOP ENS+PHSR | 68.3 | 73.1 | 0 | 4 | 45.9 | 11 | pass |
+| LOOP ENPH+BRNZ | 77.6 | 81.9 | 0 | 4 | 42.9 | 12 | FAIL |
+| LOOP ENSM1 | 65.6 | 70.2 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP ENSM2 | 66.8 | 71.4 | 0 | 4 | 48.5 | 11 | pass |
+| LOOP CHOR2 | 65.9 | 70.0 | 0 | 4 | 50.9 | 10 | pass |
+| LOOP TFLG2 | 67.8 | 72.8 | 0 | 4 | 47.2 | 11 | pass |
+| LOOP BBDF2 | 66.0 | 70.2 | 0 | 4 | 50.2 | 11 | pass |
+| LOOP PSHF2 | 67.0 | 71.3 | 0 | 4 | 47.6 | 11 | pass |
+| LOOP ECHO1 | 64.6 | 68.1 | 0 | 4 | 51.6 | 10 | pass |
+| LOOP ECHO2 | 64.7 | 68.7 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP HARP1 | 65.7 | 69.5 | 0 | 4 | 50.5 | 11 | pass |
+| LOOP HARP2 | 67.4 | 71.5 | 0 | 4 | 46.6 | 11 | pass |
+| LOOP STON2 | 67.2 | 71.2 | 0 | 4 | 47.9 | 11 | pass |
+
+### 2026-11-13 07:10, CARNAC OS DEV (2 cores), done, build/fm1-ctl2 A/B: NEW but fixed core sets, core 1 always called
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 14.5 | 15.3 | 0 | 0 | 62.0 | 2 | pass |
+| SINGLE 1V | 25.1 | 26.5 | 0 | 1 | 60.6 | 4 | pass |
+| SINGLE | 45.9 | 47.5 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE HEAVY | 52.8 | 56.1 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC | 62.3 | 64.0 | 0 | 8 | 51.9 | 8 | pass |
+| SPREAD | 57.1 | 58.7 | 0 | 8 | 57.2 | 8 | pass |
+| DUAL FILTER | 57.8 | 59.5 | 0 | 8 | 57.2 | 8 | pass |
+| STACK | 60.9 | 62.4 | 0 | 6 | 54.5 | 8 | pass |
+| BINAURAL | 56.3 | 57.8 | 0 | 6 | 57.2 | 1 | pass |
+| DUAL OSC HEAVY | 60.9 | 65.2 | 0 | 8 | 54.5 | 8 | pass |
+| SPREAD HEAVY | 63.8 | 69.6 | 0 | 8 | 51.6 | 9 | pass |
+| DUAL FLT HEAVY | 64.0 | 68.0 | 0 | 8 | 51.9 | 9 | pass |
+| STACK HEAVY | 60.9 | 64.4 | 0 | 6 | 54.9 | 8 | pass |
+| BINAURAL HEAVY | 67.4 | 70.9 | 0 | 6 | 46.9 | 9 | pass |
+| SINGLE LADDER | 45.9 | 47.5 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE MS20 | 44.3 | 46.0 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE SH-2 | 51.2 | 52.8 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE FORMANT | 46.1 | 47.8 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL FLT LADDER | 57.8 | 59.4 | 0 | 8 | 57.5 | 8 | pass |
+| SEQ+ARP HOME | 64.9 | 71.1 | 0 | 8 | 50.2 | 10 | pass |
+| SEQ+ARP AMP | 64.9 | 71.0 | 0 | 8 | 49.9 | 12 | pass |
+| SEQ+ARP SEQ | 64.1 | 69.8 | 0 | 8 | 12.5 | 127 | pass |
+| SEQ+ARP MOD1 | 65.0 | 71.4 | 0 | 8 | 50.6 | 10 | pass |
+| LADDER FILTER PG | 46.0 | 47.6 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 57.6 | 61.3 | 0 | 8 | 56.9 | 8 | pass |
+| HEAVY CELEST+PP | 57.1 | 60.6 | 0 | 8 | 57.2 | 8 | pass |
+| SEQ+ARP CELEST+PP | 70.0 | 76.6 | 0 | 8 | 44.9 | 11 | pass |
+| SINGLE MULTI H | 52.6 | 56.2 | 0 | 8 | 57.3 | 1 | pass |
+| DUALOSC MULTI H | 61.1 | 64.9 | 0 | 8 | 53.9 | 8 | pass |
+| SPREAD MULTI H | 63.4 | 68.9 | 0 | 8 | 51.5 | 9 | pass |
+| DUALFLT MULTI H | 64.6 | 69.4 | 0 | 8 | 51.2 | 9 | pass |
+| STACK MULTI H | 60.5 | 63.9 | 0 | 6 | 54.9 | 8 | pass |
+| BINAUR MULTI H | 67.6 | 70.7 | 0 | 6 | 46.2 | 9 | pass |
+| SPREAD H CEL+PP | 68.2 | 74.4 | 0 | 8 | 47.6 | 9 | pass |
+| DUALOSC H CEL+PP | 66.0 | 69.9 | 0 | 8 | 50.6 | 9 | pass |
+| SPREAD H TUM+PP | 67.5 | 73.1 | 0 | 8 | 48.2 | 9 | pass |
+| SEQ+ARP SPRD CEL | 82.4 | 90.2 | 0 | 8 | 43.2 | 13 | FAIL |
+| HEAVY SPRING+PP | 55.6 | 59.3 | 0 | 8 | 57.5 | 7 | pass |
+| HEAVY CEL+BBD PP | 59.8 | 63.8 | 0 | 8 | 56.2 | 8 | pass |
+| SEQ+ARP SPR+BBD | 70.6 | 76.6 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE SH2 H | 57.7 | 61.4 | 0 | 8 | 57.2 | 8 | pass |
+| DUALOSC SH2 H | 65.9 | 69.9 | 0 | 8 | 50.9 | 9 | pass |
+| SPREAD SH2 H | 56.8 | 61.6 | 0 | 6 | 56.9 | 8 | pass |
+| DUALFLT SH2 H | 61.1 | 64.7 | 0 | 6 | 54.6 | 8 | pass |
+| STACK SH2 H | 52.9 | 56.1 | 0 | 4 | 57.2 | 1 | pass |
+| BINAUR SH2 H | 58.0 | 60.2 | 0 | 4 | 57.2 | 8 | pass |
+| SPREAD SH2 CEL+PP | 61.3 | 65.7 | 0 | 6 | 54.2 | 8 | pass |
+| DUALFLT SH2 CEL | 65.8 | 69.2 | 0 | 6 | 50.6 | 9 | pass |
+| SEQ+ARP SH2 CEL | 75.2 | 80.9 | 0 | 8 | 42.9 | 2 | FAIL |
+| DUALFLT SH2 HP | 61.1 | 64.5 | 0 | 6 | 54.5 | 8 | pass |
+| BINAUR SH2 HP | 58.0 | 60.3 | 0 | 4 | 56.9 | 8 | pass |
+| SINGLE PCM | 48.9 | 50.6 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC PCM | 54.4 | 56.1 | 0 | 6 | 57.5 | 1 | pass |
+| SPREAD PCM | 64.6 | 66.1 | 0 | 8 | 51.9 | 8 | pass |
+| DUAL FILTER PCM | 50.3 | 51.8 | 0 | 6 | 57.3 | 1 | pass |
+| STACK PCM | 49.7 | 51.3 | 0 | 4 | 57.2 | 1 | pass |
+| BINAURAL PCM | 47.0 | 48.6 | 0 | 4 | 57.2 | 1 | pass |
+| DUALOSC MULTI H PCM | 57.8 | 59.3 | 0 | 6 | 57.2 | 8 | pass |
+| DUALFLT MULTI H PCM | 57.7 | 59.4 | 0 | 6 | 57.2 | 8 | pass |
+| BINAUR MULTI H PCM | 56.8 | 58.5 | 0 | 4 | 57.6 | 8 | pass |
+| SPREAD MULTI H PCM | 73.7 | 75.7 | 0 | 8 | 42.9 | 1 | FAIL |
+| SINGLE RS | 45.9 | 47.9 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 55.2 | 57.4 | 0 | 8 | 57.5 | 7 | pass |
+| DUALOSC RS | 62.4 | 64.4 | 0 | 8 | 52.2 | 8 | pass |
+| DUALOSC RS PCM | 69.0 | 71.4 | 0 | 6 | 43.2 | 9 | pass |
+| SEQ+ARP HOME PCM | 75.3 | 82.1 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE DRV SOFT | 50.4 | 52.0 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV HARD | 50.6 | 52.2 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV FOLD | 50.8 | 52.5 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV TAPE | 51.5 | 53.2 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV TUBE | 51.4 | 53.1 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV OD | 51.5 | 53.1 | 0 | 8 | 57.5 | 1 | pass |
+| STACK HEAVY TUBE | 68.2 | 72.4 | 0 | 6 | 46.5 | 9 | pass |
+| BINAUR HEAVY OD | 76.2 | 80.7 | 0 | 6 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME TUBE | 70.8 | 77.4 | 0 | 8 | 42.9 | 2 | FAIL |
+| FULL | 61.0 | 62.7 | 0 | 6 | 54.6 | 8 | pass |
+| FULL HEAVY | 59.6 | 63.2 | 0 | 6 | 55.9 | 8 | pass |
+| FULL MULTI H | 60.0 | 64.4 | 0 | 6 | 56.2 | 8 | pass |
+| FULL SH2 H | 52.1 | 55.4 | 0 | 4 | 57.6 | 1 | pass |
+| FULL H CEL+PP | 65.2 | 69.5 | 0 | 6 | 51.5 | 9 | pass |
+| FULL MULTI H PCM | 52.4 | 54.2 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 H PCM | 57.8 | 60.7 | 0 | 4 | 57.5 | 8 | pass |
+| FULL SH2 CEL+PP | 57.3 | 60.6 | 0 | 4 | 57.2 | 8 | pass |
+| IDLE PHASER | 17.1 | 18.0 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE PHASER x2 | 18.9 | 19.9 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD PHASER | 52.6 | 54.3 | 0 | 6 | 57.5 | 1 | pass |
+| SPREAD H CEL PHSR | 62.8 | 67.6 | 0 | 6 | 52.2 | 9 | pass |
+| SEQ+ARP HOME PHSR2 | 71.9 | 77.8 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE ENSEMBLE | 18.5 | 19.6 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENSEMBLE x2 | 20.3 | 21.3 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE ENS+PHSR | 19.1 | 20.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR x2 | 21.2 | 22.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS | 18.0 | 19.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS x2 | 19.8 | 20.7 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ENPH | 66.3 | 70.9 | 0 | 6 | 49.5 | 9 | pass |
+| SEQ+ARP HOME ENPH2 | 75.1 | 80.8 | 0 | 8 | 42.9 | 2 | FAIL |
+| SPREAD H CEL MIX | 77.0 | 82.5 | 0 | 8 | 43.2 | 1 | FAIL |
+| SEQ+ARP CEL MIX | 78.7 | 84.9 | 0 | 8 | 43.2 | 12 | FAIL |
+| HEAVY SPRING MIX | 64.6 | 67.9 | 0 | 8 | 51.6 | 9 | pass |
+| HEAVY CEL BBD MIX | 69.9 | 74.6 | 0 | 8 | 43.2 | 9 | pass |
+| IDLE TAPE FLANGER | 20.0 | 21.0 | 0 | 0 | 61.3 | 1 | pass |
+| IDLE TAPE FLNG x2 | 21.9 | 22.9 | 0 | 0 | 61.2 | 3 | pass |
+| SPREAD H CEL TFLG | 65.9 | 70.7 | 0 | 6 | 50.5 | 9 | pass |
+| SEQ+ARP HOME TFLG2 | 75.2 | 80.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE BBD FLANGER | 17.7 | 18.6 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD FLNG x2 | 19.5 | 20.6 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL BBDF | 64.3 | 68.9 | 0 | 6 | 50.9 | 9 | pass |
+| IDLE PITCH SHIFT | 18.4 | 19.4 | 0 | 0 | 61.6 | 3 | pass |
+| PITCH SHIFT HELD | 52.1 | 53.9 | 0 | 8 | 57.5 | 1 | pass |
+| IDLE PITCH SHFT x2 | 21.0 | 22.3 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL PSHF | 64.0 | 68.1 | 0 | 6 | 51.2 | 9 | pass |
+| IDLE BBD ECHO | 18.0 | 19.0 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD ECHO x2 | 18.2 | 19.1 | 0 | 0 | 61.3 | 1 | pass |
+| SPREAD H CEL ECHO | 63.2 | 68.7 | 0 | 6 | 51.5 | 9 | pass |
+| IDLE BRONZE AGE | 23.2 | 24.1 | 0 | 0 | 61.0 | 4 | pass |
+| IDLE BRONZE AGE x2 | 30.1 | 31.0 | 0 | 0 | 58.6 | 4 | pass |
+| SPREAD H CEL BRNZ | 67.9 | 72.5 | 0 | 6 | 47.5 | 9 | pass |
+| SPREAD H CEL BREQ | 68.9 | 73.5 | 0 | 6 | 44.9 | 9 | pass |
+| IDLE WIND HARP | 18.3 | 19.2 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL HARP | 65.3 | 70.3 | 0 | 6 | 50.5 | 9 | pass |
+| SPREAD H CEL STON | 64.9 | 69.8 | 0 | 6 | 50.2 | 9 | pass |
+| SINGLE HEAVY AIR | 54.9 | 58.3 | 0 | 8 | 57.2 | 1 | pass |
+| BINAURAL HEAVY AIR | 69.9 | 73.1 | 0 | 6 | 43.5 | 9 | pass |
+| SPREAD H CEL+PP AIR | 70.4 | 76.9 | 0 | 8 | 43.9 | 9 | FAIL |
+| SEQ+ARP+REC HOME | 66.2 | 72.2 | 0 | 8 | 49.2 | 11 | pass |
+| SEQ+ARP+REC CELEST+P | 71.5 | 78.1 | 0 | 8 | 42.9 | 2 | FAIL |
+| ALL HOME | 64.7 | 69.9 | 0 | 8 | 50.2 | 10 | pass |
+| ALL SPRD CEL | 82.3 | 90.1 | 0 | 8 | 42.9 | 13 | FAIL |
+| ALL DUALOSC CEL | 80.4 | 88.4 | 0 | 8 | 43.2 | 12 | FAIL |
+| LOOP SPREAD | 45.9 | 49.8 | 0 | 4 | 57.3 | 8 | pass |
+| LOOP DUALOSC | 48.8 | 53.2 | 0 | 4 | 57.5 | 8 | pass |
+| LOOP STACK | 56.2 | 60.6 | 0 | 4 | 57.2 | 9 | pass |
+| LOOP STACK H | 57.5 | 62.4 | 0 | 4 | 56.9 | 10 | pass |
+| LOOP STACK MFX1 | 61.7 | 65.7 | 0 | 4 | 53.5 | 10 | pass |
+| LOOP STACK MFX2 | 63.1 | 68.0 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP STACK SH2 | 61.1 | 65.5 | 0 | 4 | 53.9 | 10 | pass |
+| LOOPCH DUALOSC | 59.4 | 63.1 | 0 | 6 | 56.2 | 10 | pass |
+| LOOPCH STACK | 68.7 | 73.1 | 0 | 5 | 43.9 | 11 | pass |
+| LOOPCH STACK H | 68.9 | 74.3 | 0 | 5 | 44.2 | 11 | pass |
+| LOOPCH STACK MFX2 | 75.9 | 80.4 | 0 | 5 | 42.9 | 12 | FAIL |
+| LOOPCH STACK SH2 | 60.6 | 65.1 | 0 | 4 | 54.6 | 10 | pass |
+| LOOP BRNZ1 | 67.8 | 71.3 | 0 | 4 | 46.2 | 11 | pass |
+| LOOP BRNZ2 | 74.2 | 78.9 | 0 | 4 | 42.9 | 2 | FAIL |
+| LOOP BRNZ EQ2 | 75.7 | 81.0 | 0 | 4 | 43.2 | 3 | FAIL |
+| LOOP PHSR+BRNZ | 74.4 | 79.3 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP BRNZ+PHSR | 76.0 | 80.5 | 0 | 4 | 43.2 | 3 | FAIL |
+| LOOP ENPH1 | 65.5 | 69.8 | 0 | 4 | 51.1 | 10 | pass |
+| LOOP ENPH2 | 66.9 | 71.3 | 0 | 4 | 48.5 | 11 | pass |
+| LOOP ENS+PHSR | 66.6 | 71.4 | 0 | 4 | 49.2 | 11 | pass |
+| LOOP ENPH+BRNZ | 75.8 | 79.9 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP ENSM1 | 63.8 | 68.0 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP ENSM2 | 65.1 | 69.3 | 0 | 4 | 51.1 | 10 | pass |
+| LOOP CHOR2 | 64.5 | 68.6 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP TFLG2 | 66.2 | 70.5 | 0 | 4 | 48.9 | 11 | pass |
+| LOOP BBDF2 | 64.5 | 68.1 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP PSHF2 | 65.5 | 69.7 | 0 | 4 | 49.9 | 10 | pass |
+| LOOP ECHO1 | 62.7 | 67.5 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP ECHO2 | 62.8 | 66.8 | 0 | 4 | 52.5 | 10 | pass |
+| LOOP HARP1 | 64.3 | 67.5 | 0 | 4 | 51.8 | 10 | pass |
+| LOOP HARP2 | 66.0 | 70.1 | 0 | 4 | 49.9 | 10 | pass |
+| LOOP STON2 | 65.8 | 69.6 | 0 | 4 | 50.5 | 11 | pass |
+
+### 2026-11-13 06:59, CARNAC OS DEV (2 cores), done, build/fm1-ctl2 A/B: all NEW (+ lowpass loops, seq carry)
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 14.4 | 15.2 | 0 | 0 | 62.3 | 2 | pass |
+| SINGLE 1V | 25.2 | 26.7 | 0 | 1 | 61.2 | 4 | pass |
+| SINGLE | 46.0 | 47.7 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE HEAVY | 52.8 | 56.6 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC | 62.5 | 64.1 | 0 | 8 | 52.2 | 8 | pass |
+| SPREAD | 57.4 | 58.9 | 0 | 8 | 57.2 | 8 | pass |
+| DUAL FILTER | 57.8 | 59.6 | 0 | 8 | 57.2 | 8 | pass |
+| STACK | 61.1 | 62.6 | 0 | 6 | 54.6 | 8 | pass |
+| BINAURAL | 56.5 | 58.2 | 0 | 6 | 57.6 | 7 | pass |
+| DUAL OSC HEAVY | 61.1 | 65.2 | 0 | 8 | 54.2 | 8 | pass |
+| SPREAD HEAVY | 63.9 | 70.1 | 0 | 8 | 51.9 | 9 | pass |
+| DUAL FLT HEAVY | 64.1 | 68.1 | 0 | 8 | 51.6 | 9 | pass |
+| STACK HEAVY | 61.0 | 64.5 | 0 | 6 | 53.6 | 8 | pass |
+| BINAURAL HEAVY | 67.6 | 71.3 | 0 | 6 | 47.2 | 9 | pass |
+| SINGLE LADDER | 46.0 | 47.7 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE MS20 | 44.3 | 45.9 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE SH-2 | 51.2 | 52.9 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE FORMANT | 46.3 | 47.9 | 0 | 8 | 57.6 | 1 | pass |
+| DUAL FLT LADDER | 57.8 | 59.7 | 0 | 8 | 57.2 | 8 | pass |
+| SEQ+ARP HOME | 65.0 | 70.7 | 0 | 8 | 50.9 | 10 | pass |
+| SEQ+ARP AMP | 65.1 | 71.1 | 0 | 8 | 50.6 | 12 | pass |
+| SEQ+ARP SEQ | 64.3 | 69.6 | 0 | 8 | 12.5 | 127 | pass |
+| SEQ+ARP MOD1 | 65.2 | 71.1 | 0 | 8 | 49.6 | 10 | pass |
+| LADDER FILTER PG | 46.1 | 47.7 | 0 | 8 | 57.6 | 1 | pass |
+| HEAVY MOD+PP | 57.8 | 61.4 | 0 | 8 | 57.2 | 8 | pass |
+| HEAVY CELEST+PP | 57.2 | 60.5 | 0 | 8 | 57.2 | 8 | pass |
+| SEQ+ARP CELEST+PP | 70.1 | 75.7 | 0 | 8 | 44.5 | 11 | FAIL |
+| SINGLE MULTI H | 52.8 | 56.7 | 0 | 8 | 57.6 | 1 | pass |
+| DUALOSC MULTI H | 61.3 | 65.0 | 0 | 8 | 54.2 | 8 | pass |
+| SPREAD MULTI H | 63.6 | 69.0 | 0 | 8 | 51.9 | 9 | pass |
+| DUALFLT MULTI H | 64.7 | 69.2 | 0 | 8 | 51.6 | 9 | pass |
+| STACK MULTI H | 60.7 | 63.9 | 0 | 6 | 54.6 | 8 | pass |
+| BINAUR MULTI H | 67.8 | 70.6 | 0 | 6 | 45.9 | 9 | pass |
+| SPREAD H CEL+PP | 68.3 | 74.1 | 0 | 8 | 47.6 | 9 | pass |
+| DUALOSC H CEL+PP | 66.1 | 70.0 | 0 | 8 | 49.9 | 9 | pass |
+| SPREAD H TUM+PP | 67.7 | 73.1 | 0 | 8 | 47.9 | 9 | pass |
+| SEQ+ARP SPRD CEL | 82.5 | 90.3 | 0 | 8 | 42.9 | 13 | FAIL |
+| HEAVY SPRING+PP | 55.7 | 58.9 | 0 | 8 | 57.6 | 8 | pass |
+| HEAVY CEL+BBD PP | 60.0 | 63.9 | 0 | 8 | 55.9 | 8 | pass |
+| SEQ+ARP SPR+BBD | 70.7 | 77.3 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE SH2 H | 57.8 | 61.6 | 0 | 8 | 57.2 | 8 | pass |
+| DUALOSC SH2 H | 66.1 | 70.0 | 0 | 8 | 50.9 | 9 | pass |
+| SPREAD SH2 H | 56.9 | 61.5 | 0 | 6 | 57.2 | 8 | pass |
+| DUALFLT SH2 H | 61.2 | 64.7 | 0 | 6 | 53.9 | 8 | pass |
+| STACK SH2 H | 53.1 | 56.4 | 0 | 4 | 57.2 | 1 | pass |
+| BINAUR SH2 H | 58.2 | 60.4 | 0 | 4 | 57.2 | 8 | pass |
+| SPREAD SH2 CEL+PP | 61.5 | 66.2 | 0 | 6 | 54.2 | 8 | pass |
+| DUALFLT SH2 CEL | 65.9 | 69.2 | 0 | 6 | 51.2 | 9 | pass |
+| SEQ+ARP SH2 CEL | 75.3 | 81.1 | 0 | 8 | 42.9 | 2 | FAIL |
+| DUALFLT SH2 HP | 61.2 | 64.7 | 0 | 6 | 54.2 | 8 | pass |
+| BINAUR SH2 HP | 58.2 | 60.8 | 0 | 4 | 56.9 | 8 | pass |
+| SINGLE PCM | 49.0 | 50.5 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC PCM | 54.6 | 56.4 | 0 | 6 | 57.2 | 1 | pass |
+| SPREAD PCM | 64.8 | 66.6 | 0 | 8 | 52.2 | 9 | pass |
+| DUAL FILTER PCM | 50.3 | 52.0 | 0 | 6 | 57.6 | 1 | pass |
+| STACK PCM | 49.9 | 51.4 | 0 | 4 | 57.5 | 1 | pass |
+| BINAURAL PCM | 47.2 | 48.7 | 0 | 4 | 57.6 | 1 | pass |
+| DUALOSC MULTI H PCM | 58.0 | 59.5 | 0 | 6 | 57.2 | 8 | pass |
+| DUALFLT MULTI H PCM | 57.7 | 59.6 | 0 | 6 | 57.2 | 8 | pass |
+| BINAUR MULTI H PCM | 57.0 | 58.9 | 0 | 4 | 57.2 | 8 | pass |
+| SPREAD MULTI H PCM | 73.8 | 75.9 | 0 | 8 | 42.9 | 1 | FAIL |
+| SINGLE RS | 46.1 | 48.3 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 55.4 | 57.5 | 0 | 8 | 57.2 | 7 | pass |
+| DUALOSC RS | 62.5 | 64.2 | 0 | 8 | 51.9 | 8 | pass |
+| DUALOSC RS PCM | 69.2 | 71.6 | 0 | 6 | 43.2 | 9 | pass |
+| SEQ+ARP HOME PCM | 75.5 | 82.5 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE DRV SOFT | 50.6 | 52.3 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV HARD | 50.8 | 52.4 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV FOLD | 51.0 | 52.7 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TAPE | 51.7 | 53.3 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TUBE | 51.7 | 53.3 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV OD | 51.7 | 53.4 | 0 | 8 | 57.5 | 1 | pass |
+| STACK HEAVY TUBE | 68.4 | 73.0 | 0 | 6 | 44.5 | 9 | pass |
+| BINAUR HEAVY OD | 76.5 | 80.7 | 0 | 6 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME TUBE | 71.1 | 77.3 | 0 | 8 | 43.3 | 10 | FAIL |
+| FULL | 61.1 | 62.9 | 0 | 6 | 54.9 | 8 | pass |
+| FULL HEAVY | 59.6 | 63.6 | 0 | 6 | 55.6 | 8 | pass |
+| FULL MULTI H | 60.2 | 64.4 | 0 | 6 | 55.5 | 8 | pass |
+| FULL SH2 H | 52.2 | 55.6 | 0 | 4 | 57.2 | 1 | pass |
+| FULL H CEL+PP | 65.3 | 70.0 | 0 | 6 | 51.2 | 9 | pass |
+| FULL MULTI H PCM | 52.4 | 53.9 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 H PCM | 57.9 | 60.8 | 0 | 4 | 57.2 | 8 | pass |
+| FULL SH2 CEL+PP | 57.6 | 60.9 | 0 | 4 | 57.2 | 8 | pass |
+| IDLE PHASER | 17.1 | 18.1 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE PHASER x2 | 18.9 | 19.9 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD PHASER | 52.7 | 54.2 | 0 | 6 | 57.6 | 1 | pass |
+| SPREAD H CEL PHSR | 62.9 | 67.4 | 0 | 6 | 52.9 | 9 | pass |
+| SEQ+ARP HOME PHSR2 | 72.0 | 77.9 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE ENSEMBLE | 18.5 | 19.5 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENSEMBLE x2 | 20.2 | 21.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR | 19.2 | 20.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR x2 | 21.2 | 22.2 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE CHORUS | 18.0 | 19.0 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE CHORUS x2 | 19.7 | 20.8 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ENPH | 66.3 | 70.7 | 0 | 6 | 48.9 | 9 | pass |
+| SEQ+ARP HOME ENPH2 | 75.2 | 81.2 | 0 | 8 | 42.9 | 2 | FAIL |
+| SPREAD H CEL MIX | 77.1 | 83.0 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP CEL MIX | 78.7 | 85.0 | 0 | 8 | 42.9 | 12 | FAIL |
+| HEAVY SPRING MIX | 64.7 | 68.1 | 0 | 8 | 52.2 | 9 | pass |
+| HEAVY CEL BBD MIX | 70.0 | 75.1 | 0 | 8 | 43.6 | 9 | pass |
+| IDLE TAPE FLANGER | 20.0 | 21.0 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE TAPE FLNG x2 | 21.9 | 22.9 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL TFLG | 65.9 | 70.9 | 0 | 6 | 50.2 | 9 | pass |
+| SEQ+ARP HOME TFLG2 | 75.3 | 80.9 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE BBD FLANGER | 17.6 | 18.5 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD FLNG x2 | 19.5 | 20.6 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL BBDF | 64.4 | 69.1 | 0 | 6 | 51.5 | 9 | pass |
+| IDLE PITCH SHIFT | 18.3 | 19.4 | 0 | 0 | 61.6 | 3 | pass |
+| PITCH SHIFT HELD | 52.2 | 54.0 | 0 | 8 | 57.5 | 1 | pass |
+| IDLE PITCH SHFT x2 | 21.0 | 22.3 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL PSHF | 64.1 | 68.8 | 0 | 6 | 51.2 | 9 | pass |
+| IDLE BBD ECHO | 17.9 | 18.8 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD ECHO x2 | 18.1 | 19.0 | 0 | 0 | 61.2 | 3 | pass |
+| SPREAD H CEL ECHO | 63.4 | 68.0 | 0 | 6 | 51.8 | 9 | pass |
+| IDLE BRONZE AGE | 23.2 | 24.0 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE BRONZE AGE x2 | 30.1 | 31.0 | 0 | 0 | 58.6 | 4 | pass |
+| SPREAD H CEL BRNZ | 68.0 | 72.6 | 0 | 6 | 47.5 | 9 | pass |
+| SPREAD H CEL BREQ | 68.9 | 73.5 | 0 | 6 | 44.6 | 9 | pass |
+| IDLE WIND HARP | 18.3 | 19.4 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL HARP | 65.4 | 69.8 | 0 | 6 | 50.5 | 9 | pass |
+| SPREAD H CEL STON | 65.0 | 69.6 | 0 | 6 | 50.5 | 9 | pass |
+| SINGLE HEAVY AIR | 55.0 | 58.7 | 0 | 8 | 57.6 | 1 | pass |
+| BINAURAL HEAVY AIR | 70.1 | 73.3 | 0 | 6 | 43.2 | 9 | FAIL |
+| SPREAD H CEL+PP AIR | 70.6 | 76.7 | 0 | 8 | 44.2 | 9 | FAIL |
+| SEQ+ARP+REC HOME | 66.3 | 71.9 | 0 | 8 | 49.6 | 10 | pass |
+| SEQ+ARP+REC CELEST+P | 71.6 | 78.2 | 0 | 8 | 43.2 | 11 | FAIL |
+| ALL HOME | 64.9 | 71.1 | 0 | 8 | 50.9 | 10 | pass |
+| ALL SPRD CEL | 82.4 | 90.4 | 0 | 8 | 42.9 | 13 | FAIL |
+| ALL DUALOSC CEL | 80.6 | 88.6 | 0 | 8 | 43.2 | 12 | FAIL |
+| LOOP SPREAD | 46.0 | 49.9 | 0 | 4 | 57.3 | 2 | pass |
+| LOOP DUALOSC | 49.0 | 53.2 | 0 | 4 | 57.5 | 8 | pass |
+| LOOP STACK | 56.3 | 60.6 | 0 | 4 | 57.5 | 10 | pass |
+| LOOP STACK H | 57.7 | 62.7 | 0 | 4 | 57.2 | 10 | pass |
+| LOOP STACK MFX1 | 61.8 | 66.4 | 0 | 4 | 53.8 | 10 | pass |
+| LOOP STACK MFX2 | 63.2 | 66.9 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP STACK SH2 | 61.3 | 65.2 | 0 | 4 | 54.2 | 10 | pass |
+| LOOPCH DUALOSC | 59.5 | 64.5 | 0 | 6 | 56.6 | 10 | pass |
+| LOOPCH STACK | 68.9 | 72.8 | 0 | 5 | 45.3 | 11 | pass |
+| LOOPCH STACK H | 69.1 | 74.3 | 0 | 5 | 44.2 | 11 | pass |
+| LOOPCH STACK MFX2 | 76.0 | 80.3 | 0 | 5 | 42.9 | 12 | FAIL |
+| LOOPCH STACK SH2 | 60.8 | 65.0 | 0 | 4 | 55.2 | 10 | pass |
+| LOOP BRNZ1 | 67.9 | 71.8 | 0 | 4 | 45.6 | 10 | pass |
+| LOOP BRNZ2 | 74.4 | 78.7 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP BRNZ EQ2 | 75.9 | 81.2 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP PHSR+BRNZ | 74.5 | 79.0 | 0 | 4 | 43.2 | 2 | FAIL |
+| LOOP BRNZ+PHSR | 76.1 | 80.6 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP ENPH1 | 65.6 | 69.8 | 0 | 4 | 49.9 | 10 | pass |
+| LOOP ENPH2 | 67.0 | 70.5 | 0 | 4 | 47.6 | 11 | pass |
+| LOOP ENS+PHSR | 66.7 | 71.6 | 0 | 4 | 48.5 | 11 | pass |
+| LOOP ENPH+BRNZ | 76.0 | 80.7 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP ENSM1 | 64.0 | 68.0 | 0 | 4 | 51.5 | 10 | pass |
+| LOOP ENSM2 | 65.2 | 69.5 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP CHOR2 | 64.6 | 68.6 | 0 | 4 | 50.8 | 10 | pass |
+| LOOP TFLG2 | 66.3 | 69.9 | 0 | 4 | 48.9 | 10 | pass |
+| LOOP BBDF2 | 64.6 | 69.5 | 0 | 4 | 51.6 | 10 | pass |
+| LOOP PSHF2 | 65.7 | 70.1 | 0 | 4 | 50.6 | 11 | pass |
+| LOOP ECHO1 | 62.9 | 67.4 | 0 | 4 | 51.6 | 10 | pass |
+| LOOP ECHO2 | 62.9 | 66.9 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP HARP1 | 64.4 | 68.3 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP HARP2 | 66.2 | 70.2 | 0 | 4 | 50.2 | 10 | pass |
+| LOOP STON2 | 65.9 | 69.7 | 0 | 4 | 49.6 | 11 | pass |
+
+### 2026-11-12 21:02, CARNAC OS DEV (2 cores), done, build/fm1-ctl1 A/B: OLD paths (same build)
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 15.7 | 16.5 | 0 | 0 | 61.9 | 3 | pass |
+| SINGLE 1V | 27.0 | 28.2 | 0 | 1 | 60.0 | 4 | pass |
+| SINGLE | 48.5 | 49.8 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE HEAVY | 53.5 | 56.7 | 0 | 8 | 57.5 | 7 | pass |
+| DUAL OSC | 66.9 | 68.4 | 0 | 8 | 47.9 | 9 | pass |
+| SPREAD | 59.9 | 61.3 | 0 | 8 | 55.9 | 8 | pass |
+| DUAL FILTER | 61.0 | 62.3 | 0 | 8 | 54.9 | 8 | pass |
+| STACK | 65.2 | 66.5 | 0 | 6 | 51.9 | 9 | pass |
+| BINAURAL | 59.2 | 60.4 | 0 | 6 | 56.2 | 8 | pass |
+| DUAL OSC HEAVY | 62.4 | 65.6 | 0 | 8 | 52.5 | 8 | pass |
+| SPREAD HEAVY | 64.8 | 70.6 | 0 | 8 | 49.9 | 8 | pass |
+| DUAL FLT HEAVY | 63.9 | 67.3 | 0 | 8 | 52.2 | 9 | pass |
+| STACK HEAVY | 61.5 | 64.3 | 0 | 6 | 52.9 | 8 | pass |
+| BINAURAL HEAVY | 68.6 | 71.2 | 0 | 6 | 44.9 | 9 | pass |
+| SINGLE LADDER | 48.5 | 49.9 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE MS20 | 46.8 | 48.1 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE SH-2 | 54.2 | 55.8 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE FORMANT | 46.7 | 48.2 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL FLT LADDER | 61.0 | 62.4 | 0 | 8 | 54.5 | 8 | pass |
+| SEQ+ARP HOME | 68.0 | 75.0 | 0 | 8 | 45.6 | 11 | pass |
+| SEQ+ARP AMP | 68.0 | 74.6 | 0 | 8 | 44.6 | 13 | pass |
+| SEQ+ARP SEQ | 67.4 | 73.9 | 0 | 8 | 11.8 | 127 | pass |
+| SEQ+ARP MOD1 | 68.1 | 74.4 | 0 | 8 | 45.6 | 10 | pass |
+| LADDER FILTER PG | 48.5 | 49.9 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 58.1 | 61.4 | 0 | 8 | 56.9 | 8 | pass |
+| HEAVY CELEST+PP | 57.8 | 61.1 | 0 | 8 | 57.2 | 8 | pass |
+| SEQ+ARP CELEST+PP | 73.2 | 79.6 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE MULTI H | 55.9 | 58.9 | 0 | 8 | 57.5 | 8 | pass |
+| DUALOSC MULTI H | 64.6 | 68.0 | 0 | 8 | 51.2 | 9 | pass |
+| SPREAD MULTI H | 67.0 | 72.4 | 0 | 8 | 48.2 | 9 | pass |
+| DUALFLT MULTI H | 68.2 | 71.6 | 0 | 8 | 46.9 | 9 | pass |
+| STACK MULTI H | 64.9 | 67.8 | 0 | 6 | 51.6 | 9 | pass |
+| BINAUR MULTI H | 71.6 | 74.3 | 0 | 6 | 42.9 | 1 | FAIL |
+| SPREAD H CEL+PP | 70.9 | 76.9 | 0 | 8 | 43.9 | 9 | FAIL |
+| DUALOSC H CEL+PP | 68.9 | 72.9 | 0 | 8 | 45.3 | 9 | pass |
+| SPREAD H TUM+PP | 71.1 | 76.7 | 0 | 8 | 43.6 | 9 | FAIL |
+| SEQ+ARP SPRD CEL | 87.8 | 96.5 | 0 | 8 | 41.9 | 35 | FAIL |
+| HEAVY SPRING+PP | 56.9 | 59.8 | 0 | 8 | 57.5 | 1 | pass |
+| HEAVY CEL+BBD PP | 61.3 | 64.6 | 0 | 8 | 53.9 | 8 | pass |
+| SEQ+ARP SPR+BBD | 73.9 | 80.2 | 0 | 8 | 42.9 | 2 | FAIL |
+| SINGLE SH2 H | 61.0 | 64.8 | 0 | 8 | 54.8 | 8 | pass |
+| DUALOSC SH2 H | 69.8 | 73.8 | 0 | 8 | 43.2 | 9 | pass |
+| SPREAD SH2 H | 59.7 | 64.3 | 0 | 6 | 55.9 | 8 | pass |
+| DUALFLT SH2 H | 64.8 | 68.2 | 0 | 6 | 51.5 | 9 | pass |
+| STACK SH2 H | 56.4 | 59.2 | 0 | 4 | 57.2 | 8 | pass |
+| BINAUR SH2 H | 61.8 | 64.0 | 0 | 4 | 52.5 | 8 | pass |
+| SPREAD SH2 CEL+PP | 65.2 | 69.5 | 0 | 6 | 51.2 | 9 | pass |
+| DUALFLT SH2 CEL | 70.2 | 73.7 | 0 | 6 | 43.9 | 9 | FAIL |
+| SEQ+ARP SH2 CEL | 82.7 | 89.9 | 0 | 8 | 43.2 | 13 | FAIL |
+| DUALFLT SH2 HP | 64.9 | 68.1 | 0 | 6 | 51.8 | 9 | pass |
+| BINAUR SH2 HP | 61.8 | 63.8 | 0 | 4 | 52.2 | 8 | pass |
+| SINGLE PCM | 52.4 | 53.8 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC PCM | 58.5 | 59.9 | 0 | 6 | 56.5 | 8 | pass |
+| SPREAD PCM | 67.1 | 68.5 | 0 | 8 | 48.6 | 9 | pass |
+| DUAL FILTER PCM | 54.1 | 55.5 | 0 | 6 | 57.2 | 1 | pass |
+| STACK PCM | 58.3 | 59.7 | 0 | 4 | 56.2 | 8 | pass |
+| BINAURAL PCM | 50.0 | 51.4 | 0 | 4 | 57.6 | 1 | pass |
+| DUALOSC MULTI H PCM | 62.3 | 63.8 | 0 | 6 | 52.2 | 8 | pass |
+| DUALFLT MULTI H PCM | 61.4 | 62.8 | 0 | 6 | 53.9 | 8 | pass |
+| BINAUR MULTI H PCM | 60.8 | 62.1 | 0 | 4 | 53.9 | 8 | pass |
+| SPREAD MULTI H PCM | 78.5 | 80.2 | 0 | 8 | 42.9 | 1 | FAIL |
+| SINGLE RS | 48.5 | 50.2 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE RS PCM | 59.0 | 60.8 | 0 | 8 | 56.5 | 8 | pass |
+| DUALOSC RS | 66.9 | 68.7 | 0 | 8 | 47.9 | 9 | pass |
+| DUALOSC RS PCM | 74.0 | 76.8 | 0 | 6 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME PCM | 83.7 | 90.4 | 0 | 8 | 42.9 | 12 | FAIL |
+| SINGLE DRV SOFT | 52.4 | 53.8 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV HARD | 52.6 | 54.0 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV FOLD | 52.7 | 54.4 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV TAPE | 53.5 | 55.1 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE DRV TUBE | 53.3 | 54.7 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE DRV OD | 53.2 | 54.7 | 0 | 8 | 57.5 | 1 | pass |
+| STACK HEAVY TUBE | 67.9 | 71.2 | 0 | 6 | 46.2 | 9 | pass |
+| BINAUR HEAVY OD | 75.4 | 77.9 | 0 | 6 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME TUBE | 74.6 | 81.7 | 0 | 8 | 42.9 | 2 | FAIL |
+| FULL | 65.7 | 67.1 | 0 | 6 | 51.2 | 9 | pass |
+| FULL HEAVY | 60.8 | 63.6 | 0 | 6 | 54.2 | 8 | pass |
+| FULL MULTI H | 63.9 | 67.1 | 0 | 6 | 51.9 | 9 | pass |
+| FULL SH2 H | 57.1 | 60.2 | 0 | 4 | 57.2 | 8 | pass |
+| FULL H CEL+PP | 69.0 | 72.8 | 0 | 6 | 44.2 | 9 | pass |
+| FULL MULTI H PCM | 56.9 | 58.3 | 0 | 4 | 57.3 | 8 | pass |
+| FULL SH2 H PCM | 65.2 | 66.8 | 0 | 4 | 51.2 | 9 | pass |
+| FULL SH2 CEL+PP | 63.0 | 65.9 | 0 | 4 | 51.9 | 9 | pass |
+| IDLE PHASER | 18.1 | 19.2 | 0 | 0 | 61.6 | 1 | pass |
+| IDLE PHASER x2 | 19.9 | 20.9 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD PHASER | 54.7 | 56.1 | 0 | 6 | 57.5 | 7 | pass |
+| SPREAD H CEL PHSR | 66.3 | 71.2 | 0 | 6 | 48.9 | 9 | pass |
+| SEQ+ARP HOME PHSR2 | 75.3 | 81.6 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE ENSEMBLE | 19.4 | 20.4 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENSEMBLE x2 | 21.2 | 22.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR | 20.1 | 21.1 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR x2 | 22.2 | 23.1 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS | 19.1 | 20.1 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS x2 | 20.8 | 21.8 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ENPH | 69.3 | 74.0 | 0 | 6 | 44.5 | 9 | pass |
+| SEQ+ARP HOME ENPH2 | 79.0 | 85.2 | 0 | 8 | 42.9 | 11 | FAIL |
+| SPREAD H CEL MIX | 80.0 | 86.0 | 0 | 8 | 43.2 | 1 | FAIL |
+| SEQ+ARP CEL MIX | 82.0 | 88.8 | 0 | 8 | 42.9 | 13 | FAIL |
+| HEAVY SPRING MIX | 65.5 | 68.6 | 0 | 8 | 49.9 | 9 | pass |
+| HEAVY CEL BBD MIX | 71.3 | 75.2 | 0 | 8 | 43.2 | 1 | FAIL |
+| IDLE TAPE FLANGER | 21.7 | 22.7 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE TAPE FLNG x2 | 23.6 | 24.6 | 0 | 0 | 61.2 | 4 | pass |
+| SPREAD H CEL TFLG | 68.9 | 73.8 | 0 | 6 | 45.5 | 9 | pass |
+| SEQ+ARP HOME TFLG2 | 78.2 | 84.4 | 0 | 8 | 42.9 | 12 | FAIL |
+| IDLE BBD FLANGER | 18.9 | 19.9 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD FLNG x2 | 20.8 | 21.8 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL BBDF | 67.6 | 72.4 | 0 | 6 | 47.5 | 9 | pass |
+| IDLE PITCH SHIFT | 19.1 | 20.2 | 0 | 0 | 61.3 | 1 | pass |
+| PITCH SHIFT HELD | 55.5 | 57.2 | 0 | 8 | 57.5 | 7 | pass |
+| IDLE PITCH SHFT x2 | 21.7 | 23.0 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL PSHF | 67.5 | 72.8 | 0 | 6 | 47.5 | 9 | pass |
+| IDLE BBD ECHO | 19.2 | 20.1 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD ECHO x2 | 19.2 | 20.3 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ECHO | 67.3 | 72.0 | 0 | 6 | 47.5 | 9 | pass |
+| IDLE BRONZE AGE | 24.7 | 25.6 | 0 | 0 | 60.3 | 4 | pass |
+| IDLE BRONZE AGE x2 | 31.4 | 32.6 | 0 | 0 | 57.6 | 4 | pass |
+| SPREAD H CEL BRNZ | 70.7 | 75.5 | 0 | 6 | 43.2 | 9 | FAIL |
+| SPREAD H CEL BREQ | 71.8 | 76.6 | 0 | 6 | 42.9 | 1 | FAIL |
+| IDLE WIND HARP | 19.6 | 20.8 | 0 | 0 | 61.3 | 1 | pass |
+| SPREAD H CEL HARP | 68.6 | 73.2 | 0 | 6 | 45.5 | 9 | pass |
+| SPREAD H CEL STON | 68.4 | 72.9 | 0 | 6 | 46.6 | 9 | pass |
+| SINGLE HEAVY AIR | 56.0 | 59.1 | 0 | 8 | 57.3 | 8 | pass |
+| BINAURAL HEAVY AIR | 71.5 | 74.0 | 0 | 6 | 42.9 | 1 | FAIL |
+| SPREAD H CEL+PP AIR | 74.1 | 80.1 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP+REC HOME | 69.6 | 75.3 | 0 | 8 | 44.2 | 11 | pass |
+| SEQ+ARP+REC CELEST+P | 74.7 | 81.3 | 0 | 8 | 42.9 | 2 | FAIL |
+| ALL HOME | 68.2 | 74.4 | 0 | 8 | 44.9 | 11 | pass |
+| ALL SPRD CEL | 88.0 | 96.5 | 0 | 8 | 40.9 | 35 | FAIL |
+| ALL DUALOSC CEL | 85.8 | 92.3 | 0 | 8 | 42.9 | 13 | FAIL |
+| LOOP SPREAD | 49.4 | 53.3 | 0 | 4 | 57.5 | 8 | pass |
+| LOOP DUALOSC | 53.7 | 57.9 | 0 | 4 | 57.2 | 8 | pass |
+| LOOP STACK | 60.4 | 64.4 | 0 | 4 | 54.9 | 10 | pass |
+| LOOP STACK H | 61.5 | 66.5 | 0 | 4 | 52.6 | 10 | pass |
+| LOOP STACK MFX1 | 66.5 | 70.7 | 0 | 4 | 47.9 | 11 | pass |
+| LOOP STACK MFX2 | 67.8 | 71.9 | 0 | 4 | 46.2 | 11 | pass |
+| LOOP STACK SH2 | 66.7 | 71.2 | 0 | 4 | 47.5 | 11 | pass |
+| LOOPCH DUALOSC | 64.6 | 68.6 | 0 | 6 | 51.8 | 10 | pass |
+| LOOPCH STACK | 73.8 | 78.3 | 0 | 5 | 42.9 | 3 | FAIL |
+| LOOPCH STACK H | 73.7 | 79.3 | 0 | 5 | 42.9 | 3 | FAIL |
+| LOOPCH STACK MFX2 | 81.5 | 85.7 | 0 | 5 | 42.9 | 13 | FAIL |
+| LOOPCH STACK SH2 | 66.4 | 70.1 | 0 | 4 | 48.3 | 10 | pass |
+| LOOP BRNZ1 | 72.8 | 76.9 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP BRNZ2 | 79.1 | 83.3 | 0 | 4 | 43.2 | 12 | FAIL |
+| LOOP BRNZ EQ2 | 80.5 | 84.7 | 0 | 4 | 43.2 | 12 | FAIL |
+| LOOP PHSR+BRNZ | 79.2 | 83.2 | 0 | 4 | 43.2 | 12 | FAIL |
+| LOOP BRNZ+PHSR | 80.8 | 85.4 | 0 | 4 | 43.2 | 12 | FAIL |
+| LOOP ENPH1 | 71.0 | 75.4 | 0 | 4 | 42.9 | 2 | FAIL |
+| LOOP ENPH2 | 72.5 | 76.4 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP ENS+PHSR | 72.6 | 76.6 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP ENPH+BRNZ | 81.2 | 85.0 | 0 | 4 | 43.2 | 12 | FAIL |
+| LOOP ENSM1 | 69.6 | 73.5 | 0 | 4 | 43.5 | 10 | pass |
+| LOOP ENSM2 | 70.8 | 75.0 | 0 | 4 | 43.2 | 2 | FAIL |
+| LOOP CHOR2 | 69.6 | 73.7 | 0 | 4 | 43.2 | 11 | pass |
+| LOOP TFLG2 | 71.3 | 75.6 | 0 | 4 | 42.9 | 2 | FAIL |
+| LOOP BBDF2 | 69.3 | 73.5 | 0 | 4 | 42.9 | 2 | pass |
+| LOOP PSHF2 | 71.0 | 75.6 | 0 | 4 | 42.9 | 2 | FAIL |
+| LOOP ECHO1 | 67.4 | 71.9 | 0 | 4 | 47.2 | 11 | pass |
+| LOOP ECHO2 | 67.5 | 71.7 | 0 | 4 | 47.6 | 11 | pass |
+| LOOP HARP1 | 68.9 | 72.6 | 0 | 4 | 44.2 | 11 | pass |
+| LOOP HARP2 | 70.6 | 74.7 | 0 | 4 | 43.2 | 11 | FAIL |
+| LOOP STON2 | 70.4 | 74.4 | 0 | 4 | 42.9 | 2 | FAIL |
+
+### 2026-11-12 20:51, CARNAC OS DEV (2 cores), done, build/fm1-ctl1 A/B: NEW (filter keeps, per-pass layer tick, core split)
+
+| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| IDLE | 14.4 | 15.2 | 0 | 0 | 62.0 | 2 | pass |
+| SINGLE 1V | 25.3 | 26.5 | 0 | 1 | 61.0 | 4 | pass |
+| SINGLE | 46.0 | 47.4 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE HEAVY | 51.4 | 55.1 | 0 | 8 | 57.5 | 1 | pass |
+| DUAL OSC | 64.1 | 65.8 | 0 | 8 | 51.9 | 8 | pass |
+| SPREAD | 57.4 | 58.8 | 0 | 8 | 57.2 | 8 | pass |
+| DUAL FILTER | 57.3 | 58.8 | 0 | 8 | 57.2 | 8 | pass |
+| STACK | 61.8 | 63.3 | 0 | 6 | 52.5 | 8 | pass |
+| BINAURAL | 56.0 | 57.3 | 0 | 6 | 57.6 | 7 | pass |
+| DUAL OSC HEAVY | 60.2 | 64.1 | 0 | 8 | 54.5 | 8 | pass |
+| SPREAD HEAVY | 62.7 | 68.5 | 0 | 8 | 52.5 | 9 | pass |
+| DUAL FLT HEAVY | 61.3 | 64.9 | 0 | 8 | 53.5 | 8 | pass |
+| STACK HEAVY | 59.1 | 62.3 | 0 | 6 | 56.6 | 8 | pass |
+| BINAURAL HEAVY | 66.2 | 69.2 | 0 | 6 | 49.2 | 9 | pass |
+| SINGLE LADDER | 46.0 | 47.4 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE MS20 | 44.6 | 46.0 | 0 | 8 | 57.6 | 1 | pass |
+| SINGLE SH-2 | 51.3 | 52.7 | 0 | 8 | 57.5 | 1 | pass |
+| SINGLE FORMANT | 45.1 | 46.6 | 0 | 8 | 57.6 | 1 | pass |
+| DUAL FLT LADDER | 57.3 | 58.7 | 0 | 8 | 57.5 | 8 | pass |
+| SEQ+ARP HOME | 64.8 | 71.3 | 0 | 8 | 50.9 | 10 | pass |
+| SEQ+ARP AMP | 64.8 | 71.2 | 0 | 8 | 50.2 | 12 | pass |
+| SEQ+ARP SEQ | 63.9 | 69.3 | 0 | 8 | 12.9 | 127 | pass |
+| SEQ+ARP MOD1 | 65.0 | 71.7 | 0 | 8 | 51.6 | 10 | pass |
+| LADDER FILTER PG | 46.0 | 47.5 | 0 | 8 | 57.3 | 1 | pass |
+| HEAVY MOD+PP | 55.9 | 59.6 | 0 | 8 | 57.5 | 8 | pass |
+| HEAVY CELEST+PP | 55.4 | 59.5 | 0 | 8 | 57.6 | 1 | pass |
+| SEQ+ARP CELEST+PP | 69.8 | 76.5 | 0 | 8 | 44.2 | 11 | pass |
+| SINGLE MULTI H | 52.5 | 55.6 | 0 | 8 | 57.3 | 1 | pass |
+| DUALOSC MULTI H | 61.2 | 64.6 | 0 | 8 | 54.9 | 8 | pass |
+| SPREAD MULTI H | 63.5 | 68.9 | 0 | 8 | 52.2 | 9 | pass |
+| DUALFLT MULTI H | 63.7 | 67.2 | 0 | 8 | 51.9 | 9 | pass |
+| STACK MULTI H | 60.9 | 63.6 | 0 | 6 | 54.9 | 8 | pass |
+| BINAUR MULTI H | 67.8 | 70.4 | 0 | 6 | 45.9 | 9 | pass |
+| SPREAD H CEL+PP | 67.7 | 73.3 | 0 | 8 | 48.2 | 9 | pass |
+| DUALOSC H CEL+PP | 65.3 | 68.9 | 0 | 8 | 50.9 | 9 | pass |
+| SPREAD H TUM+PP | 67.8 | 73.4 | 0 | 8 | 48.6 | 9 | pass |
+| SEQ+ARP SPRD CEL | 82.6 | 91.4 | 0 | 8 | 43.2 | 13 | FAIL |
+| HEAVY SPRING+PP | 54.6 | 58.0 | 0 | 8 | 57.5 | 1 | pass |
+| HEAVY CEL+BBD PP | 58.9 | 63.0 | 0 | 8 | 55.9 | 8 | pass |
+| SEQ+ARP SPR+BBD | 70.5 | 76.4 | 0 | 8 | 43.9 | 10 | FAIL |
+| SINGLE SH2 H | 57.6 | 61.0 | 0 | 8 | 57.2 | 8 | pass |
+| DUALOSC SH2 H | 66.1 | 70.1 | 0 | 8 | 50.9 | 9 | pass |
+| SPREAD SH2 H | 56.6 | 61.7 | 0 | 6 | 57.2 | 8 | pass |
+| DUALFLT SH2 H | 61.0 | 64.4 | 0 | 6 | 54.5 | 8 | pass |
+| STACK SH2 H | 53.2 | 56.3 | 0 | 4 | 57.2 | 1 | pass |
+| BINAUR SH2 H | 58.2 | 61.0 | 0 | 4 | 57.2 | 8 | pass |
+| SPREAD SH2 CEL+PP | 61.7 | 66.0 | 0 | 6 | 53.9 | 8 | pass |
+| DUALFLT SH2 CEL | 66.1 | 70.1 | 0 | 6 | 50.5 | 9 | pass |
+| SEQ+ARP SH2 CEL | 76.8 | 83.6 | 0 | 8 | 42.9 | 2 | FAIL |
+| DUALFLT SH2 HP | 61.0 | 64.5 | 0 | 6 | 54.5 | 8 | pass |
+| BINAUR SH2 HP | 58.2 | 60.7 | 0 | 4 | 57.2 | 8 | pass |
+| SINGLE PCM | 49.8 | 51.3 | 0 | 8 | 57.2 | 1 | pass |
+| DUAL OSC PCM | 55.6 | 57.4 | 0 | 6 | 57.2 | 7 | pass |
+| SPREAD PCM | 64.5 | 66.2 | 0 | 8 | 51.9 | 8 | pass |
+| DUAL FILTER PCM | 50.6 | 52.1 | 0 | 6 | 57.3 | 1 | pass |
+| STACK PCM | 53.5 | 56.6 | 0 | 4 | 57.2 | 1 | pass |
+| BINAURAL PCM | 47.5 | 48.7 | 0 | 4 | 57.6 | 1 | pass |
+| DUALOSC MULTI H PCM | 58.7 | 61.0 | 0 | 6 | 56.9 | 8 | pass |
+| DUALFLT MULTI H PCM | 57.3 | 59.2 | 0 | 6 | 57.2 | 8 | pass |
+| BINAUR MULTI H PCM | 57.2 | 59.2 | 0 | 4 | 57.6 | 8 | pass |
+| SPREAD MULTI H PCM | 74.9 | 76.6 | 0 | 8 | 42.9 | 1 | FAIL |
+| SINGLE RS | 46.1 | 47.8 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE RS PCM | 55.7 | 57.7 | 0 | 8 | 57.5 | 7 | pass |
+| DUALOSC RS | 64.1 | 65.9 | 0 | 8 | 52.2 | 8 | pass |
+| DUALOSC RS PCM | 70.9 | 73.0 | 0 | 6 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME PCM | 78.1 | 84.8 | 0 | 8 | 42.9 | 11 | FAIL |
+| SINGLE DRV SOFT | 49.8 | 51.3 | 0 | 8 | 57.3 | 1 | pass |
+| SINGLE DRV HARD | 50.0 | 51.3 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE DRV FOLD | 50.2 | 51.8 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE DRV TAPE | 50.8 | 52.2 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE DRV TUBE | 50.6 | 52.0 | 0 | 8 | 57.2 | 1 | pass |
+| SINGLE DRV OD | 50.6 | 52.1 | 0 | 8 | 57.2 | 1 | pass |
+| STACK HEAVY TUBE | 65.4 | 69.2 | 0 | 6 | 50.9 | 9 | pass |
+| BINAUR HEAVY OD | 72.9 | 76.1 | 0 | 6 | 42.9 | 1 | FAIL |
+| SEQ+ARP HOME TUBE | 70.8 | 77.2 | 0 | 8 | 43.9 | 10 | FAIL |
+| FULL | 62.3 | 64.0 | 0 | 6 | 52.2 | 8 | pass |
+| FULL HEAVY | 58.3 | 62.0 | 0 | 6 | 56.9 | 8 | pass |
+| FULL MULTI H | 59.7 | 63.2 | 0 | 6 | 55.5 | 8 | pass |
+| FULL SH2 H | 52.6 | 55.5 | 0 | 4 | 57.2 | 1 | pass |
+| FULL H CEL+PP | 64.5 | 68.2 | 0 | 6 | 51.9 | 9 | pass |
+| FULL MULTI H PCM | 52.8 | 55.1 | 0 | 4 | 57.2 | 1 | pass |
+| FULL SH2 H PCM | 58.8 | 61.7 | 0 | 4 | 56.9 | 8 | pass |
+| FULL SH2 CEL+PP | 58.2 | 61.6 | 0 | 4 | 56.9 | 8 | pass |
+| IDLE PHASER | 16.9 | 17.9 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE PHASER x2 | 18.7 | 19.7 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD PHASER | 52.5 | 53.9 | 0 | 6 | 57.5 | 1 | pass |
+| SPREAD H CEL PHSR | 63.4 | 67.8 | 0 | 6 | 50.9 | 9 | pass |
+| SEQ+ARP HOME PHSR2 | 71.9 | 78.3 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE ENSEMBLE | 18.3 | 19.3 | 0 | 0 | 61.6 | 1 | pass |
+| IDLE ENSEMBLE x2 | 20.1 | 21.2 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE ENS+PHSR | 18.9 | 20.0 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE ENS+PHSR x2 | 21.0 | 22.1 | 0 | 0 | 61.3 | 3 | pass |
+| IDLE CHORUS | 17.9 | 18.8 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE CHORUS x2 | 19.6 | 20.6 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ENPH | 66.8 | 71.4 | 0 | 6 | 48.2 | 9 | pass |
+| SEQ+ARP HOME ENPH2 | 75.5 | 82.4 | 0 | 8 | 42.9 | 2 | FAIL |
+| SPREAD H CEL MIX | 76.5 | 82.6 | 0 | 8 | 42.9 | 1 | FAIL |
+| SEQ+ARP CEL MIX | 78.5 | 85.1 | 0 | 8 | 42.9 | 12 | FAIL |
+| HEAVY SPRING MIX | 63.4 | 66.7 | 0 | 8 | 52.3 | 8 | pass |
+| HEAVY CEL BBD MIX | 68.8 | 73.0 | 0 | 8 | 44.9 | 9 | pass |
+| IDLE TAPE FLANGER | 20.5 | 21.4 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE TAPE FLNG x2 | 22.4 | 23.4 | 0 | 0 | 61.2 | 3 | pass |
+| SPREAD H CEL TFLG | 66.3 | 70.8 | 0 | 6 | 49.5 | 9 | pass |
+| SEQ+ARP HOME TFLG2 | 74.8 | 80.9 | 0 | 8 | 42.9 | 2 | FAIL |
+| IDLE BBD FLANGER | 17.7 | 18.7 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD FLNG x2 | 19.5 | 20.6 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL BBDF | 64.6 | 69.2 | 0 | 6 | 51.2 | 9 | pass |
+| IDLE PITCH SHIFT | 17.9 | 19.0 | 0 | 0 | 61.6 | 1 | pass |
+| PITCH SHIFT HELD | 52.2 | 53.9 | 0 | 8 | 57.5 | 1 | pass |
+| IDLE PITCH SHFT x2 | 20.6 | 21.8 | 0 | 0 | 61.3 | 3 | pass |
+| SPREAD H CEL PSHF | 64.6 | 70.2 | 0 | 6 | 50.8 | 9 | pass |
+| IDLE BBD ECHO | 17.9 | 18.9 | 0 | 0 | 61.6 | 3 | pass |
+| IDLE BBD ECHO x2 | 18.0 | 19.0 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL ECHO | 64.4 | 69.4 | 0 | 6 | 51.2 | 9 | pass |
+| IDLE BRONZE AGE | 23.5 | 24.5 | 0 | 0 | 61.3 | 4 | pass |
+| IDLE BRONZE AGE x2 | 30.2 | 31.2 | 0 | 0 | 58.6 | 4 | pass |
+| SPREAD H CEL BRNZ | 67.9 | 72.9 | 0 | 6 | 46.2 | 9 | pass |
+| SPREAD H CEL BREQ | 68.9 | 73.9 | 0 | 6 | 45.2 | 9 | pass |
+| IDLE WIND HARP | 18.4 | 19.5 | 0 | 0 | 61.6 | 3 | pass |
+| SPREAD H CEL HARP | 65.3 | 69.7 | 0 | 6 | 50.5 | 9 | pass |
+| SPREAD H CEL STON | 65.0 | 69.7 | 0 | 6 | 50.9 | 9 | pass |
+| SINGLE HEAVY AIR | 53.8 | 57.1 | 0 | 8 | 57.2 | 1 | pass |
+| BINAURAL HEAVY AIR | 69.0 | 71.9 | 0 | 6 | 44.9 | 9 | pass |
+| SPREAD H CEL+PP AIR | 69.9 | 75.7 | 0 | 8 | 44.6 | 9 | pass |
+| SEQ+ARP+REC HOME | 66.3 | 73.3 | 0 | 8 | 48.2 | 10 | pass |
+| SEQ+ARP+REC CELEST+P | 71.4 | 77.7 | 0 | 8 | 43.2 | 2 | FAIL |
+| ALL HOME | 64.9 | 71.7 | 0 | 8 | 50.8 | 10 | pass |
+| ALL SPRD CEL | 82.9 | 91.2 | 0 | 8 | 43.2 | 13 | FAIL |
+| ALL DUALOSC CEL | 80.1 | 87.8 | 0 | 8 | 43.2 | 12 | FAIL |
+| LOOP SPREAD | 46.9 | 50.9 | 0 | 4 | 57.3 | 8 | pass |
+| LOOP DUALOSC | 51.1 | 55.2 | 0 | 4 | 57.5 | 8 | pass |
+| LOOP STACK | 57.5 | 61.2 | 0 | 4 | 56.9 | 10 | pass |
+| LOOP STACK H | 57.9 | 62.3 | 0 | 4 | 56.5 | 10 | pass |
+| LOOP STACK MFX1 | 63.3 | 67.4 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP STACK MFX2 | 64.7 | 68.9 | 0 | 4 | 52.2 | 10 | pass |
+| LOOP STACK SH2 | 63.3 | 67.9 | 0 | 4 | 52.2 | 10 | pass |
+| LOOPCH DUALOSC | 61.7 | 65.5 | 0 | 6 | 52.6 | 10 | pass |
+| LOOPCH STACK | 70.0 | 74.4 | 0 | 5 | 43.9 | 11 | pass |
+| LOOPCH STACK H | 69.1 | 74.8 | 0 | 5 | 44.2 | 11 | pass |
+| LOOPCH STACK MFX2 | 77.2 | 81.5 | 0 | 5 | 42.9 | 12 | FAIL |
+| LOOPCH STACK SH2 | 62.7 | 66.5 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP BRNZ1 | 69.4 | 73.7 | 0 | 4 | 43.5 | 11 | pass |
+| LOOP BRNZ2 | 75.9 | 80.1 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP BRNZ EQ2 | 77.2 | 81.3 | 0 | 4 | 43.2 | 3 | FAIL |
+| LOOP PHSR+BRNZ | 75.9 | 80.4 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP BRNZ+PHSR | 77.4 | 81.5 | 0 | 4 | 42.9 | 11 | FAIL |
+| LOOP ENPH1 | 67.8 | 71.9 | 0 | 4 | 46.9 | 11 | pass |
+| LOOP ENPH2 | 69.2 | 72.7 | 0 | 4 | 43.2 | 10 | pass |
+| LOOP ENS+PHSR | 69.0 | 72.8 | 0 | 4 | 43.2 | 10 | pass |
+| LOOP ENPH+BRNZ | 78.0 | 82.1 | 0 | 4 | 42.9 | 3 | FAIL |
+| LOOP ENSM1 | 66.4 | 70.3 | 0 | 4 | 48.5 | 11 | pass |
+| LOOP ENSM2 | 67.6 | 71.9 | 0 | 4 | 46.9 | 11 | pass |
+| LOOP CHOR2 | 66.2 | 70.2 | 0 | 4 | 49.9 | 11 | pass |
+| LOOP TFLG2 | 68.1 | 72.1 | 0 | 4 | 45.9 | 11 | pass |
+| LOOP BBDF2 | 66.2 | 69.6 | 0 | 4 | 48.5 | 11 | pass |
+| LOOP PSHF2 | 67.5 | 71.5 | 0 | 4 | 46.5 | 10 | pass |
+| LOOP ECHO1 | 64.5 | 68.8 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP ECHO2 | 64.6 | 68.5 | 0 | 4 | 51.9 | 10 | pass |
+| LOOP HARP1 | 66.0 | 69.8 | 0 | 4 | 50.9 | 10 | pass |
+| LOOP HARP2 | 67.6 | 71.6 | 0 | 4 | 46.2 | 11 | pass |
+| LOOP STON2 | 67.4 | 71.1 | 0 | 4 | 48.2 | 11 | pass |
+
 ### 2026-11-12 18:15, CARNAC OS DEV (2 cores), done, build/fm1-pcmopt2 (PCM passes, compact: one copy a mode; sha256 below)
 
 | scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |

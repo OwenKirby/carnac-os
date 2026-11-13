@@ -44,6 +44,7 @@ k->c[1]=1.f;k->e[0]=1.f;k->e[1]=1.f;       // MULTI: G = 0 (closed), its solve 1
 k->k=0.f;k->drive=1.f;k->makeup=1.f;
 k->tap[0]=k->tap[1]=k->tap[2]=k->tap[3]=0.f;k->tap[4]=1.f;
 k->flavour=FLT_MULTI;k->driven=0; // a closed lowpass until the voice's first control tick
+k->ck_ok=0;k->lp=0;               // (lp: set with the taps, at the first prepare)
 }
 dfm->parallel=0.f;dfm->bal2=0.5f;
 }
@@ -168,36 +169,60 @@ if(flavor<0||flavor>=FLT_COUNT)flavor=FLT_MULTI;
 if(k->flavour!=(uint8_t)flavor){
 k->s1=k->s2=k->t1=k->t2=0.f;k->s[0]=k->s[1]=k->s[2]=k->s[3]=0.f;
 snap=1;
+k->ck_ok=0;
 }
 k->flavour=(uint8_t)flavor;
-float n[3];
+/* same: the resonance, morph and drive the last prepare had (SvfCore): what only they set is kept. The cutoff too:
+ * the coefficients are the kept ones, only the ramp toward them is set (FILTER_NO_KEEP: every tick in full, the
+ * reference the kept path is checked against) */
+#if defined(FILTER_NO_KEEP)
+#define FILTER_LP(k) 0
+const int same=0;
+#else
+#define FILTER_LP(k) ((k)->lp)
+const int same=k->ck_ok&&k->ck_res==res_q8&&k->ck_morph==morph_q8&&k->ck_drive==drive;
+if(same&&k->ck_cut==cutoff_q8){
+ramp_to(k->c,k->dc,k->cn,flavor==FLT_MULTI?2:flavor==FLT_MS20?1:3,shift,snap);
+if(flavor==FLT_FORMANT)ramp_to(k->e,k->de,k->cn+3,3,shift,snap);
+return;
+}
+#endif
+k->ck_ok=1;k->ck_res=(int16_t)res_q8;k->ck_morph=(int16_t)morph_q8;k->ck_drive=(uint8_t)drive;k->ck_cut=cutoff_q8;
+float *n=k->cn;
 switch(flavor){
 case FLT_MULTI:{
 /* the feedback, and the mode's taps. The passband sinks by 1 / (1 + fb) as the resonance rises (the ladder's
  * thinning bass); a quarter of the feedback is made up at the input, with DRIVE's gain. The loop is solved for this
  * sample's output (zero delay): u = (x - k S) / (1 + k G^4), S the stages' stored part of the 4th's output. */
+if(!same){
 int32_t fb=feedback_q8(FLT_MULTI,res_q8),dq=(drive*MULTI_DRIVE_Q8)/127;
 int16_t tap[5]={0,0,0,0,0};
-float g=lut_g(tpt_g_lut,cutoff_q8),G=g/(1.f+g),G2=G*G;
-k->k=(float)fb*(1.f/4096.f)*(1.f-0.3f*filter_res_taper(cutoff_q8));
+k->ck_fb=fb;
 k->drive=(1.f+(float)fb*(1.f/16384.f))*(float)filter_exp2_q8(dq)*(1.f/256.f);
-n[0]=G;n[1]=1.f/(1.f+k->k*G2*G2);
-ramp_to(k->c,k->dc,n,2,shift,snap);
 filter_multi_taps_q8(morph_q8,tap);
 float ease=(float)filter_exp2_q8(-(int32_t)(MULTI_DRIVE_EASE*(float)dq))*(1.f/256.f);
 for(int i=0;i<5;i++)k->tap[i]=(float)tap[i]*(1.f/128.f)*ease;
+k->lp=(uint8_t)(k->tap[0]==0.f&&k->tap[1]==0.f&&k->tap[2]==0.f&&k->tap[3]==0.f);
+}
+float g=lut_g(tpt_g_lut,cutoff_q8),G=g/(1.f+g),G2=G*G;
+k->k=(float)k->ck_fb*(1.f/4096.f)*(1.f-0.3f*filter_res_taper(cutoff_q8));
+n[0]=G;n[1]=1.f/(1.f+k->k*G2*G2);
+ramp_to(k->c,k->dc,n,2,shift,snap);
 return;
 }
 case FLT_MS20:{
 /* the positive feedback; DRIVE drives the input 1x .. 24x into the clipper, made up by drive^-1/16: dirtier as it
  * turns, never quieter (filter.h). The morph crossfades its outputs: LP s1, BP 2 (s0 - s1) (unity at the cutoff),
  * HP u - 2 s0 + s1, as taps on u, s0, s1. */
+if(!same){
 float wl,wb,wh;
-k->k=(float)feedback_q8(FLT_MS20,res_q8)*(MS20_DIODE_G*0.5f/4096.f)*(1.f-0.25f*filter_res_taper(cutoff_q8));
+k->ck_fb=feedback_q8(FLT_MS20,res_q8);
 k->drive=(float)filter_ms20_drive_q8(drive)*(1.f/256.f);
 k->makeup=(float)filter_ms20_makeup_q8(drive)*(1.f/256.f);
 lbh_weights(morph_q8,&wl,&wb,&wh);
 k->tap[0]=wh*k->makeup;k->tap[1]=(2.f*wb-2.f*wh)*k->makeup;k->tap[2]=(wl-2.f*wb+wh)*k->makeup;
+}
+k->k=(float)k->ck_fb*(MS20_DIODE_G*0.5f/4096.f)*(1.f-0.25f*filter_res_taper(cutoff_q8));
 n[0]=(float)lut_coeff(onepole_g44_lut,cutoff_q8)*(1.f/32768.f);
 ramp_to(k->c,k->dc,n,1,shift,snap);
 return;
@@ -207,19 +232,23 @@ case FLT_FORMANT:{
  * (filter_res_taper). The level gives way as the resonance rises, as an analogue filter's passband does
  * (1 - 0.39 r^2: -0.7 dB at resonance 50, -3 dB at 100, -4.3 dB at 115). DRIVE above 0 clips the input as the
  * SH-2's mixer does (the same level and span), its makeup holding the level; at 0 the input goes straight in. */
+if(!same){
 float r=(float)res_q8*(1.f/(115.f*256.f)),comp=1.f-0.39f*r*r;
-k->k=((float)((127<<8)-res_q8)*(180.f/256.f)+1200.f)*(1.f/32768.f);
-k->k+=(0.734375f-k->k)*0.4f*filter_res_taper(cutoff_q8);
-svf_coeffs(n,lut_g(tpt_g_lut,cutoff_q8),k->k);
-ramp_to(k->c,k->dc,n,3,shift,snap);
+k->ck_kb=((float)((127<<8)-res_q8)*(180.f/256.f)+1200.f)*(1.f/32768.f);
 k->makeup=0.5f*comp;                         /* the two bands averaged, and the resonance's give */
 k->driven=(uint8_t)(drive>0);
 if(drive>0){
 k->drive=SH2_BASE*(float)filter_exp2_q8((drive*SH2_DRIVE_Q8)/127)*(1.f/256.f);
 k->makeup*=1.f/clip_gain(k->drive);
 }
-svf_coeffs(n,lut_g(tpt_g_lut,cutoff_q8+filter_formant_gap_q8(morph_q8)),k->k);
-ramp_to(k->e,k->de,n,3,shift,snap);
+k->ck_fb=filter_formant_gap_q8(morph_q8);
+}
+k->k=k->ck_kb;
+k->k+=(0.734375f-k->k)*0.4f*filter_res_taper(cutoff_q8);
+svf_coeffs(n,lut_g(tpt_g_lut,cutoff_q8),k->k);
+ramp_to(k->c,k->dc,n,3,shift,snap);
+svf_coeffs(n+3,lut_g(tpt_g_lut,cutoff_q8+k->ck_fb),k->k);
+ramp_to(k->e,k->de,n+3,3,shift,snap);
 return;
 }
 default:{
@@ -230,30 +259,40 @@ default:{
  * resonance (1 / (1 + k)); SH2_BASS of the feedback boosts the input, before the mixer's clip, and is not made up
  * after it (a made-up boost ran a clipped input past the knee). No high-cutoff taper: it self-oscillates to the top,
  * as the circuit does. LP24 -> BP -> HP24. */
+if(!same){
 int32_t fb=feedback_q8(FLT_MULTI,res_q8);
-k->k=(float)fb*(1.f/4096.f);
-float bass=1.f+SH2_BASS*k->k;
-k->drive=SH2_BASE*(float)filter_exp2_q8((drive*SH2_DRIVE_Q8)/127)*(1.f/256.f)*bass;
-float Le=clip_gain(k->drive);
+float kk=(float)fb*(1.f/4096.f);
+float bass=1.f+SH2_BASS*kk;
+float dr=SH2_BASE*(float)filter_exp2_q8((drive*SH2_DRIVE_Q8)/127)*(1.f/256.f)*bass;
+float Le=clip_gain(dr),wl,wb,wh;
+k->ck_kb=kk;
 /* the pitch: past the edge (k 4) the ringing's level in the stages, Le (1 - 4 / k) squared in effect, slows the OTAs
  * and pulls it flat, by SH2_PITCH (Le / the clean level)^2 (1 - 4 / k) cents (-8 c at drive 0, -165 c driven),
- * less toward the top. The cutoff is raised by as much: within 4 cents at drive 0 and 127, 19 at worst between. */
-if(k->k>4.f){
+ * less toward the top (the cutoff's taper, below). The cutoff is raised by as much: within 4 cents at drive 0 and
+ * 127, 19 at worst between. */
+k->ck_a=0.f;
+if(kk>4.f){
 float lr=Le/(SH2_BASE*bass);
-float tp=filter_res_taper(cutoff_q8),cents=SH2_PITCH*lr*lr*(1.f-4.f/k->k)*(1.f-0.65f*tp*tp);
-cutoff_q8+=(int)(cents*(256.f/89.3f));
+k->ck_a=SH2_PITCH*lr*lr*(1.f-4.f/kk);
 }
-float g=lut_g(tpt_g_lut,cutoff_q8),G=g/(1.f+g),G2=G*G,wl,wb,wh;
 k->e[0]=SH2_RES_CEIL*Le*SH2_Q;k->e[1]=1.f/k->e[0];  /* the feedback's ceiling, with the level the OTAs see (run_ota),
                                                      in the SH-2's units (sat_w) */
 k->makeup=1.f/Le;
-k->drive*=SH2_Q;                             /* the input into the SH-2's units: Le above was taken unscaled */
-n[0]=G;n[1]=1.f/(1.f+k->k*G2*G2);n[2]=g;
-ramp_to(k->c,k->dc,n,3,shift,snap);
+k->drive=dr*SH2_Q;                           /* the input into the SH-2's units: Le above was taken unscaled */
 /* LP24 y4, BP 4 (y2 - 2 y3 + y4) = 4 H^2 (1 - H)^2 (unity at the cutoff), HP24 (1 - H)^4 */
 static const float LP[5]={0,0,0,0,1},BP[5]={0,0,4,-8,4},HP[5]={1,-4,6,-4,1};
 lbh_weights(morph_q8,&wl,&wb,&wh);
 for(int i=0;i<5;i++)k->tap[i]=(wl*LP[i]+wb*BP[i]+wh*HP[i])*(k->makeup*(1.f/SH2_Q));   /* back to Q15 units */
+k->lp=(uint8_t)(k->tap[0]==0.f&&k->tap[1]==0.f&&k->tap[2]==0.f&&k->tap[3]==0.f);
+}
+k->k=k->ck_kb;
+if(k->k>4.f){
+float tp=filter_res_taper(cutoff_q8),cents=k->ck_a*(1.f-0.65f*tp*tp);
+cutoff_q8+=(int)(cents*(256.f/89.3f));
+}
+float g=lut_g(tpt_g_lut,cutoff_q8),G=g/(1.f+g),G2=G*G;
+n[0]=G;n[1]=1.f/(1.f+k->k*G2*G2);n[2]=g;
+ramp_to(k->c,k->dc,n,3,shift,snap);
 return;
 }
 }
@@ -397,6 +436,28 @@ y[i]=soft_limit(p0*u+p1*y1+p2*y2+p3*y3+p4*y4);
 }
 k->c[0]=G;k->c[1]=inv;k->s[0]=s0;k->s[1]=s1;k->s[2]=s2;k->s[3]=s3;
 }
+/* The plain lowpass (SvfCore.lp: the output is the last stage alone, the other taps exactly 0): block_ladder with the
+ * four products and sums that add nothing left out (2026-11-12: 8 of the loop's ~48 float operations). The same
+ * samples: a tap of 0 times a finite stage is a zero, and a zero added to the last stage's product leaves it as it
+ * is (only a zero's sign can differ, which no later stage can turn into a value). */
+static void block_ladder_lp(SvfCore *k,const float *x,float *y,int n){
+float G=k->c[0],inv=k->c[1],dG=k->dc[0],dinv=k->dc[1];
+float s0=k->s[0],s1=k->s[1],s2=k->s[2],s3=k->s[3],dr=k->drive,kk=k->k;
+float p4=k->tap[4];
+for(int i=0;i<n;i++){
+float g=G,iv=inv;
+G+=dG;inv+=dinv;
+float S=(((s0*g+s1)*g+s2)*g+s3)*(1.f-g);
+float u=sat_f((x[i]*dr-kk*S)*iv);
+float v,y1,y2,y3,y4;
+v=(u-s0)*g;y1=v+s0;s0=y1+v;
+v=(y1-s1)*g;y2=v+s1;s1=y2+v;
+v=(y2-s2)*g;y3=v+s2;s2=y3+v;
+v=(y3-s3)*g;y4=v+s3;s3=y4+v;
+y[i]=soft_limit(p4*y4);
+}
+k->c[0]=G;k->c[1]=inv;k->s[0]=s0;k->s[1]=s1;k->s[2]=s2;k->s[3]=s3;
+}
 static void block_ms20(SvfCore *k,const float *x,float *y,int n){
 float G=k->c[0],dG=k->dc[0],s0=k->s[0],s1=k->s[1],kk=k->k,dr=k->drive;
 float p0=k->tap[0],p1=k->tap[1],p2=k->tap[2];
@@ -431,12 +492,32 @@ y[i]=soft_limit(p0*u+p1*y1+p2*y2+p3*y3+p4*y4);
 }
 k->c[0]=G;k->c[1]=inv;k->c[2]=g;k->s[0]=s0;k->s[1]=s1;k->s[2]=s2;k->s[3]=s3;
 }
+/* SH-2 as the plain lowpass (LP24, the morph at 0): block_ota, the last stage alone (as block_ladder_lp) */
+static void block_ota_lp(SvfCore *k,const float *x,float *y,int n){
+float G=k->c[0],inv=k->c[1],g=k->c[2],dG=k->dc[0],dinv=k->dc[1],dg=k->dc[2];
+float s0=k->s[0],s1=k->s[1],s2=k->s[2],s3=k->s[3],dr=k->drive,kk=k->k,ce=k->e[0],ci=k->e[1];
+float p4=k->tap[4];
+for(int i=0;i<n;i++){
+float Gi=G,iv=inv,gi=g,om=1.f-Gi;
+G+=dG;inv+=dinv;g+=dg;
+float S=(((s0*Gi+s1)*Gi+s2)*Gi+s3)*(1.f-Gi);
+float xd=sat_w(x[i]*dr),u=(xd-kk*S)*iv,f=xd-u;
+u=xd-ce*tanh_f(f*ci);
+float y1,y2,y3,y4;
+{float d_=(u-s0)*om,v_=gi*sat_w(d_);y1=v_+s0;s0=y1+v_;}
+{float d_=(y1-s1)*om,v_=gi*sat_w(d_);y2=v_+s1;s1=y2+v_;}
+{float d_=(y2-s2)*om,v_=gi*sat_w(d_);y3=v_+s2;s2=y3+v_;}
+{float d_=(y3-s3)*om,v_=gi*sat_w(d_);y4=v_+s3;s3=y4+v_;}
+y[i]=soft_limit(p4*y4);
+}
+k->c[0]=G;k->c[1]=inv;k->c[2]=g;k->s[0]=s0;k->s[1]=s1;k->s[2]=s2;k->s[3]=s3;
+}
 void filter_core_render_block(SvfCore *k,const float *x,float *y,int n){
 switch(k->flavour){
-case FLT_MULTI:block_ladder(k,x,y,n);break;
+case FLT_MULTI:if(FILTER_LP(k))block_ladder_lp(k,x,y,n);else block_ladder(k,x,y,n);break;
 case FLT_MS20:block_ms20(k,x,y,n);break;
 case FLT_FORMANT:block_formant(k,x,y,n);break;
-default:block_ota(k,x,y,n);break;   /* FLT_SH2 */
+default:if(FILTER_LP(k))block_ota_lp(k,x,y,n);else block_ota(k,x,y,n);break;   /* FLT_SH2 */
 }
 }
 void dual_filter_render_block(DualFilterMatrix *dfm,const float *x,float *y,int n){

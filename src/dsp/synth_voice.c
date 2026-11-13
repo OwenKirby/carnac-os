@@ -337,7 +337,9 @@ void update_global_lfo1(uint32_t frame) {
         const LfoParams *cfg = &e->lfo[0];
         LfoRuntimeState *state = &global_lfo1_state[l];
         SourceCtx c = {e, (int)l, NULL, NULL, 0, layer_sends[l], layer_sends_hi[l]};
-        lfo_advance(cfg, state, send_sum(&c, MDST_LFO1_SPEED, 1), layer_key_held((uint8_t)l), SYNTH_CTRL_SHIFT, frame);
+        /* (the keys only matter to REL, lfo_advance: the 8 voices are not asked otherwise) */
+        lfo_advance(cfg, state, send_sum(&c, MDST_LFO1_SPEED, 1),
+                    cfg->delay > LFO_REL_DELAY ? layer_key_held((uint8_t)l) : 0, SYNTH_CTRL_SHIFT, frame);
         int32_t raw = compute_morphed_lfo_fixed(state, cfg->shape);
         lfo1_out_q15[l] = (raw * state->envelope_amp_q15) >> 15;
     }
@@ -397,17 +399,30 @@ static void glide_knobs(unsigned l) {
 /* a glided knob in Q8 knob units */
 static inline int32_t glide_q8(int32_t g_q16) { return g_q16 >> 8; }
 
+/* 0: the pass's first tick is still to come (synth_voice_begin_pass); else the patches' load counts it saw are kept */
+static uint8_t pass_kept, pass_lc[NLAYER];
+void synth_voice_begin_pass(void) { pass_kept = 0; }
+
 void synth_voice_begin_tick(uint32_t frame) {
-    tune_cents_now = instrument_tune_cents();       /* once a tick, not once a voice */
-    tuning_now = PERF_TUNING(&perf_state);
-    tuning_root_now = PERF_TUNING_ROOT(&perf_state);
+    /* once a pass (and again when a patch loads inside it), not once a tick: what only the patches and the settings
+     * say. The UI and the performance change them between passes; inside one only a load does (2026-11-12: the two
+     * route masks alone were 16 routes x 2 layers read every 16 frames, on core 0 while core 1 waits) */
+    if (!pass_kept || pass_lc[0] != engine_load_count[0] || pass_lc[1] != engine_load_count[1]) {
+        pass_kept = 1;
+        pass_lc[0] = engine_load_count[0];
+        pass_lc[1] = engine_load_count[1];
+        tune_cents_now = instrument_tune_cents();   /* once a tick, not once a voice */
+        tuning_now = PERF_TUNING(&perf_state);
+        tuning_root_now = PERF_TUNING_ROOT(&perf_state);
+        for (unsigned l = 0; l < NLAYER; l++) {
+            layer_sends[l] = route_mask(&engine_state[l], &layer_sends_hi[l]);
+            refresh_osc_mixer(l);
+        }
+    }
     if (engine_state[0].analog | engine_state[1].analog)
         analog_begin_tick();                        /* ANALOG's warm-up drift, shared by every voice (nothing to drift: skipped) */
-    for (unsigned l = 0; l < NLAYER; l++)
-        layer_sends[l] = route_mask(&engine_state[l], &layer_sends_hi[l]);
     update_global_lfo1(frame);
     for (unsigned l = 0; l < NLAYER; l++) {
-        refresh_osc_mixer(l);
         glide_knobs(l);
         mfx_mod_follow(l, layer_sends_hi[l]);
     }

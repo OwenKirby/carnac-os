@@ -1,7 +1,9 @@
 /* Host test: the MAQ / ARP idle fast paths (maq_seq.c maq_idle_frame, arp_seq.c carp_frame) are bit-exact. One
  * scripted session through the whole synth: idle with notes held, play / stop, REC stopped and playing, the ARP's
  * audition, a held (live) chord, TRANSPOSE MAQ, then the MIDI clock with Start / Stop / Continue and running pulses,
- * at block sizes 7 / 32 / 128 and with requests between blocks. It prints one hash a phase over the output and the
+ * at block sizes 7 / 32 / 128 and, as calls of several render passes (the FM1's are 256 frames: what the clock and the
+ * sequencers skip carries from a pass to the next, synth_runtime.c carry), 256 / 300 / 512, with requests between
+ * blocks. It prints one hash a phase over the output and the
  * MAQ's and the ARP's whole state. run_tests.sh builds it twice, with and without -DSYNTH_SEQ_NO_IDLE, and the two
  * outputs must be the same. Test scaffolding only. */
 #include <stdio.h>
@@ -13,7 +15,7 @@
 #include "dsp/maq_seq.h"
 #include "dsp/arp_seq.h"
 
-static int32_t buf[128 * 2];
+static int32_t buf[512 * 2];
 static uint32_t h;
 static uint32_t block = 32, clk_acc;
 static int ext_clock;                                /* 1: 0xF8 between blocks; 2: stamped (synth_midi_at, as the FM1's
@@ -58,8 +60,8 @@ static void phase(const char *name)
 
 int main(void)
 {
-    static const uint32_t blocks[3] = {7, 32, 128};
-    for (int bi = 0; bi < 3; bi++) {
+    static const uint32_t blocks[6] = {7, 32, 128, 256, 300, 512};
+    for (int bi = 0; bi < 6; bi++) {
         block = blocks[bi];
         h = 2166136261u;
         ext_clock = 0;

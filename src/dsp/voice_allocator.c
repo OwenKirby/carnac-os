@@ -7,6 +7,7 @@
 SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 volatile uint8_t voice_shed;
 volatile uint8_t voice_tail_cut;
+uint8_t pool_pass;
 
 SYNTH_COLD void voice_allocator_init(void) {
     for (int v = 0; v < POLYPHONY_VOICES; v++) {
@@ -74,7 +75,13 @@ void pool_range(uint8_t layer, int *first, int *count) {
      * (the SEQ rows of the PERF TEST went over 100 % with it uncached, 2026-11-09) */
     static uint32_t cache_key = 0xFFFFFFFFu;
     static uint8_t cache_n[NLAYER];
-    uint32_t key = (uint32_t)mode | (uint32_t)(perf_state.voice_mode[0] & 7u) << 2 | (uint32_t)(perf_state.voice_mode[1] & 7u) << 5 |
+    /* Inside a render pass (2026-11-12) the key itself is kept: making it prices both patches (varch_voice_cost: the
+     * routes, the filters, the waves), every layer tick and for every note, and within a pass the patches change only
+     * by a load (a Program Change: engine_load_count), the performance and the UI's edits only between passes. */
+    static uint8_t pass_lc[NLAYER];
+    if (pool_pass == 2u && pass_lc[0] == engine_load_count[0] && pass_lc[1] == engine_load_count[1])
+        goto have;
+    uint32_t key = (uint32_t)mode |(uint32_t)(perf_state.voice_mode[0] & 7u) << 2 | (uint32_t)(perf_state.voice_mode[1] & 7u) << 5 |
                    (uint32_t)varch_voice_cost(&engine_state[0]) << 8 | (uint32_t)varch_voice_cost(&engine_state[1]) << 16 |
                    (uint32_t)(engine_state[0].mfx.type & 15u) << 24 | (uint32_t)(engine_state[1].mfx.type & 15u) << 28;   /* (the MFX is priced by type) */
     int n[NLAYER];
@@ -84,6 +91,12 @@ void pool_range(uint8_t layer, int *first, int *count) {
                                            perf_state.voice_mode[1], l);
         cache_key = key;
     }
+    if (pool_pass) {
+        pass_lc[0] = engine_load_count[0];
+        pass_lc[1] = engine_load_count[1];
+        pool_pass = 2u;
+    }
+have:
     for (uint8_t l = 0; l < NLAYER; l++)
         n[l] = cache_n[l];
     /* layer 2 at the top of the pool (its voices end at the last one), layer 1 from the bottom: an odd count on either

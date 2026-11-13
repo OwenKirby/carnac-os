@@ -44,6 +44,7 @@ build shed_policy src/host/test_shed_policy.c && run shed_policy "$OUT/shed_poli
 build pcm_osc $DSP src/host/pcm_images_host.c src/host/test_pcm_osc.c && run pcm_osc "$OUT/pcm_osc.exe"
 build pcm_handoff $DSP src/host/test_pcm_handoff.c && run pcm_handoff "$OUT/pcm_handoff.exe"
 build filter src/host/test_filter.c src/dsp/filter.c && run filter "$OUT/filter.exe"
+build filter_keep src/host/test_filter_keep.c src/dsp/filter.c && run filter_keep "$OUT/filter_keep.exe"
 build mfx src/host/test_mfx.c src/dsp/mfx.c src/dsp/preset.c && run mfx "$OUT/mfx.exe"
 build ui_arch $DSP src/UIStateMachine.c src/host/test_ui_arch.c && run ui_arch "$OUT/ui_arch.exe"
 build ui_rows_fit $DSP src/host/test_ui_rows_fit.c && run ui_rows_fit "$OUT/ui_rows_fit.exe"

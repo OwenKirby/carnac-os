@@ -58,6 +58,10 @@ int voice_input_from_seq_step(VoiceInput *in, uint8_t event_type, const Sequence
 
 /* Once per control tick, before the voices' ticks: advances each layer's LFO1 and refreshes its OSCMIXER. */
 void synth_voice_begin_tick(uint32_t frame);
+/* Once per render pass, before its first tick: what the layer tick reads only from the patches and the instrument's
+ * settings (the route masks, the OSCMIXER knobs, the tunings) is worked out at the pass's first tick and kept for
+ * the rest of it, a patch that loads mid-pass (engine_load_count) apart: nothing else writes them inside a pass. */
+void synth_voice_begin_pass(void);
 
 /* One control tick of one voice, from the patch of voice->layer: advances its envelopes and LFO2/3, resolves the
  * mod sources its architecture (voice->arch, fixed at note start) uses and works out what voice_render_sample plays

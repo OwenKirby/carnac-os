@@ -105,6 +105,9 @@ extern volatile uint8_t voice_shed;
 /* Tail cuts (2026-11-11, the glue again): this many of the quietest released voices, of any layer, are choked at the
  * next layer tick, the limits left alone (shed_policy.h: tails go before the limit is cut). */
 extern volatile uint8_t voice_tail_cut;
+/* The render pass's mark for pool_range (synth_runtime.c render_pass): 1 at a pass's start, 0 at its end; pool_range
+ * makes it 2 once it has priced the patches in this pass, and until the pass ends (or a patch loads) answers from that. */
+extern uint8_t pool_pass;
 /* a voice for a note of source src (VSRC_*), -1 when there is none: the layer has no voices, or every one is held by
  * a higher rank */
 int allocate_voice_slot(uint8_t layer, uint8_t src);
