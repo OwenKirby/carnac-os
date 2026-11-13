@@ -2595,13 +2595,15 @@ static int32_t pu_pop_line(int32_t y, const char *s, uint16_t c, int32_t sc, int
 /* --------------------------------------------------------- preset list --- */
 /* The LEDGER (2026-11-13, the user's option A): both list popups are a dense column at 1x, a small stone at each row's
  * head, the row under the cursor on a lit slab (pu_block_lit) at 2x, so most of the list shows at a glance.
- * While the Preset Encoder turns: the stored presets of the page's kind (ui_sm_preset_target), thirteen rows around
- * the one under the cursor (ui_sm_browse_slot: loading or playing; it stays in the middle until the list runs out),
- * each its slot and its name, those far from the cursor dimmer. The slot under the cursor shows even when the store
+ * While the Preset Encoder turns: the stored presets of the page's kind (ui_sm_preset_target), eight rows at 2x
+ * (the user asked for the names twice as big) around the one under the cursor (ui_sm_browse_slot: loading or playing; it stays in the middle until the list runs out),
+ * each its slot and its name, all alike. The slot under the cursor shows even when the store
  * has nothing in it (UNSAVED: the live patch). A row of dots on the right with a stone riding it: where the cursor is
  * among them all. Drawn whole on each move (the list only changes when the cursor does). */
 static const char *const PU_BR_TITLE[UISAVE_COUNT] = {"ARP PATTERN", "SEQUENCE", "PATCH", "PERFORMANCE"};
-#define PU_BR_ROWS 13u
+#define PU_BR_ROWS 8u                 /* the preset list's rows, at 2x (2026-11-13: 13 at 1x before) */
+#define PU_RP_ROWS 13               /* the parameter ledger's window */
+#define PU_BR_PITCH 22              /* a preset row at 2x */
 #define PU_LG_Y 30                   /* the ledger's first row */
 #define PU_LG_PITCH 13               /* a row at 1x */
 #define PU_LG_SLAB 26                /* the pick's slab */
@@ -2623,7 +2625,7 @@ static void pu_draw_browse(const UIStateMachine *sm, uint32_t force)
     char nm[NAME_LEN + 1], b[12], nb[4];
     uint8_t has[(VAL_MAX + 1u) / 8u], row[PU_BR_ROWS], tgt = ui_sm_preset_target(sm), cur = ui_sm_browse_slot(sm);
     uint8_t layer = sm->s.active_synth_layer, i, st, on;
-    int32_t s, n = 0, up = 0, dn = 0, above, below, at = 0, total = 0, y, oy, d;
+    int32_t s, n = 0, up = 0, dn = 0, above, below, at = 0, total = 0, y, oy;
     const char *t, *nmt;
     if (!pu_dirty(PUR_BROWSE, sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)tgt | (uint32_t)cur << 8 | (uint32_t)layer << 16),
                   force))
@@ -2670,21 +2672,20 @@ static void pu_draw_browse(const UIStateMachine *sm, uint32_t force)
             else
                 nmt = st != UISLOT_USED ? "-" : nm[0] ? nm : "UNTITLED";
             pu_num(nb, row[i], 0u, 3u);
-            if (on) {                                /* the pick: on a lit slab, at 2x (a long name at 1x) */
-                pu_block_lit(12, y - oy, 210, PU_LG_SLAB, 0, oy, 901u);
-                pu_rune_n(20, y + 4, nb, SQC(HI), 2, 3, oy);
+            if (on) {                                /* the pick: on a lit slab (a name past 13 letters at 1x, whole) */
+                pu_block_lit(10, y - oy, 214, PU_LG_SLAB, 0, oy, 901u);
+                pu_rune_n(24, y + 4, nb, SQC(HI), 2, 3, oy);
                 if (pu_strlen(nmt) <= 13)
-                    pu_rune_n(64, y + 4, nmt, st == UISLOT_EMPTY ? SQC(MID) : SQC(HI), 2, 13, oy);
+                    pu_rune_n(66, y + 4, nmt, st == UISLOT_EMPTY ? SQC(MID) : SQC(HI), 2, 13, oy);
                 else
-                    pu_rune_n(64, y + 9, nmt, SQC(HI), 1, NAME_LEN, oy);
-                y += PU_LG_SLAB + 3;
+                    pu_rune_n(66, y + 9, nmt, SQC(HI), 1, NAME_LEN, oy);
+                y += PU_LG_SLAB + 4;
                 continue;
             }
-            d = (int32_t)i - above;
-            sq_stone(18, y + 10 - oy, 4, 9, 9, SQC(MID), (uint32_t)row[i] * 5u + 1u, 0u, 0u);
-            pu_rune_n(28, y + 1, nb, SQC(DIM), 1, 3, oy);
-            pu_rune_n(54, y + 1, nmt, d > 4 || d < -4 ? SQC(DIM) : SQC(MID), 1, NAME_LEN, oy);
-            y += PU_LG_PITCH;
+            sq_stone(14, y + 18 - oy, 5, 16, 16, SQC(MID), (uint32_t)row[i] * 5u + 1u, 0u, 0u);
+            pu_rune_n(24, y, nb, SQC(DIM), 2, 3, oy);
+            pu_rune_n(66, y, nmt, SQC(MID), 2, 13, oy);   /* (every row the same: the user, 2026-11-13) */
+            y += PU_BR_PITCH;
         }
         if (total == 1 && ui_sm_slot_query(sm, tgt, cur, nm) == UISLOT_EMPTY)
             pu_rune_n(64, PU_LG_Y + PU_LG_SLAB + 8, "NOTHING SAVED", SQC(DIM), 1, 20, oy);
@@ -2831,7 +2832,7 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
         pu_cat(tt, sm->s.active_synth_layer ? "L2  " : "L1  ");
     pu_cat(tt + pu_strlen(tt), ui_sm_noise_page(sm, sm->page, sm->s.active_synth_layer) ? "NOISE"
                                : pu_mfx_view(sm) ? "MFX" : PU_TITLE[sm->page]);
-    cnt = nv < (int32_t)PU_BR_ROWS ? nv : (int32_t)PU_BR_ROWS;   /* a window round the cursor on a long page */
+    cnt = nv < PU_RP_ROWS ? nv : PU_RP_ROWS;   /* a window round the cursor on a long page */
     first = ci - cnt / 2;
     if (first > nv - cnt) first = nv - cnt;
     if (first < 0) first = 0;
