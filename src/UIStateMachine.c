@@ -2456,6 +2456,10 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         return;
     }
     if (page == UIPAGE_MOD) {                        /* (a route at SOURCE NONE closes up when the cursor leaves) */
+        if (knob < 4u) {                             /* (2026-11-13) its list, or the route's card, while it turns */
+            sm->rowpop = (uint8_t)(UI_ROWPOP_MOD + knob);
+            sm->rowpop_ms = UI_ROWPOP_MS;
+        }
         uint8_t ri = ui_sm_route_sel(sm);
         EngineState *e = sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u];
         if (knob == 0u) {                            /* SOURCE: mod_src back into the route, or + ROUTE's start */
@@ -2997,6 +3001,8 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
                                       * its footer shows it) */
             sm->rowpop = (uint8_t)(sm->page != UIPAGE_REC &&
                                    ui_sm_row_options(sm, sm->s.current_param_focus, &pos) > 1u);
+            if (sm->page == UIPAGE_MOD && r->kind == RK_ROUTE)   /* AMOUNT: the route's card */
+                sm->rowpop = (uint8_t)(UI_ROWPOP_MOD + UIMODF_AMOUNT);
             sm->rowpop_ms = UI_ROWPOP_MS;
         }
     } else if (arg == BTN_HOME) {
@@ -3378,6 +3384,67 @@ const char *ui_sm_row_option(const UIStateMachine *sm, uint8_t row, uint16_t k, 
         if (n++ == k)
             return r->names[v];
     }
+    return "";
+}
+
+/* 2026-11-13: the MOD MATRIX's popup. The route under the cursor, field f as its knob shows it, the list fields' options
+ * in the knobs' order (SOURCE / VIA: every source; DEST: the ones the architecture has, ui_sm_dest_turn's walk) */
+static const char *const MSRC_LONG[MSRC_COUNT] = {
+    "NONE", "VELOCITY", "KEYBOARD", "RANDOM", "MOD WHEEL", "AFTERTOUCH", "POLY AT", "CC 1", "CC 2", "ENV 1",
+    "ENV 2", "ENV 3", "LFO 1", "LFO 2", "LFO 3",
+};
+const char *ui_sm_src_name(uint8_t src) { return MSRC_LONG[src < MSRC_COUNT ? src : 0u]; }
+
+uint8_t ui_sm_mod_value(const UIStateMachine *sm, uint8_t f)
+{
+    const ModRoute *m = &sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]->route[ui_sm_route_sel(sm)];
+    switch (f) {
+    case UIMODF_SRC: return route_free(m) ? sm->route_hint : m->src;
+    case UIMODF_VIA: return m->via;
+    case UIMODF_DEST: return m->dest;
+    case UIMODF_VIA_DEPTH: return m->via_depth;
+    default: return m->amount;
+    }
+}
+
+static uint8_t mod_dest_listed(const UIStateMachine *sm, uint8_t d, uint8_t cur)
+{
+    return (uint8_t)(d == cur || dest_here(sm, d));
+}
+
+uint16_t ui_sm_mod_options(const UIStateMachine *sm, uint8_t f, uint16_t *pos)
+{
+    uint8_t cur = ui_sm_mod_value(sm, f), d;
+    uint16_t n = 0u;
+    *pos = 0u;
+    if (f == UIMODF_SRC || f == UIMODF_VIA) {
+        *pos = cur < MSRC_COUNT ? cur : 0u;
+        return (uint16_t)MSRC_COUNT;
+    }
+    if (f != UIMODF_DEST)
+        return 0u;
+    for (d = 0u; d < MDST_COUNT; d++) {
+        if (!mod_dest_listed(sm, d, cur))
+            continue;
+        if (d == cur)
+            *pos = n;
+        n++;
+    }
+    return n;
+}
+
+const char *ui_sm_mod_option(const UIStateMachine *sm, uint8_t f, uint16_t k)
+{
+    uint8_t cur, d;
+    uint16_t n = 0u;
+    if (f == UIMODF_SRC || f == UIMODF_VIA)
+        return ui_sm_src_name((uint8_t)(k < MSRC_COUNT ? k : 0u));
+    if (f != UIMODF_DEST)
+        return "";
+    cur = ui_sm_mod_value(sm, f);
+    for (d = 0u; d < MDST_COUNT; d++)
+        if (mod_dest_listed(sm, d, cur) && n++ == k)
+            return MDEST_NAMES[d];
     return "";
 }
 

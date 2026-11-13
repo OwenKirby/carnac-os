@@ -383,9 +383,29 @@ int main(int argc, char **argv)
         for (i = 0; i < 4; i++) { run(441); ui_screen_draw(&sm, synth_seq(), synth_arp(), 0); }
         shot(dir, "mod_env");
         ui_sm_handle(&sm, UIEV_SELECT_ENC, 2);       /* LFO2*WHL > F1 CUTOFF */
-        ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);         /* +45 (a number: no popup, 2026-11-13) */
-        if (sm.rowpop || e->route[3].amount != BIPOLAR_CENTER + 45) { printf("FAIL: the Algorithm Encoder did not set the route's AMOUNT, or a popup came up\n"); fails = 1; }
-        shot(dir, "mod1_rowpop");
+        ui_sm_handle(&sm, UIEV_ALGO_ENC, 5);         /* +45: the route's card (2026-11-13) */
+        if (sm.rowpop != UI_ROWPOP_MOD + UIMODF_AMOUNT || e->route[3].amount != BIPOLAR_CENTER + 45) { printf("FAIL: the Algorithm Encoder did not set the route's AMOUNT, or its card did not come up\n"); fails = 1; }
+        ui_screen_draw(&sm, synth_seq(), synth_arp(), 1);
+        shot(dir, "modpop_amount");
+        {                                            /* each knob: its own popup, the value it holds on the slab */
+            static const char *const SHOT[4] = {"modpop_source", "modpop_via", "modpop_dest", "modpop_depth"};
+            uint16_t at, nopt;
+            for (k = 0; k < 4u; k++) {
+                p = ui_sm_knob(&sm, UIPAGE_MOD, 0, k, &info);
+                ui_sm_knob_written(&sm, UIPAGE_MOD, k);   /* (the value as it is: just the popup) */
+                if (sm.rowpop != UI_ROWPOP_MOD + k) { printf("FAIL: MOD knob %u did not open its popup\n", k + 1u); fails = 1; }
+                nopt = ui_sm_mod_options(&sm, k, &at);
+                if (k < 3u && (nopt < 2u || (k < 2u && at != *p) ||
+                               (k == 2u && strcmp(ui_sm_mod_option(&sm, 2, at), ui_sm_dest_name(*p)) != 0))) {
+                    printf("FAIL: MOD knob %u's list does not hold its value (%u of %u)\n", k + 1u, at, nopt); fails = 1;
+                }
+                if (k == 3u && nopt) { printf("FAIL: VIA DEPTH should show the card, not a list\n"); fails = 1; }
+                ui_screen_draw(&sm, synth_seq(), synth_arp(), 1);
+                shot(dir, SHOT[k]);
+            }
+        }
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        if (sm.rowpop) { printf("FAIL: the Select Encoder did not put the MOD popup away\n"); fails = 1; }
         ui_sm_tick(&sm, UI_ROWPOP_MS);
         /* .. RND > PAN cleared: SOURCE and DEST NONE; gone when the cursor leaves, the rest move up */
         ui_sm_handle(&sm, UIEV_SELECT_ENC, (int8_t)(0 - sm.s.current_param_focus));

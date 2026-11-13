@@ -132,6 +132,8 @@ enum {
                                       * (2026-11-13; any button or encoder puts it away at once) */
 #define UI_HOLD_MS 200u              /* HOME / SAVE held this long: the hold strip shows what OCT- / OCT+ do */
 #define UI_ROWPOP_MS 1500u           /* the parameter list stays up this long after the last Select / Algorithm detent */
+#define UI_ROWPOP_MOD 2u           /* rowpop: the MOD MATRIX's popup, + the field (UIMODF_*) being turned */
+enum { UIMODF_SRC, UIMODF_VIA, UIMODF_DEST, UIMODF_VIA_DEPTH, UIMODF_AMOUNT, UIMODF_COUNT };   /* knobs 1..4, Algorithm */
 /* The store's answer for one slot of a save target (UISAVE_*): UISLOT_EMPTY / UISLOT_USED. For a used slot it fills
  * name with the stored record's name (char_map indices; a sequence's or arp's since 2026-10-25). */
 typedef uint8_t (*UiSlotQuery)(void *ctx, uint8_t target, uint8_t slot, uint8_t name[NAME_LEN]);
@@ -177,7 +179,7 @@ typedef struct {
     uint8_t browse;                  /* 1: the preset list is up (the Preset Encoder turned; any other control or
                                       * UI_BROWSE_MS without a detent puts it away) */
     uint16_t browse_ms;              /* .. time left, ui_sm_tick counts it down */
-    uint8_t rowpop;                  /* 1: the parameter list is up, large (the Select Encoder moved the cursor; the
+    uint8_t rowpop;                  /* 1: the parameter list is up, large; UI_ROWPOP_MOD + UIMODF_*: the MOD MATRIX's (the
                                       * Algorithm Encoder keeps it up; any other control or UI_ROWPOP_MS puts it away) */
     uint16_t rowpop_ms;              /* .. time left, ui_sm_tick counts it down */
     uint16_t kb_ms;                  /* SAVE: the letter keyboard's time left (knobs 3 / 4 edit the name), ui_sm_tick */
@@ -512,6 +514,13 @@ uint8_t ui_sm_row_value(const UIStateMachine *sm, uint8_t row);   /* stored 0..1
  * 0 for a number; option k's text (buf: NAME_LEN + 1 bytes, a wave's store name) */
 uint16_t ui_sm_row_options(const UIStateMachine *sm, uint8_t row, uint16_t *pos);
 const char *ui_sm_row_option(const UIStateMachine *sm, uint8_t row, uint16_t k, char *buf);
+/* 2026-11-13, the MOD MATRIX's popup (rowpop UI_ROWPOP_MOD + f): the route under the cursor's field f (UIMODF_*) as
+ * its knob shows it (SOURCE on + ROUTE: the source it would take); a list field's options in the knob's order (pos:
+ * the value's place; DEST: the architecture's destinations), 0 for a number; option k's name; a source's long name */
+uint8_t ui_sm_mod_value(const UIStateMachine *sm, uint8_t f);
+uint16_t ui_sm_mod_options(const UIStateMachine *sm, uint8_t f, uint16_t *pos);
+const char *ui_sm_mod_option(const UIStateMachine *sm, uint8_t f, uint16_t k);
+const char *ui_sm_src_name(uint8_t src);
 uint8_t ui_sm_row_place(const UIStateMachine *sm, uint8_t row);   /* the value's place in the row's range, 0..127 */
 /* the value as text (an enum name, a source name, ON / OFF, or a bipolar -64..+63), NULL for a plain number */
 const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row);

@@ -2779,8 +2779,128 @@ static void pu_draw_namekb(const UIStateMachine *sm, uint32_t force)
 #define PU_OP_ROWS 7
 #define PU_OP_Y 54
 
+/* 2026-11-13 (the user: an easier way to see what SOURCE, VIA, DEST and AMOUNT pick): while a MOD MATRIX knob turns,
+ * the same look as the list above. SOURCE / VIA / DEST: that knob's options as the ledger (the sources spelled out,
+ * DEST only the architecture's), the route in short at the foot. VIA DEPTH / AMOUNT (the Algorithm Encoder): the
+ * route's card, its five fields a row each, the one turning on the slab, and a bar under them (AMOUNT from the
+ * middle). */
+static const char *const PU_MODF[UIMODF_COUNT] = {"SOURCE", "VIA", "DESTINATION", "VIA DEPTH", "AMOUNT"};
+#define PU_MC_Y 58                   /* the card's first row */
+#define PU_MC_PITCH 28
+
+/* field f's value as words: a source / destination's name, VIA DEPTH 0..127, AMOUNT -64..+63 */
+static const char *pu_mod_text(const UIStateMachine *sm, uint8_t f, char *b)
+{
+    int32_t v = ui_sm_mod_value(sm, f), n = 0;
+    if (f == UIMODF_SRC || f == UIMODF_VIA)
+        return ui_sm_src_name((uint8_t)v);
+    if (f == UIMODF_DEST)
+        return ui_sm_dest_name((uint8_t)v);
+    if (f == UIMODF_AMOUNT) {
+        v -= BIPOLAR_CENTER;
+        if (v != 0) b[n++] = v < 0 ? '-' : '+';
+        if (v < 0) v = -v;
+    }
+    if (v >= 100) b[n++] = (char)('0' + v / 100);
+    if (v >= 10) b[n++] = (char)('0' + v / 10 % 10);
+    b[n++] = (char)('0' + v % 10);
+    b[n] = ' ';
+    return b;
+}
+
+static void pu_draw_modpop(const UIStateMachine *sm, uint32_t force)
+{
+    char tt[24], foot[40], nb[8];
+    uint8_t f = (uint8_t)(sm->rowpop - UI_ROWPOP_MOD), i, src, via, list;
+    uint16_t pos = 0u, n;
+    int32_t first, cnt, k, y, oy, len, v, w;
+    uint32_t h;
+    if (f >= UIMODF_COUNT) f = UIMODF_AMOUNT;
+    n = ui_sm_mod_options(sm, f, &pos);
+    list = (uint8_t)(n > 1u);
+    h = sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)f | (uint32_t)sm->s.active_synth_layer << 8 |
+                                            (uint32_t)ui_sm_route_sel(sm) << 16);
+    for (i = 0u; i < UIMODF_COUNT; i++)
+        h = sq_mix(h, ui_sm_mod_value(sm, i));
+    if (!pu_dirty(PUR_ROWPOP, h, force))
+        return;
+    tt[0] = ' ';
+    pu_cat(tt, sm->s.active_synth_layer ? "L2  " : "L1  ");
+    pu_cat(tt + pu_strlen(tt), PU_TITLE[sm->page]);
+    src = ui_sm_mod_value(sm, UIMODF_SRC);           /* the foot: LFO2 * WHL > CUT1  +45 */
+    via = ui_sm_mod_value(sm, UIMODF_VIA);
+    foot[0] = ' ';
+    pu_cat(foot, ui_sm_src_short(src));
+    if (via != MSRC_NONE) {
+        pu_cat(foot + pu_strlen(foot), " * ");
+        pu_cat(foot + pu_strlen(foot), ui_sm_src_short(via));
+    }
+    pu_cat(foot + pu_strlen(foot), " > ");
+    pu_cat(foot + pu_strlen(foot), ui_sm_dest_short(ui_sm_mod_value(sm, UIMODF_DEST)));
+    pu_cat(foot + pu_strlen(foot), "  ");
+    pu_cat(foot + pu_strlen(foot), pu_mod_text(sm, UIMODF_AMOUNT, nb));
+    cnt = n < PU_OP_ROWS ? (int32_t)n : PU_OP_ROWS;
+    first = (int32_t)pos - cnt / 2;
+    if (first > (int32_t)n - cnt) first = (int32_t)n - cnt;
+    if (first < 0) first = 0;
+    for (oy = 0; oy < 240; oy += PU_POP_BAND) {
+        cv_begin(240, PU_POP_BAND, SQC(BG));
+        pu_tablet(4, 4, 232, 232, 77u, oy);
+        pu_pop_line(16, tt, SQC(THEME), 1, oy);
+        pu_pop_line(30, PU_MODF[f], SQC(TEXT), 2, oy);
+        if (list) {                                  /* SOURCE / VIA / DEST: the knob's options */
+            y = PU_OP_Y;
+            for (k = first; k < first + cnt; k++) {
+                const char *t = ui_sm_mod_option(sm, f, (uint16_t)k);
+                if (k == (int32_t)pos) {
+                    pu_block_lit(10, y - oy, 214, PU_LG_SLAB, 0, oy, 903u);
+                    pu_rune_n(24, y + 4, t, SQC(HI), 2, 16, oy);
+                    y += PU_LG_SLAB + 4;
+                    continue;
+                }
+                sq_stone(14, y + 18 - oy, 5, 16, 16, SQC(MID), (uint32_t)k * 5u + 3u, 0u, 0u);
+                pu_rune_n(24, y, t, SQC(MID), 2, 16, oy);
+                y += PU_BR_PITCH;
+            }
+            if ((int32_t)n > cnt)
+                pu_lg_scroll((int32_t)pos, (int32_t)n, oy);
+            pu_pop_line(222, foot, SQC(MID), 1, oy);
+        } else {                                     /* VIA DEPTH / AMOUNT: the route's card */
+            y = PU_MC_Y;
+            for (i = 0u; i < UIMODF_COUNT; i++) {
+                const char *t = pu_mod_text(sm, i, nb);
+                uint16_t c = i == f ? SQC(HI) : SQC(MID);
+                len = pu_strlen(t);
+                if (i == f)
+                    pu_block_lit(10, y - 2 - oy, 214, PU_LG_SLAB, 0, oy, 903u);
+                else
+                    sq_stone(14, y + 17 - oy, 5, 16, 16, SQC(MID), (uint32_t)i * 5u + 3u, 0u, 0u);
+                pu_rune_n(24, y + 6, i == UIMODF_DEST ? "DEST" : PU_MODF[i], c, 1, 12, oy);
+                pu_rune_n(100, len <= 9 ? y + 2 : y + 6, t, c, len <= 9 ? 2 : 1, 18, oy);
+                y += PU_MC_PITCH;
+            }
+            v = ui_sm_mod_value(sm, f);
+            y = PU_MC_Y + 5 * PU_MC_PITCH + 10;
+            cv_rect(24, y + 3 - oy, 192, 1, PUC_STONE);
+            if (f == UIMODF_AMOUNT) {                /* from the middle, out to -64 / +63 */
+                w = (v - (int32_t)BIPOLAR_CENTER) * 96 / 64;
+                cv_rect(w < 0 ? 120 + w : 120, y - oy, w < 0 ? -w : w, 7, SQC(THEME));
+                cv_rect(119, y - 3 - oy, 2, 13, SQC(TEXT));
+            } else {
+                cv_rect(24, y - oy, v * 192 / 127, 7, SQC(THEME));
+            }
+        }
+        cv_blit(0, (uint32_t)oy);
+    }
+}
+
+
 static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
 {
+    if (sm->rowpop >= UI_ROWPOP_MOD) {               /* the MOD MATRIX's knobs (2026-11-13) */
+        pu_draw_modpop(sm, force);
+        return;
+    }
     char tt[24], ob[NAME_LEN + 1];
     uint8_t f = sm->s.current_param_focus;
     uint16_t pos = 0u, n = f < ui_sm_row_count(sm) ? ui_sm_row_options(sm, f, &pos) : (uint16_t)0u;
