@@ -105,7 +105,7 @@ static void rec_draw(UIStateMachine *sm, uint32_t force);   /* the REC page (ui_
 #define PU_DLG_H 70
 
 enum { PUR_HEAD, PUR_KNOB0, PUR_MENU = PUR_KNOB0 + 4, PUR_VIZ, PUR_GLYPH, PUR_TRACK, PUR_DLG, PUR_BROWSE, PUR_ROWPOP,
-       PUR_COUNT };
+       PUR_NAMEKB, PUR_COUNT };
 static uint32_t pu_sig[PUR_COUNT];
 static uint8_t pu_top;               /* the first menu row shown */
 
@@ -2415,12 +2415,8 @@ static void pu_viz_preset(const UIStateMachine *sm)
     sq_stone(22, yb - ph, 196, cap, cap, PU_ROCK[sq_pal][total ? 3 : 4], 97u, (uint32_t)(total == 0), 0u);
 }
 
-/* 6.2.2: the name, its character cursor, and while RENAME is focused the floating keyboard (the character under
- * the cursor picked out on the noisy ground, in white). Otherwise 6.2.3: what the commit writes and where, what that
- * slot holds now (an overwrite in the accent), and the clipboard. ARP_SEQ / SEQ_SETTINGS have no name: the
- * performance's shows dimmed. */
-#define PU_CELL_W 16
-#define PU_CELL_H 14
+/* 6.2.3: what the commit writes and where, what that slot holds now (an overwrite in the accent), and the
+ * clipboard. (The name keyboard: pu_draw_namekb, full screen.) */
 
 static const char *const PU_SAVE_TARGET[UISAVE_COUNT] = {"ARP", "SEQUENCE", "PATCH", "PERFORMANCE"};
 
@@ -2490,20 +2486,17 @@ static void pu_save_moon(int32_t cx, int32_t cy, int32_t r, uint8_t over, int32_
     }
 }
 
-/* 6.2.2 / 2026-10-17: the bottom of the save page. While knobs 3 / 4 turn, the name a cell a letter and the keyboard;
- * otherwise the bank on the plain: all its slots left to right (128 patches, 32 of the rest), a short mark for each used one; the chosen slot a
+/* 6.2.2 / 2026-10-17: the bottom of the save page, the bank on the plain: all its slots left to right (128 patches,
+ * 32 of the rest), a short mark for each used one; the chosen slot a
  * standing stone (an outline in the theme when empty, solid in the accent when a save would overwrite it) with its
  * number at its foot, and right above it on the arch the moon, full over an empty slot, a crescent over a used one. */
 #define PU_SLOT_X(s, n) (10 + (int32_t)(s) * 220 / ((int32_t)(n) - 1))   /* slot 0 .. n - 1 along the plain */
 
 static void pu_viz_commit(const UIStateMachine *sm)
 {
-    static const char map[] = UI_CHAR_MAP;
-    const uint8_t *name = ui_sm_rename_name(sm);
-    char c[2] = {0, 0}, n[NAME_LEN + 1], b[4];
-    uint8_t cur = sm->name_cursor < NAME_LEN ? sm->name_cursor : 0u, kb = ui_sm_keyboard_visible(sm), i, ch;
-    int32_t x, y;
-    if (!kb) {
+    char n[NAME_LEN + 1], b[4];
+    int32_t x;
+    {
         enum { YH = 56, RX = 112, RY = 42, MR = 7 };
         uint8_t tgt = sm->save_target < UISAVE_COUNT ? sm->save_target : (uint8_t)UISAVE_WHOLE_PERF;
         uint8_t here = ui_sm_slot_state(sm, n) == UISLOT_USED, ns = ui_sm_bank_slots(tgt);
@@ -2533,36 +2526,6 @@ static void pu_viz_commit(const UIStateMachine *sm)
         pu_num(b, sm->save_slot, 0u, 3u);
         x = x - 16 < 0 ? 0 : x + 16 > 240 ? 208 : x - 16;
         sq_text_in(x, YH + 2 + CAP_IN(S, 13), 32, &AF_S, b, SQC(TEXT), SQC(BG));
-        return;
-    }
-    if (name == NULL)
-        name = sm->perf->name;
-    for (i = 0; i < NAME_LEN; i++) {                 /* the name, one cell a character, the cursor's underlined */
-        ch = name[i] < CHAR_MAP_LEN ? name[i] : 0u;
-        x = 8 + i * 14;
-        c[0] = map[ch];
-        if (i == cur) {
-            cv_rect(x, 15, 12, 2, SQC(ACCENT));
-            sq_text_in(x, CAP_IN(S, 14), 12, &AF_S, ch ? c : "_", SQC(HI), SQC(BG));
-        } else {
-            cv_rect(x + 2, 15, 8, 1, PUC_STONE);
-            if (ch) sq_text_in(x, CAP_IN(S, 14), 12, &AF_S, c, SQC(TEXT), SQC(BG));
-        }
-    }
-    ch = name[cur] < CHAR_MAP_LEN ? name[cur] : 0u;
-    for (i = 0; i < CHAR_MAP_LEN; i++) {             /* the keyboard: A..Z, 0..9 . - _ / and SPACE last */
-        uint8_t idx = (uint8_t)(i + 1u < CHAR_MAP_LEN ? i + 1u : 0u), row = (uint8_t)(i / 14u), col = (uint8_t)(i % 14u);
-        x = 8 + col * PU_CELL_W;
-        y = 22 + row * PU_CELL_H;
-        c[0] = map[idx];
-        if (idx == ch) {
-            sq_noise_block(x, y, idx ? PU_CELL_W - 1 : PU_CELL_W * 2 - 1, PU_CELL_H - 1, 0u, PU_VIZ_Y, 1u);
-            sq_text_in(x, y + CAP_IN(S, PU_CELL_H - 1), idx ? PU_CELL_W - 1 : PU_CELL_W * 2 - 1, &AF_S, idx ? c : "SPC",
-                       SQC(HI), PUC_HL);
-        } else {
-            sq_text_in(x, y + CAP_IN(S, PU_CELL_H - 1), idx ? PU_CELL_W - 1 : PU_CELL_W * 2 - 1, &AF_S, idx ? c : "SPC",
-                       SQC(MID), SQC(BG));
-        }
     }
 }
 
@@ -2719,6 +2682,83 @@ static void pu_draw_browse(const UIStateMachine *sm, uint32_t force)
             y = PU_BR_ROW_Y - 4 + (len - th) * at / (total - 1);
             pu_menhir(227, y + th - oy, 3, th, SQC(DIM));
         }
+        cv_blit(0, (uint32_t)oy);
+    }
+}
+
+/* ----------------------------------------------------- name keyboard --- */
+/* 2026-11-13: while SAVE's knobs 3 / 4 turn (ui_sm_keyboard_visible), the whole screen: what is being named at the
+ * top, the name in the runes at 2x a cell a letter (the cursor's in white over an accent bar, the empty cells a
+ * faint dash), and the keyboard below in char_map's order, eight to a row at 2x (A..Z 0..9 . - _ /) with SPACE a
+ * long stone underneath; the letter under the cursor cut into a channel and lit, the rest dimmer. Knob 3 walks the
+ * name, knob 4 the keyboard; any button or encoder puts it away (SAVE then stores). */
+#define PU_KB_NAME_Y 40
+#define PU_KB_GRID_Y 74
+#define PU_KB_COL_W 26
+#define PU_KB_ROW_H 22
+#define PU_KB_COLS 8
+
+static void pu_draw_namekb(const UIStateMachine *sm, uint32_t force)
+{
+    static const char map[] = UI_CHAR_MAP;
+    const uint8_t *name = ui_sm_rename_name(sm);
+    uint8_t tgt = sm->save_target < UISAVE_COUNT ? sm->save_target : (uint8_t)UISAVE_WHOLE_PERF, layer;
+    uint8_t cur = sm->name_cursor < NAME_LEN ? sm->name_cursor : 0u, ch, i, idx, on;
+    char c[2] = {0, 0}, t[24];
+    int32_t x, y, w, oy;
+    uint32_t h;
+    if (name == NULL)
+        return;
+    layer = sm->s.active_synth_layer;
+    ch = name[cur] < CHAR_MAP_LEN ? name[cur] : 0u;
+    h = sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)tgt | (uint32_t)cur << 8 | (uint32_t)layer << 16);
+    h = sq_mix_bytes(h, name, NAME_LEN);
+    if (!pu_dirty(PUR_NAMEKB, h, force))
+        return;
+    t[0] = '\0';
+    pu_cat(t, PU_BR_TITLE[tgt]);                     /* "PATCH L1 NAME" */
+    if (tgt == UISAVE_PATCH_PRESET)
+        pu_cat(t + pu_strlen(t), layer ? " L2" : " L1");
+    pu_cat(t + pu_strlen(t), " NAME");
+    for (oy = 0; oy < 240; oy += PU_POP_BAND) {
+        cv_begin(240, PU_POP_BAND, SQC(BG));
+        pu_tablet(4, 4, 232, 232, 91u, oy);
+        pu_pop_line(16, t, SQC(THEME), 1, oy);
+        for (i = 0; i < NAME_LEN; i++) {             /* the name, 13 px a cell */
+            uint8_t k = name[i] < CHAR_MAP_LEN ? name[i] : 0u;
+            x = 17 + (int32_t)i * 13;
+            c[0] = map[k];
+            if (i == cur)
+                cv_rect(x - 1, PU_KB_NAME_Y + 21 - oy, 12, 2, SQC(ACCENT));
+            else if (!k)
+                cv_rect(x + 2, PU_KB_NAME_Y + 17 - oy, 6, 1, PUC_STONE);
+            if (k)
+                pu_rune_n(x, PU_KB_NAME_Y, c, i == cur ? SQC(HI) : SQC(TEXT), 2, 1, oy);
+        }
+        for (i = 0; i < CHAR_MAP_LEN; i++) {         /* the keyboard: A .. / then SPACE (char_map 0) */
+            idx = (uint8_t)(i + 1u < CHAR_MAP_LEN ? i + 1u : 0u);
+            on = (uint8_t)(idx == ch);
+            if (idx) {
+                x = 16 + (int32_t)(i % PU_KB_COLS) * PU_KB_COL_W;
+                y = PU_KB_GRID_Y + (int32_t)(i / PU_KB_COLS) * PU_KB_ROW_H;
+                w = PU_KB_COL_W;
+            } else {
+                x = 16 + PU_KB_COL_W;
+                y = PU_KB_GRID_Y + (int32_t)((CHAR_MAP_LEN - 1u) / PU_KB_COLS) * PU_KB_ROW_H + 4;
+                w = PU_KB_COL_W * (PU_KB_COLS - 2);
+            }
+            if (on)
+                pu_hewn(x, y, w, PU_KB_ROW_H, (uint32_t)(x * 7 + y * 13), SQC(MID), oy);
+            else if (!idx)                           /* SPACE: a low stone's outline */
+                pu_hewn(x, y, w, PU_KB_ROW_H, 4219u, PUC_STONE, oy);
+            if (idx) {
+                c[0] = map[idx];
+                pu_rune_n(x + (w - 10) / 2, y + 2, c, on ? SQC(HI) : SQC(MID), 2, 1, oy);
+            } else {
+                pu_rune_n(x + (w - PU_RUNE_N_W(5, 2)) / 2, y + 2, "SPACE", on ? SQC(HI) : SQC(DIM), 2, 5, oy);
+            }
+        }
+        pu_pop_line(214, "KNOB 3 POSITION   KNOB 4 LETTER", SQC(DIM), 1, oy);
         cv_blit(0, (uint32_t)oy);
     }
 }
@@ -3254,7 +3294,8 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
     static uint8_t last_page = 0xFFu, last_layer, last_dlg, last_pop, last_pal = 0xFFu, last_hold = BTN_COUNT, last_mfx;
     uint8_t dlg = (uint8_t)(sm->dialog != UIDLG_NONE), moved = (uint8_t)(sm->page != last_page);
     uint8_t mfx = pu_mfx_view(sm);                   /* (AMP's MFX group: another layout, everything again) */
-    uint8_t pop = sm->browse ? 1u : sm->rowpop ? 2u : 0u;   /* the popup up: the preset list, the parameter list */
+    uint8_t pop = sm->browse ? 1u : sm->rowpop ? 2u : ui_sm_keyboard_visible(sm) ? 3u : 0u;   /* the popup up: the preset
+                                                     * list, the parameter list, SAVE's name keyboard */
     sq_pal = pu_page_pal(sm);                        /* a change redraws everything (page_draw, seq_draw: pal_drawn) */
     uint8_t held = (uint8_t)(sm->hold == BTN_HOME || sm->hold == BTN_SAVE);
     if (!held && last_hold != BTN_COUNT)
@@ -3275,8 +3316,10 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
     if (pop) {                                       /* a popup: the whole screen, nothing else drawn under it */
         if (pop == 1u)
             pu_draw_browse(sm, force);
-        else
+        else if (pop == 2u)
             pu_draw_rowpop(sm, force);
+        else
+            pu_draw_namekb(sm, force);
         if (held)
             pu_draw_hold(sm);
         return;

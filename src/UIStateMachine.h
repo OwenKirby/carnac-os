@@ -128,7 +128,8 @@ enum {
 };
 #define UICLIP_EMPTY 0xFFu           /* clip_kind before the first COPY */
 #define UI_BROWSE_MS 2000u           /* the preset list stays up this long after the Preset Encoder's last detent */
-#define UI_KB_MS 2500u               /* SAVE: the letter keyboard stays up this long after the last name knob detent */
+#define UI_KB_MS 4000u               /* SAVE: the full-screen keyboard stays up this long after the last name knob detent
+                                      * (2026-11-13; any button or encoder puts it away at once) */
 #define UI_HOLD_MS 200u              /* HOME / SAVE held this long: the hold strip shows what OCT- / OCT+ do */
 #define UI_ROWPOP_MS 1500u           /* the parameter list stays up this long after the last Select / Algorithm detent */
 /* The store's answer for one slot of a save target (UISAVE_*): UISLOT_EMPTY / UISLOT_USED. For a used slot it fills
@@ -516,7 +517,8 @@ const char *ui_sm_row_slot_name(const UIStateMachine *sm, uint8_t row);
 /* jump to a page directly, as a section button would (the cursor starts on its first highlightable row) */
 void ui_sm_goto(UIStateMachine *sm, uint8_t page);
 uint8_t ui_sm_home_view_count(uint8_t perf_mode);                  /* 5.3: 1 or 3 */
-/* 6.2.2 step 1: the floating keyboard draws only while the cursor is on RENAME (and it has a name to edit) */
+/* 6.2.2 step 1: the full-screen name keyboard (2026-11-13) is up while SAVE's name knobs 3 / 4 turn (and the TARGET
+ * has a name to edit), until UI_KB_MS after the last detent or any button / encoder */
 uint8_t ui_sm_keyboard_visible(const UIStateMachine *sm);
 
 #ifdef __cplusplus

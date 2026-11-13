@@ -775,6 +775,10 @@ int main(void)
     CHECK(ui_sm_keyboard_visible(&sm), "a name knob brings the keyboard up");
     ui_sm_tick(&sm, UI_KB_MS);
     CHECK(!ui_sm_keyboard_visible(&sm), ".. and it goes after UI_KB_MS");
+    ui_sm_knob_written(&sm, UIPAGE_SAVE_COMMIT, 3);
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+    CHECK(!ui_sm_keyboard_visible(&sm), ".. or at once on an encoder or button");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     /* COPY / PASTE on SAVE + OCT */
     press(BTN_FX);
     ui_sm_save_oct(&sm, 0);

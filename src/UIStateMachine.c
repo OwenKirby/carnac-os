@@ -2946,6 +2946,7 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         sm->browse = 0u;             /* any other control puts the preset list away, then does its own job */
     if (type != UIEV_SELECT_ENC && type != UIEV_ALGO_ENC)
         sm->rowpop = 0u;             /* .. and the parameter list */
+    sm->kb_ms = 0u;                  /* .. and SAVE's name keyboard (only knobs 3 / 4 keep it up; SAVE then stores) */
     if (sm->dialog == UIDLG_WRITING)                 /* nothing interrupts a flash write */
         return;
     if (type == UIEV_TRANSPORT) {                    /* REC: 7.2 on the SEQ page, 8.1 on the ARP page, else the loop */
