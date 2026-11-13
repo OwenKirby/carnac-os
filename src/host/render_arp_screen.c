@@ -110,7 +110,7 @@ static int shot(const char *dir, const char *name)
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : ".";
-    int fails = 0;
+    int fails = 0, i;
 
     /* CHORDS, playing, ORANGE, transposed +3 with TRANSPOSE MAQ, the cursor on TRANSPOSE MAQ */
     seq_palette_set(SQPAL_ORANGE);
@@ -133,7 +133,25 @@ int main(int argc, char **argv)
     blits = 0; blit_px = 0;
     arp_draw(&sm, &q, &a, 0);
     printf("  one step later: %d regions, %ld px (%ld%% of the screen)\n", blits, blit_px, blit_px * 100 / (240 * 240));
-    if (blits == 0 || blits > 4) { printf("FAIL: a step redrew %d regions\n", blits); fails = 1; }
+    if (blits == 0 || blits > 6) { printf("FAIL: a step redrew %d regions\n", blits); fails = 1; }
+
+    /* CHORDS, playing on: four steps drawn as they come (the trail fills), then a chord key held, STYLE BLOCK (its
+     * whole chord lit on the keyboard, KEY as the source) */
+    for (i = 0; i < 4; i++) {
+        run(22050u);
+        arp_draw(&sm, &q, &a, 0);
+    }
+    fails |= shot(dir, "trail");
+    sm.arp_knob[2] = ARPSTYLE_BLOCK;
+    ui_sm_knob_written(&sm, UIPAGE_ARP, 2);
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);        /* (PLAY again: stop) */
+    run(100);
+    arp_draw(&sm, &q, &a, 0);
+    ui_sm_arp_key(&sm, 7, 57, 1, 100);               /* A3 */
+    run(400);
+    fails |= shot(dir, "key");
+    ui_sm_arp_key(&sm, 7, 57, 0, 0);
+    run(10);
 
     /* stopped, RED, DUAL with LAYER BOTH, the cursor on LATCH */
     seq_palette_set(SQPAL_RED);

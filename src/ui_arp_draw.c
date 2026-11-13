@@ -10,8 +10,9 @@
  *               a time, the window scrolling with the cursor
  *   y 127..143  the chord sounding (the playing step's or the chord key's) as names and standing stones (laid out by
  *               its octave range and style), and the transposition
- *   y 146..238  8 of the 16 steps (1..8 or 9..16: STEPS the half with the selected step, CHORDS the playhead's or
- *               the record cursor's), two rows of four cards: number (an accent mark after it, the octave range as a cairn of
+ *   y 146..238  CHORDS: the chord sounding (ar_draw_name / keys / trail below: its name large, a 4-octave keyboard
+ *               with the notes striking now lit, the last four chords). STEPS: 8 of the 16 steps (1..8 or 9..16, the
+ *               half with the selected step), two rows of four cards: number (an accent mark after it, the octave range as a cairn of
  *               pebbles), chord root; style and the step's RATE; the rhythm's cells (o a box filled to the pattern's GATE, ~ a bar, _ a dot); a TIE card
  *               shows TIE and one bar across; a HOLD card its chord's four stones under one lintel, stepped as it
  *               strums.
@@ -44,7 +45,7 @@
 #define AR_GLYPH_H 13
 
 #define AR_NCARD 8u                  /* the cards on screen: half the 16 steps */
-enum { ARR_HEAD, ARR_KNOBS, ARR_MENU, ARR_CHORD, ARR_CELL0, ARR_COUNT = ARR_CELL0 + AR_NCARD };
+enum { ARR_HEAD, ARR_KNOBS, ARR_MENU, ARR_CHORD, ARR_NAME, ARR_KEYS, ARR_TRAIL, ARR_CELL0, ARR_COUNT = ARR_CELL0 + AR_NCARD };
 static uint32_t ar_sig[ARR_COUNT];
 
 static int ar_dirty(uint32_t r, uint32_t sig, uint32_t force)
@@ -431,19 +432,276 @@ static void ar_draw_cell(const ArpState *st, uint8_t i, uint8_t card, uint8_t li
     sq_inv = SQINV_OFF;
 }
 
+/* ------------------------------------------------------- chord name --- */
+/* The chord's name from its pitch classes: each kind as its intervals from the root, the usual ones first. Round 1
+ * tries the bass as root, round 2 any of its notes (a slash chord: "/bass"), round 3 the first kind of 3 notes or
+ * more the chord holds (a name near enough). Names every chord of the 100 J-6 sets (checked on the host). The runes
+ * are capitals only, so minor is MIN, M-prefixed kinds (MADD9, MMAJ7, M6/9, MB9) are minor too. */
+#define AR_IV(a, b, c, d) ((1u << (a)) | (1u << (b)) | (1u << (c)) | (1u << (d)))
+typedef struct { uint16_t m; char s[7]; } ArChordKind;
+/* most usual first: the first kind that fits, with the bass as root before any other root, names the chord */
+static const ArChordKind AR_KIND[] = {
+    {AR_IV(0, 4, 7, 0), ""},       {AR_IV(0, 3, 7, 0), "MIN"},    {AR_IV(0, 4, 7, 10), "7"},     {AR_IV(0, 4, 7, 11), "MAJ7"},
+    {AR_IV(0, 3, 7, 10), "MIN7"},  {AR_IV(0, 5, 7, 0), "SUS4"},   {AR_IV(0, 2, 7, 0), "SUS2"},   {AR_IV(0, 7, 0, 0), "5"},
+    {AR_IV(0, 0, 0, 0), ""},       {AR_IV(0, 3, 6, 0), "DIM"},    {AR_IV(0, 4, 8, 0), "AUG"},    {AR_IV(0, 3, 6, 10), "MIN7B5"},
+    {AR_IV(0, 3, 6, 9), "DIM7"},   {AR_IV(0, 4, 7, 9), "6"},      {AR_IV(0, 3, 7, 9), "MIN6"},   {AR_IV(0, 2, 4, 7), "ADD9"},
+    {AR_IV(0, 2, 3, 7), "MADD9"},  {AR_IV(0, 5, 7, 10), "7SUS4"}, {AR_IV(0, 2, 7, 10), "7SUS2"}, {AR_IV(0, 3, 7, 11), "MMAJ7"},
+    {AR_IV(0, 4, 10, 0), "7"},     {AR_IV(0, 4, 11, 0), "MAJ7"},  {AR_IV(0, 3, 10, 0), "MIN7"},  {AR_IV(0, 2, 4, 10), "9"},
+    {AR_IV(0, 2, 4, 11), "MAJ9"},  {AR_IV(0, 2, 3, 10), "MIN9"},  {AR_IV(0, 2, 4, 9), "6/9"},    {AR_IV(0, 2, 3, 9), "M6/9"},
+    {AR_IV(0, 4, 5, 7), "ADD11"},  {AR_IV(0, 3, 5, 7), "MADD11"}, {AR_IV(0, 2, 5, 7), "SUS24"},  {AR_IV(0, 4, 8, 10), "7#5"},
+    {AR_IV(0, 4, 6, 10), "7B5"},   {AR_IV(0, 4, 8, 11), "MAJ7#5"},{AR_IV(0, 1, 4, 10), "7B9"},   {AR_IV(0, 3, 4, 10), "7#9"},
+    {AR_IV(0, 4, 6, 11), "MAJ7#11"}, {AR_IV(0, 5, 10, 0), "7SUS4"}, {AR_IV(0, 2, 10, 0), "9"},   {AR_IV(0, 4, 9, 0), "6"},
+    {AR_IV(0, 3, 9, 0), "MIN6"},   {AR_IV(0, 4, 0, 0), ""},       {AR_IV(0, 3, 0, 0), "MIN"},    {AR_IV(0, 5, 10, 3), "MIN11"},
+    {AR_IV(0, 2, 5, 10), "9SUS4"}, {AR_IV(0, 4, 9, 2), "6/9"},    {AR_IV(0, 5, 11, 4), "MAJ11"}, {AR_IV(0, 4, 9, 10), "13"},
+    {AR_IV(0, 3, 5, 10), "MIN11"}, {AR_IV(0, 4, 5, 10), "11"},    {AR_IV(0, 2, 6, 10), "9B5"},   {AR_IV(0, 1, 3, 7), "MB9"},
+    {AR_IV(0, 3, 6, 11), "DIMMA7"}, {AR_IV(0, 2, 6, 11), "MA9#11"}, {AR_IV(0, 7, 11, 0), "MAJ7"}, {AR_IV(0, 7, 10, 0), "7"},
+    {AR_IV(0, 2, 11, 0), "MAJ9"},  {AR_IV(0, 2, 4, 0), "ADD9"},   {AR_IV(0, 6, 0, 0), "B5"},     {AR_IV(0, 1, 7, 0), "SUSB2"},  {AR_IV(0, 2, 9, 11), "MAJ13"}, {AR_IV(0, 2, 3, 5), "MIN11"},
+    {AR_IV(0, 1, 4, 9), "6B9"},
+};
+#define AR_NKIND (sizeof AR_KIND / sizeof AR_KIND[0])
+
+/* the chord's name from its notes (ascending): "C", "F#MIN7", "AMAJ7/C#"; out 12 bytes. 0: no name fits (out: the bass) */
+static uint8_t ar_chord_name(const uint8_t *notes, uint8_t n, char *out)
+{
+    static const char NAME[12][3] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    uint16_t m = 0u, rm;
+    uint8_t i, k, r, bass, best_k = 0xFFu, best_r = 0u, p = 0u;
+    const char *s;
+    if (n == 0u) {
+        out[0] = '\0';
+        return 0u;
+    }
+    bass = (uint8_t)(notes[0] % 12u);
+    for (i = 0; i < n; i++)
+        m |= (uint16_t)(1u << (notes[i] % 12u));
+    for (k = 0; k < 2u * AR_NKIND && best_k == 0xFFu; k++) {   /* round 1 the bass as root, round 2 any note */
+        const ArChordKind *c = &AR_KIND[k % AR_NKIND];
+        for (r = 0; r < 12u; r++) {
+            if (!((m >> r) & 1u) || (k < AR_NKIND && r != bass))
+                continue;
+            rm = (uint16_t)(((m >> r) | (m << (12u - r))) & 0xFFFu);
+            if (rm == c->m) {
+                best_k = (uint8_t)(k % AR_NKIND);
+                best_r = r;
+                break;
+            }
+        }
+    }
+    for (k = 0; k < AR_NKIND && best_k == 0xFFu; k++) {   /* round 3: the first kind of 3 notes or more inside it */
+        const ArChordKind *c = &AR_KIND[k];
+        if (c->m == AR_IV(0, 7, 0, 0) || c->m == 1u || c->m == AR_IV(0, 4, 0, 0) || c->m == AR_IV(0, 3, 0, 0) ||
+            c->m == AR_IV(0, 6, 0, 0))
+            continue;
+        for (i = 0; i < 12u; i++) {
+            r = (uint8_t)((bass + i) % 12u);
+            rm = (uint16_t)(((m >> r) | (m << (12u - r))) & 0xFFFu);
+            if (((m >> r) & 1u) && (rm & c->m) == c->m) {
+                best_k = k;
+                best_r = r;
+                break;
+            }
+        }
+    }
+    for (s = NAME[best_k == 0xFFu ? bass : best_r]; *s; s++)
+        out[p++] = *s;
+    if (best_k == 0xFFu) {
+        out[p] = '\0';
+        return 0u;
+    }
+    for (s = AR_KIND[best_k].s; *s; s++)
+        out[p++] = *s;
+    if (best_r != bass) {
+        out[p++] = '/';
+        for (s = NAME[bass]; *s; s++)
+            out[p++] = *s;
+    }
+    out[p] = '\0';
+    return 1u;
+}
+
+/* ----------------------------------------------------- sounding (CHORDS) --- */
+/* 2026-11-13: on CHORDS the lower half shows what sounds, not the steps (STEPS has those): the chord's name large,
+ * a keyboard of four octaves with the notes striking now lit (the chord's other notes over its octave range dim),
+ * and the last four chords played, the newest right.
+ *
+ *   y 146..177  AR_NAME: "AMIN7/C" in runes at 3x (2x when long), right: what plays it (KEY, or STEP 3/8)
+ *   y 180..211  AR_KEYS: C of the chord's lowest octave + 4 octaves, 28 white keys 8 px wide
+ *   y 214..238  AR_TRAIL: four tablets, the chords before and the one now (lit) */
+#define AR_NAME_Y 146
+#define AR_NAME_H 32
+#define AR_KEYS_Y 180
+#define AR_KEYS_H 32
+#define AR_KEYS_X 8
+#define AR_KEY_W 8
+#define AR_TRAIL_Y 214
+#define AR_TRAIL_H 25
+#define AR_TRAIL_N 4u
+
+/* the chords played, oldest first, newest at AR_TRAIL_N - 1 (n 0: none yet) */
+static uint8_t ar_trail[AR_TRAIL_N][ARP_CHORD_NOTES], ar_trail_n[AR_TRAIL_N];
+
+static void ar_trail_push(const uint8_t *notes, uint8_t n)
+{
+    uint8_t i, k, *last = ar_trail[AR_TRAIL_N - 1u];
+    if (n == 0u)
+        return;
+    if (ar_trail_n[AR_TRAIL_N - 1u] == n) {          /* the same chord again (a pattern's next strike): no new tablet */
+        for (k = 0; k < n && last[k] == notes[k]; k++)
+            ;
+        if (k == n)
+            return;
+    }
+    for (i = 0; i + 1u < AR_TRAIL_N; i++) {
+        ar_trail_n[i] = ar_trail_n[i + 1u];
+        for (k = 0; k < ARP_CHORD_NOTES; k++)
+            ar_trail[i][k] = ar_trail[i + 1u][k];
+    }
+    ar_trail_n[AR_TRAIL_N - 1u] = n;
+    for (k = 0; k < n; k++)
+        last[k] = notes[k];
+}
+
+/* the notes striking now: the pattern's (a held key's live arp too) and a chord key's block, as the key LEDs read
+ * them (UIStateMachine.c ui_arp_key_leds); bit k of on[] = note lo + k, over 48 notes */
+static uint64_t ar_striking(const CarpSeq *a, uint8_t lo)
+{
+    uint64_t m = 0u;
+    uint8_t i, n;
+    for (i = 0; i < 2u * ARP_CHORD_NOTES; i++) {
+        n = i < ARP_CHORD_NOTES ? a->on[i] : a->aud_on[i - ARP_CHORD_NOTES];
+        if (n <= VAL_MAX && n >= lo && n < lo + 48u)
+            m |= (uint64_t)1u << (n - lo);
+    }
+    return m;
+}
+
+/* the keyboard's lowest C: the chord's lowest note's octave */
+static uint8_t ar_keys_lo(const uint8_t *notes, uint8_t n)
+{
+    uint8_t lo = n ? (uint8_t)(notes[0] / 12u * 12u) : 36u;
+    return lo > VAL_MAX + 1u - 48u ? (uint8_t)(VAL_MAX + 1u - 48u) / 12u * 12u : lo;
+}
+
+/* who plays the chord: a held chord key, or the pattern's playing step */
+static void ar_source(const UIStateMachine *sm, const CarpSeq *a, char *b)
+{
+    uint8_t pos = carp_pos(a);
+    (void)sm;
+    if (a->live_root <= VAL_MAX || a->aud_on[0] <= VAL_MAX) {
+        b[0] = 'K'; b[1] = 'E'; b[2] = 'Y'; b[3] = '\0';
+    } else if (carp_playing(a) && pos < ARP_NSTEP) {
+        b[0] = 'S'; b[1] = 'T'; b[2] = 'E'; b[3] = 'P'; b[4] = ' ';
+        ar_num(b + 5, pos + 1u);
+    } else {
+        b[0] = '\0';
+    }
+}
+
+static void ar_draw_name(const UIStateMachine *sm, const CarpSeq *a, const uint8_t *notes, uint8_t n)
+{
+    char name[16], src[12];
+    int32_t nt = 0, sc;
+    cv_begin(240, AR_NAME_H, SQC(BG));
+    ar_chord_name(notes, n, name);
+    ar_source(sm, a, src);
+    if (n == 0u) {
+        name[0] = '-'; name[1] = '-'; name[2] = '\0';
+    }
+    while (name[nt])
+        nt++;
+    sc = PU_RUNE_N_W(nt, 3) + 8 + sq_text_w(&AF_S, src) <= 228 ? 3 : 2;
+    pu_rune_n(6, (AR_NAME_H - sc * SQ_RUNE_H) / 2, name, n ? SQC(THEME) : SQC(DIM), sc, nt, 0);
+    if (src[0])
+        sq_text_r(234, AR_NAME_H - 2 - AF_S_CAP_Y - AF_S_CAP_H, &AF_S, src, SQC(MID), SQC(BG));
+    cv_blit(0, AR_NAME_Y);
+}
+
+/* the chord's notes over its octave range dim, the ones striking lit; black keys stand over the whites' tops */
+static void ar_draw_keys(const UIStateMachine *sm, const CarpSeq *a, const uint8_t *notes, uint8_t n)
+{
+    static const uint8_t WHITE_PC[7] = {0, 2, 4, 5, 7, 9, 11};
+    uint64_t on, pool = 0u;
+    uint8_t lo = ar_keys_lo(notes, n), style, oct = ar_shape(sm, a, &style), i, k, w, pc, note;
+    int32_t x, bh = AR_KEYS_H * 3 / 5;
+    uint16_t c;
+    on = ar_striking(a, lo);
+    for (k = 0; k < oct; k++)
+        for (i = 0; i < n; i++) {
+            int32_t v = notes[i] + 12 * k - lo;
+            if (v >= 0 && v < 48)
+                pool |= (uint64_t)1u << v;
+        }
+    cv_begin(240, AR_KEYS_H, SQC(BG));
+    for (w = 0; w < 28u; w++) {                      /* the white keys */
+        note = (uint8_t)(w / 7u * 12u + WHITE_PC[w % 7u]);
+        x = AR_KEYS_X + (int32_t)w * AR_KEY_W;
+        c = (on >> note) & 1u ? SQC(THEME) : (pool >> note) & 1u ? sq_shade(SQC(THEME), 2u) : SQ_STONE[sq_pal];
+        cv_rect(x, 0, AR_KEY_W - 1, AR_KEYS_H - 1, c);
+        if (note % 12u == 0u && (on >> note & 1u) == 0u)   /* each C marked at its foot */
+            cv_rect(x + 2, AR_KEYS_H - 4, AR_KEY_W - 5, 2, SQC(DIM));
+    }
+    for (note = 0; note < 48u; note++) {             /* the black keys, over the gap between two whites */
+        pc = (uint8_t)(note % 12u);
+        if (pc != 1u && pc != 3u && pc != 6u && pc != 8u && pc != 10u)
+            continue;
+        w = (uint8_t)(note / 12u * 7u + (pc < 5u ? pc / 2u : (pc + 1u) / 2u));   /* the white key left of it */
+        x = AR_KEYS_X + (int32_t)(w + 1u) * AR_KEY_W - 3;
+        c = (on >> note) & 1u ? SQC(THEME) : (pool >> note) & 1u ? sq_shade(SQC(THEME), 2u) : SQC(BG);
+        cv_rect(x - 1, 0, 7, bh + 1, SQC(BG));
+        cv_rect(x, 0, 5, bh, c);
+        if (c == SQC(BG))
+            cv_rect(x, 0, 5, bh, sq_shade(SQ_STONE[sq_pal], 2u));
+    }
+    cv_blit(0, AR_KEYS_Y);
+}
+
+/* the last four chords, each on a tablet, the newest (the one sounding) lit */
+static void ar_draw_trail(void)
+{
+    char name[16];
+    uint8_t i;
+    uint32_t sx;
+    cv_begin(240, AR_TRAIL_H, SQC(BG));
+    for (i = 0; i < AR_TRAIL_N; i++) {
+        uint8_t now = (uint8_t)(i == AR_TRAIL_N - 1u), n = ar_trail_n[i];
+        int32_t x = SQ_KNOB_X0 + (int32_t)i * AR_CELL_PITCH_X;
+        sx = (uint32_t)x;
+        if (n == 0u)
+            continue;
+        sq_tab_shape(AR_CELL_W, AR_TRAIL_H, 4201u + i * 17u);
+        sq_tablet(x, 0, now ? SQTAB_LIT : SQTAB_ROCK, 0u, sx, AR_TRAIL_Y);
+        if (now)
+            sq_inv = SQINV_LANE;
+        ar_chord_name(ar_trail[i], n, name);
+        if (sq_text_w(&AF_S, name) > AR_CELL_W - 4) {   /* too long for its tablet: the bass dropped */
+            char *c = name;
+            while (*c && *c != '/')
+                c++;
+            *c = '\0';
+        }
+        sq_text_in(x, CAP_IN(S, AR_TRAIL_H), AR_CELL_W, &AF_S, name, now ? SQC(HI) : SQC(TEXT), SQC(SURF));
+        sq_inv = SQINV_OFF;
+    }
+    cv_blit(0, AR_TRAIL_Y);
+}
+
 /* ------------------------------------------------------------ entry --- */
 static void arp_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint32_t force)
 {
-    static uint8_t pal_drawn = 0xFFu;
+    static uint8_t pal_drawn = 0xFFu, view_drawn = 0xFFu;
     uint32_t h, base = sq_mix(2166136261u, sq_pal);
     uint8_t c, w0, r, shape, notes[ARP_CHORD_NOTES], n, pos = carp_pos(a), len = ar_len(sm->arp), cur = pos;
     if (pal_drawn != sq_pal) {
         pal_drawn = sq_pal;
         force = 1u;
     }
+    if (view_drawn != sm->arp_view) {                /* the lower half changes hands: steps / the chord sounding */
+        view_drawn = sm->arp_view;
+        force = 1u;
+    }
     if (force)
         lcd_fill(0, 0, 240, 240, SQC(BG));           /* the gaps between the regions, once */
-    h = sq_mix(h, (uint32_t)carp_playing(a) | (uint32_t)pos << 8 | (uint32_t)len << 16 |
+    h = sq_mix(base, (uint32_t)carp_playing(a) | (uint32_t)pos << 8 | (uint32_t)len << 16 |
                          (uint32_t)sm->perf->clock_source << 24 | (uint32_t)sm->arp_view << 31);
     h = sq_mix(h, sm->perf->int_tempo | (uint32_t)sm->arp_rec << 8 | (uint32_t)sm->arp_latch << 9);
     if (ar_dirty(ARR_HEAD, h, force))
@@ -470,6 +728,28 @@ static void arp_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint
     h = sq_mix(h, (uint32_t)r | (uint32_t)shape << 8);
     if (ar_dirty(ARR_CHORD, h, force))
         ar_draw_chord(sm, a);
+    ar_trail_push(notes, n);                         /* (on STEPS too: the trail is there on coming back) */
+    if (sm->arp_view != UIARP_STEPS) {               /* CHORDS: what sounds */
+        char src[12] = {0};
+        uint8_t lo = ar_keys_lo(notes, n);
+        uint64_t on = ar_striking(a, lo);
+        ar_source(sm, a, src);
+        h = sq_mix_bytes(base, notes, n);
+        h = sq_mix_bytes(h, (const uint8_t *)src, 11u);
+        if (ar_dirty(ARR_NAME, h, force))
+            ar_draw_name(sm, a, notes, n);
+        h = sq_mix_bytes(base, notes, n);
+        h = sq_mix(h, (uint32_t)r | (uint32_t)lo << 8 | (uint32_t)n << 16);
+        h = sq_mix(h, (uint32_t)on);
+        h = sq_mix(h, (uint32_t)(on >> 32));
+        if (ar_dirty(ARR_KEYS, h, force))
+            ar_draw_keys(sm, a, notes, n);
+        h = sq_mix_bytes(base, &ar_trail[0][0], sizeof ar_trail);
+        h = sq_mix_bytes(h, ar_trail_n, sizeof ar_trail_n);
+        if (ar_dirty(ARR_TRAIL, h, force))
+            ar_draw_trail();
+        return;
+    }
     if (sm->arp_rec && !carp_playing(a))
         cur = (uint8_t)(sm->arp_rec_cursor % ARP_NSTEP);   /* step entry: where the next chord goes */
     w0 = sm->arp_view == UIARP_STEPS ? sm->arp_sel : cur < ARP_NSTEP ? cur : 0u;
