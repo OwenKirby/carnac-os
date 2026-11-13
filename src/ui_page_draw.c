@@ -2581,18 +2581,6 @@ static void pu_draw_dialog(const UIStateMachine *sm)
  * hewn edge round the screen, the words in the rune face at 1x, 2x and 4x, a stone or two lit. */
 #define PU_POP_BAND 120
 
-/* the plain's ground in a popup: the dotted horizon at y, fog thinning upward below it to y1 */
-static void pu_pop_ground(int32_t y, int32_t y1, int32_t oy)
-{
-    int32_t x, j;
-    for (x = 14; x < 226; x += 2)
-        cv_pset(x, y - oy, PUC_STONE);
-    for (j = y + 1; j < y1; j++)
-        for (x = 14; x < 226; x++)
-            if (pu_speck(x, j, j > y1 - 8 ? 31u : j > y1 - 18 ? 63u : 127u))
-                cv_pset(x, j - oy, PUC_STONE);
-}
-
 /* s centred on the screen at y - oy, sc times the size or smaller until it fits 212 px; returns the scale used */
 static int32_t pu_pop_line(int32_t y, const char *s, uint16_t c, int32_t sc, int32_t oy)
 {
@@ -2605,15 +2593,28 @@ static int32_t pu_pop_line(int32_t y, const char *s, uint16_t c, int32_t sc, int
 }
 
 /* --------------------------------------------------------- preset list --- */
-/* While the Preset Encoder turns: the stored presets of the page's kind (ui_sm_preset_target), seven rows around the
- * one under the cursor (ui_sm_browse_slot: loading or playing; it stays in the middle until the list runs out), each
- * its slot and its name in the runes at 2x; the cursor's lit, the rest dimmer. The slot under the cursor shows
- * even when the store has nothing in it (UNSAVED: the live patch). A row of dots on the right with a stone riding it:
- * where the cursor is among them all. Drawn whole on each move (the list only changes when the cursor does). */
+/* The LEDGER (2026-11-13, the user's option A): both list popups are a dense column at 1x, a small stone at each row's
+ * head, the row under the cursor on a lit slab (pu_block_lit) at 2x, so most of the list shows at a glance.
+ * While the Preset Encoder turns: the stored presets of the page's kind (ui_sm_preset_target), thirteen rows around
+ * the one under the cursor (ui_sm_browse_slot: loading or playing; it stays in the middle until the list runs out),
+ * each its slot and its name, those far from the cursor dimmer. The slot under the cursor shows even when the store
+ * has nothing in it (UNSAVED: the live patch). A row of dots on the right with a stone riding it: where the cursor is
+ * among them all. Drawn whole on each move (the list only changes when the cursor does). */
 static const char *const PU_BR_TITLE[UISAVE_COUNT] = {"ARP PATTERN", "SEQUENCE", "PATCH", "PERFORMANCE"};
-#define PU_BR_ROWS 7u
-#define PU_BR_ROW_Y 40
-#define PU_BR_ROW_H 26
+#define PU_BR_ROWS 13u
+#define PU_LG_Y 30                   /* the ledger's first row */
+#define PU_LG_PITCH 13               /* a row at 1x */
+#define PU_LG_SLAB 26                /* the pick's slab */
+
+/* the ledger's scroll: dots down the right, a stone riding them at the cursor's place (at of total) */
+static void pu_lg_scroll(int32_t at, int32_t total, int32_t oy)
+{
+    int32_t y;
+    for (y = PU_LG_Y; y < 226; y += 3)
+        cv_pset(228, y - oy, PUC_STONE);
+    y = PU_LG_Y + 12 + (226 - PU_LG_Y - 14) * at / (total > 1 ? total - 1 : 1);
+    sq_stone(227, y - oy, 3, 12, 12, SQC(DIM), 5u, 0u, 0u);
+}
 
 static uint8_t pu_br_has(const uint8_t *has, int32_t s) { return (uint8_t)((has[s >> 3] >> (s & 7)) & 1u); }
 
@@ -2622,7 +2623,7 @@ static void pu_draw_browse(const UIStateMachine *sm, uint32_t force)
     char nm[NAME_LEN + 1], b[12], nb[4];
     uint8_t has[(VAL_MAX + 1u) / 8u], row[PU_BR_ROWS], tgt = ui_sm_preset_target(sm), cur = ui_sm_browse_slot(sm);
     uint8_t layer = sm->s.active_synth_layer, i, st, on;
-    int32_t s, n = 0, up = 0, dn = 0, above, below, at = 0, total = 0, y, oy;
+    int32_t s, n = 0, up = 0, dn = 0, above, below, at = 0, total = 0, y, oy, d;
     const char *t, *nmt;
     if (!pu_dirty(PUR_BROWSE, sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)tgt | (uint32_t)cur << 8 | (uint32_t)layer << 16),
                   force))
@@ -2658,8 +2659,8 @@ static void pu_draw_browse(const UIStateMachine *sm, uint32_t force)
         cv_begin(240, PU_POP_BAND, SQC(BG));
         pu_tablet(4, 4, 232, 232, 77u, oy);
         pu_pop_line(16, t, SQC(THEME), 1, oy);
+        y = PU_LG_Y;
         for (i = 0; i < (uint8_t)n; i++) {
-            y = PU_BR_ROW_Y + (int32_t)i * PU_BR_ROW_H;
             on = (uint8_t)(row[i] == cur);
             st = ui_sm_slot_query(sm, tgt, row[i], nm);
             if (st == UISLOT_EMPTY)
@@ -2669,19 +2670,26 @@ static void pu_draw_browse(const UIStateMachine *sm, uint32_t force)
             else
                 nmt = st != UISLOT_USED ? "-" : nm[0] ? nm : "UNTITLED";
             pu_num(nb, row[i], 0u, 3u);
-            pu_rune_n(20, y, nb, on ? SQC(THEME) : SQC(DIM), 2, 3, oy);
-            pu_rune_n(68, y, nmt, on ? SQC(TEXT) : st == UISLOT_EMPTY ? SQC(DIM) : SQC(MID), 2, NAME_LEN, oy);
+            if (on) {                                /* the pick: on a lit slab, at 2x (a long name at 1x) */
+                pu_block_lit(12, y - oy, 210, PU_LG_SLAB, 0, oy, 901u);
+                pu_rune_n(20, y + 4, nb, SQC(HI), 2, 3, oy);
+                if (pu_strlen(nmt) <= 13)
+                    pu_rune_n(64, y + 4, nmt, st == UISLOT_EMPTY ? SQC(MID) : SQC(HI), 2, 13, oy);
+                else
+                    pu_rune_n(64, y + 9, nmt, SQC(HI), 1, NAME_LEN, oy);
+                y += PU_LG_SLAB + 3;
+                continue;
+            }
+            d = (int32_t)i - above;
+            sq_stone(18, y + 10 - oy, 4, 9, 9, SQC(MID), (uint32_t)row[i] * 5u + 1u, 0u, 0u);
+            pu_rune_n(28, y + 1, nb, SQC(DIM), 1, 3, oy);
+            pu_rune_n(54, y + 1, nmt, d > 4 || d < -4 ? SQC(DIM) : SQC(MID), 1, NAME_LEN, oy);
+            y += PU_LG_PITCH;
         }
         if (total == 1 && ui_sm_slot_query(sm, tgt, cur, nm) == UISLOT_EMPTY)
-            pu_rune_n(68, PU_BR_ROW_Y + PU_BR_ROW_H + 4, "NOTHING SAVED", SQC(DIM), 1, 20, oy);
-        if (total > (int32_t)PU_BR_ROWS) {           /* the dots on the right and the stone that rides them */
-            int32_t len = (int32_t)PU_BR_ROWS * PU_BR_ROW_H - 10, th = len * (int32_t)PU_BR_ROWS / total;
-            if (th < 6) th = 6;
-            for (y = 0; y < len; y += 3)
-                cv_pset(228, PU_BR_ROW_Y - 4 + y - oy, PUC_STONE);
-            y = PU_BR_ROW_Y - 4 + (len - th) * at / (total - 1);
-            pu_menhir(227, y + th - oy, 3, th, SQC(DIM));
-        }
+            pu_rune_n(64, PU_LG_Y + PU_LG_SLAB + 8, "NOTHING SAVED", SQC(DIM), 1, 20, oy);
+        if (total > (int32_t)PU_BR_ROWS)
+            pu_lg_scroll(at, total, oy);
         cv_blit(0, (uint32_t)oy);
     }
 }
@@ -2764,53 +2772,15 @@ static void pu_draw_namekb(const UIStateMachine *sm, uint32_t force)
 }
 
 /* ---------------------------------------------------------- parameters --- */
-/* While the Select Encoder moves the cursor: one parameter at a time. The page's name at the top (and the layer's on
- * a layer page); the row under the cursor in the runes at 2x, the rows either side of it faint above and below; its
- * value carved at 4x. Along the bottom the page's rows stand as a row of stones on the plain, the cursor's lit and
- * taller; behind them the moon rides a low arch with the value, rising from the left horizon (the range's bottom),
- * overhead at its middle (a bipolar 0), setting on the right (its top), half sunk behind the horizon at either end.
- * Its phase goes with it: a waxing crescent at the left, full overhead, a waning crescent at the right; its seas
- * (the near side's maria) a shade darker, its unlit part a faint disc. */
-#define PU_RP_HORIZON 206
-#define PU_RP_ARC_RX 92
-#define PU_RP_ARC_RY 46
-#define PU_RP_MOON_R 8
-
-/* the arch's point at place 0..127 (0 the left horizon, 127 the right): sin / cos from SQ_SIN (64 a turn, Q8),
- * stepped between its entries */
-static void pu_arc_at(int32_t place, int32_t *x, int32_t *y)
-{
-    int32_t a = place * 32 / 127, fa = place * 32 - a * 127;
-    int32_t sn = SQ_SIN[a & 63], cs = SQ_SIN[(a + 16) & 63];
-    sn += (SQ_SIN[(a + 1) & 63] - sn) * fa / 127;
-    cs += (SQ_SIN[(a + 17) & 63] - cs) * fa / 127;
-    *x = 120 - PU_RP_ARC_RX * cs / 256;
-    *y = PU_RP_HORIZON - PU_RP_ARC_RY * sn / 256;
-}
-
-/* the moon at (cx, cy - oy), its phase by place 0..127 (a 64th of a turn from 4 to 60: crescent, full at 64,
- * crescent), nothing of it at or below the horizon */
-static void pu_rp_moon(int32_t cx, int32_t cy, int32_t place, int32_t oy)
-{
-    int32_t a = 4 + (place * 56 + 63) / 127, c = SQ_SIN[(a + 16) & 63], x, y, hw, lit;
-    uint16_t col;
-    for (y = -PU_RP_MOON_R; y <= PU_RP_MOON_R; y++) {
-        if (cy + y >= PU_RP_HORIZON)
-            break;
-        for (hw = PU_RP_MOON_R; hw > 0 && hw * hw + y * y > PU_RP_MOON_R * PU_RP_MOON_R + PU_RP_MOON_R / 2; hw--) {}
-        for (x = -hw; x <= hw; x++) {
-            lit = a < 32 ? x * 256 > c * hw : x * 256 < -c * hw;   /* the terminator: cos(phase) of the row */
-            col = !lit ? SQC(SURF) : sq_mare(x, y, PU_RP_MOON_R) ? SQC(THEME) : SQC(TEXT);   /* the seas (ui_seq_draw.c) */
-            cv_pset(cx + x, cy + y - oy, col);
-        }
-    }
-}
-
+/* While the Algorithm Encoder turns a value: the page's rows as the LEDGER (see the preset list), every row's name and
+ * value, centred on the screen (a window of thirteen round the cursor on a longer page); the cursor's row on the lit
+ * slab, its value at 2x, and under its name the preset's name on a slot row or the routes into the row's destination
+ * ("LFO2+40 WHL-12"). Greyed rows dimmer, their stones unlit. */
 static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
 {
-    char b[8], tt[24];
+    char b[8], vb[8], tt[24];
     uint8_t vis[32], n = ui_sm_row_count(sm), nv = 0, r, f = sm->s.current_param_focus;
-    int32_t ci = 0, i, y, oy, mx, my, gap, w, place = 0, sc;
+    int32_t ci = 0, i, y, oy, place = 0, first, cnt, pitch, sh, y0, lw, vw, sc;
     uint32_t h = sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)sm->page | (uint32_t)f << 8 |
                                                      (uint32_t)sm->s.active_synth_layer << 16);
     const char *val = "", *slot = NULL;
@@ -2823,8 +2793,9 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
             ci = nv;
         vis[nv++] = r;
     }
-    for (i = 0; i < nv; i++)
-        h = pu_mix_str(sq_mix(h, ui_sm_row_state(sm, vis[i])), ui_sm_row_label(sm, vis[i]));
+    for (i = 0; i < nv; i++)                         /* (every row's value shows now) */
+        h = pu_mix_str(pu_mix_str(sq_mix(h, ui_sm_row_state(sm, vis[i])), ui_sm_row_label(sm, vis[i])),
+                       pu_row_text(sm, vis[i], vb));
     if (f < n) {
         val = pu_row_text(sm, f, b);
         slot = ui_sm_row_slot_name(sm, f);           /* PERF: the preset's name under its number */
@@ -2860,52 +2831,50 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
         pu_cat(tt, sm->s.active_synth_layer ? "L2  " : "L1  ");
     pu_cat(tt + pu_strlen(tt), ui_sm_noise_page(sm, sm->page, sm->s.active_synth_layer) ? "NOISE"
                                : pu_mfx_view(sm) ? "MFX" : PU_TITLE[sm->page]);
-    pu_arc_at(place, &mx, &my);
-    gap = nv > 1 ? 200 / (nv - 1) : 0;
-    if (gap > 26) gap = 26;
-    w = gap * (nv > 1 ? nv - 1 : 0);
+    cnt = nv < (int32_t)PU_BR_ROWS ? nv : (int32_t)PU_BR_ROWS;   /* a window round the cursor on a long page */
+    first = ci - cnt / 2;
+    if (first > nv - cnt) first = nv - cnt;
+    if (first < 0) first = 0;
+    sh = slot || sends[0] ? 30 : 28;                 /* the pick's slab: a second line for a slot's name, the sends */
+    pitch = cnt > 1 ? (226 - PU_LG_Y - sh - 3) / (cnt - 1) : PU_LG_PITCH;
+    if (pitch > 17) pitch = 17;
+    if (pitch < PU_LG_PITCH) pitch = PU_LG_PITCH;
+    y0 = PU_LG_Y + (226 - PU_LG_Y - ((cnt - 1) * pitch + sh + 12 - pitch)) / 2;   /* the ledger centred */
+    if (y0 < PU_LG_Y) y0 = PU_LG_Y;
     for (oy = 0; oy < 240; oy += PU_POP_BAND) {
         cv_begin(240, PU_POP_BAND, SQC(BG));
         pu_tablet(4, 4, 232, 232, 77u, oy);
         pu_pop_line(16, tt, SQC(THEME), 1, oy);
-        if (nv) {
-            y = 40;
-            if (ci > 0)
-                pu_pop_line(y, ui_sm_row_label(sm, vis[ci - 1]), SQC(DIM), 1, oy);
-            y += SQ_RUNE_H + 8;
-            sc = pu_pop_line(y, ui_sm_row_label(sm, vis[ci]), SQC(TEXT), 2, oy);
-            y += SQ_RUNE_H * sc + 8;
-            if (ci + 1 < nv)
-                pu_pop_line(y, ui_sm_row_label(sm, vis[ci + 1]), SQC(DIM), 1, oy);
-            y += SQ_RUNE_H;                          /* the value, in the room left above the arch */
-            if (slot) {                              /* a slot: its number at 3x, its name at 2x under it */
-                y += HALF_UP(158 - y - SQ_RUNE_H * 5 - 6);   /* (down to the arch's top) */
-                pu_pop_line(y, val, SQC(THEME), 3, oy);
-                pu_pop_line(y + SQ_RUNE_H * 3 + 6, slot, SQC(TEXT), 2, oy);
-            } else if (sends[0]) {                   /* the value at 3x, the sends under it */
-                y += HALF_UP(158 - y - SQ_RUNE_H * 5 - 6);
-                pu_pop_line(y, val, SQC(THEME), 3, oy);
-                pu_pop_line(y + SQ_RUNE_H * 3 + 6, sends, SQC(ACCENT), 2, oy);
-            } else {
-                pu_pop_line(y + HALF_UP(150 - y - SQ_RUNE_H * 4), val, SQC(THEME), 4, oy);
-            }
-            for (i = 2; i < 127; i += 3) {           /* the arch, faint dots */
-                int32_t ax, ay;
-                pu_arc_at(i, &ax, &ay);
-                cv_pset(ax, ay - oy, PUC_STONE);
-            }
-            pu_rp_moon(mx, my, place, oy);
-            for (i = 0; i < nv && i < 24; i++) {     /* the stones, one a row, in front of the moon */
-                int32_t sh = 16 + (int32_t)((pu_hash(i, 5) >> 28) & 7u), x = 120 - HALF_UP(w) + i * gap - 1;
-                if (i == ci)
-                    pu_menhir(x - 2, PU_RP_HORIZON - oy, 7, sh + 12, SQC(THEME));
-                else
-                    pu_menhir(x - 1, PU_RP_HORIZON - oy, 5, sh, SQC(DIM));
-            }
-        } else {
+        if (!nv)
             pu_pop_line(90, "ALL ON THE KNOBS", SQC(DIM), 1, oy);
+        y = y0;
+        for (i = first; i < first + cnt; i++) {
+            uint8_t r = vis[i], gr = (uint8_t)(ui_sm_row_state(sm, r) == UIROW_GREYED);
+            const char *lab = ui_sm_row_label(sm, r), *v = i == ci ? val : pu_row_text(sm, r, vb);
+            if (i == ci) {                           /* the cursor's row: a lit slab, its value at 2x */
+                pu_block_lit(12, y - oy, 216, sh, 0, oy, 903u);
+                lw = sq_rune_w(lab, 0);
+                vw = PU_RUNE_N_W(pu_strlen(v), 2);
+                sc = 20 + lw + 10 + vw <= 220 ? 2 : 1;
+                if (sc == 1) vw = sq_rune_w(v, 0);
+                if (slot || sends[0]) {
+                    sq_rune(20, y + 5 - oy, lab, SQC(HI), 0);
+                    sq_rune(20, y + 17 - oy, slot ? slot : sends, slot ? SQC(TEXT) : SQC(ACCENT), 0);
+                } else {
+                    sq_rune(20, y + 10 - oy, lab, SQC(HI), 0);
+                }
+                pu_rune_n(220 - vw, sc == 2 ? y + HALF_UP(sh - 18) : y + HALF_UP(sh - 9), v, SQC(HI), sc,
+                          pu_strlen(v), oy);
+                y += sh + 3;
+                continue;
+            }
+            sq_stone(18, y + 10 - oy, 4, 9, 9, gr ? PUC_STONE : SQC(MID), (uint32_t)r * 5u + 3u, 0u, 0u);
+            sq_rune(28, y + 1 - oy, lab, gr ? SQC(DIM) : SQC(MID), 0);
+            sq_rune(220 - sq_rune_w(v, 0), y + 1 - oy, v, gr ? SQC(DIM) : SQC(TEXT), 0);
+            y += pitch;
         }
-        pu_pop_ground(PU_RP_HORIZON, 226, oy);
+        if (nv > cnt)
+            pu_lg_scroll(ci, nv, oy);
         cv_blit(0, (uint32_t)oy);
     }
 }
