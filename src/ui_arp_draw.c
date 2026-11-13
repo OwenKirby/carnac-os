@@ -1,19 +1,22 @@
 /* ARP page renderer for the FM1's 240 x 240 panel: mvave_fm1_master_specification.txt 3 (the knob frame on top, the
  * encoder menu list in the middle, the visualizer at the bottom, the synth palettes), 2.2 (the four ARP knobs), 8.1 / 8.2
- * (the 8 captured steps, the menu list) and 8.3 (each step's rhythm).
+ * (the captured steps, the menu list) and 8.3 (each step's rhythm). Two views (2026-11-13, sm->arp_view): CHORDS
+ * (every key a chord key; the live knobs) and STEPS (the 16 white keys the steps; the knobs the selected step's).
  *
- *   y   0..20   header: ARP, its transport (carp_playing) and the playing step, REC and LATCH when on, the clock
+ *   y   0..20   header: ARP and the view (CHORDS / STEPS), its transport (carp_playing) and the playing step, REC and LATCH when on, the clock
  *   y  21..53   knob cards: RATE, OCTAVE, STYLE, VARIATION (STRUM under HOLD) (the live dial values a capture copies)
- *   y  56..124  menu list: LAYER, TIMING, GATE, SEQ LENGTH, TRANSPOSE MAQ, GENRE BANK, ACCENT VEL (the cursor row in
- *               white; 6 at a time, the window scrolling with the cursor)
+ *   y  56..124  menu list, the view's rows (CHORDS: GENRE BANK, LATCH, LAYER, TRANSPOSE MAQ; STEPS: the selected
+ *               step's CHORD, ACCENT, CLEAR, then SEQ LENGTH, TIMING, GATE, ACCENT VEL), the cursor row in white, 3 at
+ *               a time, the window scrolling with the cursor
  *   y 127..143  the chord sounding (the playing step's or the chord key's) as names and standing stones (laid out by
  *               its octave range and style), and the transposition
- *   y 146..238  steps 1..8, two rows of four cards: number (an accent mark after it, the octave range as a cairn of
+ *   y 146..238  8 of the 16 steps (1..8 or 9..16: STEPS the half with the selected step, CHORDS the playhead's or
+ *               the record cursor's), two rows of four cards: number (an accent mark after it, the octave range as a cairn of
  *               pebbles), chord root; style and the step's RATE; the rhythm's cells (o a box filled to the pattern's GATE, ~ a bar, _ a dot); a TIE card
  *               shows TIE and one bar across; a HOLD card its chord's four stones under one lintel, stepped as it
  *               strums.
- *               The playhead's card is framed (stopped with REC armed: the card the next chord goes into), held step
- *               keys' and the COPY source's cards inverted, steps past SEQ LENGTH dimmed.
+ *               The playhead's card is framed (stopped with REC armed: the card the next chord goes into), the
+ *               selected step's (STEPS) and held step keys' cards inverted, steps past SEQ LENGTH dimmed.
  *
  * A Felucca unity-build fragment, not a translation unit: #include it after ui_seq_draw.c (its palette, sq_c / SQC,
  * sq_mix and the canvas calls it uses), UIStateMachine.h and dsp/midi_clock.h. Like the SEQ page it redraws only the
@@ -40,7 +43,8 @@
 #define AR_GLYPH_Y 27                /* the rhythm row inside a tablet: a lintel's 2 rows, the stones */
 #define AR_GLYPH_H 13
 
-enum { ARR_HEAD, ARR_KNOBS, ARR_MENU, ARR_CHORD, ARR_CELL0, ARR_COUNT = ARR_CELL0 + ARP_NSTEP };
+#define AR_NCARD 8u                  /* the cards on screen: half the 16 steps */
+enum { ARR_HEAD, ARR_KNOBS, ARR_MENU, ARR_CHORD, ARR_CELL0, ARR_COUNT = ARR_CELL0 + AR_NCARD };
 static uint32_t ar_sig[ARR_COUNT];
 
 static int ar_dirty(uint32_t r, uint32_t sig, uint32_t force)
@@ -76,7 +80,8 @@ static void ar_draw_head(const UIStateMachine *sm, const MaqSeq *q, const CarpSe
     int32_t x, y = CAP_IN(S, AR_HEAD_H), i;
     uint8_t pos = carp_pos(a);
     cv_begin(SQ_MOON_X, AR_HEAD_H, SQC(BG));
-    x = sq_text(6, CAP_IN(M, AR_HEAD_H), &AF_M, "ARP", SQC(THEME)) + 10;
+    x = sq_text(6, CAP_IN(M, AR_HEAD_H), &AF_M, "ARP", SQC(THEME)) + 6;
+    x = sq_text(x, y, &AF_S, sm->arp_view == UIARP_STEPS ? "STEPS" : "CHORDS", SQC(TEXT)) + 9;
     (void)q;
     if (carp_playing(a)) {
         for (i = 0; i < 5; i++)
@@ -111,8 +116,8 @@ static void ar_draw_head(const UIStateMachine *sm, const MaqSeq *q, const CarpSe
 
 /* ------------------------------------------------------------- knobs --- */
 /* the four knobs pick from lists more than they turn, so they are cards, not stone circles: the SEQ page's knob
- * tablets (ui_seq_draw.c sq_knob_card), cut the same; the grass under them THEME while a step key is held (the knobs
- * edit that step) */
+ * tablets (ui_seq_draw.c sq_knob_card), cut the same; the grass under them THEME on STEPS (the knobs edit the
+ * selected step) */
 static void ar_draw_knobs(UIStateMachine *sm)
 {
     char b[8];
@@ -127,7 +132,7 @@ static void ar_draw_knobs(UIStateMachine *sm)
             ar_num(b, sm->arp_knob[k]);
             t = b;
         }
-        sq_knob_card(k, AR_KNOB_Y, info.label, t, sm->arp_held ? SQC(THEME) : SQC(MID), 0u);
+        sq_knob_card(k, AR_KNOB_Y, info.label, t, sm->arp_view == UIARP_STEPS ? SQC(THEME) : SQC(MID), 0u);
     }
     cv_blit(0, AR_KNOB_Y);
 }
@@ -346,18 +351,18 @@ static void ar_cup(int32_t x, int32_t y, uint16_t c)
 }
 
 /* step i's tablet: number and chord root, style and octaves, the rhythm as a row of stones. live: within SEQ LENGTH;
- * head: playing (or the record cursor); held: its step key is down or it is the COPY source (a capture, a knob turn or
- * a copy lands here). The rhythm (8.3): a strike a standing stone, filled from its foot to the gate; a tie a lintel
+ * head: playing (or the record cursor); held: selected on STEPS or its step key down (a knob turn lands here). card:
+ * its place on screen, 0..7. The rhythm (8.3): a strike a standing stone, filled from its foot to the gate; a tie a lintel
  * laid from the stone before onto a stone of its own; a rest a pebble on the ground. A TIE step is one lintel across
  * on two stones. */
-static void ar_draw_cell(const ArpState *st, uint8_t i, uint8_t live, uint8_t head, uint8_t held)
+static void ar_draw_cell(const ArpState *st, uint8_t i, uint8_t card, uint8_t live, uint8_t head, uint8_t held)
 {
     const ArpChordStep *s = &st->steps[i];
     char b[12], nb[6];
     uint8_t cells[CARP_NCELL], nc, c, tie = (uint8_t)(s->chord_root == ARP_CHORD_TIE);
     uint8_t empty = (uint8_t)!ARP_ROOT_IS_CHORD(s->chord_root);
     uint8_t gate = st->gate_length > VAL_MAX ? (uint8_t)VAL_MAX : st->gate_length;
-    uint32_t sx = (uint32_t)(SQ_KNOB_X0 + (i & 3u) * AR_CELL_PITCH_X), sy = (uint32_t)(AR_CELL_Y + (i >> 2) * AR_CELL_PITCH_Y);
+    uint32_t sx = (uint32_t)(SQ_KNOB_X0 + (card & 3u) * AR_CELL_PITCH_X), sy = (uint32_t)(AR_CELL_Y + (card >> 2) * AR_CELL_PITCH_Y);
     uint32_t seed, ruin = live || held ? 0u : 120u;
     int32_t gx = 5, gw = AR_CELL_W - 10, cw, x, w, k, yb = AR_GLYPH_Y + AR_GLYPH_H, sh = AR_GLYPH_H - 2, fill;
     uint16_t txt, dim, lit, num;
@@ -431,26 +436,28 @@ static void arp_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint
 {
     static uint8_t pal_drawn = 0xFFu;
     uint32_t h, base = sq_mix(2166136261u, sq_pal);
-    uint8_t i, r, shape, notes[ARP_CHORD_NOTES], n, pos = carp_pos(a), len = ar_len(sm->arp), cur = pos;
+    uint8_t c, w0, r, shape, notes[ARP_CHORD_NOTES], n, pos = carp_pos(a), len = ar_len(sm->arp), cur = pos;
     if (pal_drawn != sq_pal) {
         pal_drawn = sq_pal;
         force = 1u;
     }
     if (force)
         lcd_fill(0, 0, 240, 240, SQC(BG));           /* the gaps between the regions, once */
-    h = sq_mix(base, (uint32_t)carp_playing(a) | (uint32_t)pos << 8 | (uint32_t)len << 16 |
-                         (uint32_t)sm->perf->clock_source << 24);
+    h = sq_mix(h, (uint32_t)carp_playing(a) | (uint32_t)pos << 8 | (uint32_t)len << 16 |
+                         (uint32_t)sm->perf->clock_source << 24 | (uint32_t)sm->arp_view << 31);
     h = sq_mix(h, sm->perf->int_tempo | (uint32_t)sm->arp_rec << 8 | (uint32_t)sm->arp_latch << 9);
     if (ar_dirty(ARR_HEAD, h, force))
         ar_draw_head(sm, q, a);
     h = sq_mix_bytes(base, sm->arp_knob, 4u);
-    h = sq_mix(h, sm->arp_held != 0u);
+    h = sq_mix(h, sm->arp_view);
     if (ar_dirty(ARR_KNOBS, h, force))
         ar_draw_knobs(sm);
     h = sq_mix(base, sm->s.current_param_focus | (uint32_t)sm->perf->perf_mode << 8);
     h = sq_mix(h, (uint32_t)sm->arp->layer_timing | (uint32_t)sm->arp->gate_length << 8 |
                       (uint32_t)sm->arp->sequence_length << 16 | (uint32_t)sm->arp->transpose_maq_option << 24);
-    h = sq_mix(h, sm->arp->current_genre_bank | (uint32_t)sm->arp->accent_velocity << 8);
+    h = sq_mix(h, sm->arp->current_genre_bank | (uint32_t)sm->arp->accent_velocity << 8 | (uint32_t)sm->arp_view << 16 |
+                      (uint32_t)sm->arp_latch << 17 | (uint32_t)sm->arp_sel << 18);
+    h = sq_mix_bytes(h, (const uint8_t *)&sm->arp->steps[sm->arp_sel % ARP_NSTEP], sizeof(ArpChordStep));
     for (r = 0; r < ui_sm_row_count(sm); r++)
         h = sq_mix(h, ui_sm_row_state(sm, r));
     if (ar_dirty(ARR_MENU, h, force))
@@ -465,12 +472,15 @@ static void arp_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint
         ar_draw_chord(sm, a);
     if (sm->arp_rec && !carp_playing(a))
         cur = (uint8_t)(sm->arp_rec_cursor % ARP_NSTEP);   /* step entry: where the next chord goes */
-    for (i = 0; i < ARP_NSTEP; i++) {
-        uint8_t live = (uint8_t)(i < len), head = (uint8_t)(i == cur);
-        uint8_t held = (uint8_t)(((sm->arp_held >> i) & 1u) || i == sm->arp_copy_src);
-        h = sq_mix_bytes(base, (const uint8_t *)&sm->arp->steps[i], sizeof(ArpChordStep));
-        h = sq_mix(h, (uint32_t)live | (uint32_t)head << 1 | (uint32_t)held << 2 | (uint32_t)sm->arp->gate_length << 8);
-        if (ar_dirty(ARR_CELL0 + i, h, force))
-            ar_draw_cell(sm->arp, i, live, head, held);
+    w0 = sm->arp_view == UIARP_STEPS ? sm->arp_sel : cur < ARP_NSTEP ? cur : 0u;
+    w0 = (uint8_t)(w0 / AR_NCARD * AR_NCARD);        /* the half of the steps on screen */
+    for (c = 0; c < AR_NCARD; c++) {
+        uint8_t s = (uint8_t)(w0 + c), live = (uint8_t)(s < len), head = (uint8_t)(s == cur);
+        uint8_t held = (uint8_t)(((sm->arp_held >> s) & 1u) || (sm->arp_view == UIARP_STEPS && s == sm->arp_sel));
+        h = sq_mix_bytes(base, (const uint8_t *)&sm->arp->steps[s], sizeof(ArpChordStep));
+        h = sq_mix(h, (uint32_t)live | (uint32_t)head << 1 | (uint32_t)held << 2 | (uint32_t)sm->arp->gate_length << 8 |
+                          (uint32_t)s << 16);
+        if (ar_dirty(ARR_CELL0 + c, h, force))
+            ar_draw_cell(sm->arp, s, c, live, head, held);
     }
 }

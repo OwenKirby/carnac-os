@@ -52,10 +52,15 @@ enum {                               /* how a row reads and writes its value */
     RK_REC_ACT,                      /* the REC page's DOUBLE (offset 0) / CLEAR (1): a turn asks, SAVE does it */
     RK_SUBWAVE,                      /* SUB WAVE's 6 steps (SUBWAVE6_NAMES) over the two bytes at offset: sub_octave
                                       * and sub_waveform (sub6_get / sub6_set) */
+    RK_ARP_ROOT,                     /* ARP STEPS: the selected step's chord (REST, TIE, then its chord key's note) */
+    RK_ARP_ACC,                      /* .. its accent */
+    RK_ARP_CLEAR,                    /* .. CLEAR: a turn makes it a rest */
+    RK_ARP_LATCH,                    /* ARP CHORDS: LATCH (sm->arp_latch, ui_sm_arp_latch) */
     RK_LINK                          /* RK_BYTE holding a PERF page link (layer_patch, seq_link, arp_link): a turn loads
                                       * the next used slot (ui_sm_perf_link_turn), the link follows once it has loaded */
 };
 #define RF_LAYER2 (1u << 0)          /* a Layer 2 parameter: greyed under SINGL_SYNTH */
+#define RF_ARP_STEPS (1u << 1)       /* an ARP row of the STEPS view (the rest: the CHORDS view's) */
 #define RF_BIPOLAR (1u << 2)         /* stored 0..127 with 64 = 0: shown as -64..+63 */
 #define RF_UNISON (1u << 3)          /* greyed unless the row's layer plays VOICE MODE UNISON */
 /* how a plain number reads (ui_sm_row_text): a note name, a MIDI channel 1..16, BPM, a 3-digit slot */
@@ -444,14 +449,20 @@ static const UiRow PERF_ROWS[] = {          /* HOME's first page: the performanc
 static const UiRow SAVE_COMMIT_ROWS[] = {
     {"RENAME PERF", 0, 0, 0, RK_RENAME, 0, NULL, A_ALL},
 };
+/* 2026-11-13: CHORDS (playing) shows the first four, STEPS (editing) the selected step's rows and the pattern's */
+#define ARP_ROOT_POS_MAX 127u        /* RK_ARP_ROOT's positions: 0 REST, 1 TIE, 2.. the notes 0..125 */
 static const UiRow ARP_ROWS[] = {
-    {"LAYER", OFS(ArpState, layer_timing), 0, ARPLAYER_COUNT - 1, RK_ARP_LAYER, 0, ARPLAYER_NAMES, A_ALL},
-    {"TIMING", OFS(ArpState, layer_timing), 0, ARPDIV_COUNT - 1, RK_ARP_TIMING, 0, ARPDIV_NAMES, A_ALL},
-    {"GATE", OFS(ArpState, gate_length), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
-    {"SEQ LENGTH", OFS(ArpState, sequence_length), 1, ARP_NSTEP, RK_BYTE, 0, NULL, A_ALL},
-    {"TRANSPOSE MAQ", OFS(ArpState, transpose_maq_option), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
     {"GENRE BANK", OFS(ArpState, current_genre_bank), 0, ARP_GENRE_COUNT - 1, RK_BYTE, 0, arp_genre_names, A_ALL},
-    {"ACCENT VEL", OFS(ArpState, accent_velocity), 1, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"LATCH", 0, 0, 1, RK_ARP_LATCH, 0, BOOL_NAMES, A_ALL},
+    {"LAYER", OFS(ArpState, layer_timing), 0, ARPLAYER_COUNT - 1, RK_ARP_LAYER, 0, ARPLAYER_NAMES, A_ALL},
+    {"TRANSPOSE MAQ", OFS(ArpState, transpose_maq_option), 0, 1, RK_BYTE, 0, BOOL_NAMES, A_ALL},
+    {"CHORD", 0, 0, ARP_ROOT_POS_MAX, RK_ARP_ROOT, RF_ARP_STEPS, NULL, A_ALL},
+    {"ACCENT", 0, 0, 1, RK_ARP_ACC, RF_ARP_STEPS, BOOL_NAMES, A_ALL},
+    {"CLEAR", 0, 0, 1, RK_ARP_CLEAR, RF_ARP_STEPS, NULL, A_ALL},
+    {"SEQ LENGTH", OFS(ArpState, sequence_length), 1, ARP_NSTEP, RK_BYTE, RF_ARP_STEPS, NULL, A_ALL},
+    {"TIMING", OFS(ArpState, layer_timing), 0, ARPDIV_COUNT - 1, RK_ARP_TIMING, RF_ARP_STEPS, ARPDIV_NAMES, A_ALL},
+    {"GATE", OFS(ArpState, gate_length), 0, VAL_MAX, RK_BYTE, RF_ARP_STEPS, NULL, A_ALL},
+    {"ACCENT VEL", OFS(ArpState, accent_velocity), 1, VAL_MAX, RK_BYTE, RF_ARP_STEPS, NULL, A_ALL},
 };
 /* 7.4: the knob window, then the active lane's footer left to right (2026-10-21; ui_seq_draw.c highlights the field the
  * cursor is on). The Select Encoder walks STEPS a group of 4 at a time, then the footer, then wraps (seq_cursor_move). */
@@ -770,6 +781,8 @@ static uint8_t row_shown(const UIStateMachine *sm, const UiPage *pg, const UiRow
                 return 0u;
         return 1u;
     }
+    if (pg->rows == ARP_ROWS)                        /* each ARP view its own rows */
+        return (uint8_t)(((r->flags & RF_ARP_STEPS) != 0u) == (sm->arp_view == UIARP_STEPS));
     return (uint8_t)(pg->store != ST_ENGINE || (r->archs & VARCH_BIT(layer_arch(sm, sm->s.active_synth_layer))) != 0u);
 }
 
@@ -1112,6 +1125,13 @@ static uint8_t row_get(const UIStateMachine *sm, const UiRow *r)
     case RK_VOICES: return ui_sm_layer_voices(sm, row_layer(r));
     case RK_ARP_LAYER: return ARP_LAYER(sm->arp);
     case RK_ARP_TIMING: return ARP_TIMING(sm->arp);
+    case RK_ARP_ROOT: {
+        uint8_t c = sm->arp->steps[sm->arp_sel % ARP_NSTEP].chord_root;
+        return c == ARP_CHORD_EMPTY ? (uint8_t)0u : c == ARP_CHORD_TIE ? (uint8_t)1u : (uint8_t)(c + 2u);
+    }
+    case RK_ARP_ACC: return sm->arp->steps[sm->arp_sel % ARP_NSTEP].accent;
+    case RK_ARP_CLEAR: return 0u;
+    case RK_ARP_LATCH: return sm->arp_latch;
     case RK_BIT0: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] & 1u);
     case RK_HIGH7: return (uint8_t)(page_block(sm, ui_cur_page(sm))[r->offset] >> 1);
     case RK_SUBWAVE: return sub6_get(&page_block(sm, ui_cur_page(sm))[r->offset]);
@@ -1149,6 +1169,40 @@ static void mfx_type_set(MfxParams *m, uint8_t t)
     m->type = t;
 }
 
+static void arp_capture(UIStateMachine *sm, uint8_t i, uint8_t note);
+static void arp_select(UIStateMachine *sm, uint8_t w);
+
+/* STEPS > CHORD: position v (0 REST, 1 TIE, 2.. a note) into the selected step. A rest or TIE becoming a chord takes
+ * the live knobs, as a capture does, and goes onto the knobs */
+static void arp_root_set(UIStateMachine *sm, uint8_t v)
+{
+    uint8_t i = sm->arp_sel % ARP_NSTEP;
+    ArpChordStep *s = &sm->arp->steps[i];
+    uint8_t was = ARP_ROOT_IS_CHORD(s->chord_root);
+    if (v == 0u) {
+        s->chord_root = ARP_CHORD_EMPTY;
+        s->accent = 0u;
+    } else if (v == 1u) {
+        s->chord_root = ARP_CHORD_TIE;
+    } else if (!was) {
+        arp_capture(sm, i, (uint8_t)(v - 2u));
+    } else {
+        s->chord_root = (uint8_t)(v - 2u);
+    }
+    if (was != ARP_ROOT_IS_CHORD(s->chord_root))
+        arp_select(sm, i);                           /* the knobs: the step's now, or the live dials */
+}
+
+/* the note a rest or TIE turned up into a chord starts on: the chord before it, else C3 */
+static uint8_t arp_root_seed(const UIStateMachine *sm)
+{
+    uint8_t i = sm->arp_sel % ARP_NSTEP;
+    while (i-- > 0u)
+        if (ARP_ROOT_IS_CHORD(sm->arp->steps[i].chord_root))
+            return sm->arp->steps[i].chord_root;
+    return 48u;
+}
+
 static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
 {
     if (r == &MFX_ROWS[0]) {
@@ -1169,6 +1223,10 @@ static void row_set(UIStateMachine *sm, const UiRow *r, uint8_t v)
     case RK_SEQ_EVENT: seq_lane_set_event(cur_lane(sm), v); break;   /* also restarts TARGET: */
     case RK_ARP_LAYER: arp_set_layer(sm->arp, v); break;
     case RK_ARP_TIMING: arp_set_timing(sm->arp, v); break;
+    case RK_ARP_ROOT: arp_root_set(sm, v); break;
+    case RK_ARP_ACC: sm->arp->steps[sm->arp_sel % ARP_NSTEP].accent = (uint8_t)(v != 0u); break;
+    case RK_ARP_CLEAR: break;
+    case RK_ARP_LATCH: ui_sm_arp_latch(sm, v); break;
     case RK_BIT0: case RK_HIGH7: {
         uint8_t *b = &page_block(sm, ui_cur_page(sm))[r->offset];
         *b = r->kind == RK_BIT0 ? (uint8_t)((*b & 0xFEu) | (v & 1u)) : (uint8_t)((*b & 1u) | (uint8_t)(v << 1));
@@ -1189,6 +1247,20 @@ static void row_step(UIStateMachine *sm, const UiRow *r, int16_t delta)
     int16_t n = delta > 0 ? delta : (int16_t)-delta;
     if (r->kind == RK_RENAME || r->kind == RK_VOICES || r->kind == RK_SEQ_STEPS)
         return;
+    if (r->kind == RK_ARP_CLEAR) {            /* STEPS > CLEAR: a turn either way, the selected step a rest */
+        row_set(sm, &ARP_ROWS[4], 0u);
+        return;
+    }
+    if (r->kind == RK_ARP_ROOT) {             /* REST <-> TIE <-> the notes; up from TIE onto the chord before */
+        int16_t p = cur;
+        while (n-- > 0)
+            p = p == 1 && dir > 0 ? (int16_t)(arp_root_seed(sm) + 2u) : p <= 2 && dir < 0 && p > 0 ? (int16_t)(p - 1)
+              : (int16_t)(p + dir);
+        p = p < 0 ? 0 : p > (int16_t)ARP_ROOT_POS_MAX ? (int16_t)ARP_ROOT_POS_MAX : p;
+        if (p != cur)
+            row_set(sm, r, (uint8_t)p);
+        return;
+    }
     if (r->kind == RK_REC_ACT) {              /* DOUBLE / CLEAR: the popup asks (SAVE: yes), unless there is none to do */
         if (sm->rec != 0 && (r->offset ? sm->rec->state != KREC_EMPTY : krec_can_double(sm->rec))) {
             sm->rec_ask = (uint8_t)(r->offset + 1u);
@@ -1266,6 +1338,9 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
         return UIROW_INFO;
     if (r->kind == RK_REC_ACT && (sm->rec == 0 || (r->offset ? sm->rec->state == KREC_EMPTY : !krec_can_double(sm->rec))))
         return UIROW_GREYED;         /* DOUBLE at 16 bars (or too many notes), CLEAR with nothing */
+    if ((r->kind == RK_ARP_CLEAR || r->kind == RK_ARP_ACC) &&
+        !ARP_ROOT_IS_CHORD(sm->arp->steps[sm->arp_sel % ARP_NSTEP].chord_root))
+        return UIROW_GREYED;         /* a rest or TIE: nothing to clear or accent */
     if (r->kind == RK_RENAME && ui_sm_rename_name(sm) == NULL)
         return UIROW_GREYED;         /* (every TARGET carries a name since 2026-10-25) */
     if (r->kind == RK_SEQ_TARGET && ui_sm_seq_target_count(sm, sm->s.active_seq_lane) <= 1u)
@@ -1371,10 +1446,9 @@ static void enter_page(UIStateMachine *sm, uint8_t page)
     }
     sm->seq_cap_held = 0u;           /* a 7.2 chord capture ends with the page */
     sm->seq_cap_n = 0u;
-    sm->arp_held = 0u;               /* .. and so do the ARP's held step keys, function keys, REC and its sounding chord */
+    sm->arp_held = 0u;               /* .. and so do the ARP's held step keys, REC and its sounding chord */
+    sm->arp_tie_from = CARP_POS_NONE;
     arp_unpeek(sm);
-    sm->arp_fn = 0u;
-    sm->arp_copy_src = CARP_POS_NONE;
     sm->arp_rec = 0u;
     sm->arp_chord_down = CARP_NOTE_NONE;
     if (sm->arp_chord_key != CARP_NOTE_NONE) {
@@ -2021,20 +2095,6 @@ static void arp_unpeek(UIStateMachine *sm)
         carp_set_knobs(sm->carp, sm->arp_knob);
 }
 
-/* TIE, CLEAR or ACCENT on step i */
-static void arp_step_fn(UIStateMachine *sm, uint8_t fn, uint8_t i)
-{
-    ArpChordStep *s = &sm->arp->steps[i];
-    if (fn == ARPFN_TIE) {
-        s->chord_root = ARP_CHORD_TIE;
-    } else if (fn == ARPFN_CLEAR) {
-        s->chord_root = ARP_CHORD_EMPTY;
-        s->accent = 0u;
-    } else if (fn == ARPFN_ACCENT) {
-        s->accent = (uint8_t)!s->accent;
-    }
-}
-
 static uint8_t arp_playing(const UIStateMachine *sm) { return (uint8_t)(sm->carp != 0 && carp_playing(sm->carp)); }
 
 /* TRANSPOSE MAQ over an empty pattern (no chord in its SEQ LENGTH steps): nothing to follow but the keybed, so the
@@ -2061,16 +2121,17 @@ static void ui_arp_chord_off(UIStateMachine *sm)
     sm->arp_chord_hold = 0u;
 }
 
-/* REC on the ARP page: arm (stopped, the next chord goes into step 1) or disarm */
+/* REC on the ARP page: arm (stopped, the next chord goes into step 1, or the step chosen on STEPS) or disarm */
 static void arp_record_toggle(UIStateMachine *sm)
 {
     sm->arp_rec = (uint8_t)!sm->arp_rec;
-    sm->arp_rec_cursor = 0u;
+    sm->arp_rec_cursor = sm->arp_view == UIARP_STEPS ? (uint8_t)(ARP_NSTEP + sm->arp_sel) : (uint8_t)0u;
     sm->arp_rec_last = CARP_POS_NONE;
 }
 
-/* REC: the step the next recorded chord, TIE or rest goes into. Playing: the nearest step. Stopped: steps 1, 2, 3 ..
- * in turn, SEQ LENGTH growing with them on the first pass (arp_rec_cursor 0..7), staying after a wrap (8..15). */
+/* REC: the step the next recorded chord goes into. Playing: the nearest step. Stopped: steps 1, 2, 3 .. in turn.
+ * Armed from step 1 (arp_rec_cursor 0..15) SEQ LENGTH follows the steps recorded on the first pass; from a step
+ * chosen on STEPS, or after a wrap (16..31), it only grows to take the step in. */
 static uint8_t arp_rec_take(UIStateMachine *sm)
 {
     uint8_t i, c = sm->arp_rec_cursor;
@@ -2084,127 +2145,149 @@ static uint8_t arp_rec_take(UIStateMachine *sm)
         i = (uint8_t)(c % ARP_NSTEP);
         if (c < ARP_NSTEP)
             sm->arp->sequence_length = (uint8_t)(i + 1u);
+        else if (sm->arp->sequence_length < i + 1u)
+            sm->arp->sequence_length = (uint8_t)(i + 1u);
         sm->arp_rec_cursor = (uint8_t)(c + 1u < 2u * ARP_NSTEP ? c + 1u : ARP_NSTEP);
     }
     sm->arp_rec_last = i;
     return i;
 }
 
-/* a function key (the black keys among the step keys) */
-static void arp_fn_key(UIStateMachine *sm, uint8_t fn, uint8_t down)
+void ui_sm_arp_latch(UIStateMachine *sm, uint8_t on)
 {
-    uint8_t i;
-    if (!down) {
-        sm->arp_fn &= (uint8_t)~(1u << fn);
-        if (fn == ARPFN_COPY)
-            sm->arp_copy_src = CARP_POS_NONE;
+    sm->arp_latch = (uint8_t)(on != 0u);
+    if (!sm->arp_latch && sm->arp_chord_hold && sm->arp_chord_key != sm->arp_chord_down)
+        ui_arp_chord_off(sm);                        /* the latched chord stops (a key still down plays until let go) */
+}
+
+/* STEPS: step w selected, its values on the knobs (a rest or TIE leaves the live ones) */
+static void arp_select(UIStateMachine *sm, uint8_t w)
+{
+    arp_unpeek(sm);
+    sm->arp_sel = w < ARP_NSTEP ? w : (uint8_t)0u;
+    if (sm->arp_view == UIARP_STEPS && sm->page == UIPAGE_ARP)
+        arp_peek(sm, sm->arp_sel);
+}
+
+/* the ARP button on the ARP page (2026-11-13): CHORDS <-> STEPS, each view with its own cursor */
+static void arp_view_set(UIStateMachine *sm, uint8_t v)
+{
+    sm->arp_focus[sm->arp_view & 1u] = sm->s.current_param_focus;
+    sm->arp_held = 0u;
+    sm->arp_tie_from = CARP_POS_NONE;
+    if (sm->arp_chord_key != CARP_NOTE_NONE && !sm->arp_chord_hold)
+        ui_arp_chord_off(sm);                        /* a step's audition ends with its view */
+    sm->arp_view = (uint8_t)(v & 1u);
+    arp_select(sm, sm->arp_sel);                     /* STEPS: the selected step on the knobs; CHORDS: the live dials */
+    sm->s.current_param_focus = sm->arp_focus[sm->arp_view];
+    cursor_snap(sm);
+}
+
+static void on_arp(UIStateMachine *sm)
+{
+    if (sm->page != UIPAGE_ARP) {
+        enter_page(sm, UIPAGE_ARP);                  /* back to the view it was left on */
+        sm->s.current_param_focus = sm->arp_focus[sm->arp_view & 1u];
+        cursor_snap(sm);
+        arp_select(sm, sm->arp_sel);
         return;
     }
-    sm->arp_fn |= (uint8_t)(1u << fn);
-    if (fn == ARPFN_LATCH) {
-        sm->arp_latch = (uint8_t)!sm->arp_latch;
-        if (!sm->arp_latch && sm->arp_chord_key != sm->arp_chord_down)
-            ui_arp_chord_off(sm);                       /* the latched chord stops (a key still down plays until let go) */
-    } else if (fn == ARPFN_COPY) {
-        sm->arp_copy_src = CARP_POS_NONE;
-    } else if (sm->arp_held != 0u) {                 /* TIE, CLEAR, ACCENT on the step keys held */
-        for (i = 0u; i < ARP_NSTEP; i++)
-            if ((sm->arp_held >> i) & 1u)
-                arp_step_fn(sm, fn, i);
-    } else if (sm->arp_rec) {                        /* .. or recorded: a tie or a rest; ACCENT on the last step recorded */
-        if (fn != ARPFN_ACCENT)
-            arp_step_fn(sm, fn, arp_rec_take(sm));
-        else if (sm->arp_rec_last < ARP_NSTEP)
-            arp_step_fn(sm, fn, sm->arp_rec_last);
+    arp_view_set(sm, (uint8_t)(sm->arp_view ^ 1u));
+}
+
+/* STEPS: a step key. Down: selected (and with REC armed where the next chord goes; stopped, its chord sounds while
+ * held); with a step already held, a later one ties every step after the held one up to it instead. */
+static void arp_step_key(UIStateMachine *sm, uint8_t w, uint8_t down, uint8_t vel)
+{
+    uint8_t i, a = sm->arp_tie_from;
+    const ArpChordStep *s = &sm->arp->steps[w];
+    if (!down) {
+        sm->arp_held &= (uint16_t)~(1u << w);
+        if (a == w)
+            sm->arp_tie_from = CARP_POS_NONE;
+        if (sm->arp_chord_key != CARP_NOTE_NONE && !sm->arp_chord_hold && sm->arp_held == 0u)
+            ui_arp_chord_off(sm);
+        return;
+    }
+    sm->arp_held |= (uint16_t)(1u << w);
+    if (a < ARP_NSTEP && w > a) {                    /* hold -> press: the tie */
+        for (i = (uint8_t)(a + 1u); i <= w; i++) {
+            sm->arp->steps[i].chord_root = ARP_CHORD_TIE;
+            sm->arp->steps[i].accent = 0u;
+        }
+        if (sm->arp->sequence_length < w + 1u)
+            sm->arp->sequence_length = (uint8_t)(w + 1u);
+        return;
+    }
+    if (a >= ARP_NSTEP)
+        sm->arp_tie_from = w;
+    arp_select(sm, w);
+    if (sm->arp_rec && !arp_playing(sm))
+        sm->arp_rec_cursor = (uint8_t)(ARP_NSTEP + w);   /* the next recorded chord goes here */
+    if (!arp_playing(sm) && ARP_ROOT_IS_CHORD(s->chord_root) && sm->carp != 0) {
+        if (sm->arp_chord_key != CARP_NOTE_NONE)
+            ui_arp_chord_off(sm);
+        sm->arp_chord_key = s->chord_root;           /* heard while held, as a block */
+        sm->arp_chord_hold = 0u;
+        carp_audition(sm->carp, s->chord_root, vel ? vel : (uint8_t)1u);
     }
 }
 
-/* step key w: held for a capture, or the target of the function keys held */
-static void arp_step_key(UIStateMachine *sm, uint8_t w, uint8_t down)
+/* CHORDS: a chord key (note) */
+static void arp_chord_key(UIStateMachine *sm, uint8_t note, uint8_t down, uint8_t vel)
 {
-    uint8_t f;
+    uint8_t rec;
+    if (note >= ARP_CHORD_TIE)
+        note = ARP_CHORD_TIE - 1u;                   /* 126 marks a TIE, 127 a rest */
     if (!down) {
-        sm->arp_held &= (uint8_t)~(1u << w);
-        if (sm->arp_held == 0u)
-            arp_unpeek(sm);
+        if (note == sm->arp_chord_down)
+            sm->arp_chord_down = CARP_NOTE_NONE;
+        if (note == sm->arp_chord_key) {             /* (an older key released after a newer one: nothing sounds) */
+            if (sm->arp_latch && sm->arp_chord_hold) {
+                if (sm->carp != 0)
+                    carp_latch_up(sm->carp, note);   /* latched: it plays on */
+            } else {
+                ui_arp_chord_off(sm);
+            }
+        }
         return;
     }
-    if ((sm->arp_fn >> ARPFN_COPY) & 1u) {          /* COPY: the first step tapped is the source */
-        if (sm->arp_copy_src >= ARP_NSTEP)
-            sm->arp_copy_src = w;
-        else if (w != sm->arp_copy_src)
-            sm->arp->steps[w] = sm->arp->steps[sm->arp_copy_src];
-        return;
+    sm->arp_chord_down = note;
+    rec = sm->arp_rec;
+    if (rec) {
+        arp_capture(sm, arp_rec_take(sm), note);     /* REC: into the nearest step, or the next in turn */
+    } else if (sm->carp != 0 && (arp_playing(sm) || arp_keys_lead_maq(sm) ||
+                                 (sm->arp->transpose_maq_option == 1u && sm->seq != 0 && maq_playing(sm->seq)))) {
+        int16_t t = (int16_t)note - (int16_t)UIARP_TRANSPOSE_ZERO;
+        carp_set_transpose(sm->carp, (int8_t)(t < -64 ? -64 : t > 63 ? 63 : t));   /* the key transposes the pattern
+                                                                                  * (and the MAQ) from C4 */
     }
-    if (sm->arp_fn & (uint8_t)(1u << ARPFN_TIE | 1u << ARPFN_CLEAR | 1u << ARPFN_ACCENT)) {
-        for (f = ARPFN_TIE; f < ARPFN_COUNT; f++)
-            if (f != ARPFN_COPY && ((sm->arp_fn >> f) & 1u))
-                arp_step_fn(sm, f, w);
+    sm->arp_chord_key = note;
+    sm->arp_chord_hold = (uint8_t)!rec;
+    if (sm->carp == 0)
         return;
-    }
-    sm->arp_held |= (uint8_t)(1u << w);
-    arp_peek(sm, w);
+    if (rec)
+        carp_audition(sm->carp, note, vel ? vel : (uint8_t)1u);   /* a capture: the chord, as a block */
+    else
+        carp_hold(sm->carp, note, vel ? vel : (uint8_t)1u);       /* else arpeggiated live while held */
 }
-
-/* a black key by the white keys below it in the step zone (ui_sm_arp_key, ui_sm_key_leds) */
-static const uint8_t ARP_FN_BY_WHITE[CARP_STEP_KEYS] = {
-    ARPFN_NONE, ARPFN_LATCH, ARPFN_TIE, ARPFN_NONE, ARPFN_CLEAR, ARPFN_COPY, ARPFN_NONE, ARPFN_ACCENT
-};
 
 uint8_t ui_sm_arp_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t down, uint8_t vel)
 {
-    uint8_t n, w = 0u, i, rec;
+    uint8_t n, w = 0u;
     if (sm->page != UIPAGE_ARP || sm->dialog != UIDLG_NONE || key > note || note > VAL_MAX)
         return 0u;
-    if (key < CARP_ZONE_KEYS) {                      /* chord key */
-        if (note >= ARP_CHORD_TIE)
-            note = ARP_CHORD_TIE - 1u;               /* 126 marks a TIE, 127 a rest */
-        if (!down) {
-            if (note == sm->arp_chord_down)
-                sm->arp_chord_down = CARP_NOTE_NONE;
-            if (note == sm->arp_chord_key) {         /* (an older key released after a newer one: nothing sounds) */
-                if (sm->arp_latch && sm->arp_chord_hold) {
-                    if (sm->carp != 0)
-                        carp_latch_up(sm->carp, note);   /* latched: it plays on */
-                } else {
-                    ui_arp_chord_off(sm);
-                }
-            }
-            return 1u;
-        }
-        sm->arp_chord_down = note;
-        rec = (uint8_t)(sm->arp_held == 0u && sm->arp_rec);
-        if (sm->arp_held != 0u) {
-            for (i = 0u; i < ARP_NSTEP; i++)
-                if ((sm->arp_held >> i) & 1u)
-                    arp_capture(sm, i, note);
-        } else if (rec) {
-            arp_capture(sm, arp_rec_take(sm), note);     /* REC: into the nearest step, or the next in turn */
-        } else if (sm->carp != 0 && (arp_playing(sm) || arp_keys_lead_maq(sm) ||
-                                     (sm->arp->transpose_maq_option == 1u && sm->seq != 0 && maq_playing(sm->seq)))) {
-            carp_set_transpose(sm->carp, (int8_t)key);   /* playing: the key transposes the pattern (and the MAQ) */
-        }
-        sm->arp_chord_key = note;
-        sm->arp_chord_hold = (uint8_t)(sm->arp_held == 0u && !rec);
-        if (sm->carp == 0)
-            return 1u;
-        if (!sm->arp_chord_hold)
-            carp_audition(sm->carp, note, vel ? vel : (uint8_t)1u);   /* a capture: the chord, as a block */
-        else
-            carp_hold(sm->carp, note, vel ? vel : (uint8_t)1u);       /* else arpeggiated live while held */
+    if (sm->arp_view != UIARP_STEPS) {
+        arp_chord_key(sm, note, down, vel);
         return 1u;
     }
-    for (n = (uint8_t)(note - key + CARP_ZONE_KEYS); n != note; n++)   /* white keys between the zone and this key */
+    if (!NOTE_IS_WHITE(note))
+        return 1u;                                   /* STEPS: the black keys do nothing */
+    for (n = (uint8_t)(note - key); n != note; n++)  /* the white keys below this one */
         w = (uint8_t)(w + NOTE_IS_WHITE(n));
-    if (w >= CARP_STEP_KEYS)
-        return 0u;                                   /* above the 8 step keys: plays */
-    if (!NOTE_IS_WHITE(note)) {                      /* a function key (F#4, below step 1, does nothing) */
-        if (ARP_FN_BY_WHITE[w] != ARPFN_NONE)
-            arp_fn_key(sm, ARP_FN_BY_WHITE[w], down);
-        return 1u;
-    }
-    arp_step_key(sm, w, down);
-    return 1u;
+    if (w < ARP_NSTEP)
+        arp_step_key(sm, w, down, vel);
+    return 1u;                                       /* (above the 16 steps: nothing) */
 }
 
 void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
@@ -2212,7 +2295,8 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
     sm->knob_touched = (uint8_t)(knob + 1u);         /* EDIT jumps from it until the cursor moves */
     sm->knob_touched_page = page;
     static const uint8_t lim[4] = {ARPRATE_COUNT - 1u, ARP_NOCT - 1u, ARPSTYLE_COUNT - 1u, ARP_NVAR - 1u};
-    uint8_t i, v, held;
+    uint8_t i, v;
+    uint16_t held;
     if (page == UIPAGE_SAVE_COMMIT && knob == 0u) {
         ui_sm_enforce(sm);           /* a new TARGET: RENAME greys or returns, PASTE may lose its clipboard */
         return;
@@ -2265,9 +2349,11 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
     }
     if (sm->carp != 0)
         carp_set_knobs(sm->carp, sm->arp_knob);      /* a held chord key follows the dials */
-    held = sm->arp_held;
-    if (held == 0u && sm->arp_rec && sm->carp != 0 && arp_playing(sm) && carp_pos(sm->carp) < ARP_NSTEP)
-        held = (uint8_t)(1u << carp_pos(sm->carp));  /* REC, playing: the knob overdubs the playing step */
+    held = 0u;
+    if (sm->arp_view == UIARP_STEPS)
+        held = (uint16_t)(1u << (sm->arp_sel % ARP_NSTEP));   /* STEPS: the knobs edit the selected step */
+    else if (sm->arp_rec && sm->carp != 0 && arp_playing(sm) && carp_pos(sm->carp) < ARP_NSTEP)
+        held = (uint16_t)(1u << carp_pos(sm->carp)); /* CHORDS, REC, playing: the knob overdubs the playing step */
     for (i = 0u; i < ARP_NSTEP; i++) {
         ArpChordStep *s = &sm->arp->steps[i];
         if (!((held >> i) & 1u))
@@ -2352,45 +2438,37 @@ static void ui_seq_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8
         ui_led_put(lv, wk[pos], LV_LIT);
 }
 
-/* ARP (8.1): the notes sounding (dim, folded into the chord zone's first octave), the step keys, the function keys
- * among them, and the chord key of the transposition (2026-10-30). A step key held: the zone shows that step's chord
- * instead, lit, as the chord keys it was captured from (a rest or TIE: dark) */
+/* ARP (2026-11-13). CHORDS: every key a chord key, so the notes sounding light where they are on the keybed (dim; a
+ * note out of its reach is not shown), and while a pattern plays the key of its transposition mid. STEPS: the 16 white
+ * keys are the steps: 1..SEQ LENGTH dim (a rest dark), the selected step mid (stopped with REC armed: the step the
+ * next chord goes into), the playing and held steps lit */
 static void ui_arp_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8_t *lv)
 {
-    uint8_t wk[CARP_STEP_KEYS], ch[ARP_CHORD_NOTES], i, f, n, pos = CARP_POS_NONE, len = sm->arp->sequence_length;
-    int8_t t;
+    uint8_t wk[ARP_NSTEP], i, n, pos = CARP_POS_NONE, len = sm->arp->sequence_length;
+    int16_t t;
     if (sm->carp != 0 && arp_playing(sm))
         pos = carp_pos(sm->carp);
-    if (sm->arp_held != 0u) {
-        for (i = 0u; !((sm->arp_held >> i) & 1u); i++) {}   /* the lowest step held */
-        n = sm->arp->steps[i].chord_root;
-        if (ARP_ROOT_IS_CHORD(n))
-            for (f = carp_chord_notes(sm->arp->current_genre_bank, n, ch); f-- > 0u; )
-                ui_led_put(lv, (uint8_t)((ch[f] + 12u - lowest_note % 12u) % 12u), LV_LIT);
-    } else if (sm->carp != 0) {
-        for (i = 0u; i < 2u * ARP_CHORD_NOTES; i++) {   /* the pattern's notes (a held key's live arp too), a chord key's block */
+    if (sm->arp_view != UIARP_STEPS) {
+        if (sm->carp == 0)
+            return;
+        for (i = 0u; i < 2u * ARP_CHORD_NOTES; i++) {   /* the pattern's notes (a held key's live arp too), a block */
             n = i < ARP_CHORD_NOTES ? sm->carp->on[i] : sm->carp->aud_on[i - ARP_CHORD_NOTES];
-            if (n <= VAL_MAX)
-                ui_led_put(lv, (uint8_t)((n + 12u - lowest_note % 12u) % 12u), LV_DIM);
+            if (n <= VAL_MAX && n >= lowest_note && (uint8_t)(n - lowest_note) < UI_LED_KEYS)
+                ui_led_put(lv, (uint8_t)(n - lowest_note), LV_DIM);
         }
-        t = carp_transpose(sm->carp);
-        if (arp_playing(sm) && t >= 0 && t < (int8_t)CARP_ZONE_KEYS)
-            ui_led_put(lv, (uint8_t)t, LV_MID);         /* the chord key the pattern is transposed to */
+        t = (int16_t)(UIARP_TRANSPOSE_ZERO + carp_transpose(sm->carp)) - (int16_t)lowest_note;
+        if (arp_playing(sm) && t >= 0 && t < (int16_t)UI_LED_KEYS)
+            ui_led_put(lv, (uint8_t)t, LV_MID);          /* the key the pattern is transposed to */
+        return;
     }
-    ui_led_whites(lowest_note, CARP_ZONE_KEYS, CARP_STEP_KEYS, wk);
-    for (i = 0u; i < CARP_STEP_KEYS; i++) {
+    ui_led_whites(lowest_note, 0u, ARP_NSTEP, wk);
+    for (i = 0u; i < ARP_NSTEP; i++) {
         if (i < len && sm->arp->steps[i].chord_root != ARP_CHORD_EMPTY)
             ui_led_put(lv, wk[i], LV_DIM);              /* past SEQ LENGTH, and a rest: dark */
-        if (pos == CARP_POS_NONE && sm->arp_rec && i == sm->arp_rec_cursor % ARP_NSTEP)
-            ui_led_put(lv, wk[i], LV_MID);              /* step entry: where the next chord goes */
-        if (i == pos || ((sm->arp_held >> i) & 1u) || i == sm->arp_copy_src)
+        if (pos == CARP_POS_NONE && sm->arp_rec ? i == sm->arp_rec_cursor % ARP_NSTEP : i == sm->arp_sel)
+            ui_led_put(lv, wk[i], LV_MID);
+        if (i == pos || ((sm->arp_held >> i) & 1u))
             ui_led_put(lv, wk[i], LV_LIT);
-        f = ARP_FN_BY_WHITE[i];                      /* the black key after white step key i - 1 */
-        if (f == ARPFN_NONE || i == 0u || wk[i - 1u] >= UI_LED_KEYS - 1u ||
-            NOTE_IS_WHITE((uint8_t)(lowest_note + wk[i - 1u] + 1u)))
-            continue;
-        ui_led_put(lv, (uint8_t)(wk[i - 1u] + 1u),
-                (f == ARPFN_LATCH ? sm->arp_latch : (sm->arp_fn >> f) & 1u) ? (uint8_t)LV_LIT : (uint8_t)LV_DIM);
     }
 }
 
@@ -2558,8 +2636,10 @@ void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *
     sm->arp_chord_down = CARP_NOTE_NONE;
     sm->arp_chord_hold = 0u;
     sm->arp_latch = 0u;
-    sm->arp_fn = 0u;
-    sm->arp_copy_src = CARP_POS_NONE;
+    sm->arp_view = UIARP_CHORDS;
+    sm->arp_sel = 0u;
+    sm->arp_tie_from = CARP_POS_NONE;
+    sm->arp_focus[0] = sm->arp_focus[1] = 0u;
     sm->arp_rec = 0u;
     sm->arp_rec_cursor = 0u;
     sm->arp_rec_last = CARP_POS_NONE;
@@ -2768,6 +2848,8 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         on_save(sm);
     } else if (arg == BTN_SEQ) {
         on_seq(sm);
+    } else if (arg == BTN_ARP) {
+        on_arp(sm);
     } else {
         on_section(sm, (uint8_t)arg);
     }
@@ -2781,6 +2863,9 @@ void ui_sm_enforce(UIStateMachine *sm)
         sm->s.active_synth_layer = 0u;
     if (sm->s.active_seq_lane >= SEQ_NLANE)
         sm->s.active_seq_lane = 0u;
+    sm->arp_view &= 1u;
+    if (sm->arp_sel >= ARP_NSTEP)
+        sm->arp_sel = 0u;
     if (sm->seq_step0 > UISEQ_STEP0_MAX)
         sm->seq_step0 = UISEQ_STEP0_MAX;
     sm->seq_step0 &= (uint8_t)~3u;                   /* the knob window is always a block of four (2026-10-26) */
@@ -3144,7 +3229,8 @@ const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row)
     if (r->kind == RK_SEQ_TARGET) return ui_sm_seq_target_text(sm, sm->s.active_seq_lane, target_buf);
     if (r->kind == RK_ROUTE && route_free(&sm->engine[sm->s.active_synth_layer < NLAYER ? sm->s.active_synth_layer : 0u]
                                               ->route[r->offset])) return "";   /* + NEW ROUTE */
-    if (r->kind == RK_REC_ACT) return ">";
+    if (r->kind == RK_REC_ACT || r->kind == RK_ARP_CLEAR) return ">";
+    if (r->kind == RK_ARP_ROOT) return v == 0u ? "REST" : v == 1u ? "TIE" : ui_sm_note_name((uint8_t)(v - 2u), num_buf);
     if (r->kind == RK_FINE) return ui_sm_fine_text(v, num_buf);
     if (r->kind == RK_WAVE) return wave_name(v, num_buf);
     if (r->kind == RK_RENAME) {       /* the name, trailing spaces dropped; "-" when the TARGET has none */

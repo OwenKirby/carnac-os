@@ -518,10 +518,11 @@ enum { FG_TRAD_MAJ = 6, FG_TRAD_MIN_1 = 7, FG_TRAD_MIN_2 = 8, FG_OCT = 13, FG_4T
 /* chord keys */
 enum { FA_F2 = 41, FA_G2 = 43, FA_AB2 = 44, FA_A2 = 45, FA_BB2 = 46, FA_B2 = 47, FA_C3 = 48, FA_D3 = 50, FA_EB3 = 51,
        FA_E3 = 52 };
+#define FA_NSTEP 8u                      /* the factory patterns' steps (9..16 left empty) */
 typedef struct {
     uint8_t genre, div, style, oct, gate;
     uint8_t maq;                         /* 1: TRANSPOSE MAQ, and the performance is ARP-led */
-    uint8_t root[ARP_NSTEP];             /* chord keys, FA_T a TIE */
+    uint8_t root[FA_NSTEP];              /* chord keys, FA_T a TIE */
     const char *var;                     /* 8 steps: 'a' + the RHYTHM variation (8.3: a = 01A, q = 09A 1 1 1 _, s = 10A
                                           * 1 1 _ 1, u = 11A 1 _ 1 1) */
     const char *acc;                     /* 8 steps: '1' accented */
@@ -632,7 +633,7 @@ static void factory_arp(uint32_t s, ArpState *st)
     const FactoryArp *f = &FA_TAB[s];
     uint8_t i;
     arp_defaults(st);
-    for (i = 0; i < ARP_NSTEP; i++) {
+    for (i = 0; i < FA_NSTEP; i++) {
         ArpChordStep *c = &st->steps[i];
         c->chord_root = f->root[i];
         c->rate = arp_rate_of_div(f->div);          /* its rhythm across the step, as TIMING plays it */

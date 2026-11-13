@@ -61,8 +61,6 @@ extern "C" {
 
 #define CARP_POS_NONE 0xFFu          /* stopped, or before the first step */
 #define CARP_NOTE_NONE 0xFFu
-#define CARP_ZONE_KEYS 13u           /* 8.1: the lowest 13 keys, chromatic: chord keys */
-#define CARP_STEP_KEYS ARP_NSTEP     /* .. then the next 8 white keys: step keys */
 #define CARP_NCELL 4u                /* a step's rhythm cells (3 for a triplet) */
 #define CARP_POOL_MAX (ARP_CHORD_NOTES * ARP_NOCT)
 enum { CARP_CELL_REST, CARP_CELL_STRIKE, CARP_CELL_TIE };          /* 8.3: _ o ~ */

@@ -53,7 +53,7 @@ static void run(uint32_t frames)
 }
 
 /* a captured pattern: 6 of 8 steps (one a rest, one a TIE, two accented), mixed styles (a HOLD strummed down),
- * rhythms and rates, Neo_Soul_1 */
+ * rhythms and rates, Neo_Soul_1; steps 9..16 the same again a fourth up (the STEPS scene plays 12 of them) */
 static void pattern(void)
 {
     static const uint8_t root[8] = {53, 58, 55, ARP_CHORD_EMPTY, 60, ARP_CHORD_TIE, 62, 65};
@@ -67,11 +67,11 @@ static void pattern(void)
     midi_clock_init();
     seq_defaults(lanes);
     now = 0;
-    for (i = 0; i < 8; i++) {
-        arp_state.steps[i].chord_root = root[i];
-        arp_state.steps[i].style = style[i];
-        arp_state.steps[i].variation = var[i];
-        arp_state.steps[i].rate = rate[i];
+    for (i = 0; i < 16; i++) {
+        arp_state.steps[i].chord_root = i < 8 || !ARP_ROOT_IS_CHORD(root[i % 8]) ? root[i % 8] : (uint8_t)(root[i % 8] + 5u);
+        arp_state.steps[i].style = style[i % 8];
+        arp_state.steps[i].variation = var[i % 8];
+        arp_state.steps[i].rate = rate[i % 8];
         arp_state.steps[i].octave_range = (uint8_t)(i % 3);
         arp_state.steps[i].accent = (uint8_t)(i == 0 || i == 4);
     }
@@ -112,17 +112,16 @@ int main(int argc, char **argv)
     const char *dir = argc > 1 ? argv[1] : ".";
     int fails = 0;
 
-    /* playing, ORANGE, transposed +3 with TRANSPOSE MAQ, step 5's key held (its card inverted), the cursor on GENRE */
+    /* CHORDS, playing, ORANGE, transposed +3 with TRANSPOSE MAQ, the cursor on TRANSPOSE MAQ */
     seq_palette_set(SQPAL_ORANGE);
     pattern();
     arp_state.transpose_maq_option = 1;
-    ui_sm_handle(&sm, UIEV_SELECT_ENC, 4);
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, 3);
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
     run(22050u * 2u + 100u);
-    ui_sm_arp_key(&sm, 3, 56, 1, 100);               /* G#3: +3 */
+    ui_sm_arp_key(&sm, 10, 63, 1, 100);              /* D#4: C4 + 3 */
     run(10);
-    ui_sm_arp_key(&sm, 3, 56, 0, 0);
-    ui_sm_arp_key(&sm, 20, 74, 1, 100);              /* (from F3: D5 is the 5th step key) */
+    ui_sm_arp_key(&sm, 10, 63, 0, 0);
     run(10);
     fails |= shot(dir, "play");
 
@@ -136,13 +135,25 @@ int main(int argc, char **argv)
     printf("  one step later: %d regions, %ld px (%ld%% of the screen)\n", blits, blit_px, blit_px * 100 / (240 * 240));
     if (blits == 0 || blits > 4) { printf("FAIL: a step redrew %d regions\n", blits); fails = 1; }
 
-    /* stopped, RED, DUAL with LAYER BOTH, the cursor on GATE */
+    /* stopped, RED, DUAL with LAYER BOTH, the cursor on LATCH */
     seq_palette_set(SQPAL_RED);
     pattern();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     arp_set_layer(&arp_state, ARPLAYER_BOTH);
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
     fails |= shot(dir, "stopped");
+
+    /* STEPS, playing 12 steps, ORANGE: step 11 selected (the second half on screen, its values on the knobs), the
+     * cursor on CHORD */
+    seq_palette_set(SQPAL_ORANGE);
+    pattern();
+    arp_state.sequence_length = 12;
+    ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
+    ui_sm_arp_key(&sm, 18, 71, 1, 100);              /* B4: step 11 */
+    ui_sm_arp_key(&sm, 18, 71, 0, 0);
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);
+    run(22050u * 9u + 100u);
+    fails |= shot(dir, "steps");
 
     /* stopped, ORANGE: REC armed (step entry, two chords in: the cursor on step 3), LATCH on, the cursor on ACCENT VEL,
      * the knobs RATE 1/16T and HOLD strummed UP */
@@ -153,8 +164,7 @@ int main(int argc, char **argv)
     sm.arp_knob[2] = ARPSTYLE_HOLD;
     sm.arp_knob[3] = 1;
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
-    ui_sm_arp_key(&sm, 15, 68, 1, 100);              /* G#4: LATCH */
-    ui_sm_arp_key(&sm, 15, 68, 0, 0);
+    ui_sm_arp_latch(&sm, 1);                         /* (ARP held + a key) */
     ui_sm_arp_key(&sm, 0, 53, 1, 100); run(10); ui_sm_arp_key(&sm, 0, 53, 0, 0);
     ui_sm_arp_key(&sm, 7, 60, 1, 100); run(10); ui_sm_arp_key(&sm, 7, 60, 0, 0);
     run(10);
