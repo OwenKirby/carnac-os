@@ -190,6 +190,11 @@ static void ar_draw_menu(const UIStateMachine *sm)
             pu_rune_n(230 - vw, y + 1, t, vc, 2, nt, 0);
         }
     }
+    if (n > AR_NROW) {                               /* the scroll bar, as every page's menu */
+        int32_t h = AR_NROW * AR_ROW_H, th = h * (int32_t)AR_NROW / n, t0 = h * top / n;
+        cv_rect(237, 4, 1, h, SQ_STONE[sq_pal]);
+        cv_rect(236, 4 + t0, 3, th, SQC(MID));
+    }
     cv_blit(0, AR_MENU_Y);
 }
 

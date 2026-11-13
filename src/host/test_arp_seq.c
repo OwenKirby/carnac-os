@@ -286,6 +286,20 @@ int main(void)
     CHECK(ui_sm_arp_key(&sm, 28, FM1_LOW + 28u, 1, 100) == 1 && sm.arp_held == 0 && sm.arp_sel == 15,
           "A5, above the 16 steps: taken, nothing");
     ui_sm_arp_key(&sm, 28, FM1_LOW + 28u, 0, 0);
+    {   /* OCT+ held + step key n: SEQ LENGTH n, the step not selected; the LEDs 1..n, n lit */
+        UiKeyLeds kl;
+        uint8_t len0 = arp_state.sequence_length;
+        CHECK(ui_sm_seq_key(&sm, 9, FM1_LOW + 9u, 1, UISEQ_MOD_OCT_UP) == 1 && arp_state.sequence_length == 6 &&
+              sm.arp_sel == 15 && sm.arp_held == 0, "OCT+ + D4 (step 6): SEQ LENGTH 6, selection kept");
+        ui_sm_seq_key(&sm, 9, FM1_LOW + 9u, 0, UISEQ_MOD_OCT_UP);
+        ui_sm_key_leds(&sm, FM1_LOW, UISEQ_MOD_OCT_UP, &kl);
+        CHECK(kl.lit == 1u << 9 && kl.dim == 0xD5u && kl.mid == 0, "OCT+ LEDs: steps 1..5 dim, 6 lit (%08x %08x)",
+              (unsigned)kl.lit, (unsigned)kl.dim);
+        CHECK(ui_sm_seq_key(&sm, 28, FM1_LOW + 28u, 1, UISEQ_MOD_OCT_UP) == 0 && arp_state.sequence_length == 6,
+              "OCT+ + A5 (past 16): not taken");
+        CHECK(ui_sm_seq_key(&sm, 9, FM1_LOW + 9u, 1, 0) == 0, "no OCT+: the step key goes to ui_sm_arp_key");
+        arp_state.sequence_length = len0;
+    }
     {   /* STEPS LEDs: 1..SEQ LENGTH dim (a rest dark), the selected step mid, held lit */
         UiKeyLeds kl;
         ui_sm_arp_key(&sm, 0, FM1_LOW, 1, 100);

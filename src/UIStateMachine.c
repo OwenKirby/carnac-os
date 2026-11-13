@@ -1910,6 +1910,15 @@ uint8_t ui_sm_seq_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t dow
 {
     SequencerLane *ln;
     uint8_t w;
+    if (sm->page == UIPAGE_ARP && sm->arp_view == UIARP_STEPS && (mods & UISEQ_MOD_OCT_UP) &&
+        sm->dialog == UIDLG_NONE && key <= note && note <= VAL_MAX) {
+        w = seq_whites_below(key, note);             /* (2026-11-13) ARP STEPS: OCT+ + step key n = SEQ LENGTH n */
+        if (w >= ARP_NSTEP)
+            return 0u;
+        if (down && NOTE_IS_WHITE(note))
+            sm->arp->sequence_length = (uint8_t)(w + 1u);
+        return 1u;
+    }
     if (sm->page != UIPAGE_SEQ || sm->dialog != UIDLG_NONE)
         return 0u;
     if (ui_sm_seq_recording(sm)) {                   /* 7.2: the keyboard plays as normal and writes the step */
@@ -2442,7 +2451,7 @@ static void ui_seq_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8
  * note out of its reach is not shown), and while a pattern plays the key of its transposition mid. STEPS: the 16 white
  * keys are the steps: 1..SEQ LENGTH dim (a rest dark), the selected step mid (stopped with REC armed: the step the
  * next chord goes into), the playing and held steps lit */
-static void ui_arp_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8_t *lv)
+static void ui_arp_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8_t mods, uint8_t *lv)
 {
     uint8_t wk[ARP_NSTEP], i, n, pos = CARP_POS_NONE, len = sm->arp->sequence_length;
     int16_t t;
@@ -2462,6 +2471,11 @@ static void ui_arp_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8
         return;
     }
     ui_led_whites(lowest_note, 0u, ARP_NSTEP, wk);
+    if (mods & UISEQ_MOD_OCT_UP) {                   /* OCT+ held: 1..SEQ LENGTH dim, the last step lit */
+        for (i = 0u; i < len && i < ARP_NSTEP; i++)
+            ui_led_put(lv, wk[i], i + 1u == len ? (uint8_t)LV_LIT : (uint8_t)LV_DIM);
+        return;
+    }
     for (i = 0u; i < ARP_NSTEP; i++) {
         if (i < len && sm->arp->steps[i].chord_root != ARP_CHORD_EMPTY)
             ui_led_put(lv, wk[i], LV_DIM);              /* past SEQ LENGTH, and a rest: dark */
@@ -2483,7 +2497,7 @@ uint8_t ui_sm_key_leds(const UIStateMachine *sm, uint8_t lowest_note, uint8_t mo
     if (sm->page == UIPAGE_SEQ)
         ui_seq_key_leds(sm, lowest_note, mods, lv);
     else
-        ui_arp_key_leds(sm, lowest_note, lv);
+        ui_arp_key_leds(sm, lowest_note, mods, lv);
     for (k = 0u; k < UI_LED_KEYS; k++) {
         if (lv[k] == LV_LIT) out->lit |= 1u << k;
         else if (lv[k] == LV_MID) out->mid |= 1u << k;
