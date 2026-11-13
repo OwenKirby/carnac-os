@@ -131,7 +131,8 @@ enum {
 #define UI_KB_MS 4000u               /* SAVE: the full-screen keyboard stays up this long after the last name knob detent
                                       * (2026-11-13; any button or encoder puts it away at once) */
 #define UI_HOLD_MS 200u              /* HOME / SAVE held this long: the hold strip shows what OCT- / OCT+ do */
-#define UI_ROWPOP_MS 1500u           /* the parameter list stays up this long after the last Select / Algorithm detent */
+#define UI_VMPOP_MS 1500u            /* HOME + MONO / POLY: the VOICING popup stays up this long after the key */
+#define UI_ROWPOP_MS 1500u          /* the parameter list stays up this long after the last Select / Algorithm detent */
 #define UI_ROWPOP_MOD 2u           /* rowpop: the MOD MATRIX's popup, + the field (UIMODF_*) being turned */
 enum { UIMODF_SRC, UIMODF_VIA, UIMODF_DEST, UIMODF_VIA_DEPTH, UIMODF_AMOUNT, UIMODF_COUNT };   /* knobs 1..4, Algorithm */
 /* The store's answer for one slot of a save target (UISAVE_*): UISLOT_EMPTY / UISLOT_USED. For a used slot it fills
@@ -183,6 +184,9 @@ typedef struct {
                                       * Algorithm Encoder keeps it up; any other control or UI_ROWPOP_MS puts it away) */
     uint16_t rowpop_ms;              /* .. time left, ui_sm_tick counts it down */
     uint16_t kb_ms;                  /* SAVE: the letter keyboard's time left (knobs 3 / 4 edit the name), ui_sm_tick */
+    uint16_t vmpop_ms;               /* HOME + MONO / POLY: the VOICING popup's time left (2026-11-13), ui_sm_tick; any
+                                      * control or page change puts it away */
+    uint8_t vmpop_layer;             /* .. the layer whose voicing it shows */
     InstrumentSettings *inst;        /* GLOBAL's instrument settings (ui_sm_attach_instrument; NULL: a private copy) */
     uint8_t hold;                    /* the button held as a modifier, BTN_HOME / BTN_SAVE, for the hold strip (the
                                       * caller sets it UI_HOLD_MS after the press, ui_sm_set_hold); BTN_COUNT: none */

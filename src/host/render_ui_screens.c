@@ -580,6 +580,19 @@ int main(int argc, char **argv)
         perf_state.perf_mode = PERF_SINGL_SYNTH;
         ui_sm_enforce(&sm);
         shot(dir, "perf_singl");
+        {                                            /* HOME + MONO / POLY: the VOICING popup for each voicing */
+            static const uint8_t K[5] = {UIHK_POLY, UIHK_POLY, UIHK_MONO, UIHK_MONO, UIHK_MONO};
+            static const char *const N[5] = {"vm_poly_a", "vm_poly_b", "vm_mono_retrig", "vm_mono_legato", "vm_unison"};
+            uint8_t keep = perf_state.voice_mode[0], j;
+            for (j = 0; j < 5u; j++) {
+                ui_sm_home_key(&sm, K[j]);
+                if (!sm.vmpop_ms) { printf("FAIL: HOME + voicing key did not raise the VOICING popup\n"); fails = 1; }
+                shot(dir, N[j]);
+            }
+            ui_sm_tick(&sm, UI_VMPOP_MS);
+            if (sm.vmpop_ms) { printf("FAIL: the VOICING popup did not time out\n"); fails = 1; }
+            perf_state.voice_mode[0] = keep;
+        }
         perf_state.perf_mode = PERF_DUAL_SYNTH;
         engine_state[0] = e0; engine_state[1] = e1; seq_lanes[0] = s0; seq_lanes[1] = s1; seq_lanes[2] = s2; arp_state = a0;
         ui_sm_enforce(&sm);

@@ -1494,6 +1494,7 @@ static void enter_page(UIStateMachine *sm, uint8_t page)
     sm->browse = 0u;                 /* the preset list belongs to the page it opened on */
     sm->rowpop = 0u;                 /* .. and so does the parameter list */
     sm->kb_ms = 0u;                  /* .. and SAVE's keyboard */
+    sm->vmpop_ms = 0u;               /* .. and the VOICING popup */
     sm->knob_touched = 0u;
     sm->s.current_param_focus = page < UIPAGE_COUNT && ui_cur_page(sm)->ctx == UICTX_SYNTH ?
                                 sm->page_focus[page] : (uint8_t)0u;
@@ -1575,6 +1576,11 @@ uint8_t ui_sm_home_key(UIStateMachine *sm, uint8_t hk)
         break;
     default: return 0u;
     }
+    sm->browse = 0u;                 /* the VOICING popup, large, over whatever was up */
+    sm->rowpop = 0u;
+    sm->kb_ms = 0u;
+    sm->vmpop_ms = UI_VMPOP_MS;
+    sm->vmpop_layer = perf_mode(sm) == PERF_SINGL_SYNTH ? 0u : layer;
     ui_sm_enforce(sm);               /* (UNISON's rows grey or return) */
     return 1u;
 }
@@ -2746,6 +2752,8 @@ void ui_sm_tick(UIStateMachine *sm, uint16_t ms)
     }
     if (sm->kb_ms)
         sm->kb_ms = ms >= sm->kb_ms ? (uint16_t)0u : (uint16_t)(sm->kb_ms - ms);
+    if (sm->vmpop_ms)
+        sm->vmpop_ms = ms >= sm->vmpop_ms ? (uint16_t)0u : (uint16_t)(sm->vmpop_ms - ms);
     if (sm->rowpop) {
         if (ms >= sm->rowpop_ms)
             sm->rowpop = 0u;
@@ -2822,6 +2830,8 @@ void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *
     sm->save_from = UIPAGE_PERF;
     sm->hold = BTN_COUNT;
     sm->kb_ms = 0u;
+    sm->vmpop_ms = 0u;
+    sm->vmpop_layer = 0u;
     sm->inst = 0;
     sm->clip_kind = UICLIP_EMPTY;
     sm->clip_layer = 0u;
@@ -2951,6 +2961,7 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
     if (type != UIEV_SELECT_ENC && type != UIEV_ALGO_ENC)
         sm->rowpop = 0u;             /* .. and the parameter list */
     sm->kb_ms = 0u;                  /* .. and SAVE's name keyboard (only knobs 3 / 4 keep it up; SAVE then stores) */
+    sm->vmpop_ms = 0u;               /* .. and the VOICING popup */
     if (sm->dialog == UIDLG_WRITING)                 /* nothing interrupts a flash write */
         return;
     if (type == UIEV_TRANSPORT) {                    /* REC: 7.2 on the SEQ page, 8.1 on the ARP page, else the loop */

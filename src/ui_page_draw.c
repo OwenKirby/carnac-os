@@ -105,7 +105,7 @@ static void rec_draw(UIStateMachine *sm, uint32_t force);   /* the REC page (ui_
 #define PU_DLG_H 70
 
 enum { PUR_HEAD, PUR_KNOB0, PUR_MENU = PUR_KNOB0 + 4, PUR_VIZ, PUR_GLYPH, PUR_TRACK, PUR_DLG, PUR_BROWSE, PUR_ROWPOP,
-       PUR_NAMEKB, PUR_COUNT };
+       PUR_NAMEKB, PUR_VMPOP, PUR_COUNT };
 static uint32_t pu_sig[PUR_COUNT];
 static uint8_t pu_top;               /* the first menu row shown */
 
@@ -562,7 +562,7 @@ static void pu_draw_knob_tablet(UIStateMachine *sm, const PuKnob *o, uint8_t k)
     uint8_t st;
     cv_begin((uint32_t)(c1 - c0), PU_KNOB_H, SQC(BG));
     sq_knob_tablet(x, sx, PU_KNOB_H - 3, k, PU_KNOB_Y, o->label, SQC(MID), 0u);
-    if (!o->none && o->text) {                       /* "088", as the menu and the dolmen show a slot */
+    if (!o->none && o->text) {                       /* "088", as the menu and the kerbstone show a slot */
         for (n = 0; o->text[n] && n < 3; n++) {}
         for (i = 0; i < 3 - n; i++) nm[i] = '0';
         for (j = 0; j < n; j++) nm[i + j] = o->text[j];
@@ -2342,8 +2342,6 @@ static void pu_viz_split(const UIStateMachine *sm)
 }
 
 /* --------------------------------------------------------------- save --- */
-/* the performance as a dolmen: its name on the capstone, the four links it rests on as stones (6.1); layer 2's stone
- * dark under SINGL */
 /* how much each part of the performance holds, 0..PU_FILL_MAX: a patch and the sequencer by the bytes changed from
  * their factory slot (an init patch or the factory C3 row reads 0), the arp by the steps holding a chord */
 #define PU_FILL_MAX 16
@@ -2375,44 +2373,94 @@ static void pu_preset_fill(const UIStateMachine *sm, int32_t f[4])
     f[3] = n * PU_FILL_MAX / ARP_NSTEP;
 }
 
-/* HOME's performance browser (6.1): the performance is a dolmen, its name above. The capstone is the performance,
- * resting on four pillars, the parts it links: L1 and L2's patches, the sequence and the arp. Each pillar is as thick
- * as its part holds (pu_preset_fill) and the capstone as thick as all four together. The stones are the voice stones
- * of HOME and AMP (sq_stone) in the knob tablets' rock (PU_ROCK, a tone up from their face): solid where the live part
- * holds something (saved or not), an outline in the rock's brightest tone where it is still the factory slot, rubble for
- * layer 2 under SINGL */
+/* HOME's performance browser (6.1, 2026-11-13 the user's pick: the kerbstone): the performance is the long kerb before
+ * a tomb's mouth, its name above, in the knob tablets' rock (PU_ROCK, sq_rock_tone), with a spiral cut for each part it
+ * links: L1 and L2's patches, the sequence and the arp. A spiral winds more turns the more its part holds
+ * (pu_preset_fill), lit in the theme where the live part holds something (saved or not), only its groove where it is
+ * still the factory slot; layer 2 under SINGL a cup mark. Lozenges cut between, as on the kerbstones. */
+#define PU_KERB_X 8
+#define PU_KERB_Y 19
+#define PU_KERB_W 224
+#define PU_KERB_H 32
+#define PU_KERB_CY 35                /* the spirals' row */
+#define PU_KERB_R 12
+
+/* the kerb: the hewn block's outline (pu_rock_in), filled with the rock's grain, its edge a tone darker */
+static void pu_kerb(uint32_t seed)
+{
+    const uint16_t *t = PU_ROCK[sq_pal];
+    int32_t x, y, w = PU_KERB_W, h = PU_KERB_H;
+    uint32_t k;
+    for (y = 0; y < h; y++) {
+        pu_bl[y] = (int16_t)pu_rock_in(y, h, seed + 1u);
+        pu_br[y] = (int16_t)(w - pu_rock_in(y, h, seed + 2u));
+    }
+    for (x = 0; x < w; x++) {
+        pu_bt[x] = (int16_t)pu_rock_in(x, w, seed + 3u);
+        pu_bb[x] = (int16_t)(h - pu_rock_in(x, w, seed + 4u));
+    }
+    for (y = 0; y < h; y++)
+        for (x = pu_bl[y]; x < pu_br[y]; x++) {
+            int32_t edge;
+            if (!pu_block_in(x, y, w, h))
+                continue;
+            edge = !pu_block_in(x - 1, y, w, h) || !pu_block_in(x + 1, y, w, h) || !pu_block_in(x, y - 1, w, h) ||
+                   !pu_block_in(x, y + 1, w, h);
+            k = pu_rock_tone(PU_KERB_X + x, PU_VIZ_Y + PU_KERB_Y + y);
+            cv_pset(PU_KERB_X + x, PU_KERB_Y + y, t[edge && k > 1u ? k - 1u : k]);
+        }
+}
+
+/* a line cut in the rock: its groove a px down and right in the darkest tone, then the line in c (0: the groove only) */
+static void pu_cut(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
+{
+    cv_line(x0 + 1, y0 + 1, x1 + 1, y1 + 1, PU_ROCK[sq_pal][0]);
+    if (c)
+        cv_line(x0, y0, x1, y1, c);
+}
+
+/* a spiral cut round (cx, cy), q quarter turns out to radius r (a little flattened) */
+static void pu_kerb_spiral(int32_t cx, int32_t cy, int32_t q, int32_t r, uint16_t c)
+{
+    int32_t n = q * 16, i, lx = cx, ly = cy;
+    for (i = 1; i <= n; i++) {
+        int32_t rr = r * i / n, a = i & 63;
+        int32_t x = cx + rr * SQ_SIN[(a + 16) & 63] / 256, y = cy + rr * SQ_SIN[a] * 3 / (4 * 256);
+        pu_cut(lx, ly, x, y, c);
+        lx = x;
+        ly = y;
+    }
+}
+
 static void pu_viz_preset(const UIStateMachine *sm)
 {
     static const char *const LBL[4] = {"L1 ", "L2 ", "SEQ ", "ARP "};
     char b[NAME_LEN + 1];
     const MasterPerformancePreset *p = sm->perf;
     uint8_t v[4], k, off;
-    int32_t f[4], x, w, y, total = 0, cap, yb = 52, ph = 20;
+    int32_t f[4], x;
     v[0] = p->layer_patch[0]; v[1] = p->layer_patch[1]; v[2] = p->seq_link; v[3] = p->arp_link;
     pu_preset_fill(sm, f);
-    sq_text_in(0, CAP_IN(M, 22), 240, &AF_M, pu_perf_name(p, b), SQC(THEME), SQC(BG));
-    pu_ground(yb, PUC_STONE);
+    sq_text_in(0, CAP_IN(M, 18), 240, &AF_M, pu_perf_name(p, b), SQC(THEME), SQC(BG));
+    pu_kerb(4411u);
     for (k = 0; k < 4u; k++) {
         off = (uint8_t)(k == 1u && p->perf_mode == PERF_SINGL_SYNTH);
         x = 36 + k * 56;
-        w = 4 + f[k] * 10 / PU_FILL_MAX;             /* 4 .. 14 px */
-        if (!off)
-            total += f[k];
-        if (off) {                                   /* layer 2 under SINGL: rubble where its pillar would stand */
-            for (y = yb - 6; y < yb; y++)
-                for (w = 0; w < 10; w++)
-                    if (pu_speck(x - 5 + w, y + PU_VIZ_Y, 7u))
-                        cv_pset(x - 5 + w, y, PUC_STONE);
-        } else if (f[k] == 0) {
-            sq_stone(x - w / 2, yb, w, ph, ph, PU_ROCK[sq_pal][4], 31u + k * 7u, 1u, 0u);
+        if (off) {                                   /* layer 2 under SINGL: a cup mark where its spiral would be */
+            cv_rect(x - 2, PU_KERB_CY - 1, 4, 3, PU_ROCK[sq_pal][0]);
+            cv_rect(x - 1, PU_KERB_CY - 2, 2, 5, PU_ROCK[sq_pal][0]);
         } else {
-            sq_stone(x - w / 2, yb, w, ph, ph, PU_ROCK[sq_pal][3], 31u + k * 7u, 0u, 0u);
+            pu_kerb_spiral(x, PU_KERB_CY, 4 + f[k] * 8 / PU_FILL_MAX, PU_KERB_R, f[k] ? SQC(THEME) : 0u);
+        }
+        if (k < 3u) {                                /* a lozenge between */
+            pu_cut(x + 28, PU_KERB_CY - 7, x + 32, PU_KERB_CY, 0u);
+            pu_cut(x + 32, PU_KERB_CY, x + 28, PU_KERB_CY + 7, 0u);
+            pu_cut(x + 28, PU_KERB_CY - 7, x + 24, PU_KERB_CY, 0u);
+            pu_cut(x + 24, PU_KERB_CY, x + 28, PU_KERB_CY + 7, 0u);
         }
         pu_num(pu_cat(b, LBL[k]), v[k], 0u, 3u);
-        sq_text_in(x - 28, yb + 2 + CAP_IN(S, 14), 56, &AF_S, b, off ? SQC(DIM) : SQC(TEXT), SQC(BG));
+        sq_text_in(x - 28, PU_KERB_Y + PU_KERB_H + 2 + CAP_IN(S, 14), 56, &AF_S, b, off ? SQC(DIM) : SQC(TEXT), SQC(BG));
     }
-    cap = 5 + total * 6 / (4 * PU_FILL_MAX);         /* 5 .. 11 px: the performance's whole */
-    sq_stone(22, yb - ph, 196, cap, cap, PU_ROCK[sq_pal][total ? 3 : 4], 97u, (uint32_t)(total == 0), 0u);
 }
 
 /* 6.2.3: what the commit writes and where, what that slot holds now (an overwrite in the accent), and the
@@ -3137,7 +3185,7 @@ static uint32_t pu_viz_live(UIStateMachine *sm, uint32_t h)
         return pu_mix_sig(sm, h);
     case UIPAGE_TUNING:
         return pu_tuning_sig(sm, h);
-    case UIPAGE_PERF:                                /* the dolmen measures the live patches, sequence and arp */
+    case UIPAGE_PERF:                                /* the kerbstone measures the live patches, sequence and arp */
         h = sq_mix_bytes(h, (const uint8_t *)sm->engine[0], sizeof(EngineState));
         h = sq_mix_bytes(h, (const uint8_t *)sm->engine[1], sizeof(EngineState));
         h = sq_mix_bytes(h, (const uint8_t *)sm->lanes, sizeof(SequencerLane) * SEQ_NLANE);
@@ -3327,13 +3375,194 @@ static void pu_draw_hold(const UIStateMachine *sm)
     cv_blit(0, PU_HOLD_Y);
 }
 
+/* ------------------------------------------------------------ voicing --- */
+/* 2026-11-13 (the user): HOME + MONO / POLY changes the voicing blind, so it shows full screen for UI_VMPOP_MS: the
+ * layer small at the top, the voicing at 3x between the one its key gave before (above) and the one it gives next
+ * (below), dim, and under them its sign on a dotted plain, the stones in the theme. MONO RETRIG: one stone, the
+ * ripples of each strike round its foot. MONO LEGATO: one stone, the wind streaming past it. UNISON: one stone and
+ * its phased echoes either side. POLY RESET: the wind weaving through a row, left to right, until it spirals up round
+ * its last stone. POLY REUSE: a row, the wind weaving through it, in front of one stone and behind the next, left to
+ * right. */
+#define PU_VM_GY 202                 /* the plain */
+#define PU_VM_CX 120
+#define PU_VM_SW 24                  /* the stone */
+#define PU_VM_SH 70
+
+/* the cycles the two keys step through (ui_sm_home_key) */
+static const uint8_t PU_VM_MONO[3] = {VMODE_MONO_RETRIG, VMODE_MONO_LEGATO, VMODE_UNISON_STACK};
+static const uint8_t PU_VM_POLY[2] = {VMODE_POLY_REUSE, VMODE_POLY_RESET};
+
+/* a dotted half ellipse rx x ry round (cx, cy - oy), the near side (below cy) or the far (above) */
+static void pu_vm_ring(int32_t cx, int32_t cy, int32_t rx, int32_t ry, int32_t near, int32_t step, uint16_t c, int32_t oy)
+{
+    int32_t x, y;
+    for (x = -rx; x <= rx; x += step) {
+        for (y = ry; y > 0 && x * x * ry * ry + y * y * rx * rx > rx * rx * ry * ry; y--) {}
+        cv_pset(cx + x, cy + (near ? y : -y) - oy, c);
+    }
+}
+
+/* a curl of wind ending a strand at (x, y - oy): a turn and a quarter winding in, up (dir -1) or down (+1) */
+static void pu_vm_curl(int32_t x, int32_t y, int32_t r, int32_t dir, uint16_t c, int32_t oy)
+{
+    int32_t i, n = 80, lx = x, ly = y - oy;
+    for (i = 1; i <= n; i++) {                       /* centre (x, y + dir r): from its rim, round and in */
+        int32_t rr = r * (n - i / 2) / n, a = (48 - i) & 63;
+        int32_t px = x + rr * SQ_SIN[(a + 16) & 63] / 256, py = y + dir * (r + rr * SQ_SIN[a] / 256);
+        cv_line(lx, ly, px, py - oy, c);
+        lx = px; ly = py - oy;
+    }
+}
+
+/* a strand of wind from x0 to x1 about row y, swelling amp px with period per px: long dashes, faint at the ends,
+ * its curl at x1 */
+static void pu_vm_strand(int32_t x0, int32_t x1, int32_t y, int32_t amp, int32_t per, int32_t ph, int32_t dir, int32_t oy)
+{
+    int32_t x, py, ly = 0, n = x1 - x0;
+    for (x = x0; x <= x1; x++) {
+        py = y + amp * SQ_SIN[((x - x0) * 64 / per + ph) & 63] / 256;
+        if (x > x0 && (x - x0) % 14 < 11) {
+            int32_t e = x - x0 < x1 - x ? x - x0 : x1 - x;   /* how far in from the nearer end */
+            cv_line(x - 1, ly - oy, x, py - oy, e < n / 6 ? SQC(DIM) : SQC(MID));
+        }
+        ly = py;
+    }
+    pu_vm_curl(x1, ly, 4, dir, SQC(MID), oy);
+}
+
+static void pu_vm_stone(int32_t x, int32_t w, int32_t h, uint16_t c, uint32_t seed, uint32_t edge, int32_t oy)
+{
+    sq_stone(x - w / 2, PU_VM_GY - oy, w, h, h, c, seed, edge, 0u);
+}
+
+/* the wind spiralling up round the stone at cx from row y0, coming in from its left (front 1: the near half, drawn
+ * over it) */
+static void pu_vm_helix(int32_t cx, int32_t y0, int32_t front, int32_t oy)
+{
+    int32_t i, n = 64 * 2 + 32, lx = 0, ly = 0, lf = -1, top = PU_VM_GY - PU_VM_SH + 2;
+    for (i = 0; i <= n; i++) {
+        int32_t a = (i + 32) & 63, s = SQ_SIN[a];   /* (from the left, a half turn in) */
+        int32_t x = cx + 28 * SQ_SIN[(a + 16) & 63] / 256;
+        int32_t y = y0 - i * (y0 - top) / n - 7 * s / 256;
+        int32_t f = s < 0;                           /* the lower half of each turn is the near side */
+        if (lf == f && f == front)
+            cv_line(lx, ly - oy, x, y - oy, front ? SQC(MID) : PUC_STONE);
+        lx = x; ly = y; lf = f;
+    }
+    if (front)
+        pu_vm_curl(lx, ly, 5, -1, SQC(MID), oy);
+}
+
+/* the wind weaving through the row from x 18 to x1, left to right (front 1: where it passes before a stone); arrow:
+ * an arrowhead where it ends */
+static void pu_vm_weave(int32_t x1, int32_t arrow, int32_t front, int32_t oy)
+{
+    int32_t x, lx = 0, ly = 0, lf = -1;
+    for (x = 18; x <= x1; x++) {
+        int32_t a = ((x - 40) * 32 / 40) & 63;       /* in front of the stones at 40, 120, 200; behind 80, 160 */
+        int32_t f = SQ_SIN[(a + 16) & 63] > 0;
+        int32_t y = PU_VM_GY - 26 + 5 * SQ_SIN[a] / 256;
+        if (lf == f && f == front && (x - 18) % 12 < 9)
+            cv_line(lx, ly - oy, x, y - oy, front ? (x < 70 ? SQC(DIM) : SQC(MID)) : PUC_STONE);
+        lx = x; ly = y; lf = f;
+    }
+    if (front && arrow) {                            /* where it goes */
+        cv_line(lx, ly - oy, lx + 6, ly - oy, SQC(MID));
+        cv_line(lx + 6, ly - oy, lx + 2, ly - 4 - oy, SQC(MID));
+        cv_line(lx + 6, ly - oy, lx + 2, ly + 4 - oy, SQC(MID));
+    }
+}
+
+static void pu_vm_sign(uint8_t m, int32_t oy)
+{
+    int32_t x, i;
+    for (x = 20; x < 220; x += 2)
+        cv_pset(x, PU_VM_GY - oy, PUC_STONE);
+    switch (m) {
+    case VMODE_MONO_RETRIG:
+        for (i = 3; i >= 1; i--) {                   /* the strikes' ripples, the newest brightest */
+            uint16_t c = i == 1 ? SQC(MID) : i == 2 ? SQC(DIM) : PUC_STONE;
+            pu_vm_ring(PU_VM_CX, PU_VM_GY, 14 + i * 22, 2 + i * 3, 1, 3, c, oy);
+            pu_vm_ring(PU_VM_CX, PU_VM_GY, 14 + i * 22, 2 + i * 3, 0, 3, c, oy);
+        }
+        pu_vm_stone(PU_VM_CX, PU_VM_SW, PU_VM_SH, SQC(THEME), 5101u, 0u, oy);
+        break;
+    case VMODE_MONO_LEGATO:                          /* the wind streaming past, never broken off */
+        pu_vm_stone(PU_VM_CX, PU_VM_SW, PU_VM_SH, SQC(THEME), 5101u, 0u, oy);
+        pu_vm_strand(24, 196, PU_VM_GY - 52, 4, 110, 0, -1, oy);
+        pu_vm_strand(44, 214, PU_VM_GY - 30, 3, 90, 24, 1, oy);
+        pu_vm_strand(70, 170, PU_VM_GY - 70, 3, 80, 40, -1, oy);
+        break;
+    case VMODE_UNISON_STACK:
+        for (i = 3; i >= 1; i--) {                   /* its echoes, out of phase, either side */
+            uint16_t c = i == 1 ? SQC(MID) : i == 2 ? SQC(DIM) : PUC_STONE;
+            pu_vm_stone(PU_VM_CX - i * 10, PU_VM_SW, PU_VM_SH - i * 3, c, 5101u, 1u, oy);
+            pu_vm_stone(PU_VM_CX + i * 10, PU_VM_SW, PU_VM_SH - i * 3, c, 5101u, 1u, oy);
+        }
+        pu_vm_stone(PU_VM_CX, PU_VM_SW, PU_VM_SH, SQC(THEME), 5101u, 0u, oy);
+        break;
+    case VMODE_POLY_RESET:                           /* the wind through the row, then round its last stone */
+        pu_vm_weave(150, 0, 0, oy);
+        pu_vm_helix(186, PU_VM_GY - 26, 0, oy);
+        for (i = 0; i < 3; i++) {
+            int32_t sh = 46 + (i == 1 ? 6 : 0);
+            pu_vm_stone(40 + i * 40, 16, sh, SQC(DIM), 5200u + (uint32_t)i * 13u, 0u, oy);
+        }
+        pu_vm_stone(186, PU_VM_SW, PU_VM_SH, SQC(THEME), 5101u, 0u, oy);
+        pu_vm_weave(150, 0, 1, oy);
+        pu_vm_helix(186, PU_VM_GY - 26, 1, oy);
+        break;
+    default:                                         /* POLY REUSE: a row of five */
+        pu_vm_weave(214, 1, 0, oy);
+        for (i = 0; i < 5; i++) {
+            int32_t sh = 50 + (i == 2 ? 8 : 0) - (i == 0 || i == 4 ? 6 : 0);
+            pu_vm_stone(40 + i * 40, 16, sh, i == 2 ? SQC(THEME) : SQC(DIM), 5200u + (uint32_t)i * 13u, 0u, oy);
+        }
+        pu_vm_weave(214, 1, 1, oy);
+        break;
+    }
+}
+
+/* the voicing the key gives d steps from m (d -1: the one before, +1: the one after) */
+static uint8_t pu_vm_step(uint8_t m, int32_t d)
+{
+    const uint8_t *c = PU_VM_POLY;
+    int32_t n = 2, i;
+    if (m == VMODE_MONO_RETRIG || m == VMODE_MONO_LEGATO || m == VMODE_UNISON_STACK)
+        c = PU_VM_MONO, n = 3;
+    for (i = 0; i < n && c[i] != m; i++) {}
+    return c[((i + d) % n + n) % n];
+}
+
+static void pu_draw_vmpop(const UIStateMachine *sm, uint32_t force)
+{
+    uint8_t layer = sm->vmpop_layer < NLAYER ? sm->vmpop_layer : 0u, m = sm->perf->voice_mode[layer];
+    char t[16];
+    int32_t oy;
+    if (!pu_dirty(PUR_VMPOP, sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)m | (uint32_t)layer << 8), force))
+        return;
+    t[0] = '\0';
+    pu_cat(t, sm->perf->perf_mode == PERF_SINGL_SYNTH ? "VOICING" : layer ? "L2  VOICING" : "L1  VOICING");
+    for (oy = 0; oy < 240; oy += PU_POP_BAND) {
+        cv_begin(240, PU_POP_BAND, SQC(BG));
+        pu_tablet(4, 4, 232, 232, 63u, oy);
+        pu_pop_line(14, t, SQC(MID), 1, oy);
+        pu_pop_line(30, ui_sm_vmode_name(pu_vm_step(m, -1)), SQC(DIM), 2, oy);
+        pu_pop_line(54, ui_sm_vmode_name(m), SQC(THEME), 3, oy);
+        pu_pop_line(87, ui_sm_vmode_name(pu_vm_step(m, 1)), SQC(DIM), 2, oy);
+        pu_vm_sign(m, oy);
+        cv_blit(0, (uint32_t)oy);
+    }
+}
+
 static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint32_t force)
 {
     static uint8_t last_page = 0xFFu, last_layer, last_dlg, last_pop, last_pal = 0xFFu, last_hold = BTN_COUNT, last_mfx;
     uint8_t dlg = (uint8_t)(sm->dialog != UIDLG_NONE), moved = (uint8_t)(sm->page != last_page);
     uint8_t mfx = pu_mfx_view(sm);                   /* (AMP's MFX group: another layout, everything again) */
-    uint8_t pop = sm->browse ? 1u : sm->rowpop ? 2u : ui_sm_keyboard_visible(sm) ? 3u : 0u;   /* the popup up: the preset
-                                                     * list, the parameter list, SAVE's name keyboard */
+    uint8_t pop = sm->browse ? 1u : sm->rowpop ? 2u : ui_sm_keyboard_visible(sm) ? 3u : sm->vmpop_ms ? 4u : 0u;   /* the
+                                                     * popup up: the preset list, the parameter list, SAVE's name
+                                                     * keyboard, the VOICING */
     sq_pal = pu_page_pal(sm);                        /* a change redraws everything (page_draw, seq_draw: pal_drawn) */
     uint8_t held = (uint8_t)(sm->hold == BTN_HOME || sm->hold == BTN_SAVE);
     if (!held && last_hold != BTN_COUNT)
@@ -3356,8 +3585,10 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
             pu_draw_browse(sm, force);
         else if (pop == 2u)
             pu_draw_rowpop(sm, force);
-        else
+        else if (pop == 3u)
             pu_draw_namekb(sm, force);
+        else
+            pu_draw_vmpop(sm, force);
         if (held)
             pu_draw_hold(sm);
         return;
