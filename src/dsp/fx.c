@@ -102,6 +102,7 @@ static struct FX_LINE {                               /* core 1: the ROOM networ
 
 static void tank_init(void);                       /* the MOD / DOLMEN / TUMULUS tank, below */
 static void spring_init(void);                     /* SPRING, below */
+static void rv_half_init(void);                    /* the tank's half rate, below */
 static int32_t clamp16(int32_t v) { return v > 32767 ? 32767 : (v < -32768 ? -32768 : v); }
 /* 32-bit Q15 multiply (no int64 on the 32-bit core). Every call here has |a| <= 65535 and 0 <= b <= 32767,
  * so the product stays below 2^31: tape states and comb low-passes track int16 values, so their differences
@@ -177,6 +178,11 @@ void fx_init(void)
     rv_r = RV_RING - FX_REV_LAG;                       /* the back reads the lag behind the front */
     tank_init();
     spring_init();
+    rv_half_init();
+#if defined(FX_LAYOUT_PAD) && FX_LAYOUT_PAD > 0
+    extern void (*volatile fx_layout_pad_ref)(void);
+    (void)fx_layout_pad_ref;                       /* (a read: the layout pad stays through --gc-sections) */
+#endif
 }
 
 /* Delay time in samples, always at least 64 and at most 44133 (1.0 s; 2026-10-26, user: "reduce the maximum delay
@@ -251,13 +257,32 @@ static inline int32_t mr_mulq15(int32_t a, int32_t b)
     int32_t t = a * b;
     return (t + ((t >> 31) & 32767)) >> 15;
 }
-#define MR_L(n) ((uint32_t)((n) * 13u + 5u) / 10u)        /* Dattorro's length at 29.761 kHz, scaled 1.3x */
-#define MR_EXC 12                                         /* modulation excursion, samples either side */
+/* HALF RATE (2026-11-11, after S1Vave's REV_DIV 2): the tank runs at 22.05 kHz. The front takes the send's frames in
+ * pairs through a [1 3 3 1] / 8 decimator (a double null at 22 kHz, -9 dB at the half rate's Nyquist) and diffuses
+ * them at half rate; the back runs the tank once a pair and brings its output back up by linear interpolation, a
+ * frame late. Every length, the sweep, the spin, the damping and the filters keep their times and corners, so the
+ * space is the same; above ~8 kHz it is darker. Half the work on both cores and half the ring (32 KB of .pool back).
+ * Measured on the FM1 (same layout, FX_LAYOUT_PAD): PERF TEST median +0.1, no row better than -0.8: the tank's work
+ * is core 1's, hidden behind core 0's. So off by default; MR_HALF 0 is the full-rate tank, bit for bit as before. */
+#ifndef MR_HALF
+#define MR_HALF 0                                         /* (2026-11-11: off. On two cores it saved ~0: the tank runs on
+                                                           * core 1 beside core 0's delay and front, which set the pace.
+                                                           * On, it frees 32 KB of .pool, should that be needed) */
+#endif
+#define MR_DS (MR_HALF ? 2u : 1u)                         /* frames a tank sample */
+/* MR_MELLOW 1: CELESTIAL's mellowing (below; on hold 2026-11-11, the user undecided): needs MR_HALF */
+#ifndef MR_MELLOW
+#define MR_MELLOW 0
+#endif
+PS_STATIC_ASSERT(!MR_MELLOW || MR_HALF, "the mellowing is the half-rate tank's");
+#define MR_L(n) ((uint32_t)((n) * 13u + 5u * MR_DS) / (10u * MR_DS))   /* Dattorro's length at 29.761 kHz, scaled
+                                                                         * 1.3x (at the tank's rate) */
+#define MR_EXC (12 / (int)MR_DS)                          /* modulation excursion, samples either side (0.27 ms) */
 /* Every line lives in one ring of MR_RING samples with one pointer that falls by one a sample (Keith Barr's FV-1
  * layout): line k writes at p + its start and reads d samples back at p + start + d, so an access is one add, one
  * mask and the load, the offsets constants (2026-10-15: per-line pointers, lengths and write heads cost ~1000 cycles
  * a sample on the FM1 in loads alone). A line's region is its longest delay + 1. */
-#define MR_RING 32768u
+#define MR_RING (32768u / MR_DS)
 #define MR_MASK (MR_RING - 1u)
 #define MR_B_IN1 MR_L(142)                                /* each line's delay at full size */
 #define MR_B_IN2 MR_L(107)
@@ -334,9 +359,38 @@ PS_STATIC_ASSERT(MR_CHUNK == 16u, "the guard glides with >> 4");
 /* CELESTIAL's pitch shifter: a window of MR_SH_LEN samples read by two heads at twice the writing speed (an octave
  * up, whole-sample steps: no interpolation), half a window apart, each faded in and out by a triangle so the other
  * covers its jump back; then a one-pole low-pass, as each octave up would pile up harsh highs */
-#define MR_SH_LEN 2048u
+#define MR_SH_LEN (MR_MELLOW ? 2048u : 2048u / MR_DS)  /* (46 ms; the mellowing's 93: a smoother window) */
 #define MR_SHIMMER 19661                                  /* 0.6: how much of it goes back into the tank, Q15 */
+#if MR_HALF                                               /* its one-poles at the tank's rate: */
+#define MR_SH_AA 22300                                    /* ~4 kHz (an octave up must stay under 11 kHz) */
+#define MR_SH_HP 1800                                     /* ~200 Hz */
+#define MR_SH_LP 22000                                    /* ~3.9 kHz (MR_MELLOW: it glides, below) */
+#else
+#define MR_SH_AA 18000
+#define MR_SH_HP 900
+#define MR_SH_LP 14000
+#endif
 static int16_t mr_sh[MR_SH_LEN] SYNTH_POOL FX_LINE;     /* (its state: in fx_tank_c1, above) */
+/* CELESTIAL's mellowing (2026-11-11, the user: "dreamier, not as annoying when the octave shift rings out ... having it
+ * mellow out and blur"): the octaves keep blooming through the whole tail, but the older the tail, the softer and the
+ * more smeared each pass up. An envelope of the tank's input (its peak a chunk, Q8: fast up, tau ~1.5 s down) is the
+ * tail's youth: fresh (notes going in, from MR_BLOOM_FULL) the shimmer's low-pass sits at ~3.5 kHz and its blur
+ * allpass is light; as the envelope falls the low-pass glides down to ~900 Hz and the blur's feedback rises, so the
+ * octave stack turns into a warm haze instead of a whistle. The blur: one allpass of MR_BLUR_D samples (9.6 ms) on its
+ * own small ring after the shifter. MR_HALF only: MR_HALF 0 keeps the old CELESTIAL to the bit. */
+#if MR_MELLOW
+#define MR_BLOOM_FULL 512                                 /* the input's level (Q15 into the tank) at a fresh tail */
+#define MR_SH_LP_FRESH 20700                              /* ~3.5 kHz */
+#define MR_SH_LP_AGED 7400                                /* ~900 Hz */
+#define MR_BLUR_FRESH 9830                                /* the blur allpass's coefficient, 0.3 .. */
+#define MR_BLUR_AGED 22938                                /* .. 0.7 */
+#define MR_BLUR_LEN 256u
+#define MR_BLUR_D 211u
+static int16_t mr_blur[MR_BLUR_LEN] SYNTH_POOL;
+static int32_t mr_bloom_env, mr_bloom_g, mr_bloom_pk;     /* the envelope (Q8), the youth (Q15) and its peak so far */
+PS_STATIC_ASSERT(((MR_BLOOM_FULL << 8) >> 2) == 32768, "the youth is the envelope >> 2");
+PS_STATIC_ASSERT(MR_BLUR_D < MR_BLUR_LEN && (MR_SH_LEN & (MR_BLUR_LEN - 1u)) == 0u, "the blur's ring");
+#endif
 
 /* The tank's input diffusion runs in the reverb's front (fx_reverb_front, core 0 on the FM1), so its four allpasses
  * have a ring of their own (the same FV-1 layout, MR_S_IN1 .. MR_S_AP1L of it), apart from the tank's. */
@@ -362,6 +416,10 @@ static void tank_init(void)
     mr_duck = mr_duck_g = 32767;
     mr_duck_step = 0;
     memset(mr_sh, 0, sizeof mr_sh);
+#if MR_MELLOW
+    memset(mr_blur, 0, sizeof mr_blur);
+    mr_bloom_env = mr_bloom_g = mr_bloom_pk = 0;
+#endif
     mr_sh_w = mr_sh_c = 0;
     mr_sh_lp = mr_sh_hp = mr_sh_aa1 = mr_sh_aa2 = 0;
 }
@@ -371,7 +429,13 @@ static void tank_init(void)
  * of its own c, 0 where it jumps back, and the two always sum to 1. */
 /* the shifter's state while a block runs: locals of tank_run (on this core a load or store of a static costs ~8
  * cycles, and the shifter touched six of them a sample) */
-typedef struct { uint32_t w, c; int32_t aa1, aa2, hp, lp; } MrShift;
+typedef struct {
+    uint32_t w, c;
+    int32_t aa1, aa2, hp, lp;
+#if MR_MELLOW
+    int32_t lp_c, blur_g;                                 /* the mellowing's low-pass and blur, set once a chunk */
+#endif
+} MrShift;
 
 static inline __attribute__((always_inline)) int32_t mr_shift(MrShift *st, int32_t x)
 {
@@ -379,9 +443,13 @@ static inline __attribute__((always_inline)) int32_t mr_shift(MrShift *st, int32
     uint32_t w = st->w, c = st->c;
     /* two poles at about 6 kHz before it: an octave up folds whatever is above 11 kHz back down, and at 14.7 kHz (a
      * third of the rate) onto itself, where the loop held a faint tone forever (measured) */
-    st->aa1 += mr_mulq15(x - st->aa1, 18000);
-    st->aa2 += mr_mulq15(st->aa1 - st->aa2, 18000);
+    st->aa1 += mr_mulq15(x - st->aa1, MR_SH_AA);
+#if MR_MELLOW
+    mr_sh[w] = (int16_t)clamp16(st->aa1);
+#else
+    st->aa2 += mr_mulq15(st->aa1 - st->aa2, MR_SH_AA);
     mr_sh[w] = (int16_t)clamp16(st->aa2);
+#endif
     int32_t a = mr_sh[(w - (mask - c)) & mask], b = mr_sh[(w - (mask - ((c + half) & mask))) & mask];
     /* head A's triangle; head B's is its complement (B is half a window round, so ga + gb = 32768 always), and
      * a ga + b (32768 - ga) = 32768 b + (a - b) ga: one multiply, the same bits */
@@ -391,9 +459,18 @@ static inline __attribute__((always_inline)) int32_t mr_shift(MrShift *st, int32
     int32_t y = b + (((a - b) * ga) >> 15);              /* |a - b| <= 65535, ga <= 32768: within 2^31 */
     /* a high-pass first: an octave up leaves DC and the lowest notes where they were, so fed back they would only
      * add to the decay and the loop would run away (measured); only what really rises goes back */
-    st->hp += mr_mulq15(y - st->hp, 900);                /* about 200 Hz */
-    st->lp += mr_mulq15(y - st->hp - st->lp, 14000);     /* about 5 kHz */
+    st->hp += mr_mulq15(y - st->hp, MR_SH_HP);           /* about 200 Hz */
+#if MR_MELLOW
+    st->lp += mr_mulq15(y - st->hp - st->lp, st->lp_c);  /* ~3.5 kHz fresh .. ~900 Hz aged */
+    /* the blur: an allpass on its own ring (v = x + g dl, out = dl - g v), the shifter's write count its index */
+    const uint32_t bm = MR_BLUR_LEN - 1u;
+    int32_t dl = mr_blur[(w - MR_BLUR_D) & bm], v = clamp16(st->lp + mr_mulq15(dl, st->blur_g));
+    mr_blur[w & bm] = (int16_t)v;
+    return dl - mr_mulq15(v, st->blur_g);
+#else
+    st->lp += mr_mulq15(y - st->hp - st->lp, MR_SH_LP);  /* about 4..5 kHz */
     return st->lp;
+#endif
 }
 
 /* a one-pole high-pass at about 20 Hz in each half of the loop: without it, rounding offsets build up by 1 / (1 -
@@ -401,7 +478,8 @@ static inline __attribute__((always_inline)) int32_t mr_shift(MrShift *st, int32
  * at this small a coefficient a plain Q0 one would not move for differences under ~176 LSB. */
 static inline int32_t mr_dc_block(int32_t *s, int32_t x)
 {
-    *s += (((x << 8) - *s) * 93) >> 15;                   /* |x << 8 - s| < 2^24: times 93 inside int32 */
+    /* |x << 8 - s| < 2^24: times 93 inside int32 (half rate: halved first, x 93 >> 14 = x 186 >> 15, the same corner) */
+    *s += ((((x << 8) - *s) >> (MR_DS - 1u)) * 93) >> (16u - MR_DS);
     return x - (*s >> 8);
 }
 
@@ -451,12 +529,35 @@ static inline __attribute__((always_inline)) int32_t mr_ap_in(uint32_t p, uint32
     return dl - mr_mulq15(v, g);
 }
 
-/* the tank's input: the send into it, then four allpasses diffusing it (0.75, 0.75, 0.625, 0.625), in place */
-static inline __attribute__((always_inline)) void tank_front(int32_t *x, uint32_t n, const uint32_t size)
+/* the tank's input: the send into it, then four allpasses diffusing it (0.75, 0.75, 0.625, 0.625), in place. Half
+ * rate: odd 1 on a pair's second frame (rv_odd_f), which gets the pair's tank sample; its first frame gets 0 */
+#if MR_HALF
+static int32_t mr_in_h[3];                                /* the send's last three frames, the newest first */
+#endif
+static inline __attribute__((always_inline)) void tank_front(int32_t *x, uint32_t n, const uint32_t size, uint32_t odd)
 {
     uint32_t p = mr_in_p;
+#if MR_HALF
+    int32_t h0 = mr_in_h[0], h1 = mr_in_h[1], h2 = mr_in_h[2];
+#else
+    (void)odd;
+#endif
     for (uint32_t s = 0; s < n; s++) {
+#if MR_HALF
+        int32_t v = x[s];
+        x[s] = 0;
+        int32_t dec = (v + 3 * (h0 + h1) + h2 + 4) >> 3;  /* the decimator, [1 3 3 1] / 8 (a send is Q15) */
+        h2 = h1;
+        h1 = h0;
+        h0 = v;
+        uint32_t second = odd;
+        odd ^= 1u;
+        if (!second)                                      /* (the pair's first frame: no tank sample) */
+            continue;
+        int32_t in = mr_mulq15(dec, MR_IN_GAIN);
+#else
         int32_t in = mr_mulq15(x[s], MR_IN_GAIN);
+#endif
         in = mr_ap_in(p, MR_S_IN1, MR_SZ(MR_B_IN1, size), in, 24576);
         in = mr_ap_in(p, MR_S_IN2, MR_SZ(MR_B_IN2, size), in, 24576);
         in = mr_ap_in(p, MR_S_IN3, MR_SZ(MR_B_IN3, size), in, 20480);
@@ -464,6 +565,9 @@ static inline __attribute__((always_inline)) void tank_front(int32_t *x, uint32_
         p = (p - 1u) & (MR_IN_RING - 1u);
     }
     mr_in_p = p;
+#if MR_HALF
+    mr_in_h[0] = h0; mr_in_h[1] = h1; mr_in_h[2] = h2;
+#endif
 }
 
 #define MR_RATE_L 38956u                                  /* spin: 0.40 Hz */
@@ -482,7 +586,14 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
     int32_t dec = mr_mulq15(decay, dg);
     int32_t dc_l = mr_dc_l, dc_r = mr_dc_r;
     uint32_t chunk = mr_wander_n;
+#if MR_MELLOW
+    int32_t bl_env = mr_bloom_env, bl_g = mr_bloom_g, bl_pk = mr_bloom_pk;
+    MrShift sh = {mr_sh_w, mr_sh_c, mr_sh_aa1, mr_sh_aa2, mr_sh_hp, mr_sh_lp,
+                  MR_SH_LP_AGED + (((MR_SH_LP_FRESH - MR_SH_LP_AGED) * bl_g) >> 15),
+                  MR_BLUR_AGED + (((MR_BLUR_FRESH - MR_BLUR_AGED) * bl_g) >> 15)};
+#else
     MrShift sh = {mr_sh_w, mr_sh_c, mr_sh_aa1, mr_sh_aa2, mr_sh_hp, mr_sh_lp};
+#endif
     if (!moving)
         mod_l = mod_r = 0;                                /* (a still tank: none left from MOD or CELESTIAL) */
     for (uint32_t s = 0; s < n; s++) {
@@ -503,17 +614,30 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
             if (pk > MR_DUCK_AT)
                 duck -= duck >> 4;
             else if (duck < 32767)
-                duck += ((32767 - duck) >> 8) + 1;
+                duck += ((32767 - duck) >> (9u - MR_DS)) + 1;   /* (half rate: chunks twice as long, the same tau) */
             if (duck > 32767) duck = 32767;
             dg_step = (duck - dg) >> 4;                   /* MR_CHUNK samples to the target */
             if (dg_step == 0 && dg != duck) {             /* (the last few LSB: 0.004 dB at most) */
                 dg = duck;
                 dec = mr_mulq15(decay, dg);
             }
+#if MR_MELLOW
+            if (celestial) {                              /* the mellowing: the last chunk's peak, the youth from it */
+                int32_t pk8 = bl_pk << 8;
+                if (pk8 > bl_env)
+                    bl_env += (pk8 - bl_env) >> 2;        /* (up in ~3 ms) */
+                else
+                    bl_env -= (bl_env >> 11) + (bl_env > 0);   /* (down: tau 2048 chunks, 1.5 s) */
+                bl_pk = 0;
+                bl_g = bl_env >= (MR_BLOOM_FULL << 8) ? 32767 : bl_env >> 2;
+                sh.lp_c = MR_SH_LP_AGED + (((MR_SH_LP_FRESH - MR_SH_LP_AGED) * bl_g) >> 15);
+                sh.blur_g = MR_BLUR_AGED + (((MR_BLUR_FRESH - MR_BLUR_AGED) * bl_g) >> 15);
+            }
+#endif
             if (moving) {
-                mr_ph_l += MR_RATE_L * MR_CHUNK;
-                mr_ph_r += MR_RATE_R * MR_CHUNK;
-                if (chunk >= 4410u) {                     /* wander: a new random target every 0.1 s ... */
+                mr_ph_l += MR_RATE_L * MR_CHUNK * MR_DS;
+                mr_ph_r += MR_RATE_R * MR_CHUNK * MR_DS;
+                if (chunk >= 4410u / MR_DS) {             /* wander: a new random target every 0.1 s ... */
                     chunk = 1;                    /* (as it is just after a chunk's count) */
                     for (int k = 0; k < 2; k++) {
                         mr_rng = mr_rng * 1103515245u + 12345u;
@@ -521,14 +645,20 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
                     }
                 }
                 for (int k = 0; k < 2; k++)               /* ... approached slowly (tau ~ 0.19 s), never stepped */
-                    mr_wander[k] += (mr_wander_tgt[k] - mr_wander[k]) >> 9;
+                    mr_wander[k] += (mr_wander_tgt[k] - mr_wander[k]) >> (10u - MR_DS);
                 mod_l = (para_sine(mr_ph_l) + mr_wander[0]) >> 1;   /* spin + wander, each half the excursion */
                 mod_r = (para_sine(mr_ph_r) + mr_wander[1]) >> 1;
             }
         }
         int32_t shim = 0;                                 /* CELESTIAL: both ends an octave up, back into both halves */
-        if (celestial)
+        if (celestial) {
+#if MR_MELLOW
+            int32_t ai = in < 0 ? -in : in;               /* (the mellowing's peak) */
+            if (ai > bl_pk)
+                bl_pk = ai;
+#endif
             shim = mr_mulq15(mr_shift(&sh, (from_l + from_r) >> 1), MR_SHIMMER);
+        }
 
         /* left half */
         int32_t a = mr_ap_swept(p, MR_S_AP1L, MR_SZ(MR_B_AP1L, size), mod_l, in + si + shim + mr_mulq15(from_r, dec),
@@ -576,6 +706,11 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
     mr_dc_r = dc_r;
     mr_wander_n = chunk;
     mr_sh_w = sh.w; mr_sh_c = sh.c; mr_sh_aa1 = sh.aa1; mr_sh_aa2 = sh.aa2; mr_sh_hp = sh.hp; mr_sh_lp = sh.lp;
+#if MR_MELLOW
+    mr_bloom_env = bl_env;
+    mr_bloom_g = bl_g;
+    mr_bloom_pk = bl_pk;
+#endif
 }
 
 /* x: the reverb send in, the left output out; r: the right output. type: REVTYPE_MOD / _CELESTIAL / _DOLMEN /
@@ -602,6 +737,8 @@ static void tank_reverb_block(const MasterPerformancePreset *p, int32_t *x, cons
         decay = 8000 + knob_t * 190;                      /* 0.24 .. 0.98 */
         damp = knob_d * 200;                              /* 0 .. 0.78 */
     }
+    if (MR_HALF)                                          /* the damping's pole squared: its corner at half rate */
+        damp = mr_mulq15(damp, damp);
     if (type == REVTYPE_DOLMEN)
         tank_run(x, sd, r, n, decay, damp, 0, 0, 102u);       /* 0.4 size */
     else if (celestial)                                   /* one copy each: the type's branches fold away */
@@ -1402,15 +1539,22 @@ static int reverb_is_tank(uint8_t t)
     return t == REVTYPE_MOD || t == REVTYPE_CELESTIAL || t == REVTYPE_DOLMEN || t == REVTYPE_TUMULUS;
 }
 
+/* the half-rate tank's frame parity, front and back: 1 when the next frame is a pair's second. Both step on every
+ * frame whatever the type, so they stay in step (the back reads FX_REV_LAG frames behind, an even number) */
+static uint32_t rv_odd_f, rv_odd_b;
+PS_STATIC_ASSERT((FX_REV_LAG & 1u) == 0u, "the back reads whole pairs behind the front");
+
 void fx_reverb_front(const MasterPerformancePreset *p, const int32_t *send, uint32_t n)
 {
     int32_t x[FX_BLOCK_MAX];
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
+    uint32_t odd = rv_odd_f;
+    rv_odd_f ^= n & 1u;
     send_limit(&rv_lim_env, send, x, n);
     if (p->reverb_type == REVTYPE_DOLMEN)
-        tank_front(x, n, 102u);
+        tank_front(x, n, 102u, odd);
     else if (reverb_is_tank(p->reverb_type))
-        tank_front(x, n, 256u);
+        tank_front(x, n, 256u, odd);
     else if (p->reverb_type == REVTYPE_SPRING)
         spring_front(x, n);
     for (uint32_t s = 0; s < n; s++) {
@@ -1424,10 +1568,68 @@ void fx_reverb_front(const MasterPerformancePreset *p, const int32_t *send, uint
 /* the side's block for the back (core 1's: static, not on its 2.8 KB stack) */
 static int32_t rv_sd[FX_BLOCK_MAX] FX_LINE;
 
+#if MR_HALF
+#define MR_HB (FX_BLOCK_MAX / 2u + 1u)                    /* a block's tank samples, at most */
+static int32_t mr_hx[MR_HB] FX_LINE, mr_hs[MR_HB] FX_LINE, mr_hr[MR_HB] FX_LINE;   /* (core 1's) */
+static struct FX_LINE {
+    int32_t pend_s;                                       /* a pair's first side frame, when a block ended between */
+    int32_t prev_l, prev_r;                               /* the tank's last output (the interpolation's) */
+} mr_half_c1;
+/* the tank at half rate over a block of n frames, odd as rv_odd_b: the front's pair samples (on the pairs' second
+ * frames) and the side's pairs averaged in, the output back up a frame late (a pair's first frame the last tank
+ * sample, its second halfway to the new one), as the springs */
+static void tank_half_block(const MasterPerformancePreset *p, int32_t *x, const int32_t *sd, int32_t *r, uint32_t n,
+                            uint32_t odd)
+{
+    uint32_t m = 0, o = odd;
+    int32_t pend_s = mr_half_c1.pend_s;
+    for (uint32_t s = 0; s < n; s++) {
+        if (o) {
+            mr_hx[m] = x[s];
+            mr_hs[m++] = (pend_s + sd[s]) / 2;
+        } else
+            pend_s = sd[s];
+        o ^= 1u;
+    }
+    mr_half_c1.pend_s = pend_s;
+    if (m)
+        tank_reverb_block(p, mr_hx, mr_hs, mr_hr, m, p->reverb_type);
+    int32_t al = mr_half_c1.prev_l, ar = mr_half_c1.prev_r;
+    m = 0;
+    o = odd;
+    for (uint32_t s = 0; s < n; s++) {
+        int32_t el = al, er = ar;
+        if (o) {
+            el = (al + mr_hx[m]) / 2;                     /* (toward zero: a dead tail ends at 0) */
+            er = (ar + mr_hr[m]) / 2;
+            al = mr_hx[m];
+            ar = mr_hr[m++];
+        }
+        o ^= 1u;
+        x[s] = el;
+        r[s] = er;
+    }
+    mr_half_c1.prev_l = al;
+    mr_half_c1.prev_r = ar;
+}
+#endif
+
+static void rv_half_init(void)
+{
+    rv_odd_f = rv_odd_b = 0u;
+#if MR_HALF
+    memset(mr_in_h, 0, sizeof mr_in_h);
+    memset(&mr_half_c1, 0, sizeof mr_half_c1);
+#endif
+}
+
 void fx_reverb_back(const MasterPerformancePreset *p, int32_t *x, int32_t *r, uint32_t n)
 {
     int32_t *const sd = rv_sd;
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
+    uint32_t odd = rv_odd_b;
+    rv_odd_b ^= n & 1u;
+    (void)odd;
     const int tank = reverb_is_tank(p->reverb_type);
     for (uint32_t s = 0; s < n; s++) {
         x[s] = rv_ring[(rv_r + s) & (RV_RING - 1u)];
@@ -1436,7 +1638,11 @@ void fx_reverb_back(const MasterPerformancePreset *p, int32_t *x, int32_t *r, ui
     }
     rv_r = (rv_r + n) & (RV_RING - 1u);
     if (tank) {
+#if MR_HALF
+        tank_half_block(p, x, sd, r, n, odd);
+#else
         tank_reverb_block(p, x, sd, r, n, p->reverb_type);
+#endif
         return;
     }
     if (p->reverb_type == REVTYPE_SPRING) {
@@ -1492,6 +1698,65 @@ void fx_reverb_block(const MasterPerformancePreset *p, int32_t *x, int32_t *r, u
     fx_reverb_front(p, x, n);
     fx_reverb_back(p, x, r, n);
 }
+
+/* FX_LAYOUT_PAD (2026-11-11, a layout tool): the FM1 runs the DSP from XIP flash through a 32 KB 8-way I-cache (4 KB a
+ * way), so a function's cache sets are its address mod 4 KB. Every DSP function after the reverb (the MFX, the
+ * oscillators, the voices' control tick and render) moves when the reverb's code grows, onto other sets: +-2..5 PERF
+ * points from changes that touch no voice code (fm1-cpu-profile, the layout lottery; the half-rate tank, +536 B: +4.7
+ * on rows it never runs in). FX_LAYOUT_PAD N: a never-run function of N volatile stores here, so the code after it
+ * moves by a whole way and keeps its sets. (A 4 KB-aligned function would do it exactly, but it raises .text's
+ * alignment and moves _start; inline asm is X0X's hal/ only.) */
+#if defined(FX_LAYOUT_PAD) && FX_LAYOUT_PAD > 0
+volatile uint8_t fx_pad_sink;
+#define FXP1 fx_pad_sink = 0u;
+#define FXP2 FXP1 FXP1
+#define FXP4 FXP2 FXP2
+#define FXP8 FXP4 FXP4
+#define FXP16 FXP8 FXP8
+#define FXP32 FXP16 FXP16
+#define FXP64 FXP32 FXP32
+#define FXP128 FXP64 FXP64
+#define FXP256 FXP128 FXP128
+#define FXP512 FXP256 FXP256
+#define FXP1024 FXP512 FXP512
+__attribute__((noinline, used)) void fx_layout_pad(void)
+{
+#if FX_LAYOUT_PAD & 1
+    FXP1
+#endif
+#if FX_LAYOUT_PAD & 2
+    FXP2
+#endif
+#if FX_LAYOUT_PAD & 4
+    FXP4
+#endif
+#if FX_LAYOUT_PAD & 8
+    FXP8
+#endif
+#if FX_LAYOUT_PAD & 16
+    FXP16
+#endif
+#if FX_LAYOUT_PAD & 32
+    FXP32
+#endif
+#if FX_LAYOUT_PAD & 64
+    FXP64
+#endif
+#if FX_LAYOUT_PAD & 128
+    FXP128
+#endif
+#if FX_LAYOUT_PAD & 256
+    FXP256
+#endif
+#if FX_LAYOUT_PAD & 512
+    FXP512
+#endif
+#if FX_LAYOUT_PAD & 1024
+    FXP1024
+#endif
+}
+void (*volatile fx_layout_pad_ref)(void) = fx_layout_pad;   /* (keeps it through --gc-sections) */
+#endif
 
 void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r, uint32_t n)
 {

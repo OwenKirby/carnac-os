@@ -100,7 +100,9 @@ const AnalogTick *analog_voice_tick(AnalogVoice *a, uint8_t amount)
         analog_fixed(a, amount);
     if (a->damt != 0.f) {
         float damt = a->damt, th = AN_THERMAL * an_th[1], dc;
-        if ((++a->phase & 3u) == 0u) {
+        uint8_t was = a->phase;
+        a->phase = (uint8_t)(was + 1u + a->long_tick);
+        if (((was ^ a->phase) & ~3u) != 0u) {
             int i;
             for (i = 0; i < 6; i += 2) {
                 a->drift[i] += AN_DRIFT_A * (AN_DRIFT_GAIN * an_noise(&a->rng) - a->drift[i]);

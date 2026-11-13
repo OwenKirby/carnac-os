@@ -277,7 +277,7 @@ void update_poly_lfo_engines(SynthVoiceNode *voice, const VoiceInput *in) {
         const LfoParams *cfg = &e->lfo[i + 1];                      /* LFO2, LFO3 */
         LfoRuntimeState *state = &voice->poly_lfos.engines[i];
         lfo_advance(cfg, state, i ? send_sum(&c, MDST_LFO3_SPEED, 1) : send_sum(&c, MDST_LFO2_SPEED, 1), in->gate,
-                    SYNTH_CTRL_SHIFT, in->frame);                   /* REL: waits for the key release */
+                    voice->ctrl_shift, in->frame);                  /* REL: waits for the key release */
         /* once per tick: the shape also redraws its random values here, so it must not be read twice */
         int32_t raw = compute_morphed_lfo_fixed(state, cfg->shape);
         voice->lfo_q15[i] = (((raw * state->envelope_amp_q15) >> 15) * voice->lfo_gain_q15[i + 1]) >> 15;
@@ -360,7 +360,6 @@ static void refresh_osc_mixer(int l) {
     x->noise_colour = clampi(m->noise_colour, 0, 127);
     x->noise_harmonic = clampi(engine_state[l].noise_harmonic, 0, 127);
 }
-PS_STATIC_ASSERT(SYNTH_CTRL_SHIFT == 4u, "oscmixer.c's noise band steps once a 16-sample tick (NZ_TICK_HZ, nz_d)");
 
 /* Knob smoothing (2026-10-21). The knobs are encoders a step at a time, and a cutoff step is 89 cents: turned slowly,
  * a filter sweep stepped audibly. CUTOFF, RESONANCE and MORPH of both filters and both oscillators' SCAN glide to the
@@ -368,7 +367,7 @@ PS_STATIC_ASSERT(SYNTH_CTRL_SHIFT == 4u, "oscmixer.c's noise band steps once a 1
  * 1 / 2^KNOB_GLIDE_SHIFT a tick: a time constant of 64 ticks, 23 ms (a turn settles in about 70). A MIDI CC or a
  * sequencer lane writing the same knob glides as well. A patch or performance load (engine_load_count) jumps. */
 #ifndef KNOB_GLIDE_SHIFT
-#define KNOB_GLIDE_SHIFT 6
+#define KNOB_GLIDE_SHIFT (10u - SYNTH_CTRL_SHIFT)   /* (23 ms at any control rate) */
 #endif
 typedef struct {
     int32_t cutoff[2], res[2], morph[2], scan[2];   /* filter / oscillator 1 and 2, Q16 knob units */
@@ -463,7 +462,7 @@ static void base_pitch(const OscParams *o, const VoiceInput *in, int32_t key_cen
 
 /* CHOKE (a voice over its layer's limit, or still on its layer's old architecture): the level fades to 0 over
  * 2^CHOKE_SHIFT control ticks, 256 samples (5.8 ms), then the voice is silenced and reset. */
-#define CHOKE_SHIFT 5
+#define CHOKE_SHIFT (9u - SYNTH_CTRL_SHIFT)          /* (256 samples at any control rate) */
 
 /* BINAURAL right ear: 0.125 Hz per BEAT step, in Q16 */
 #define BIN_BEAT_STEP_Q16 8192u
@@ -534,7 +533,7 @@ static int drive_plus(const SourceCtx *c, const FilterParams *f, int fi) {
 static void filter_prepare_one(SvfCore *k, const SourceCtx *c, const FilterParams *f, int fi, int cut_q8, int res_off,
                                int snap) {
     filter_core_prepare(k, cut_q8, res_plus(c, fi, res_off), filter_morph(c, f, fi), drive_plus(c, f, fi), f->flavour,
-                        SYNTH_CTRL_SHIFT, snap);
+                        c->voice->ctrl_shift, snap);
 }
 
 /* ANALOG's pitch offset: a frequency times a ratio near 1 (in float, so a fraction of a cent counts) */
@@ -574,6 +573,15 @@ static void mix_gains(float *g, int32_t l_q15, int32_t r_q15, float dry) {
     g[MIX_R] = (float)r_q15 * dry;
 }
 
+uint8_t voice_tick_shift(SynthVoiceNode *voice) {
+#if SYNTH_CTRL_ADAPT
+    voice->ctrl_shift = (uint8_t)(SYNTH_CTRL_SHIFT + !(voice->snap || voice->choke || voice->ctrl_fast));
+#else
+    voice->ctrl_shift = SYNTH_CTRL_SHIFT;
+#endif
+    return voice->ctrl_shift;
+}
+
 void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const EngineState *e = &engine_state[voice->layer];
     SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1], layer_sends_hi[voice->layer & 1]};
@@ -597,12 +605,25 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     /* 1. Envelopes, a tick at a time. ENV2 and ENV3 invert when read as mod sources (see resolve_source). In STACK,
      * ENV2 is also stack B's amp envelope, read uninverted as ENV1 is. */
     int32_t amp_env_q15 = adsr_advance(&voice->amp_env, &e->env[0], time_mod(&e->env[0], in), attack_mod(&e->env[0], in),
-                                       voice->release_boost_q15, SYNTH_CTRL_SHIFT, in->frame);
+                                       voice->release_boost_q15, voice->ctrl_shift, in->frame);
     int32_t env2_q15 = adsr_advance(&voice->mod_env, &e->env[1], time_mod(&e->env[1], in), attack_mod(&e->env[1], in),
-                                    voice->release_boost_q15, SYNTH_CTRL_SHIFT, in->frame);
+                                    voice->release_boost_q15, voice->ctrl_shift, in->frame);
     adsr_advance(&voice->aux_env, &e->env[2], time_mod(&e->env[2], in), attack_mod(&e->env[2], in),
-                 voice->release_boost_q15, SYNTH_CTRL_SHIFT, in->frame);
+                 voice->release_boost_q15, voice->ctrl_shift, in->frame);
     int32_t amp_b_env_q15 = arch == VARCH_STACK ? env2_q15 : 0;
+#if SYNTH_CTRL_ADAPT
+    {                                                               /* how fast they moved: the next tick's length */
+        const int32_t lv[3] = {voice->amp_env.level_q15, voice->mod_env.level_q15, voice->aux_env.level_q15};
+        int32_t mv = 0;
+        for (int k = 0; k < 3; k++) {
+            int32_t d = lv[k] - voice->env_seen[k];
+            d = d < 0 ? -d : d;
+            if (d > mv) mv = d;
+            voice->env_seen[k] = (int16_t)lv[k];
+        }
+        voice->ctrl_fast = (mv >> (voice->ctrl_shift - SYNTH_CTRL_SHIFT)) > SYNTH_CTRL_FAST_DELTA;
+    }
+#endif
     SPROF_LAP(SPROF_C_ENV);
 
     if (voice->choke) {
@@ -685,6 +706,10 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     if (arch == VARCH_SPREAD)
         spread = clampi(mx->spread + (send_sum(&c, MDST_SPREAD, 2) >> 15), 0, 127);
     int32_t harm_off_q8 = send_sum(&c, MDST_HARMONIC, 1) >> 7;   /* HARMONIC's routes, fine: 1/256 of a knob step */
+    {
+        uint8_t lt = (uint8_t)(voice->ctrl_shift != SYNTH_CTRL_SHIFT);
+        voice->mix.long_tick = voice->osc1.pcm.long_tick = voice->osc2.pcm.long_tick = voice->analog.long_tick = lt;
+    }
     osc_mixer_prepare(&voice->mix, &osc_mixer[voice->layer], freq1_q16, freq2_q16,
                       (int)balance_off, (int)xmod_off, (int)noise_off, (int)colour_off, (int)harm_off_q8);
     osc_prepare(&voice->osc1, freq1_q16, (int)spread);
@@ -720,7 +745,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
                             cutoff_q8(&c, 1, filter_mod_q8(&c, f2, 1) + an_cut2), res_plus(&c, 1, an_res2),
                             filter_morph(&c, f2, 1), drive_plus(&c, f2, 1), f2->flavour,
                             clampi(fm->routing + (int)routing_mod, 0, 127), clampi(fm->balance + (int)balance_mod, 0, 127),
-                            SYNTH_CTRL_SHIFT, snap);
+                            voice->ctrl_shift, snap);
         break;
     }
     case VARCH_STACK: {
@@ -768,7 +793,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
 
     /* 6. AMP (spec 4.6): each level ramps to this tick's value one step per sample (no zipper on the envelope), then
      * the drive stage, then pan with its mod source. Float from here (the FM1's FPU beats its integer multiplies). */
-    const float tick_inv = 1.f / (float)SYNTH_CTRL_PERIOD, q15_inv = 1.f / 32768.f;
+    const float tick_inv = 1.f / (float)(1u << voice->ctrl_shift), q15_inv = 1.f / 32768.f;
     voice->vol_step = ((float)vol_q15 * q15_inv - voice->vol) * tick_inv;
     voice->vol_b_step = ((float)vol_b_q15 * q15_inv - voice->vol_b) * tick_inv;
     voice->drive = a->drive;
@@ -1055,7 +1080,7 @@ void voice_render_block(SynthVoiceNode *voice, float *mix, int n) {
 
 /* Portamento: moves the glide offset toward its target by one control tick's worth of per-sample steps. */
 void voice_glide_advance(SynthVoiceNode *v) {
-    int32_t step = v->glide_step_q16 << SYNTH_CTRL_SHIFT;
+    int32_t step = v->glide_step_q16 << v->ctrl_shift;
     if (v->glide_mod != 0 && v->glide_q16 != 0) {   /* GLIDE's MOD SENDS: the step as PORTA TIME + the send would set it */
         int32_t pt = perf_state.porta_time[v->layer < NLAYER ? v->layer : 0u], pm = clampi(pt + v->glide_mod, 0, 127);
         float t = 441.f + (float)(pt * pt) * 13.f, tm = 441.f + (float)(pm * pm) * 13.f;   /* (synth_runtime.c glide_to) */

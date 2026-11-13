@@ -667,13 +667,15 @@ static void render_voice_run(MixBus *bus, uint32_t set, uint32_t from, uint32_t 
                 in.detune_cents = voice->detune_cents;
                 in.pan += voice->unison_pan;           /* UNISON stereo spread; the voice clamps the sum to 0..127 */
                 in.frame = pass_base + f;              /* the clock-synced LFOs and retriggers ask about this frame */
+                voice_tick_shift(voice);               /* the tick's length (SYNTH_CTRL_ADAPT) */
                 voice_glide_advance(voice);
                 voice_control_tick(voice, &in);
-                voice->ctrl_left = SYNTH_CTRL_PERIOD;
+                voice->ctrl_left = (uint8_t)(1u << voice->ctrl_shift);
                 SPROF_LAP(SPROF_CTRL);
             }
             uint32_t n = to - f;
             if (n > voice->ctrl_left) n = voice->ctrl_left;
+            if (n > SYNTH_CTRL_PERIOD) n = SYNTH_CTRL_PERIOD;   /* (a long tick renders in blocks) */
             if (voice_is_free(voice)) n = 1u;      /* its tick ended it: the one frame the per-sample loop counted */
             SPROF_START();
             voice->noise_at = (uint8_t)f;

@@ -13,7 +13,8 @@
 /* The resonance's band: the voice's white noise (the LCG's top 16 bits, RMS 18919) through two one-poles at the
  * control tick, held at NZ_RMS (~1.5 dB under brown, so it seldom reaches the clamp) whatever its width: 30 Hz from
  * COLOUR 56 to 80, then narrowing to 4 Hz at 127, evenly in octaves. */
-#define NZ_TICK_HZ (44100.f / (float)(1u << 4))   /* SYNTH_CTRL_SHIFT 4 (synth_voice.h): the tick rate */
+#include "synth_voice.h"                  /* SYNTH_CTRL_SHIFT */
+#define NZ_TICK_HZ (44100.f / (float)SYNTH_CTRL_PERIOD)   /* the tick rate */
 #define NZ_RMS 9500.f
 #define NZ_WIDE_HZ 30.f
 #define NZ_OCTAVES 2.907f                         /* log2(30 / 4) */
@@ -115,7 +116,7 @@ void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t f
 
     /* 5. The resonance: HARMONIC to its ratio, gliding ~20 ms; then the voice's band, when COLOUR reaches it. */
     float f = osc_mixer_harm_ratio((float)mixer->noise_harmonic + (float)harm_offset_q8 * (1.f / 256.f));
-    mv->wh_ratio = mv->wh_ratio <= 0.f ? f : mv->wh_ratio + (f - mv->wh_ratio) * 0.018f;
+    mv->wh_ratio = mv->wh_ratio <= 0.f ? f : mv->wh_ratio + (f - mv->wh_ratio) * (mv->long_tick ? 0.035676f : 0.018f);
     if (mv->noise_seg < 3u)
         return;
     if (mv->nz_col != c + 1) {                 /* the band's width for this COLOUR, and the gain that holds its level */
@@ -128,13 +129,15 @@ void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t f
         mv->nz_col = (int16_t)(c + 1);
     }
     for (int e = 0; e < 2; e++) {              /* each ear one step, then a straight line to it over the tick */
-        mv->nz_seed = mv->nz_seed * 1664525u + 1013904223u;
-        float w = (float)(int16_t)(mv->nz_seed >> 16);
-        mv->nz_a[e] += mv->nz_g * (w - mv->nz_a[e]);
-        mv->nz_b[e] += mv->nz_g * (mv->nz_a[e] - mv->nz_b[e]);
+        for (int s = 0; s <= (int)mv->long_tick; s++) {
+            mv->nz_seed = mv->nz_seed * 1664525u + 1013904223u;
+            float w = (float)(int16_t)(mv->nz_seed >> 16);
+            mv->nz_a[e] += mv->nz_g * (w - mv->nz_a[e]);
+            mv->nz_b[e] += mv->nz_g * (mv->nz_a[e] - mv->nz_b[e]);
+        }
         float y = mv->nz_b[e] * mv->nz_gain;
         int32_t next = (int32_t)(y > 32767.f ? 32767.f : y < -32767.f ? -32767.f : y) * 16;
-        mv->nz_d[e] = (next - mv->nz_cur[e]) >> 4;   /* (a tick is 16 samples) */
+        mv->nz_d[e] = (next - mv->nz_cur[e]) >> (SYNTH_CTRL_SHIFT + mv->long_tick);   /* (over a tick) */
     }
 }
 

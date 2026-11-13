@@ -86,6 +86,9 @@ typedef struct __attribute__((aligned(64))) {
     int16_t rand_q15;             // RANDOM: this note's value, -32768..32767, picked at its note-on
     uint8_t poly_at;              // POLY AT: this note's pressure 0..127 ..
     uint8_t poly_seen;            // .. 1 once one has come for it (until then POLY AT reads the channel's AFTERTOUCH)
+    uint8_t ctrl_shift;           // this tick's length, 2^ctrl_shift samples (SYNTH_CTRL_ADAPT: 16 or 32, synth_voice.h)
+    uint8_t ctrl_fast;            // 1 = an envelope moved fast last tick: the next one is short
+    int16_t env_seen[3];          // the envelopes' levels at the last tick (how fast they move)
 } SynthVoiceNode;
 
 /* a voice nobody hears and nobody holds: free to take (STACK's ENV2 path keeps a voice sounding after ENV1 ends) */

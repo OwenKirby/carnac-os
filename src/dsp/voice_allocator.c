@@ -3,6 +3,7 @@
 #include "voice_allocator.h"
 #include "preset.h"          // perf_state and engine_state: the voice limits come from the live patches
 #include "dsp_cold.h"
+#include "synth_voice.h"     // SYNTH_CTRL_SHIFT (a voice's first tick length)
 
 SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 volatile uint8_t voice_shed;
@@ -55,6 +56,9 @@ SYNTH_COLD void voice_allocator_init(void) {
         n->arch = VARCH_SINGLE;
         n->ctrl_left = 0;
         n->snap = 1;
+        n->ctrl_shift = SYNTH_CTRL_SHIFT;
+        n->ctrl_fast = 1;
+        n->env_seen[0] = n->env_seen[1] = n->env_seen[2] = 0;
         n->silent = 1;
         n->lfo_q15[0] = n->lfo_q15[1] = 0;
         for (int k = 0; k < 3; k++) n->env_vel_q15[k] = n->lfo_gain_q15[k] = 32768;   /* unity */

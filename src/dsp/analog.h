@@ -33,7 +33,8 @@ typedef struct {
     float damt;            /* the drift's share at amount */
     uint32_t rng;
     uint8_t amount;        /* the amount out and base hold; 0 = work them out on the next tick */
-    uint8_t phase;         /* the walks step every 4th tick */
+    uint8_t phase;         /* the walks step every 4th tick (of SYNTH_CTRL_PERIOD) */
+    uint8_t long_tick;     /* 1: this tick is 2 x SYNTH_CTRL_PERIOD (SYNTH_CTRL_ADAPT) */
     AnalogTick out;
 } AnalogVoice;
 

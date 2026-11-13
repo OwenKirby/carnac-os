@@ -75,6 +75,7 @@ typedef struct {
     float nz_g, nz_gain;                    /* .. the poles' coefficient, and the gain that holds its level as it narrows */
     uint32_t nz_seed;                       /* .. its white noise (seeded by voice, osc_mixer_voice_init) */
     int16_t nz_col;                         /* the COLOUR nz_g / nz_gain are for, + 1 (0: none yet) */
+    uint8_t long_tick;                      /* 1: this tick is 2 x SYNTH_CTRL_PERIOD (SYNTH_CTRL_ADAPT): the band steps twice */
 } OscMixVoice;
 
 /* a voice's own noise and whistle at start-up, seeded by its index (deterministic, whichever core renders it) */

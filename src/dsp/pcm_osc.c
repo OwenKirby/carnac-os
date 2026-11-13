@@ -377,8 +377,10 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
         ta = q->pa && xf < W1 / 2 ? W1 : 0;
         tb = q->pb && !ta ? W1 : 0;
     } else if (q->tmul_a || q->tmul_b) {    /* HANDOFF's tails: each loop goes on decaying as its attack did */
-        if (q->tmul_a) q->tail_a = (int32_t)(((int64_t)q->tail_a * q->tmul_a) >> 15);
-        if (q->tmul_b) q->tail_b = (int32_t)(((int64_t)q->tail_b * q->tmul_b) >> 15);
+        for (int s = 0; s <= (int)q->long_tick; s++) {
+            if (q->tmul_a) q->tail_a = (int32_t)(((int64_t)q->tail_a * q->tmul_a) >> 15);
+            if (q->tmul_b) q->tail_b = (int32_t)(((int64_t)q->tail_b * q->tmul_b) >> 15);
+        }
         ta = (int32_t)(((int64_t)ta * q->tail_a) >> 15);
         tb = (int32_t)(((int64_t)tb * q->tail_b) >> 15);
     }

@@ -19,6 +19,15 @@
 #define SYNTH_CTRL_SHIFT 4u
 #endif
 #define SYNTH_CTRL_PERIOD (1u << SYNTH_CTRL_SHIFT)
+/* SYNTH_CTRL_ADAPT 1 (2026-11-11, trial): a voice whose envelopes move slowly ticks every 2 x SYNTH_CTRL_PERIOD
+ * samples (32: half the control work), one whose envelopes moved fast on its last tick (an attack, a short decay or
+ * release: plucks, drums, filter zaps), a new note or a choke at SYNTH_CTRL_PERIOD. It still renders in blocks of at
+ * most SYNTH_CTRL_PERIOD; the amp and filter ramps span the whole tick. 0: every voice at SYNTH_CTRL_PERIOD. */
+#ifndef SYNTH_CTRL_ADAPT
+#define SYNTH_CTRL_ADAPT 1
+#endif
+#define SYNTH_CTRL_FAST_DELTA 512    /* an envelope moving more than this (Q15) in SYNTH_CTRL_PERIOD samples is fast:
+                                      * full scale in under ~23 ms */
 
 /* Everything one voice needs for one control tick. Each source is normalised into these fields before the
  * voice runs, so the voice never reads MIDI, the front panel or the sequencer directly. Adapters below
@@ -67,6 +76,8 @@ void synth_voice_begin_pass(void);
  * mod sources its architecture (voice->arch, fixed at note start) uses and works out what voice_render_sample plays
  * for the next 2^SYNTH_CTRL_SHIFT samples. A choked voice (voice->choke) fades out over its next ticks. */
 void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in);
+/* The coming tick's length for the voice (sets voice->ctrl_shift; SYNTH_CTRL_ADAPT above): before its glide and tick */
+uint8_t voice_tick_shift(SynthVoiceNode *voice);
 
 /* The mix bus a voice renders into: one frame is MIX_N floats in Q15 units (32768 = full scale), each layer's dry
  * left and right (2026-11-01: per layer, so the layer's MFX runs on its own sum and the delay and reverb sends are
