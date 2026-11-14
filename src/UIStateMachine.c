@@ -2076,6 +2076,8 @@ uint8_t ui_sm_seq_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t dow
                                                       * knobs (1..4, 5..8, 9..12, 13..16); the cursor on STEPS */
             sm->seq_step0 = (uint8_t)(w & ~3u);
             sm->s.current_param_focus = 0u;
+            if (sm->rowpop == UI_ROWPOP_ROWS)      /* (the footer's rows away: the cursor left them) */
+                sm->rowpop = 0u;
         }
     }
     return 1u;
@@ -2992,11 +2994,16 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
     } else if (type == UIEV_SELECT_ENC && sm->page == UIPAGE_SEQ && ui_sm_seq_recording(sm)) {
         maq_rec_nav(sm->seq, sm->s.active_seq_lane, arg);   /* 7.2: the encoder walks the record step */
     } else if (type == UIEV_SELECT_ENC && sm->page == UIPAGE_SEQ) {
-        seq_cursor_move(sm, arg);
-        sm->rowpop = 0u;
+        seq_cursor_move(sm, arg);    /* (2026-11-14, the user) on the footer's rows: all of them, large */
+        sm->rowpop = (uint8_t)(sm->s.current_param_focus != UI_FOCUS_NONE && sm->s.current_param_focus != 0u
+                               ? UI_ROWPOP_ROWS : 0u);
+        sm->rowpop_ms = UI_ROWPOP_MS;
     } else if (type == UIEV_SELECT_ENC) {
         cursor_move(sm, arg);
-        sm->rowpop = 0u;             /* (2026-10-17) the cursor moves in the page's own list: no popup */
+        sm->rowpop = (uint8_t)(sm->page == UIPAGE_ARP && sm->s.current_param_focus != UI_FOCUS_NONE
+                               ? UI_ROWPOP_ROWS : 0u);   /* (2026-10-17) the page's own list: no popup; ARP's rows
+                                                         * large (2026-11-14) */
+        sm->rowpop_ms = UI_ROWPOP_MS;
     } else if (type == UIEV_PRESET_ENC) {
         ui_preset_step(sm, arg);
         sm->browse = 1u;             /* the list opens on (or follows) the slot it lands on */
@@ -3011,10 +3018,9 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
             uint16_t pos;            /* (2026-11-13) a list's options while its value turns; a number has none (REC:
                                       * its footer shows it) */
             sm->rowpop = (uint8_t)(sm->page != UIPAGE_REC &&
-                                   (ui_sm_row_options(sm, sm->s.current_param_focus, &pos) > 1u ||
-                                    ((sm->page == UIPAGE_SEQ || sm->page == UIPAGE_ARP) && r->kind != RK_ARP_CLEAR)));
-                                     /* (2026-11-14, the user: SEQ / ARP footers are tiny on screen, so their numbers
-                                      * and slot rows get the popup too: the value's card) */
+                                   ui_sm_row_options(sm, sm->s.current_param_focus, &pos) > 1u);
+            if (!sm->rowpop && (sm->page == UIPAGE_SEQ || sm->page == UIPAGE_ARP))
+                sm->rowpop = UI_ROWPOP_ROWS;   /* (2026-11-14) SEQ / ARP numbers: the rows, the value changing */
             if (sm->page == UIPAGE_MOD && r->kind == RK_ROUTE)   /* AMOUNT: the route's card */
                 sm->rowpop = (uint8_t)(UI_ROWPOP_MOD + UIMODF_AMOUNT);
             sm->rowpop_ms = UI_ROWPOP_MS;

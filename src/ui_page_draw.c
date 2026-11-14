@@ -2826,8 +2826,6 @@ static void pu_draw_namekb(const UIStateMachine *sm, uint32_t force)
  * scroll stone on the right when there are more. */
 #define PU_OP_ROWS 7
 #define PU_OP_Y 54
-#define PU_VC_Y 84                   /* a SEQ / ARP number's card (2026-11-14): the value on a lit slab, up to 4x */
-#define PU_VC_SLAB 52
 
 /* 2026-11-13 (the user: an easier way to see what SOURCE, VIA, DEST and AMOUNT pick): while a MOD MATRIX knob turns,
  * the same look as the list above. SOURCE / VIA / DEST: that knob's options as the ledger (the sources spelled out,
@@ -2945,15 +2943,84 @@ static void pu_draw_modpop(const UIStateMachine *sm, uint32_t force)
 }
 
 
+/* 2026-11-14 (the user: SEQ / ARP's rows are small; show them all once the cursor is on them): while the Select
+ * Encoder walks SEQ's footer or ARP's menu, or the Algorithm Encoder turns a number there, every row as the ledger,
+ * name left and value right at 2x, the cursor's on the lit slab; greyed rows dim; seven round the cursor, the scroll
+ * stone when there are more. (SEQ's STEPS row is the page itself: left out.) */
+static void pu_draw_rowspop(const UIStateMachine *sm, uint32_t force)
+{
+    char tt[24], vb[8];
+    uint8_t vis[24], nv = 0, r, n = ui_sm_row_count(sm), f = sm->s.current_param_focus, st;
+    int32_t ci = 0, first, cnt, i, y, oy, vw, len;
+    uint32_t h = sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)sm->page | (uint32_t)f << 8 |
+                                                     (uint32_t)sm->s.active_seq_lane << 16);
+    for (r = sm->page == UIPAGE_SEQ ? 1u : 0u; r < n && nv < sizeof vis; r++) {
+        st = ui_sm_row_state(sm, r);
+        if (st == UIROW_HIDDEN)
+            continue;
+        if (r == f)
+            ci = nv;
+        vis[nv++] = r;
+        h = pu_mix_str(pu_mix_str(sq_mix(h, st), ui_sm_row_label(sm, r)), pu_row_text(sm, r, vb));
+    }
+    if (!pu_dirty(PUR_ROWPOP, h, force))
+        return;
+    tt[0] = ' ';
+    pu_cat(tt, PU_TITLE[sm->page]);
+    if (sm->page == UIPAGE_SEQ) {                    /* "SEQ  LANE 2" */
+        pu_cat(tt + pu_strlen(tt), "  LANE ");
+        vb[0] = (char)('1' + sm->s.active_seq_lane);
+        vb[1] = ' ';
+        pu_cat(tt + pu_strlen(tt), vb);
+    }
+    cnt = nv < PU_OP_ROWS ? nv : PU_OP_ROWS;
+    first = ci - cnt / 2;
+    if (first > nv - cnt) first = nv - cnt;
+    if (first < 0) first = 0;
+    for (oy = 0; oy < 240; oy += PU_POP_BAND) {
+        cv_begin(240, PU_POP_BAND, SQC(BG));
+        pu_tablet(4, 4, 232, 232, 77u, oy);
+        pu_pop_line(16, tt, SQC(THEME), 1, oy);
+        y = 30 + (196 - ((cnt - 1) * PU_BR_PITCH + PU_LG_SLAB + 4)) / 2;   /* the rows centred under the title */
+        for (i = first; i < first + cnt; i++) {
+            const char *t;
+            uint16_t lc, vc;
+            r = vis[i];
+            st = ui_sm_row_state(sm, r);
+            t = pu_row_text(sm, r, vb);
+            len = pu_strlen(t);
+            vw = PU_RUNE_N_W(len, 2);
+            if (i == ci) {
+                pu_block_lit(10, y - oy, 214, PU_LG_SLAB, 0, oy, 903u);
+                pu_rune_n(20, y + 4, ui_sm_row_label(sm, r), SQC(HI), 2, (196 - vw) / 12, oy);
+                pu_rune_n(218 - vw, y + 4, t, SQC(HI), 2, len, oy);
+                y += PU_LG_SLAB + 4;
+                continue;
+            }
+            lc = st == UIROW_ACTIVE ? SQC(MID) : SQC(DIM);
+            vc = st == UIROW_ACTIVE ? SQC(TEXT) : SQC(DIM);
+            sq_stone(14, y + 18 - oy, 5, 16, 16, lc, (uint32_t)r * 5u + 3u, 0u, 0u);
+            pu_rune_n(24, y, ui_sm_row_label(sm, r), lc, 2, (194 - vw) / 12, oy);
+            pu_rune_n(218 - vw, y, t, vc, 2, len, oy);
+            y += PU_BR_PITCH;
+        }
+        if (nv > cnt)
+            pu_lg_scroll(ci, nv, oy);
+        cv_blit(0, (uint32_t)oy);
+    }
+}
+
 static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
 {
+    if (sm->rowpop == UI_ROWPOP_ROWS) {              /* SEQ / ARP: all the rows (2026-11-14) */
+        pu_draw_rowspop(sm, force);
+        return;
+    }
     if (sm->rowpop >= UI_ROWPOP_MOD) {               /* the MOD MATRIX's knobs (2026-11-13) */
         pu_draw_modpop(sm, force);
         return;
     }
-    char tt[24], ob[NAME_LEN + 1], vb[24];
-    const char *vt = "";
-    int32_t vsc = 4;
+    char tt[24], ob[NAME_LEN + 1];
     uint8_t f = sm->s.current_param_focus;
     uint16_t pos = 0u, n = f < ui_sm_row_count(sm) ? ui_sm_row_options(sm, f, &pos) : (uint16_t)0u;
     const char *lab = f < ui_sm_row_count(sm) ? ui_sm_row_label(sm, f) : "";
@@ -2961,12 +3028,6 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
     uint32_t h = sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)sm->page | (uint32_t)f << 8 |
                                                      (uint32_t)sm->s.active_synth_layer << 16);
     h = pu_mix_str(sq_mix(h, (uint32_t)pos | (uint32_t)n << 16), lab);
-    if (n <= 1u && f < ui_sm_row_count(sm)) {        /* a number's card: the value's text, the largest that fits */
-        vt = pu_row_text(sm, f, vb);
-        h = sq_mix(pu_mix_str(h, vt), ui_sm_row_place(sm, f));
-        while (vsc > 2 && PU_RUNE_N_W(pu_strlen(vt), vsc) > 200)
-            vsc--;
-    }
     if (!pu_dirty(PUR_ROWPOP, h, force))
         return;
     tt[0] = '\0';
@@ -2983,17 +3044,6 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
         pu_tablet(4, 4, 232, 232, 77u, oy);
         pu_pop_line(16, tt, SQC(THEME), 1, oy);
         pu_pop_line(30, lab, SQC(TEXT), 2, oy);
-        if (n <= 1u) {                               /* SEQ / ARP numbers (2026-11-14): the value's card, large */
-            pu_block_lit(10, PU_VC_Y - oy, 214, PU_VC_SLAB, 0, oy, 903u);
-            pu_pop_line(PU_VC_Y + (PU_VC_SLAB - vsc * SQ_RUNE_H) / 2, vt, SQC(HI), vsc, oy);
-            if (ui_sm_row_text(sm, f) == NULL) {     /* a plain number: its place in the range */
-                y = PU_VC_Y + PU_VC_SLAB + 24;
-                cv_rect(24, y + 3 - oy, 192, 1, PUC_STONE);
-                cv_rect(24, y - oy, (int32_t)ui_sm_row_place(sm, f) * 192 / 127, 7, SQC(THEME));
-            }
-            cv_blit(0, (uint32_t)oy);
-            continue;
-        }
         y = PU_OP_Y;
         for (k = first; k < first + cnt; k++) {
             const char *t = ui_sm_row_option(sm, f, (uint16_t)k, ob);

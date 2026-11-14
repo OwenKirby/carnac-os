@@ -758,10 +758,15 @@ int main(int argc, char **argv)
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     shot(dir, "rowpop_seq");
-    ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);          /* PRESCALE, a number: its card (2026-11-14) */
-    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
-    if (!sm.rowpop) { printf("FAIL: SEQ PRESCALE did not open its card\n"); fails = 1; }
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);          /* PRESCALE: the Select Encoder shows all the rows (2026-11-14) */
+    if (sm.rowpop != UI_ROWPOP_ROWS) { printf("FAIL: SEQ's footer did not show its rows\n"); fails = 1; }
+    shot(dir, "rowpop_seq_rows");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);             /* a number turning: the rows stay, its value changes */
+    if (sm.rowpop != UI_ROWPOP_ROWS) { printf("FAIL: SEQ PRESCALE did not keep the rows up\n"); fails = 1; }
     shot(dir, "rowpop_seq_prescale");
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);          /* back onto STEPS: the page itself */
+    if (sm.rowpop) { printf("FAIL: SEQ STEPS left the rows up\n"); fails = 1; }
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     ui_sm_tick(&sm, UI_ROWPOP_MS);
 

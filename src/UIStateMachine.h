@@ -134,6 +134,7 @@ enum {
 #define UI_VMPOP_MS 1500u            /* HOME + MONO / POLY: the VOICING popup stays up this long after the key */
 #define UI_ROWPOP_MS 1500u          /* the parameter list stays up this long after the last Select / Algorithm detent */
 #define UI_ROWPOP_MOD 2u           /* rowpop: the MOD MATRIX's popup, + the field (UIMODF_*) being turned */
+#define UI_ROWPOP_ROWS 0x40u       /* rowpop (2026-11-14): SEQ / ARP, every parameter row and its value, the cursor's lit */
 enum { UIMODF_SRC, UIMODF_VIA, UIMODF_DEST, UIMODF_VIA_DEPTH, UIMODF_AMOUNT, UIMODF_COUNT };   /* knobs 1..4, Algorithm */
 /* The store's answer for one slot of a save target (UISAVE_*): UISLOT_EMPTY / UISLOT_USED. For a used slot it fills
  * name with the stored record's name (char_map indices; a sequence's or arp's since 2026-10-25). */
