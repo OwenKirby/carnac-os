@@ -9,7 +9,9 @@
  *                    theme colour, layer 2's cream; the older passes darker, the stones sounding lit; the notes DENSITY
  *                    thins out only outlined; the loop's length of grass along the front; the playhead a line of light
  *        195 .. 222  the ridges: the mod wheel lane (a hill line over the envelope page's speckle) and the bend
- *        225 .. 239  the footer, the Select Encoder's: the place, TRANSPOSE, QUANTIZE, the notes used, DOUBLE, CLEAR
+ *        225 .. 239  the footer, the Select Encoder's: the place, LENGTH, TRANSPOSE, QUANTIZE, CLICK, DOUBLE, CLEAR
+ *                    (2026-11-13: the notes used gave way; FULL in the header says when they run out)
+ * The count-in (a fixed LENGTH's REC): its beat big over the empty field, COUNT in the header.
  *
  * Redraw (the screen keeps what it has): the field whole only when the loop changes (a note, a pass, TRANSPOSE,
  * DENSITY, DOUBLE, CLEAR, a popup); otherwise the strips the playhead left and reached, the stones that began or
@@ -129,11 +131,21 @@ static void rd_paint(const UIStateMachine *sm, const Krec *k, int32_t cx, int32_
             sq_stone(x - 1 - cx, 9 - cy, 3, i % 4 ? 3 : 7, i % 4 ? 3 : 7, PUC_STONE, (uint32_t)i, 0u, 0u);
     }
     if (k->nn == 0u) {
-        if (cy < 90 && cy + ch > 40) {
-            const char *a = k->state == KREC_ARMED ? "PLAY TO RAISE" : "REC TO ARM";
+        uint8_t beat = krec_countin(k, k->frame_now);
+        if (beat && cy < 100 && cy + ch > 20) {      /* the count-in: its beat */
+            char b[4];
+            pu_num(b, beat, 0u, 1u);
+            pu_rune_n((240 - PU_RUNE_N_W(1, 5)) / 2 - cx, 26 - cy, b, beat == 1u ? SQC(THEME) : SQC(TEXT), 5, 1, 0);
+            sq_rune_in(-cx, 84 - cy, 240, k->sync_run ? "TO THE BAR" : "COUNT IN", SQC(MID), 2);
+        } else if (cy < 120 && cy + ch > 40) {
+            const char *a = k->state == KREC_EMPTY ? "REC TO ARM" : k->set.length && k->state == KREC_ARMED
+                            ? "REC OR PLAY" : "PLAY TO RAISE";
             sq_rune_in(-cx, 50 - cy, 240, a, SQC(MID), 2);
-            if (k->state == KREC_ARMED)
-                sq_rune_in(-cx, 74 - cy, 240, "THE STONES", SQC(MID), 2);
+            if (k->state != KREC_EMPTY)
+                sq_rune_in(-cx, 74 - cy, 240, k->set.length && k->state == KREC_ARMED ? "TO RAISE STONES"
+                           : "THE STONES", SQC(MID), 2);
+            if (k->state == KREC_ARMED && krec_can_capture(k, k->frame_now))
+                sq_rune_in(-cx, 104 - cy, 240, "HOLD REC TO KEEP WHAT YOU PLAYED", SQC(DIM), 0);
         }
     } else {
         for (i = 0; i < (int32_t)k->nn; i++) {      /* far to near: each drawn over the ones behind it */
@@ -203,7 +215,7 @@ static void rd_head(const UIStateMachine *sm, const Krec *k)
     cv_begin(SQ_MOON_X, SQ_HEAD_H, SQC(BG));
     x = sq_rune(6, y, "REC", SQC(THEME), 0) + 6;
     sq_stone(x, y + 9, 7, 8, 8, on ? SQC(THEME) : PUC_STONE, 77u, 0u, 0u);
-    x = sq_rune(x + 11, y, k->state == KREC_PLAY && !k->playing ? "STOP" : ST[k->state < 5u ? k->state : 0u],
+    x = sq_rune(x + 11, y, k->wait ? "COUNT" : k->state == KREC_PLAY && !k->playing ? "STOP" : ST[k->state < 5u ? k->state : 0u],
                 SQC(TEXT), 0) + 8;
     x = sq_rune(x, y, sm->s.active_synth_layer ? "L2" : "L1", SQC(MID), 0) + 8;
     if (k->full && ((rd_frames >> 3) & 1u))
@@ -279,15 +291,16 @@ static void rd_ridges(const Krec *k, int32_t ph)
 
 static void rd_footer(const UIStateMachine *sm, const Krec *k, uint32_t pos)
 {
-    static const int16_t FX[6] = {2, 50, 88, 126, 168, 204};
-    static const int16_t FW[6] = {44, 34, 34, 38, 32, 34};
-    static const uint8_t ROW_FIELD[UIREC_NROWS] = {1, 2, 4, 5};
-    char f[6][12];
+    static const int16_t FX[7] = {0, 38, 67, 98, 139, 189, 215};
+    static const int16_t FW[7] = {37, 28, 30, 40, 48, 24, 24};
+    static const uint8_t ROW_FIELD[UIREC_NROWS] = {1, 2, 3, 4, 5, 6};
+    static const char *const CK[KC_N] = {"OFF", "CNT", "REC", "ON"};
+    char f[7][12];
     uint32_t i, cur = 99u;
     uint8_t dbl = krec_can_double(k), clr = (uint8_t)(k->state != KREC_EMPTY);
     if (sm->s.current_param_focus < UIREC_NROWS) cur = ROW_FIELD[sm->s.current_param_focus];
-    for (i = 0; i < 6u; i++) f[i][0] = 0;
-    if (k->state >= KREC_REC) {                      /* bar.beat / bars */
+    for (i = 0; i < 7u; i++) f[i][0] = 0;
+    if (k->state >= KREC_REC && !k->wait) {          /* bar.beat / bars */
         char *e = pu_num(f[0], (int32_t)(pos / KREC_BAR + 1u), 0u, 1u);
         e = pu_cat(e, ".");
         e = pu_num(e, (int32_t)(pos % KREC_BAR / KREC_TPB + 1u), 0u, 1u);
@@ -295,14 +308,15 @@ static void rd_footer(const UIStateMachine *sm, const Krec *k, uint32_t pos)
     } else {
         pu_cat(f[0], "-");
     }
-    pu_cat(pu_cat(f[1], "TR "), ui_sm_row_text(sm, 0u));
-    pu_cat(pu_cat(f[2], "Q "), ui_sm_row_text(sm, 1u));
-    pu_cat(pu_num(f[3], k->nn, 0u, 1u), "/256");
-    pu_cat(f[4], "DBL");
-    pu_cat(f[5], "CLR");
+    pu_cat(k->set.length ? pu_cat(f[1], "L ") : f[1], ui_sm_row_text(sm, 0u));   /* (FREE alone: no room) */
+    pu_cat(pu_cat(f[2], "TR "), ui_sm_row_text(sm, 1u));
+    pu_cat(pu_cat(f[3], "Q "), ui_sm_row_text(sm, 2u));
+    pu_cat(pu_cat(f[4], "CLK "), CK[k->set.click < KC_N ? k->set.click : 0u]);
+    pu_cat(f[5], "DBL");
+    pu_cat(f[6], "CLR");
     cv_begin(240, RD_TH, SQC(BG));
-    for (i = 0; i < 6u; i++) {
-        uint16_t c = i == cur ? SQC(HI) : (i == 4u && !dbl) || (i == 5u && !clr) ? SQC(DIM) : SQC(MID);
+    for (i = 0; i < 7u; i++) {
+        uint16_t c = i == cur ? SQC(HI) : (i == 5u && !dbl) || (i == 6u && !clr) ? SQC(DIM) : SQC(MID);
         if (i == cur) sq_noise_block(FX[i], 1, FW[i], 13, 0u, RD_TY, 1u);
         sq_text_in(FX[i], 2, FW[i], &AF_S, f[i], c, i == cur ? SQC(SEL) : SQC(BG));
     }
@@ -332,7 +346,8 @@ static void rd_popup(const UIStateMachine *sm, const Krec *k)
             sq_rune_in(x, 47, 54, i ? "YES" : "NO", on ? SQC(TEXT) : SQC(DIM), 2);
         }
     } else {
-        sq_rune_in(0, 26, PU_DLG_W, sm->rec_msg == 1u ? "UNDONE" : "NOTHING TO UNDO", SQC(THEME), 2);
+        sq_rune_in(0, 26, PU_DLG_W, sm->rec_msg == 1u ? "UNDONE" : sm->rec_msg == 4u ? "CAPTURED" : "NOTHING TO UNDO",
+                   SQC(THEME), 2);
     }
     cv_blit(PU_DLG_X, (uint32_t)y0);
 }
@@ -355,7 +370,7 @@ SYNTH_COLD static void rec_draw(UIStateMachine *sm, uint32_t force)
         ph = RD_FX + (int32_t)(pos * RD_FW / (uint32_t)rd_total);
     h = sq_mix(sq_pal, k->state | (uint32_t)k->playing << 4 | (uint32_t)k->full << 5 | (uint32_t)sm->s.active_synth_layer << 6 |
                        (uint32_t)sm->perf->int_tempo << 8 | (uint32_t)midi_clock_is_external() << 16 |
-                       ((rd_frames >> 3) & 1u) << 17);
+                       ((rd_frames >> 3) & 1u) << 17 | (uint32_t)k->wait << 18);
     if (force || h != rd_sig_head) { rd_sig_head = h; rd_head(sm, k); }
     rd_knobs(sm, k, force);
     /* the field: whole when the loop changed */
@@ -364,6 +379,9 @@ SYNTH_COLD static void rec_draw(UIStateMachine *sm, uint32_t force)
                      (const uint8_t *)&k->set, sizeof k->set);
     h = sq_mix(h, (uint32_t)rd_total | (uint32_t)k->state << 16 | (uint32_t)(k->state != KREC_PLAY) << 20 |
                   (uint32_t)sm->perf->perf_mode << 21);
+    if (k->nn == 0u)                                 /* (the count-in's beat, the CAPTURE hint) */
+        h = sq_mix(h, (uint32_t)krec_countin(k, k->frame_now) | (uint32_t)k->sync_run << 4 |
+                      (uint32_t)(k->state == KREC_ARMED && krec_can_capture(k, k->frame_now)) << 5);
     if (k->nn) {                                     /* (every note's start, length: an overdub's note-off, an UNDO) */
         uint32_t a = 0;
         for (i = 0; i < k->nn; i++) a = a * 31u + k->n[i].t + ((uint32_t)k->n[i].len << 13) + k->n[i].note;
@@ -407,7 +425,7 @@ SYNTH_COLD static void rec_draw(UIStateMachine *sm, uint32_t force)
     if (k->touch[0] || k->touch[1] || force || h != rd_sig_ridge) { rd_sig_ridge = h; rd_ridges(k, ph); }
     h = sq_mix(sq_mix_bytes(sq_mix(sq_pal, pos / KREC_TPB | (uint32_t)k->nn << 16), (const uint8_t *)&k->set, sizeof k->set),
                (uint32_t)sm->s.current_param_focus | (uint32_t)krec_can_double(k) << 8 | (uint32_t)k->state << 9 |
-               (uint32_t)k->len << 12);
+               (uint32_t)k->len << 12 | (uint32_t)k->wait << 28);
     if (force || h != rd_sig_foot) { rd_sig_foot = h; rd_footer(sm, k, pos); }
 }
 

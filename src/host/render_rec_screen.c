@@ -123,6 +123,7 @@ int main(int argc, char **argv)
     perf_state.midi_ch[1] = 1;
     ui_sm_enforce(&sm);
     run(5000);
+    k->set.length = 0;                               /* (the scenes before 2026-11-13: FREE, closed by REC) */
 
     /* REC from HOME: the page opens, armed */
     ui_sm_goto(&sm, UIPAGE_HOME1);
@@ -170,7 +171,7 @@ int main(int argc, char **argv)
     k->set.gate = 64;
 
     /* the DOUBLE prompt from the footer */
-    sm.s.current_param_focus = 2u;
+    sm.s.current_param_focus = 4u;
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     if (sm.dialog != UIDLG_CONFIRM || sm.rec_ask != 1u) { printf("FAIL: DOUBLE asked nothing\n"); fails = 1; }
@@ -199,6 +200,44 @@ int main(int argc, char **argv)
         ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);    /* on the page: the cycle */
         if (k->state == st) { printf("FAIL: REC on the page did not act\n"); fails = 1; }
     }
+
+    /* (2026-11-13) LENGTH 2: REC counts a bar in, the empty loop runs; then CAPTURE from HOME */
+    ui_sm_goto(&sm, UIPAGE_REC);
+    krec_clear(k);
+    k->set.length = 2;
+    k->set.click = KC_REC;
+    krec_arm(k);
+    shot(dir, "armed_fixed");
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
+    if (!k->wait || k->len != 2u * KREC_BAR) { printf("FAIL: REC: no count-in (wait %u len %u)\n", k->wait, k->len); fails = 1; }
+    play_frames(30, "count-in, 30 frames");
+    shot(dir, "countin");
+    run(ticks(4u * KREC_TPB));
+    if (k->wait || k->state != KREC_ODUB) { printf("FAIL: the count-in did not end\n"); fails = 1; }
+    play_frames(30, "the empty loop, 30 frames");
+    shot(dir, "empty_loop");
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC_UNDO);   /* nothing played in it: no UNDO, so CAPTURE (the overdubs
+                                                         * above, a few bars back, replace the empty loop) */
+    if (sm.rec_msg != 4u) { printf("FAIL: hold REC on an empty loop: msg %u\n", sm.rec_msg); fails = 1; }
+    ui_sm_tick(&sm, 1000);
+    krec_clear(k);
+    ui_sm_goto(&sm, UIPAGE_HOME1);
+    for (i = 0; i < 8; i++) {                        /* noodling on HOME, no loop */
+        key(0, (uint8_t)(50 + (i * 7) % 12), 90); run(ticks(60)); key(0, (uint8_t)(50 + (i * 7) % 12), 0); run(ticks(36));
+    }
+    ui_sm_goto(&sm, UIPAGE_REC);
+    krec_arm(k);
+    run(706);                                        /* (no partial-redraw check: the armed stone blinks) */
+    shot(dir, "can_capture");
+    ui_sm_goto(&sm, UIPAGE_HOME1);
+    ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC_UNDO);   /* held REC: CAPTURE, the page opens */
+    if (sm.page != UIPAGE_REC || sm.rec_msg != 4u || k->nn != 8u || k->len != 2u * KREC_BAR) {
+        printf("FAIL: CAPTURE: page %u msg %u n %u len %u\n", sm.page, sm.rec_msg, k->nn, k->len);
+        fails = 1;
+    }
+    shot(dir, "captured");
+    ui_sm_tick(&sm, 1000);
+    play_frames(30, "captured, playing, 30 frames");
 
     if (fails) { printf("render_rec_screen: FAILED\n"); return 1; }
     printf("render_rec_screen: OK\n");

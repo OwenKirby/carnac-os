@@ -8,6 +8,11 @@
  * The cycle (looper style): REC arms; the first note starts the loop (on the sequencers' bar when they run); REC again
  * closes it, its length snapped to the beat, and overdub goes on; REC then toggles overdub (PLAY <-> ODUB). Each
  * overdub is a pass: krec_undo takes the newest pass back (its notes, its lane writes, a DOUBLE's length).
+ * LENGTH (2026-11-13): FREE is the cycle above; 1..16 bars (4 by default) fixes the loop before it starts. Then REC
+ * starts it on the next bar (the sequencers' when they run, else after a bar's count-in) and a note starts it at once
+ * (as FREE's first note): the loop wraps from the start, empty or not, as the first overdub pass. CLICK: a beat's
+ * blip the render mixes into the output (krec.click_hit), no voice. CAPTURE: the keys' last notes are always kept
+ * (cap[]); with no loop, krec_capture makes one of the last phrase (LENGTH's bars, or the phrase's own).
  * Thread: every call runs on the render's side, or the UI's inside syn_lock (they never run at once). */
 #include <stdint.h>
 
@@ -28,6 +33,9 @@ enum { KREC_L_WHEEL, KREC_L_BEND };
 
 enum { KREC_EMPTY, KREC_ARMED, KREC_REC, KREC_PLAY, KREC_ODUB };
 enum { KQ_OFF, KQ_8, KQ_16, KQ_16T, KQ_COUNT };   /* QUANTIZE: notes recorded onto the grid (their starts) */
+enum { KC_OFF, KC_COUNT, KC_REC, KC_ON, KC_N };   /* CLICK: never, the count-in, also recording, whenever it plays */
+#define KREC_LEN_DEFAULT 4u          /* LENGTH: bars (0 FREE) */
+#define KREC_CAP 256u                /* CAPTURE: the keys' last notes kept */
 
 typedef struct {
     uint16_t t;                      /* start, ticks from the loop's top */
@@ -43,7 +51,15 @@ typedef struct {
     uint8_t quantize;                /* KQ_* */
     uint8_t gate;                    /* knob 3: 64 = as played, 0 = staccato (a tick), 127 = twice as long */
     uint8_t density;                 /* knob 4: 127 every note, lower thins the loop (the weakest notes first) */
+    uint8_t length;                  /* bars, 0 FREE (KREC_LEN_DEFAULT) */
+    uint8_t click;                   /* KC_* */
 } KrecSettings;
+
+typedef struct {                     /* 8 B (the pool is tight) */
+    uint16_t on;                     /* the absolute tick's low 16 bits (cap_last's age from it: 170 bars) */
+    uint16_t len;                    /* KREC_LEN_OPEN while held */
+    uint8_t note, vel, ch, spare;
+} KrecCap;
 
 typedef void (*KrecOut)(uint8_t status, uint8_t data1, uint8_t data2);
 
@@ -82,7 +98,15 @@ typedef struct {
     uint8_t lout[2];                 /* the value last sent (0xFF: none) */
     uint8_t out_ch;                  /* the lanes' channel */
     uint32_t frame_now;              /* the render's frame after its last pass: where the UI's calls act */
+    uint8_t wait;                    /* a fixed loop started, its top (org) still ahead: the count-in */
+    uint8_t click_hit;               /* a click due: 1 a beat, 2 a bar's first (the render takes it, sets 0) */
+    uint32_t click_frame;            /* .. on this frame */
+    uint32_t tick_frame;             /* (krec_frame's frame, for the click) */
     KrecOut out;
+    /* CAPTURE: kept through CLEAR / UNDO (krec_clear stops before it) */
+    KrecCap cap[KREC_CAP];           /* a ring, oldest first from cap_h - cap_n */
+    uint16_t cap_h, cap_n;
+    uint32_t cap_last;               /* the newest one's absolute tick */
 } Krec;
 
 void krec_init(Krec *k, KrecOut out);
@@ -105,6 +129,9 @@ uint8_t krec_double(Krec *k);                /* the loop twice as long, copied (
 void krec_clear(Krec *k);                    /* everything, back to EMPTY */
 void krec_set_playing(Krec *k, uint8_t on, uint32_t frame);   /* the loop's transport (PLAY) */
 uint8_t krec_can_double(const Krec *k);
+uint8_t krec_capture(Krec *k, uint32_t frame);   /* no loop: one of the keys' last phrase, playing; 1 if made */
+uint8_t krec_can_capture(const Krec *k, uint32_t frame);
+uint8_t krec_countin(const Krec *k, uint32_t frame);   /* the count-in's beat now (1..4), 0 when none */
 
 /* for the page */
 uint16_t krec_pos(const Krec *k, uint32_t frame);   /* the playhead, ticks from the top (while recording the first

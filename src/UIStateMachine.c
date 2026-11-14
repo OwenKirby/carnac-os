@@ -477,9 +477,15 @@ static const UiRow ARP_ROWS[] = {
  * cursor is on). The Select Encoder walks STEPS a group of 4 at a time, then the footer, then wraps (seq_cursor_move). */
 /* REC (2026-11-04): the loop's footer, as SEQ's: the Select Encoder walks it, the Algorithm Encoder sets it */
 static const char *const KQ_NAMES[KQ_COUNT] = {"OFF", "1/8", "1/16", "1/16T"};
+static const char *const KL_NAMES[KREC_MAX_BARS + 1u] = {"FREE", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+                                                         "11", "12", "13", "14", "15", "16"};
+static const char *const KC_NAMES[KC_N] = {"OFF", "COUNT", "REC", "ON"};
+/* LENGTH and CLICK (2026-11-13): the next loop's bars (a running one keeps its own), the metronome */
 static const UiRow REC_ROWS[] = {
+    {"LENGTH", OFS(KrecSettings, length), 0, KREC_MAX_BARS, RK_BYTE, 0, KL_NAMES, A_ALL},
     {"TRANSPOSE", OFS(KrecSettings, transpose), 40, 88, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
     {"QUANTIZE", OFS(KrecSettings, quantize), 0, KQ_COUNT - 1, RK_BYTE, 0, KQ_NAMES, A_ALL},
+    {"CLICK", OFS(KrecSettings, click), 0, KC_N - 1, RK_BYTE, 0, KC_NAMES, A_ALL},
     {"DOUBLE", 0, 0, 1, RK_REC_ACT, 0, NULL, A_ALL},
     {"CLEAR", 1, 0, 1, RK_REC_ACT, 0, NULL, A_ALL},
 };
@@ -2887,9 +2893,10 @@ static void rec_transport(UIStateMachine *sm, uint8_t arg)
     if (arg == UITR_REC_PAGE) {
         krec_arm(k);
         enter_page(sm, UIPAGE_REC);
-    } else if (arg == UITR_REC_UNDO) {
-        sm->rec_msg = krec_undo(k) ? 1u : 2u;
+    } else if (arg == UITR_REC_UNDO) {          /* nothing to undo and no loop: CAPTURE what the keys just played */
+        sm->rec_msg = krec_undo(k) ? 1u : krec_capture(k, k->frame_now) ? 4u : 2u;
         sm->rec_msg_ms = 900u;
+        if (sm->rec_msg == 4u && sm->page != UIPAGE_REC) enter_page(sm, UIPAGE_REC);
     } else if (sm->page != UIPAGE_REC) {             /* off the page, a tap goes to it (user, 2026-11-04) */
         krec_arm(k);                                 /* (armed when empty; the cycle is the page's own) */
         enter_page(sm, UIPAGE_REC);
