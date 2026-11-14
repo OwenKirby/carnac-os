@@ -67,3 +67,5 @@ the credits to [X0X](https://github.com/charlesvestal/fm1-x0x) and
 [Felucca](https://github.com/hugelton/Felucca), on whose platform Carnac runs.
 
 Carnac OS is independent firmware, not affiliated with or endorsed by M-VAVE.
+
+You can also try Carnac OS in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
