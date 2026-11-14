@@ -758,6 +758,11 @@ int main(int argc, char **argv)
     ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
     ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     shot(dir, "rowpop_seq");
+    ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);          /* PRESCALE, a number: its card (2026-11-14) */
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, 1);
+    if (!sm.rowpop) { printf("FAIL: SEQ PRESCALE did not open its card\n"); fails = 1; }
+    shot(dir, "rowpop_seq_prescale");
+    ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     ui_sm_tick(&sm, UI_ROWPOP_MS);
 
     /* PERF: turning LAYER1 PATCH loads the next stored patch (no popup: a slot, not a list) */

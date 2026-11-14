@@ -3011,7 +3011,10 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
             uint16_t pos;            /* (2026-11-13) a list's options while its value turns; a number has none (REC:
                                       * its footer shows it) */
             sm->rowpop = (uint8_t)(sm->page != UIPAGE_REC &&
-                                   ui_sm_row_options(sm, sm->s.current_param_focus, &pos) > 1u);
+                                   (ui_sm_row_options(sm, sm->s.current_param_focus, &pos) > 1u ||
+                                    ((sm->page == UIPAGE_SEQ || sm->page == UIPAGE_ARP) && r->kind != RK_ARP_CLEAR)));
+                                     /* (2026-11-14, the user: SEQ / ARP footers are tiny on screen, so their numbers
+                                      * and slot rows get the popup too: the value's card) */
             if (sm->page == UIPAGE_MOD && r->kind == RK_ROUTE)   /* AMOUNT: the route's card */
                 sm->rowpop = (uint8_t)(UI_ROWPOP_MOD + UIMODF_AMOUNT);
             sm->rowpop_ms = UI_ROWPOP_MS;

@@ -2826,6 +2826,8 @@ static void pu_draw_namekb(const UIStateMachine *sm, uint32_t force)
  * scroll stone on the right when there are more. */
 #define PU_OP_ROWS 7
 #define PU_OP_Y 54
+#define PU_VC_Y 84                   /* a SEQ / ARP number's card (2026-11-14): the value on a lit slab, up to 4x */
+#define PU_VC_SLAB 52
 
 /* 2026-11-13 (the user: an easier way to see what SOURCE, VIA, DEST and AMOUNT pick): while a MOD MATRIX knob turns,
  * the same look as the list above. SOURCE / VIA / DEST: that knob's options as the ledger (the sources spelled out,
@@ -2949,7 +2951,9 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
         pu_draw_modpop(sm, force);
         return;
     }
-    char tt[24], ob[NAME_LEN + 1];
+    char tt[24], ob[NAME_LEN + 1], vb[24];
+    const char *vt = "";
+    int32_t vsc = 4;
     uint8_t f = sm->s.current_param_focus;
     uint16_t pos = 0u, n = f < ui_sm_row_count(sm) ? ui_sm_row_options(sm, f, &pos) : (uint16_t)0u;
     const char *lab = f < ui_sm_row_count(sm) ? ui_sm_row_label(sm, f) : "";
@@ -2957,6 +2961,12 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
     uint32_t h = sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)sm->page | (uint32_t)f << 8 |
                                                      (uint32_t)sm->s.active_synth_layer << 16);
     h = pu_mix_str(sq_mix(h, (uint32_t)pos | (uint32_t)n << 16), lab);
+    if (n <= 1u && f < ui_sm_row_count(sm)) {        /* a number's card: the value's text, the largest that fits */
+        vt = pu_row_text(sm, f, vb);
+        h = sq_mix(pu_mix_str(h, vt), ui_sm_row_place(sm, f));
+        while (vsc > 2 && PU_RUNE_N_W(pu_strlen(vt), vsc) > 200)
+            vsc--;
+    }
     if (!pu_dirty(PUR_ROWPOP, h, force))
         return;
     tt[0] = '\0';
@@ -2973,6 +2983,17 @@ static void pu_draw_rowpop(const UIStateMachine *sm, uint32_t force)
         pu_tablet(4, 4, 232, 232, 77u, oy);
         pu_pop_line(16, tt, SQC(THEME), 1, oy);
         pu_pop_line(30, lab, SQC(TEXT), 2, oy);
+        if (n <= 1u) {                               /* SEQ / ARP numbers (2026-11-14): the value's card, large */
+            pu_block_lit(10, PU_VC_Y - oy, 214, PU_VC_SLAB, 0, oy, 903u);
+            pu_pop_line(PU_VC_Y + (PU_VC_SLAB - vsc * SQ_RUNE_H) / 2, vt, SQC(HI), vsc, oy);
+            if (ui_sm_row_text(sm, f) == NULL) {     /* a plain number: its place in the range */
+                y = PU_VC_Y + PU_VC_SLAB + 24;
+                cv_rect(24, y + 3 - oy, 192, 1, PUC_STONE);
+                cv_rect(24, y - oy, (int32_t)ui_sm_row_place(sm, f) * 192 / 127, 7, SQC(THEME));
+            }
+            cv_blit(0, (uint32_t)oy);
+            continue;
+        }
         y = PU_OP_Y;
         for (k = first; k < first + cnt; k++) {
             const char *t = ui_sm_row_option(sm, f, (uint16_t)k, ob);
