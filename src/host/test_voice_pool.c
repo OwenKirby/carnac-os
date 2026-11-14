@@ -158,6 +158,44 @@ int main(void)
     poly_bank[1].silent = 1;                        /* one tail: a free voice is taken */
     CHECK(allocate_voice_slot(0, VSRC_ARP) >= 1 && allocate_voice_slot(0, VSRC_ARP) != 0, "below SRC_TAILS a free voice is taken");
 
+    /* round-robin (2026-11-13): free voices are taken in turn, wrapping, never the lowest one again and again */
+    voice_allocator_init();
+    for (int v = 0; v < 8; v++) {
+        poly_bank[v].src = VSRC_KEYS;
+        poly_bank[v].is_gate_open = 0;
+        poly_bank[v].silent = 1;
+        poly_bank[v].choke = 0;
+        poly_bank[v].age_counter = 0;
+    }
+    pool_range(0, &first, &count);
+    CHECK(first == 0 && count == 8, "SINGLE alone: 8 voices from 0 (%d + %d)", first, count);
+    for (int k = 0; k < 2 * count; k++) {            /* staccato: each note's tail ends before the next */
+        int got = allocate_voice_slot(0, VSRC_KEYS);
+        CHECK(got == k % count, "staccato note %d took voice %d, want %d", k, got, k % count);
+    }
+    voice_allocator_init();                          /* held chord: every free voice before any steal */
+    int seen = 0;
+    for (int k = 0; k < count; k++) {
+        int got = allocate_voice_slot(0, VSRC_KEYS);
+        CHECK(got >= 0 && !(seen & 1 << got), "held note %d took voice %d, already used", k, got);
+        if (got >= 0) {
+            seen |= 1 << got;
+            poly_bank[got].is_gate_open = 1;
+            poly_bank[got].silent = 0;
+            poly_bank[got].age_counter = (uint32_t)(count - k);   /* the first note is the oldest */
+        }
+    }
+    CHECK(seen == 0xFF, "all 8 voices used before a steal (0x%02X)", seen);
+    CHECK(allocate_voice_slot(0, VSRC_KEYS) == 0, "the 9th note steals the oldest held, voice 0");
+    poly_bank[3].is_gate_open = 0;                   /* voice 3 releases (still ringing): it goes before any held note */
+    CHECK(allocate_voice_slot(0, VSRC_KEYS) == 3, "a ringing release is stolen before a held note");
+    poly_bank[5].silent = 1;                         /* voice 5 frees, after the last pick (7): wraps to it */
+    poly_bank[5].is_gate_open = 0;
+    CHECK(allocate_voice_slot(0, VSRC_KEYS) == 5, "a free voice before a ringing one, found past the wrap");
+    pool_range(1, &first, &count);
+    CHECK(count == 0 || allocate_voice_slot(1, VSRC_KEYS) == -1 || allocate_voice_slot(1, VSRC_KEYS) >= first,
+          "layer 2 stays in its own range");
+
     if (fails) { printf("%d failure(s)\n", fails); return 1; }
     printf("voice pool: priced caps, pairs inside the cores, top-aligned layer 2, source tails\n");
     return 0;

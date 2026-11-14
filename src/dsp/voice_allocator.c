@@ -9,8 +9,10 @@ SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 volatile uint8_t voice_shed;
 volatile uint8_t voice_tail_cut;
 uint8_t pool_pass;
+static uint8_t rr_last[NLAYER] = {0xFFu, 0xFFu};   /* each layer's last free-voice pick (allocate_voice_slot stage 1) */
 
 SYNTH_COLD void voice_allocator_init(void) {
+    for (uint8_t l = 0; l < NLAYER; l++) rr_last[l] = 0xFFu;
     for (int v = 0; v < POLYPHONY_VOICES; v++) {
         SynthVoiceNode *n = &poly_bank[v];
         osc_init(&n->osc1);
@@ -147,9 +149,15 @@ int allocate_voice_slot(uint8_t layer, uint8_t src) {
         if (tails >= SRC_TAILS) return own;
     }
 
-    // Stage 1: Try to look for an inactive, perfectly silent voice slot
-    for (int v = first; v < end; v++) {
+    /* Stage 1: a free (silent) voice, round-robin (2026-11-13): the search starts after the layer's last free pick and
+     * wraps, so a line of short notes walks through every voice (each its own ANALOG offsets) instead of replaying the
+     * lowest one. The cores still share the load: they render alternate voices. */
+    int start = (int)rr_last[layer < NLAYER ? layer : 0] + 1 - first;
+    if (start < 0 || start >= count) start = 0;
+    for (int i = 0; i < count; i++) {
+        int v = first + (start + i) % count;
         if (voice_is_free(&poly_bank[v])) {
+            rr_last[layer < NLAYER ? layer : 0] = (uint8_t)v;
             return v;
         }
     }
