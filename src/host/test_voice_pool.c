@@ -196,6 +196,32 @@ int main(void)
     CHECK(count == 0 || allocate_voice_slot(1, VSRC_KEYS) == -1 || allocate_voice_slot(1, VSRC_KEYS) >= first,
           "layer 2 stays in its own range");
 
+    /* the measured room (2026-11-14): CAIRN SPIRIT's pair in DUAL (L1 MONO, L2 STACK PCM x2): the table gives 1 + 4; a
+     * room of 49 tenths (L2 priced 19 here) takes L2 to 3, at the top of the pool; room 0 is the table; a big room never exceeds it */
+    {
+        int f0, n0, f1, n1, af, an;
+        perf_state.perf_mode = PERF_DUAL_SYNTH;
+        perf_state.voice_mode[0] = VMODE_MONO_RETRIG;
+        perf_state.voice_mode[1] = VMODE_POLY_REUSE;
+        engine_state[0] = mk(VARCH_DUAL_OSC, 0, FLT_MULTI, 0);
+        engine_state[1] = mk(VARCH_STACK, 0, FLT_MULTI, 1);
+        voice_room = 0;
+        pool_range(0, &f0, &n0);
+        pool_range(1, &f1, &n1);
+        pool_alloc_range(1, &af, &an);
+        CHECK(af == f1 && an == n1, "room 0: the table's range (%d+%d vs %d+%d)", af, an, f1, n1);
+        CHECK(n0 == 1 && n1 == 4, "CAIRN pair by the table: 1 + 4 (%d + %d)", n0, n1);
+        voice_room = 49;                             /* (core 0: L1's 12 + two of L2's 19 = 50: one over) */
+        pool_alloc_range(1, &af, &an);
+        CHECK(an == 3 && af + an == POLYPHONY_VOICES, "room 49: L2 3 at the top (%d at %d)", an, af);
+        pool_alloc_range(0, &af, &an);
+        CHECK(an == 1 && af == 0, "room 49: L1 MONO keeps its one (%d at %d)", an, af);
+        voice_room = 200;
+        pool_alloc_range(1, &af, &an);
+        CHECK(af == f1 && an == n1, "a big room: never more than the table (%d at %d)", an, af);
+        voice_room = 0;
+    }
+
     if (fails) { printf("%d failure(s)\n", fails); return 1; }
     printf("voice pool: priced caps, pairs inside the cores, top-aligned layer 2, source tails\n");
     return 0;

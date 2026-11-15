@@ -23,6 +23,12 @@ void synth_render_q15(int32_t *interleaved_lr, uint32_t frames);
  * called only inside synth_render_q15. Unset (the host, the browser, the profile build), one core renders both voice
  * sets; the output is the same either way. */
 void synth_set_core2(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void));
+/* The measured room (2026-11-14, voice_allocator.h voice_room): a clock and its ticks a frame (the FM1: 24 MHz, 544) let
+ * the render time its passes and its voices; unset (the host, the browser) nothing is measured and the voice limits are
+ * the price table's alone. synth_floor_pm: the smoothed floor (a pass's time outside the voices), per mille. */
+void synth_set_clock(uint32_t (*now)(void), uint32_t ticks_per_frame);
+uint32_t synth_floor_pm(void);
+uint32_t synth_slope_q8(void);    /* the voices' measured cost a priced tenth on the busier core, per mille x 256 */
 #if !defined(FELUCCA_ID)                      /* browser emulator only */
 int32_t *synth_web_buffer(void);
 void synth_web_render(uint32_t frames);

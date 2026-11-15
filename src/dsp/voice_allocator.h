@@ -108,6 +108,21 @@ extern volatile uint8_t voice_shed;
 /* Tail cuts (2026-11-11, the glue again): this many of the quietest released voices, of any layer, are choked at the
  * next layer tick, the limits left alone (shed_policy.h: tails go before the limit is cut). */
 extern volatile uint8_t voice_tail_cut;
+/* THE MEASURED ROOM (2026-11-14). The price table (PresetStructures.h) sets the voice limits from what the voices cost
+ * over a fixed floor (14.6 % of a pass, plus each MFX's price); a real performance's floor ran to 25 % (the slowed tape
+ * delay, the reverb, the sequencers), so CAIRN SPIRIT with its SEQ and ARP went over (80 % average, 101 % peaks: the
+ * user's drop-outs). The render now times its own work outside the voices each pass (synth_runtime.c, where a clock is
+ * set: the FM1) and leaves here the tenths each core's voices may still carry under VOICE_ROOM_TARGET_PM: 0 = not
+ * measured (the host, the browser: the table alone, as before). New notes are fitted to it (pool_alloc_range); the
+ * limits themselves (pool_range: note-offs, the held notes) stay the table's, so a lower room never cuts a held note:
+ * a released voice outside it is choked at the next layer tick (a steal), a new note steals inside it. */
+extern volatile uint8_t voice_room;
+#define VOICE_ROOM_TARGET_PM 720u    /* the pass's average load the room aims at: peaks run ~6..15 over it (PERF TEST) */
+#define VOICE_ROOM_PEAK_PM 850u      /* .. and the average plus the spikes (an 11.6 ms half's over its mean, held ~3 s)
+                                      * under this: a sequenced PCM stack spiked 20..26 points over its mean (2026-11-14) */
+/* the voices new notes of `layer` may take: pool_range's, or fewer at the top of the pool for layer 2 / the bottom for
+ * layer 1 while the measured room is lower than the table's */
+void pool_alloc_range(uint8_t layer, int *first, int *count);
 /* The render pass's mark for pool_range (synth_runtime.c render_pass): 1 at a pass's start, 0 at its end; pool_range
  * makes it 2 once it has priced the patches in this pass, and until the pass ends (or a patch loads) answers from that. */
 extern uint8_t pool_pass;

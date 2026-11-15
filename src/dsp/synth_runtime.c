@@ -449,6 +449,19 @@ static void enforce_voice_limits(void)
             s->is_gate_open = 0;
         }
     }
+    if (voice_room)                                /* the measured room (voice_allocator.h): a released voice above it is stolen */
+        for (uint8_t l = 0; l < NLAYER; l++) {
+            int af, an;
+            pool_alloc_range(l, &af, &an);
+            if (an >= count[l]) continue;
+            for (int v = first[l]; v < first[l] + count[l]; v++) {
+                SynthVoiceNode *s = &poly_bank[v];
+                if (v >= af && v < af + an) continue;
+                if (s->is_gate_open || s->silent || s->choke || s->layer != l) continue;
+                s->choke = 1;
+                s->choke_q15 = 32767;
+            }
+        }
     for (; voice_tail_cut; voice_tail_cut--) {      /* the overload's tail cuts: the quietest ringing release first */
         SynthVoiceNode *q = 0;
         for (int v = 0; v < POLYPHONY_VOICES; v++) {
@@ -476,8 +489,10 @@ SYNTH_COLD void synth_init(void)
     synth_restart();
 }
 
+static void room_reset(void);
 SYNTH_COLD void synth_restart(void)
 {
+    room_reset();                              /* (a fresh start measures afresh: the table until it has) */
     midi_io_init(&master_midi);
     midi_clock_init();
     voice_allocator_init();
@@ -627,6 +642,93 @@ void synth_fx_one_core(int on) { fx_one_core = (uint8_t)(on != 0); }
 static int (*core2_run)(void (*fn)(uint32_t), uint32_t arg);
 static int (*core2_wait)(void);
 static uint32_t core1_from, core1_to;          /* the run core 1 renders (set before it is handed the job) */
+
+/* the measured room (synth_runtime.h): the clock, this pass's voice runs, the floor's tracker (per mille, Q8) and the
+ * voices' cost a priced tenth (per mille x 256: Q8) */
+static uint32_t (*pass_clock)(void);
+static uint32_t pass_tpf;
+static uint32_t vrun_ticks;
+static uint32_t floor_q8, floor_passes, slope_q8 = 95u * 256u / 10u;   /* (before any is measured: the table's 0.95 %) */
+static uint32_t half_ticks, half_frames, load_q8, spike_q8;   /* the halves' loads: their mean, the spikes over it */
+void synth_set_clock(uint32_t (*now)(void), uint32_t ticks_per_frame)
+{
+    pass_clock = now;
+    pass_tpf = ticks_per_frame;
+}
+uint32_t synth_floor_pm(void) { return floor_q8 >> 8; }
+uint32_t synth_slope_q8(void) { return slope_q8; }
+
+/* A pass into the measured room (voice_allocator.h voice_room), 2026-11-14:
+ *  - the floor, its time less its voice runs (the effects, the MFX, the clock and sequencers, the notes' handling),
+ *    its mean over ~32 passes (90 ms) both ways (a first version followed its peaks, up in 8 passes and down in 500:
+ *    a light patch with the SEQ running lost 2 of 8 voices, and a chord struck 1 s after a heavy sequence stopped
+ *    got half its voices);
+ *  - the slope, what a priced tenth of voices (PresetStructures.h varch_voice_cost) on the busier core costs in wall
+ *    time this pass, smoothed over ~32 passes, measured only while 2 voices' worth or more sound. The table's fixed
+ *    0.95 % was ~2x high for SINGLE voices and low for STACK + PCM ones (the PERF TEST with SYNTH_ROOM_OFF, 2026-11-14);
+ *  - the spikes: each half's load over the halves' mean, the biggest held and let down over ~3 s;
+ *  - the room: the tenths a core may carry for the pass to land on VOICE_ROOM_TARGET_PM, (target - floor) / slope,
+ *    and for the mean plus the held spike to stay under VOICE_ROOM_PEAK_PM (whichever is less),
+ *    moved only by 2 or more (no flapping). Fitted on that run: the rows that passed keep their voices, CAIRN SPIRIT
+ *    (74 %, peaks 82..89) loses one on layer 2. */
+static void floor_pass(uint32_t total, uint32_t frames)
+{
+    uint32_t budget = frames * pass_tpf, pm, vpm, room, w[NLAYER], core[2] = {0u, 0u}, t;
+    if (!budget) return;
+    pm = (total > vrun_ticks ? total - vrun_ticks : 0u) * 1000u / budget;
+    vpm = vrun_ticks * 1000u / budget;
+    if (pm > 1000u) pm = 1000u;
+    for (unsigned l = 0; l < NLAYER; l++) w[l] = varch_voice_cost(&engine_state[l]);
+    for (unsigned v = 0; v < POLYPHONY_VOICES; v++)
+        if (!voice_is_free(&poly_bank[v]))
+            core[(CORE1_VOICES >> v) & 1u] += w[poly_bank[v].layer < NLAYER ? poly_bank[v].layer : 0u];
+    t = core[0] > core[1] ? core[0] : core[1];
+    half_ticks += total;                           /* the spikes, by halves (512 frames: the FM1's deadline) */
+    half_frames += frames;
+    if (half_frames >= 512u) {
+        uint32_t h = half_ticks * 1000u / (half_frames * pass_tpf) << 8, s;
+        half_ticks = half_frames = 0;
+        if (!load_q8) load_q8 = h;
+        if (h > load_q8) load_q8 += (h - load_q8) >> 4;   /* (the mean, ~0.2 s) */
+        else load_q8 -= (load_q8 - h) >> 4;
+        s = h > load_q8 ? h - load_q8 : 0u;        /* this half's spike: held, then let down over ~3 s */
+        spike_q8 = s > spike_q8 ? s : spike_q8 - (spike_q8 >> 8);
+    }
+    if (floor_passes < 64u) {                      /* (the first passes: the start, settling) */
+        floor_passes++;
+        floor_q8 = pm << 8;
+        return;
+    }
+    if ((pm << 8) > floor_q8) floor_q8 += ((pm << 8) - floor_q8) >> 5;   /* (its mean: the target's margin takes */
+    else floor_q8 -= (floor_q8 - (pm << 8)) >> 5;                        /* the bursts; ~90 ms both ways) */
+    if (t >= 20u) {
+        uint32_t s = (vpm << 8) / t;
+        if (s > slope_q8) slope_q8 += (s - slope_q8) >> 5;
+        else slope_q8 -= (slope_q8 - s) >> 5;
+        if (slope_q8 < 64u) slope_q8 = 64u;         /* (0.25 % a tenth at least: a room stays finite) */
+    }
+    pm = floor_q8 >> 8;
+    room = pm < VOICE_ROOM_TARGET_PM ? ((VOICE_ROOM_TARGET_PM - pm) << 8) / slope_q8 : 1u;
+    {                                              /* the peak's limit: the mean plus the held spike under the peak target */
+        uint32_t sp = spike_q8 >> 8, rp = pm + sp < VOICE_ROOM_PEAK_PM ? ((VOICE_ROOM_PEAK_PM - pm - sp) << 8) / slope_q8 : 1u;
+        if (rp < room) room = rp;
+    }
+    if (room < 1u) room = 1u;
+    if (room > 255u) room = 255u;
+#if !defined(SYNTH_ROOM_OFF)                       /* (-D SYNTH_ROOM_OFF: measured, not applied: the calibration) */
+    if (!voice_room || room + 2u <= voice_room || room >= voice_room + 2u)
+        voice_room = (uint8_t)room;
+#else
+    (void)room;
+#endif
+}
+
+static void room_reset(void)
+{
+    floor_passes = 0;
+    voice_room = 0;
+    half_ticks = half_frames = load_q8 = spike_q8 = 0;
+}
 
 void synth_set_core2(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)(void))
 {
@@ -902,10 +1004,12 @@ static void voices_up_to(uint32_t frame)
     core1_from = voices_done;
     core1_to = frame;
     core1_set = set1;
+    uint32_t vt0 = pass_clock ? pass_clock() : 0u;
     int on2 = set1 && core2_run && core2_run(core1_job, 0u);   /* core 1 starts on its set ... */
     render_voice_run(&mix_bus[0], all & ~set1, voices_done, frame);   /* ... while core 0 renders its own */
     if (set1 && (!on2 || core2_wait()))
         core1_job(0u);                         /* one core (or the second failed): here */
+    if (pass_clock) vrun_ticks += pass_clock() - vt0;   /* (the measured room: the voices' wall time) */
     voices_done = frame;
     for (uint8_t i = 0; i < seq_qn; i++)       /* the sequencers' events that waited for this boundary, in order */
         midi_apply(seq_q[i].st, seq_q[i].d1, seq_q[i].d2, seq_q[i].src);
@@ -953,6 +1057,8 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
     uint32_t sprof_total = synth_prof_now();
 #endif
     SPROF_DECL;
+    uint32_t pass_t0 = pass_clock ? pass_clock() : 0u;
+    vrun_ticks = 0;
     /* each bus cleared on its own (2026-10-16): the FM1's compiler (JieLi clang, -O2) turned the joint loop that was
      * here (both buses in one statement) into 64-bit stores for bus 0 placed 4 bytes low: every frame's reverb send was
      * cleared one iteration late, frame 127's never, and the word just below mix_bus was zeroed every pass. Frame 127's
@@ -1138,6 +1244,8 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
     fx_tone_sync(&perf_state);                         /* LOOP TONE's thinner half is DELAY HP (fx.h) */
     fx_pulse_q8 = midi_clock_period_q8();              /* DELAY SYNC follows the tempo, internal or MIDI */
     fx_cross_to_dly(fx_dly, frames);                   /* REV > DLY: the reverb's last pass (fx.h, 2026-11-02) */
+    /* (2026-11-14: the delay alone on core 1 paid while the slowed tape cost more than the reverb's front and tank;
+     * with the half-rate tape it is cheap at every DELAY TIME, and this way round balances the cores again) */
     int on2 = !fx_one_core && core2_run && core2_run(fx_reverb_job, 0u);
     fx_delay_block(&perf_state, fx_dly, fx_dly_l, fx_dly_r, frames);
     fx_cross_to_rev(fx_dly_l, fx_dly_r, fx_rev_in, frames);   /* DLY > REV: this pass's echoes */
@@ -1147,6 +1255,7 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
     if (!on2 || core2_wait())
         fx_reverb_job(0u);
     PF_LAP(SPROF_F_RVB);
+
     fx_cross_keep(fx_rev_l, fx_rev_r, frames);         /* (core 1 done: the reverb's out, for the next pass) */
     for (uint32_t frame = 0; lvl_on && frame < frames; ++frame) {   /* the meters (synth_levels): before the wet sum */
         int32_t r = fx_rev_l[frame] < 0 ? -fx_rev_l[frame] : fx_rev_l[frame];
@@ -1221,6 +1330,8 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
         out[frame * 2u + 1u] = clamp_q15_64(right);
     }
     limit_env_q8 = env;
+    if (pass_clock)
+        floor_pass(pass_clock() - pass_t0, frames);
     PF_LAP(SPROF_F_TAIL);
     SPROF_LAP(SPROF_FX);
 #if defined(SYNTH_PROF)

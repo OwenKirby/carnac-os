@@ -33,13 +33,13 @@ static const uint32_t stab_at[4] = {0u, RATE * 3u / 4u, RATE * 2u, RATE * 2u + R
 
 typedef struct {
     const char *name;
-    uint8_t rev, pp, delay_type;
+    uint8_t rev, pp, delay_type;   /* (0: the tape, the only delay since 2026-11-14) */
 } Scene;
 static const Scene scenes[] = {
-    {"1_mod_pingpong", REVTYPE_MOD, 1, DELAYTYPE_TAPE},
-    {"2_mod_mono_echo", REVTYPE_MOD, 0, DELAYTYPE_TAPE},
-    {"3_spring_pingpong", REVTYPE_SPRING, 1, DELAYTYPE_TAPE},
-    {"4_tumulus_bbd", REVTYPE_TUMULUS, 1, DELAYTYPE_BBD},
+    {"1_mod_pingpong", REVTYPE_MOD, 1, 0},
+    {"2_mod_mono_echo", REVTYPE_MOD, 0, 0},
+    {"3_spring_pingpong", REVTYPE_SPRING, 1, 0},
+    {"4_tumulus_pingpong", REVTYPE_TUMULUS, 1, 0},
 };
 static const uint8_t tones[] = {64, 40, 16, 0, 96, 127};
 

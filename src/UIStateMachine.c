@@ -43,7 +43,7 @@ enum {                               /* how a row reads and writes its value */
     RK_THEME,                        /* GLOBAL > THEME: UIStateMachine.theme */
     RK_INST,                         /* the byte at offset in the instrument settings (GLOBAL, sm->inst) */
     RK_FINE,                         /* RK_BYTE shown in cents (OSC FINE TUNE, osc_fine_cents) */
-    RK_BIT0,                         /* bit 0 of the byte at offset: PING PONG (DELAY_PINGPONG), DELAY SYNC, DELAY TYPE */
+    RK_BIT0,                         /* bit 0 of the byte at offset: PING PONG (DELAY_PINGPONG), DELAY SYNC */
     RK_HIGH7,                        /* bits 1..7 of the byte at offset: DELAY HP, TUNING and ROOT (PresetStructures.h) */
     RK_WAVE,                         /* RK_BYTE holding a wave code (pcm_osc.h): steps through the wave list (banks,
                                       * PCM waves, attacks), shows the wave's name */
@@ -144,7 +144,6 @@ PS_STATIC_ASSERT(sizeof(VELCURVE_NAMES) / sizeof(VELCURVE_NAMES[0]) == VELCURVE_
 PS_STATIC_ASSERT(sizeof(CLKOUT_NAMES) / sizeof(CLKOUT_NAMES[0]) == CLKOUT_COUNT, "one name per CLKOUT_*");
 static const char *const THEME_NAMES[UITHEME_COUNT] = {"SAMHAIN", "BLOOD MOON", "FIRE", "SOLSTICE", "LICHEN", "HEATHER",
                                                        "RITUAL", "GRANITE", "OAK"};
-static const char *const DELAYTYPE_NAMES[] = {"TAPE", "BBD"};
 static const char *const TUNING_NAMES[] = {"EQUAL", "OVERTONE", "JUST", "PYTHAGORAS", "SEPTIMAL", "MAQAM RAST", "MEANTONE",
                                            "WERCK III", "USER 1", "USER 2", "USER 3", "USER 4"};
 PS_STATIC_ASSERT(sizeof(TUNING_NAMES) / sizeof(TUNING_NAMES[0]) == TUNING_COUNT, "one name per TUNING_*");
@@ -379,7 +378,6 @@ static const UiRow MFX_ROWS[] = {
 #define ENGB(member) OFS(EngineState, member)
 static const UiRow EFFECTS_ROWS[] = {
     /* the delay's rows first, then the reverb's (2026-10-26) */
-    {"DELAY TYPE", PERF(delay_type), 0, DELAYTYPE_COUNT - 1, RK_BIT0, 0, DELAYTYPE_NAMES, A_ALL},
     {"DELAY SYNC", PERF(delay_sync), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},
     {"DEGRADE", PERF(delay_degrade), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"PING PONG", PERF(delay_pingpong), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},   /* (DELAY HP: MIX's LOOP TONE) */

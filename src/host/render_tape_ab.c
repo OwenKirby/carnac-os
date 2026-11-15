@@ -1,9 +1,9 @@
-/* Delay stereo A/B (2026-11-03): the same scenes rendered by the build before (A) and after (B) the tape's PING PONG
- * heads got their own wow and flutter and the BBD got two lines (fx.c bbd_delay_block), as WAVs to compare by ear.
- * Build it against each fx.c and run both into one folder with a different label:
- *   gcc -O2 -Isrc -Isrc/dsp -Isrc/hardware $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) \
- *       src/host/pcm_images_host.c src/host/render_delay_ab.c -lm -o render_delay_ab
- *   render_delay_ab OUTDIR LABEL      writes OUTDIR/<scene>_<LABEL>.wav, prints peak / RMS and the side's level */
+/* Tape memory A/B (2026-11-14): the tape echo's scenes, from gentle to runaway, rendered by builds of fx.c with
+ * different tape memories (TAPE_BYTES) and cells (TAPE_MULAW), as WAVs to compare by ear: whether the longer tape (no
+ * slowing, so none of the slowed tape's filters, and none of its aliasing) and the squeezed 8-bit cells land somewhere
+ * interesting in high feedback.
+ *   gcc -O2 [-DTAPE_BYTES=65536u] [-DTAPE_MULAW=1] -Isrc -Isrc/dsp -Isrc/hardware  *       $(ls src/dsp/?*.c | grep -v engine.c | grep -v test_wavetables.c) src/host/pcm_images_host.c  *       src/host/render_tape_ab.c -lm -o render_tape_ab
+ *   render_tape_ab OUTDIR LABEL       writes OUTDIR/<scene>_<LABEL>.wav, prints peak / RMS and the side's level */
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -33,15 +33,17 @@ static const uint32_t stab_at[4] = {0u, RATE * 3u / 4u, RATE * 2u, RATE * 2u + R
 
 typedef struct {
     const char *name;
-    uint8_t delay_type, pp, degrade, feedback, xf;               /* xf: both cross-feeds (0: off) */
+    uint8_t pp, time, degrade, feedback;                         /* DELAY TIME 47: ~0.375 s, a dotted eighth at 120 */
     uint32_t secs;
 } Scene;
 static const Scene scenes[] = {
-    {"1_tape_pingpong", DELAYTYPE_TAPE, 1, 70, 75, 0, 12},
-    {"2_bbd_pingpong", DELAYTYPE_BBD, 1, 70, 75, 0, 12},
-    {"3_bbd_mono_echo", DELAYTYPE_BBD, 0, 70, 75, 0, 12},
-    {"4_bbd_loop", DELAYTYPE_BBD, 1, 50, 78, 120, 16},
-    {"5_bbd_howl", DELAYTYPE_BBD, 1, 36, 118, 0, 16},
+    {"1_factory_pingpong", 1, 47, 60, 75, 12},                  /* CAIRN SPIRIT's echo */
+    {"2_pingpong_fb110", 1, 47, 50, 110, 16},                  /* sustaining */
+    {"3_pingpong_howl118", 1, 47, 36, 118, 16},                /* a held howl */
+    {"4_pingpong_runaway127", 1, 47, 60, 127, 16},             /* flat out */
+    {"5_dub_short_fb115", 1, 30, 80, 115, 16},                 /* ~0.24 s, worn */
+    {"6_mono_0s75_worn", 0, 95, 100, 105, 16},                 /* a long mono echo, worn tape */
+    {"7_pingpong_1s_fb112", 1, 127, 60, 112, 18},              /* the longest: slowed in every variant */
 };
 
 static void put_u32(FILE *f, uint32_t v) { fputc(v & 255, f); fputc((v >> 8) & 255, f); fputc((v >> 16) & 255, f); fputc((v >> 24) & 255, f); }
@@ -55,20 +57,19 @@ static void patch(const Scene *sc)
     perf_state.perf_mode = PERF_SINGL_SYNTH;
     e->arch = VARCH_SINGLE;
     e->amp.delay_send = 90;
-    e->amp.reverb_send = sc->xf ? 40 : 15;
+    e->amp.reverb_send = 15;
     e->env[0].attack = 0; e->env[0].decay = 45; e->env[0].sustain = 0; e->env[0].release = 30;
     e->filter[0].cutoff = 80; e->filter[0].resonance = 25;
     perf_state.delay_sync = 0;
-    perf_state.delay_time = 46;
+    perf_state.delay_time = sc->time;
     perf_state.delay_feedback = sc->feedback;
     perf_state.delay_degrade = sc->degrade;
-    perf_state.delay_type = sc->delay_type;
     perf_state.delay_pingpong = sc->pp;
     perf_state.reverb_type = REVTYPE_MOD;
     perf_state.reverb_decay = 80;
     perf_state.reverb_damp = 40;
-    fx_cross[FX_X_DLY_REV] = sc->xf;
-    fx_cross[FX_X_REV_DLY] = sc->xf;
+    fx_cross[FX_X_DLY_REV] = 0;
+    fx_cross[FX_X_REV_DLY] = 0;
     synth_restart();
 }
 
@@ -110,7 +111,7 @@ static void render(const char *dir, const char *label, const Scene *sc)
 
 int main(int argc, char **argv)
 {
-    if (argc < 3) { fprintf(stderr, "usage: render_delay_ab OUTDIR LABEL\n"); return 2; }
+    if (argc < 3) { fprintf(stderr, "usage: render_tape_ab OUTDIR LABEL\n"); return 2; }
     synth_init();
     {
         extern const uint8_t pcm_image_host0[], pcm_image_host1[], pcm_image_host2[];

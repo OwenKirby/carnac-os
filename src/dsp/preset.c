@@ -164,7 +164,7 @@ void perf_defaults(MasterPerformancePreset *p)
     p->midi_ch[1] = 1;                   /* channel 2 */
     p->delay_degrade = 36;               /* tape echo character: the fixed wear before it was a parameter */
     p->delay_pingpong = 0;
-    p->delay_type = DELAYTYPE_TAPE;
+    p->delay_type = 0;
     p->reverb_type = REVTYPE_TOMB;       /* the old default, PLATE, played the ROOM network */
     p->base_velocity = 69;
     p->bend_range = 2;

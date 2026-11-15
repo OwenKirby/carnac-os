@@ -90,8 +90,11 @@ def results():
     for i in range(n):
         b = ask(ED_PERFT, [2, i & 127, i >> 7])
         w = lambda k: b[k] | b[k + 1] << 7
-        rows.append(dict(name=cstr(b, 12), avg=w(1) / 10, peak=w(3) / 10, late=w(5), fps=w(7) / 10,
-                         ui_ms=b[9], voices=b[10], cut=bool(b[11])))
+        name = cstr(b, 12)
+        k = 12 + len(name) + 1                       # the measured floor after the name (2026-11-14), if sent
+        rows.append(dict(name=name, avg=w(1) / 10, peak=w(3) / 10, late=w(5), fps=w(7) / 10,
+                         ui_ms=b[9], voices=b[10], cut=bool(b[11]),
+                         floor=(b[k] | b[k + 1] << 7) / 10 if len(b) >= k + 2 else None))
     return PT_STATE.get(st, st), rows
 
 
@@ -155,12 +158,14 @@ def verdict(r):
 
 
 def table(rows):
-    out = ["| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms | |",
-           "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+    fl = any(r.get("floor") for r in rows)          # the measured floor column, when the firmware sends one
+    out = ["| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms |" + (" floor % |" if fl else "") + " |",
+           "| --- | ---: | ---: | ---: | ---: | ---: | ---: |" + (" ---: |" if fl else "") + " --- |"]
     for r in rows:
         ui = "– | –" if r["cut"] else f"{r['fps']:.1f} | {r['ui_ms']}"   # cut: ~0.1 s, the screen starved
+        f = f" {r['floor']:.1f} |" if fl and r.get("floor") is not None else (" – |" if fl else "")
         out.append(f"| {r['name']} | {r['avg']:.1f} | {r['peak']:.1f} | {r['late']} | {r['voices']} | "
-                   f"{ui} | {verdict(r)}{' (cut by the guard)' if r['cut'] else ''} |")
+                   f"{ui} |{f} {verdict(r)}{' (cut by the guard)' if r['cut'] else ''} |")
     return out
 
 
@@ -246,6 +251,29 @@ def main():
             print("reverb send going in %s; core 1 stack used %d of 2816 B" % (db(v[27]), v[28]))
         if n >= 30:
             print("tails cut by the overload guard (before any shed): %d" % v[29])
+        if n >= 40:
+            print("longest lock hold %d us (by 0x%08x; holds >= 1 ms %d, >= 3 ms %d)" % (v[30], v[31], v[32], v[33]))
+            print("longest audio start delay %d us; longest usb_poll %d us; flash erases %d" % (v[34], v[35], v[36]))
+            print("late halves: render too slow %d, started too late %d; last late one: start %d us late, render %d us" %
+                  (v[37], v[38], v[39] & 0xFFFF, v[39] >> 16))
+        if n >= 50:
+            b = lambda x, k: (x >> (8 * k)) & 0xFF
+            print("MFX L1 %d L2 %d | filters L1 %d/%d L2 %d/%d | waves L1 %d/%d L2 %d/%d | spread L1 %d L2 %d" %
+                  (b(v[40], 0), b(v[40], 1), b(v[41], 0), b(v[41], 1), b(v[41], 2), b(v[41], 3),
+                   b(v[42], 0), b(v[42], 1), b(v[43], 0), b(v[43], 1), b(v[49], 0), b(v[49], 1)))
+            print("price (tenths) L1 %d L2 %d MFX %d | caps L1 %d L2 %d | voice modes %d %d" %
+                  (b(v[44], 0), b(v[44], 1), b(v[44], 2), b(v[45], 0), b(v[45], 1), b(v[45], 2), b(v[45], 3)))
+            w = v[46]
+            print("slowest half played: L1 %d held %d releasing, L2 %d held %d releasing" %
+                  (w & 15, (w >> 4) & 15, (w >> 8) & 15, (w >> 12) & 15))
+            print("perf slot %d; SEQ %s ARP %s; MIX balance %d tone %d dly>rev %d rev>dly %d" %
+                  (v[47] & 0xFF, "playing" if v[47] >> 8 & 1 else "stopped", "playing" if v[47] >> 9 & 1 else "stopped",
+                   v[48] & 127, v[48] >> 7 & 127, v[48] >> 14 & 127, v[48] >> 21 & 127))
+        if n >= 53:
+            print("measured floor %.1f %%; room %d tenths a core (0: off); new notes may take L1 %d L2 %d" %
+                  (v[50] / 10, v[51], v[52] & 0xFF, v[52] >> 8))
+        if n >= 54:
+            print("voices' measured cost: %.2f %% a priced tenth on the busier core" % (v[53] / 2560))
 
         return 0
     if not a or a[0] not in ("build", "install", "run", "read", "all"):

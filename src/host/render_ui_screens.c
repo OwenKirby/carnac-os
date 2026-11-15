@@ -497,9 +497,9 @@ int main(int argc, char **argv)
     perf_state.reverb_type = REVTYPE_TOMB;
     go(UIPAGE_EFFECTS);
     shot(dir, "effects");
-    perf_state.delay_type = DELAYTYPE_BBD; perf_state.delay_sync = 1; perf_state.reverb_type = REVTYPE_SPRING;
+    perf_state.delay_type = 0u; perf_state.delay_sync = 1; perf_state.reverb_type = REVTYPE_SPRING;
     shot(dir, "effects_bbd");                     /* the delay type, SYNC and the reverb's name together */
-    perf_state.delay_type = DELAYTYPE_TAPE; perf_state.delay_sync = 0; perf_state.reverb_type = REVTYPE_TOMB;
+    perf_state.delay_type = 0u; perf_state.delay_sync = 0; perf_state.reverb_type = REVTYPE_TOMB;
     /* MIX (2026-11-02): DUAL, layer 2 back, LOOP TONE dark, the loop up and running (its dashes lit); then SINGL's
      * DRY/WET, thinner repeats */
     perf_state.perf_mode = PERF_DUAL_SYNTH;

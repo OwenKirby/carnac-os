@@ -411,40 +411,40 @@ typedef struct {
     const uint8_t *set;                  /* (offset, value) pairs over engine_defaults, V_END ends */
     uint8_t vmode, porta, unison;        /* voice mode, glide (PORTA_* << 7 | time), UNISON DETUNE */
     uint8_t rtype, rdec, rdmp, rpre;     /* reverb (rpre: REV PREDELAY, ignored since v11) */
-    uint8_t dtime, dfb, dtype, ping, degrade, dsync;   /* delay: dtime set to the tempo (dotted eighths mostly) */
+    uint8_t dtime, dfb, ping, degrade, dsync;   /* delay: dtime set to the tempo (dotted eighths mostly) */
 } FactoryVoice;
 #define FV_GLIDE(mode, t) ((uint8_t)(PORTA_##mode << 7 | (t)))
 #define FV_PP(ping, hp) ((uint8_t)((hp) << 1 | (ping)))   /* delay_pingpong: PING PONG and DELAY HP */
-#define FV_ROW(name, set, vm, gl, un, rt, rd, rm, rp, dt, df, dy, pp, dg, ds) \
-    {name, set, VMODE_##vm, gl, un, REVTYPE_##rt, rd, rm, rp, dt, df, DELAYTYPE_##dy, pp, dg, ds}
+#define FV_ROW(name, set, vm, gl, un, rt, rd, rm, rp, dt, df, pp, dg, ds) \
+    {name, set, VMODE_##vm, gl, un, REVTYPE_##rt, rd, rm, rp, dt, df, pp, dg, ds}
 static const FactoryVoice FV_TAB[FP_N] = {
- /*      name             set            voice mode   glide                      uni reverb    dec dmp pre  dt  fb  type pp           deg sync */
- FV_ROW("DUB BARROW",     FV_DUBBARROW,  MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 20), 0, SPRING,    84, 50,  4, 79, 80, TAPE, FV_PP(1, 34), 60, 0),
- FV_ROW("SIDHE SUB",      FV_SIDHESUB,   MONO_LEGATO, FV_GLIDE(CONST_TIME, 16), 0,  TOMB,      50, 70,  0, 75, 30, TAPE, FV_PP(0, 20), 36, 0),
- FV_ROW("BOG SQUELCH",    FV_BOG,        MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 14), 0, SPRING,    60, 60,  4, 46, 50, TAPE, FV_PP(1, 30), 40, 0),
- FV_ROW("WIGHT GROWL",    FV_WIGHT,      MONO_RETRIG, 0,                        0,  DOLMEN,    60, 80,  0, 62, 30, BBD,  FV_PP(0, 20), 36, 0),
- FV_ROW("CROM PULSE",     FV_CROM,       MONO_RETRIG, 0,                        0,  CELESTIAL,116, 50, 20, 49, 56, TAPE, FV_PP(1, 20), 30, 0),
- FV_ROW("UNDERHILL",      FV_UNDERHILL,  MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 16), 0, TOMB,      50, 70,  0, 79, 40, TAPE, FV_PP(0, 24), 50, 0),
- FV_ROW("PEAT THUMP",     FV_PEAT,       POLY_RESET,  0,                        0,  TOMB,      50, 70,  0, 62, 30, TAPE, FV_PP(0, 20), 36, 0),
- FV_ROW("TUMULUS DRONE",  FV_TUMULUS,    POLY_REUSE,  0,                        0,  TUMULUS,  120, 70, 30, 87, 50, TAPE, FV_PP(1, 16), 60, 0),
- FV_ROW("WILL O WISP",    FV_WISP,       MONO_LEGATO, FV_GLIDE(CONST_TIME, 30), 0,  CELESTIAL,112, 50, 30, 71, 50, TAPE, FV_PP(1, 20), 40, 0),
- FV_ROW("BANSHEE",        FV_BANSHEE,    MONO_LEGATO, FV_GLIDE(CONST_TIME, 40), 0,  TUMULUS,  110, 60, 30, 71, 46, BBD,  FV_PP(1, 20), 36, 0),
- FV_ROW("HAG SYNC",       FV_HAGSYNC,    MONO_LEGATO, FV_GLIDE(CONST_TIME, 20), 0,  DOLMEN,    80, 60, 10, 62, 40, TAPE, FV_PP(1, 20), 40, 0),
- FV_ROW("GHOST LIGHT",    FV_GHOST,      MONO_LEGATO, FV_GLIDE(CONST_TIME, 60), 0,  CELESTIAL,120, 50, 40, 79, 50, TAPE, FV_PP(1, 16), 50, 0),
- FV_ROW("WILD HUNT",      FV_HUNT,       UNISON_STACK,FV_GLIDE(CONST_TIME, 16), 44, TUMULUS,  100, 60, 20, 46, 40, TAPE, FV_PP(1, 24), 36, 0),
- FV_ROW("SPIRIT SIREN",   FV_SIREN,      MONO_RETRIG, 0,                        0,  SPRING,    80, 50,  4, 75, 76, TAPE, FV_PP(1, 30), 60, 0),
- FV_ROW("NEWGRANGE DAWN", FV_NEWGRANGE,  POLY_REUSE,  0,                        0,  CELESTIAL,112, 60, 24, 80, 48, TAPE, FV_PP(1, 0),  30, 0),
- FV_ROW("THIN VEIL",      FV_VEIL,       POLY_REUSE,  0,                        0,  TUMULUS,  118, 70, 30, 87, 40, TAPE, FV_PP(1, 16), 50, 0),
- FV_ROW("CRYPT ORGAN",    FV_CRYPT,      POLY_REUSE,  0,                        0,  DOLMEN,   100, 70, 12, 71, 30, TAPE, FV_PP(0, 16), 50, 0),
- FV_ROW("CORPSE CANDLE",  FV_CANDLE,     POLY_RESET,  0,                        0,  CELESTIAL,116, 40, 30, 79, 50, BBD,  FV_PP(1, 16), 36, 0),
- FV_ROW("ALL SOULS",      FV_SOULS,      POLY_REUSE,  0,                        0,  TUMULUS,  120, 70, 40, 87, 40, TAPE, FV_PP(1, 16), 40, 0),
- FV_ROW("OTHERWORLD",     FV_OTHERWORLD, POLY_REUSE,  0,                        0,  CELESTIAL,124, 50, 40, 87, 50, TAPE, FV_PP(1, 16), 40, 0),
- FV_ROW("CAIRN SPIRIT",   FV_SPIRIT,     POLY_REUSE,  0,                        0,  TUMULUS,  120, 70, 30, 79, 60, TAPE, FV_PP(1, 24), 60, 0),
- FV_ROW("RUNE PLUCK",     FV_RUNE,       POLY_REUSE,  0,                        0,  MOD,      100, 50, 15, 68, 56, TAPE, FV_PP(1, 24), 50, 0),
- FV_ROW("CAIRN KICK",     FV_KICK,       POLY_RESET,  0,                        0,  TOMB,      40, 70,  0, 55, 30, TAPE, FV_PP(0, 30), 36, 0),
- FV_ROW("HENGE STAB",     FV_STAB,       POLY_RESET,  0,                        0,  SPRING,    80, 50,  4, 79, 70, TAPE, FV_PP(1, 30), 60, 0),
- FV_ROW("ANTLER CLAV",    FV_CLAV,       POLY_REUSE,  0,                        0,  SPRING,    60, 50,  4, 55, 40, TAPE, FV_PP(1, 24), 40, 0),
- FV_ROW("SPIRIT ZAP",     FV_ZAP,        POLY_RESET,  0,                        0,  SPRING,    70, 50,  4, 71, 80, TAPE, FV_PP(1, 30), 60, 0),
+ /*      name             set            voice mode   glide                      uni reverb    dec dmp pre  dt  fb  pp           deg sync */
+ FV_ROW("DUB BARROW",     FV_DUBBARROW,  MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 20), 0, SPRING,    84, 50,  4, 79, 80, FV_PP(1, 34), 60, 0),
+ FV_ROW("SIDHE SUB",      FV_SIDHESUB,   MONO_LEGATO, FV_GLIDE(CONST_TIME, 16), 0,  TOMB,      50, 70,  0, 75, 30, FV_PP(0, 20), 36, 0),
+ FV_ROW("BOG SQUELCH",    FV_BOG,        MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 14), 0, SPRING,    60, 60,  4, 46, 50, FV_PP(1, 30), 40, 0),
+ FV_ROW("WIGHT GROWL",    FV_WIGHT,      MONO_RETRIG, 0,                        0,  DOLMEN,    60, 80,  0, 62, 30, FV_PP(0, 20), 36, 0),
+ FV_ROW("CROM PULSE",     FV_CROM,       MONO_RETRIG, 0,                        0,  CELESTIAL,116, 50, 20, 49, 56, FV_PP(1, 20), 30, 0),
+ FV_ROW("UNDERHILL",      FV_UNDERHILL,  MONO_LEGATO, FV_GLIDE(LEGATO_TIED, 16), 0, TOMB,      50, 70,  0, 79, 40, FV_PP(0, 24), 50, 0),
+ FV_ROW("PEAT THUMP",     FV_PEAT,       POLY_RESET,  0,                        0,  TOMB,      50, 70,  0, 62, 30, FV_PP(0, 20), 36, 0),
+ FV_ROW("TUMULUS DRONE",  FV_TUMULUS,    POLY_REUSE,  0,                        0,  TUMULUS,  120, 70, 30, 87, 50, FV_PP(1, 16), 60, 0),
+ FV_ROW("WILL O WISP",    FV_WISP,       MONO_LEGATO, FV_GLIDE(CONST_TIME, 30), 0,  CELESTIAL,112, 50, 30, 71, 50, FV_PP(1, 20), 40, 0),
+ FV_ROW("BANSHEE",        FV_BANSHEE,    MONO_LEGATO, FV_GLIDE(CONST_TIME, 40), 0,  TUMULUS,  110, 60, 30, 71, 46, FV_PP(1, 20), 36, 0),
+ FV_ROW("HAG SYNC",       FV_HAGSYNC,    MONO_LEGATO, FV_GLIDE(CONST_TIME, 20), 0,  DOLMEN,    80, 60, 10, 62, 40, FV_PP(1, 20), 40, 0),
+ FV_ROW("GHOST LIGHT",    FV_GHOST,      MONO_LEGATO, FV_GLIDE(CONST_TIME, 60), 0,  CELESTIAL,120, 50, 40, 79, 50, FV_PP(1, 16), 50, 0),
+ FV_ROW("WILD HUNT",      FV_HUNT,       UNISON_STACK,FV_GLIDE(CONST_TIME, 16), 44, TUMULUS,  100, 60, 20, 46, 40, FV_PP(1, 24), 36, 0),
+ FV_ROW("SPIRIT SIREN",   FV_SIREN,      MONO_RETRIG, 0,                        0,  SPRING,    80, 50,  4, 75, 76, FV_PP(1, 30), 60, 0),
+ FV_ROW("NEWGRANGE DAWN", FV_NEWGRANGE,  POLY_REUSE,  0,                        0,  CELESTIAL,112, 60, 24, 80, 48, FV_PP(1, 0),  30, 0),
+ FV_ROW("THIN VEIL",      FV_VEIL,       POLY_REUSE,  0,                        0,  TUMULUS,  118, 70, 30, 87, 40, FV_PP(1, 16), 50, 0),
+ FV_ROW("CRYPT ORGAN",    FV_CRYPT,      POLY_REUSE,  0,                        0,  DOLMEN,   100, 70, 12, 71, 30, FV_PP(0, 16), 50, 0),
+ FV_ROW("CORPSE CANDLE",  FV_CANDLE,     POLY_RESET,  0,                        0,  CELESTIAL,116, 40, 30, 79, 50, FV_PP(1, 16), 36, 0),
+ FV_ROW("ALL SOULS",      FV_SOULS,      POLY_REUSE,  0,                        0,  TUMULUS,  120, 70, 40, 87, 40, FV_PP(1, 16), 40, 0),
+ FV_ROW("OTHERWORLD",     FV_OTHERWORLD, POLY_REUSE,  0,                        0,  CELESTIAL,124, 50, 40, 87, 50, FV_PP(1, 16), 40, 0),
+ FV_ROW("CAIRN SPIRIT",   FV_SPIRIT,     POLY_REUSE,  0,                        0,  TUMULUS,  120, 70, 30, 79, 60, FV_PP(1, 24), 60, 0),
+ FV_ROW("RUNE PLUCK",     FV_RUNE,       POLY_REUSE,  0,                        0,  MOD,      100, 50, 15, 68, 56, FV_PP(1, 24), 50, 0),
+ FV_ROW("CAIRN KICK",     FV_KICK,       POLY_RESET,  0,                        0,  TOMB,      40, 70,  0, 55, 30, FV_PP(0, 30), 36, 0),
+ FV_ROW("HENGE STAB",     FV_STAB,       POLY_RESET,  0,                        0,  SPRING,    80, 50,  4, 79, 70, FV_PP(1, 30), 60, 0),
+ FV_ROW("ANTLER CLAV",    FV_CLAV,       POLY_REUSE,  0,                        0,  SPRING,    60, 50,  4, 55, 40, FV_PP(1, 24), 40, 0),
+ FV_ROW("SPIRIT ZAP",     FV_ZAP,        POLY_RESET,  0,                        0,  SPRING,    70, 50,  4, 71, 80, FV_PP(1, 30), 60, 0),
 };
 #undef FV_ROW
 
@@ -683,7 +683,7 @@ static int factory_perf(uint32_t s, WholePerformance *w)
     /* (an ARP-led DUAL keeps its two channels: the arp plays layer 2, the bass sequence layer 1, at any pitch) */
     p->split_note = 60u;                                  /* SPLIT: layer 1 below C4, layer 2 from C4 */
     p->reverb_type = fx->rtype; p->reverb_decay = fx->rdec; p->reverb_damp = fx->rdmp;
-    p->delay_time = fx->dtime; p->delay_feedback = fx->dfb; p->delay_type = fx->dtype; p->delay_pingpong = fx->ping;
+    p->delay_time = fx->dtime; p->delay_feedback = fx->dfb; p->delay_pingpong = fx->ping;
     p->delay_degrade = fx->degrade;
     p->delay_sync = fx->dsync;
     p->int_tempo = (uint8_t)(FA_TAB[s].bpm - MIDI_CLOCK_BPM_BASE);

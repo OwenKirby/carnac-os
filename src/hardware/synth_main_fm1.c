@@ -100,8 +100,33 @@ extern uint32_t _pool_start[], _pool_end[], _rt_start[], _rt_end[], _rt_load[], 
  * with flash bytes. Undefined (weak), it reads 0 and the copy runs to _rt_end as before. */
 extern uint32_t _rt_text_end[] __attribute__((weak));
 
-static void syn_lock(void) { (void)irq_save(); }
-static void syn_unlock(void) { irq_restore(0); }
+/* The dropout watch (2026-11-14, fm1_perf.py stats): a half is late when its render ENDS past the DMA, so a held-off
+ * start counts as much as a slow render. A live dropout with the render at 27 % showed the start was it. Measured:
+ * the longest syn_lock hold (and who held it: the caller's address, `nm` the ELF), the longest audio-interrupt start
+ * delay, the longest usb_poll in TIMER5, the flash erases (each one silences the audio on purpose), and each late half
+ * sorted by cause: the render itself over 90 % of the half, or a late start. */
+static uint32_t lk_t0, lk_ra, lk_max_us, lk_max_ra, lk_n1ms, lk_n3ms;
+static uint32_t dw_lat_max_us, dw_usb_max_us, dw_erases, dw_late_slow, dw_late_start, dw_late_lat_us, dw_late_us;
+static uint32_t dw_lat_ticks;                       /* this half's start delay (midi_drain) */
+static uint32_t dw_worst_mix;
+static uint32_t room_clock(void) { return fm1_ticks(); }   /* (synth_set_clock: fm1_ticks is inline) */                       /* the slowest half's voices: held / releasing a layer, 4 bits each */
+static __attribute__((noinline)) void syn_lock(void)
+{
+    (void)irq_save();
+    lk_t0 = fm1_ticks();
+    lk_ra = (uint32_t)__builtin_return_address(0);
+}
+static void syn_unlock(void)
+{
+    uint32_t us = (fm1_ticks() - lk_t0) / FM1_TICKS_PER_US;
+    if (us > lk_max_us) {
+        lk_max_us = us;
+        lk_max_ra = lk_ra;
+    }
+    lk_n1ms += us >= 1000u;
+    lk_n3ms += us >= 3000u;
+    irq_restore(0);
+}
 
 /* the PERF TEST (src/hardware/perf_test.h): started and read over SysEx (ED_PERFT below, tools: fm1_perf.py) */
 #include "perf_test.c"
@@ -225,6 +250,9 @@ static void midi_drain(uint32_t t0)
     }
     nom = anc_t + (f0 - anc_f) * TICKS_PER_FRAME;   /* (mod 2^32: only differences are taken) */
     d = (int32_t)(t0 - nom);                        /* how late this half began against the anchor */
+    dw_lat_ticks = d > 0 ? (uint32_t)d : 0u;        /* (the dropout watch) */
+    if (dw_lat_ticks / FM1_TICKS_PER_US > dw_lat_max_us && d < (int32_t)HALF_TICKS)
+        dw_lat_max_us = dw_lat_ticks / FM1_TICKS_PER_US;
     if (d < 0) {                                    /* earlier than ever: the anchor moves back to it */
         anc_t += (uint32_t)d;
         nom = t0;
@@ -345,8 +373,16 @@ static uint32_t render_block(int32_t *o)            /* ALNK0: one half, measured
         audio_peak_pct = us * 100u / budget;
     syn_dbg.halves++;
     syn_dbg.last_us = us;
-    if (us > syn_dbg.max_us)
+    if (us > syn_dbg.max_us) {
+        uint32_t v, m = 0;
         syn_dbg.max_us = us;
+        for (v = 0; v < POLYPHONY_VOICES; v++) {    /* (the dropout watch: what the slowest half was playing) */
+            const SynthVoiceNode *s = &poly_bank[v];
+            if (voice_is_free(s)) continue;
+            m += 1u << ((s->layer ? 8u : 0u) + (s->is_gate_open ? 0u : 4u));
+        }
+        dw_worst_mix = m;
+    }
     syn_dbg.in_audio = 0;
     return us * 1000u / budget;
 }
@@ -385,6 +421,12 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
             syn_dbg.late++;                         /* the DMA moved on while we rendered */
             audio_xruns++;
             late = 1;
+            if (syn_dbg.last_us * 10u >= (HALF_FRAMES * 1000000u / FS) * 9u)
+                dw_late_slow++;                     /* the render alone took the half */
+            else
+                dw_late_start++;                    /* it began too late to finish */
+            dw_late_lat_us = dw_lat_ticks / FM1_TICKS_PER_US;
+            dw_late_us = syn_dbg.last_us;
         }
         pt_audio_half(pm, late);
         shed_update(pm, late);
@@ -403,6 +445,7 @@ static void audio_init(void)
 static void audio_silence(void)                     /* IRQs off (flash erase): the DMA would loop stale audio */
 {
     uint32_t i;
+    dw_erases++;
     for (i = 0; i < sizeof abuf / sizeof abuf[0]; i++)
         abuf[i] = 0;
 }
@@ -429,8 +472,12 @@ void fm1_timer5_irq(void)                           /* 10 kHz: the panel scan, U
         }
     }
     if (usb_due && !syn_dbg.in_audio) {             /* usb_poll shares the MIDI queues with the audio ISR */
+        uint32_t u0 = fm1_ticks(), u;
         usb_due = 0;
         usb_poll();
+        u = (fm1_ticks() - u0) / FM1_TICKS_PER_US;
+        if (u > dw_usb_max_us)
+            dw_usb_max_us = u;
 #if X0X_TRS
         uart_midi_poll();
 #endif
@@ -602,7 +649,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         break;
     }
     case ED_STATS: {                                /* + the levels since the last read and the live settings */
-        uint32_t v[30], i, k, nv = 0, c1 = 0;
+        uint32_t v[54], i, k, nv = 0, c1 = 0;
         int32_t lv[4];
         synth_levels(lv);
         for (i = 0; i < POLYPHONY_VOICES; i++)
@@ -611,7 +658,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         v[4] = audio_peak_pct; v[5] = shed_count; v[6] = voice_shed;
         v[7] = (uint32_t)lv[0]; v[8] = (uint32_t)lv[1]; v[9] = (uint32_t)lv[2]; v[10] = nv;
         v[11] = perf_state.reverb_type; v[12] = perf_state.reverb_decay; v[13] = perf_state.reverb_damp;
-        v[14] = 0u /* (REV PREDELAY, gone in v11) */; v[15] = DELAY_TYPE(&perf_state); v[16] = perf_state.delay_time;
+        v[14] = 0u /* (REV PREDELAY, gone in v11) */; v[15] = 0u /* (DELAY TYPE, gone 2026-11-14) */; v[16] = perf_state.delay_time;
         v[17] = perf_state.delay_feedback; v[18] = perf_state.delay_degrade; v[19] = perf_state.delay_pingpong;
         v[20] = engine_state[0].amp.reverb_send; v[21] = engine_state[0].amp.delay_send;
         v[22] = engine_state[1].amp.reverb_send; v[23] = engine_state[1].amp.delay_send; v[24] = perf_state.perf_mode;
@@ -620,11 +667,49 @@ static void ed_handle(const uint8_t *f, uint32_t n)
             c1++;                                   /* core 1's stack: the words never touched, from the bottom */
         v[27] = (uint32_t)lv[3]; v[28] = (FM1_C1_STACK_WORDS - c1) * 4u;
         v[29] = shed.tail_count;                    /* (2026-11-11: tails cut before any shed) */
-        for (i = 0; i < 30u; i++)
+        v[30] = lk_max_us; v[31] = lk_max_ra; v[32] = lk_n1ms; v[33] = lk_n3ms;   /* (2026-11-14: the dropout watch) */
+        v[34] = dw_lat_max_us; v[35] = dw_usb_max_us; v[36] = dw_erases; v[37] = dw_late_slow; v[38] = dw_late_start;
+        v[39] = dw_late_lat_us | dw_late_us << 16;
+        {
+            const EngineState *e0 = &engine_state[0], *e1 = &engine_state[1];
+            int f0, n0, f1, n1;
+            syn_lock();                             /* (pool_range's cache is the render's too) */
+            pool_range(0, &f0, &n0);
+            pool_range(1, &f1, &n1);
+            syn_unlock();
+            v[40] = (uint32_t)e0->mfx.type | (uint32_t)e1->mfx.type << 8;
+            v[41] = (uint32_t)e0->filter[0].flavour | (uint32_t)e0->filter[1].flavour << 8 |
+                    (uint32_t)e1->filter[0].flavour << 16 | (uint32_t)e1->filter[1].flavour << 24;
+            v[42] = (uint32_t)e0->osc[0].wavebank | (uint32_t)e0->osc[1].wavebank << 8;
+            v[43] = (uint32_t)e1->osc[0].wavebank | (uint32_t)e1->osc[1].wavebank << 8;
+            v[44] = (uint32_t)varch_voice_cost(e0) | (uint32_t)varch_voice_cost(e1) << 8 |
+                    (uint32_t)voice_overhead(e0, e1, perf_state.perf_mode != PERF_SINGL_SYNTH) << 16;
+            v[45] = (uint32_t)n0 | (uint32_t)n1 << 8 | (uint32_t)perf_state.voice_mode[0] << 16 |
+                    (uint32_t)perf_state.voice_mode[1] << 24;
+            v[46] = dw_worst_mix;
+            v[47] = (uint32_t)sm.perf_slot | (uint32_t)maq_playing(synth_seq()) << 8 | (uint32_t)carp_playing(synth_arp()) << 9;
+            v[48] = (uint32_t)perf_state.mix[0] | (uint32_t)perf_state.mix[1] << 7 | (uint32_t)perf_state.mix[2] << 14 |
+                    (uint32_t)perf_state.mix[3] << 21;
+            v[49] = (uint32_t)e0->oscmix.spread | (uint32_t)e1->oscmix.spread << 8;
+        }
+        {
+            int af, an0, an1;
+            syn_lock();
+            pool_alloc_range(0, &af, &an0);
+            pool_alloc_range(1, &af, &an1);
+            syn_unlock();
+            v[50] = synth_floor_pm();               /* (2026-11-14: the measured room) */
+            v[51] = voice_room;
+            v[52] = (uint32_t)an0 | (uint32_t)an1 << 8;
+            v[53] = synth_slope_q8();
+        }
+        for (i = 0; i < 54u; i++)
             for (k = 0; k < 5u; k++)
                 ed_b(v[i] >> (7u * k));               /* 35 bits each, 7 at a time, low first */
         if (na && a[0] == 1u) {
             syn_dbg.late = 0; syn_dbg.max_us = 0; audio_peak_pct = 0; shed_count = 0; shed.tail_count = 0;
+            lk_max_us = lk_max_ra = lk_n1ms = lk_n3ms = 0;
+            dw_lat_max_us = dw_usb_max_us = dw_erases = dw_late_slow = dw_late_start = dw_late_lat_us = dw_late_us = 0;
         }
         break;
     }
@@ -659,6 +744,8 @@ static void ed_handle(const uint8_t *f, uint32_t n)
             ed_b(r->voices);
             ed_b(r->over);
             ed_str(pt_name((uint8_t)pi), 20);
+            ed_b(r->floor_pm);                      /* (after the name: older tools stop at its 0) */
+            ed_b(r->floor_pm >> 7);
 #if defined(SYNTH_PROF)
         } else if (a[0] == 5u) {                    /* the operation costs: ticks for MB_N of each, 21-bit */
             ed_b(plat_cycles_cpu() ? 1u : 0u);
@@ -971,6 +1058,8 @@ static void fm1_main(void)
     syn_dbg.stage = 4;
 
 #if !defined(SYNTH_PROF)                            /* the profile build: one core (its stage counters are shared) */
+    synth_set_clock(room_clock, TICKS_PER_FRAME);   /* the measured room (voice_allocator.h): not in the profile build,
+                                                     * whose counters slow the passes it would measure */
     if (!plat_cpu2_barred() && !bootguard.failed && plat_cpu2_set(1) == 0)
         synth_set_core2(plat_cpu2_run, plat_cpu2_wait);   /* the second core renders half the voices (synth_runtime.c
                                                      * CORE1_VOICES). Started at power-on, before the audio and the

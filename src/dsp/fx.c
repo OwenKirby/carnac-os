@@ -20,7 +20,28 @@
  * path saturates softly; playback loses top end (head loss) and low end (a high-pass), both set by TAPE DEGRADE,
  * so each repeat is darker and thinner. TAPE DEGRADE drives all three (tape_degrade); its default 36 gives the old
  * fixed character (32, 10, 36). PING PONG adds a second play head (tape_delay_block). */
-#define TAPE_LEN 16384u                   /* power of 2: 32 KB of int16 (was a 128 KB full-rate line) */
+/* THE TAPE'S MEMORY (2026-11-14). TAPE_BYTES of it (was 32 KB: 0.37 s at the full rate, so PING PONG, which runs the
+ * tape as for twice the echo, slowed past ~0.19 s, and the slowed tape's anti-aliasing filters cost more than the
+ * reverb on the FM1). TAPE_MULAW 1 stores a cell in 8 bits, companded (mu-law, as the early samplers and delays
+ * squeezed theirs): twice the time in the same memory, a level-following grain each pass adds to. 0: 16-bit cells.
+ * (The BBD that shared it was removed 2026-11-14: the user, MFX covers its colours.) */
+#ifndef TAPE_BYTES
+#define TAPE_BYTES 32768u
+#endif
+#ifndef TAPE_MULAW
+#define TAPE_MULAW 1
+#endif
+/* TAPE_HALF 1 (2026-11-14): the tape runs at half the sample rate, as the affordable 80s delays did (~10 kHz wide, every
+ * repeat through the decimator and the interpolator again: darker each pass), and never slows: no slowed tape, none of
+ * its filters, no aliasing at any DELAY TIME. A delay longer than the tape holds stops at its end. */
+#ifndef TAPE_HALF
+#define TAPE_HALF 1                       /* (the user's pick, 2026-11-14: E, 32 KB: 1.49 s, PING PONG to 0.74 s a side) */
+#endif
+#if TAPE_MULAW
+#define TAPE_LEN TAPE_BYTES               /* (cells: a power of 2) */
+#else
+#define TAPE_LEN (TAPE_BYTES / 2u)
+#endif
 #define TAPE_MASK (TAPE_LEN - 1u)
 #define TAPE_GAP_MAX (TAPE_LEN - 64u)     /* room for the wow + flutter excursion (< 56 cells) and the neighbour */
 /* gap / speed slew: tau = 1024 samples, about 23 ms, settled in ~0.1 s (2026-10-26: was 93 ms, ~0.5 s to settle, so
@@ -46,7 +67,37 @@ static const uint16_t SFX_REV_AP[2] = {556, 441};
  * TIME: 1/24, 1/16, 1/12, 1/8, 1/6, 1/4, 1/3, 1/2 */
 static const uint16_t DELAY_SYNC_DEN[8] = {24, 16, 12, 8, 6, 4, 3, 2};
 
-static int16_t tape[TAPE_LEN] SYNTH_POOL;
+static union {
+    int16_t s16[TAPE_BYTES / 2u];                         /* 16-bit cells (TAPE_MULAW 0) */
+    uint8_t u8[TAPE_BYTES];                               /* mu-law cells (TAPE_MULAW) */
+} tape_mem SYNTH_POOL;
+#if TAPE_MULAW
+/* mu-law (G.711's segments on the 16-bit range): sign, 3-bit segment, 4-bit step; ~38 dB under the signal, 8 LSB
+ * steps near silence. Encoded toward zero (a decaying loop reaches silence, no limit cycle); decoded by a table. */
+static int16_t mulaw_tab[256] SYNTH_POOL;
+static void mulaw_init(void)
+{
+    for (int c = 0; c < 256; c++) {
+        int seg = (c >> 4) & 7, mant = c & 15, m = (((mant << 3) + 0x84) << seg) - 0x84;
+        mulaw_tab[c] = (int16_t)(c & 0x80 ? -m : m);
+    }
+}
+static inline uint8_t mulaw_enc(int32_t x)
+{
+    uint32_t sign = x < 0 ? 0x80u : 0u, m = (uint32_t)(x < 0 ? -x : x), b, seg = 0;
+    if (m > 32635u) m = 32635u;
+    b = m + 0x84u;
+    while (seg < 7u && b >= (0x100u << seg)) seg++;
+    uint32_t code = seg << 4 | ((b >> (seg + 3u)) & 15u);
+    if (code && (uint32_t)mulaw_tab[code] > m) code--;   /* (toward zero: never louder than the input) */
+    return (uint8_t)(sign | code);
+}
+#define TAPE_RD(i) ((int32_t)mulaw_tab[tape_mem.u8[(i) & TAPE_MASK]])
+#define TAPE_WR(i, v) (tape_mem.u8[(i) & TAPE_MASK] = mulaw_enc(v))
+#else
+#define TAPE_RD(i) ((int32_t)tape_mem.s16[(i) & TAPE_MASK])
+#define TAPE_WR(i, v) (tape_mem.s16[(i) & TAPE_MASK] = (int16_t)(v))
+#endif
 /* Core 1's memory (2026-10-16): what core 1 writes (the reverb's back below, through fx_reverb_job) sits on cache
  * lines of its own, 64 bytes, as X0X keeps its mailbox (fm1_cpu1.h: each core's writes on lines of their own). A
  * precaution, added while hunting the "digital buzz with reverb" (which turned out to be a miscompiled clear of the mix
@@ -57,15 +108,6 @@ static int16_t tape[TAPE_LEN] SYNTH_POOL;
 static int16_t sfx_rev_comb[FX_PAD16(REV_COMB_TOTAL)] SYNTH_POOL FX_LINE;   /* core 1: the ROOM network */
 static int16_t sfx_rev_ap[FX_PAD16(REV_AP_TOTAL)] SYNTH_POOL FX_LINE;
 
-/* a BBD line's own (bbd_delay_block, 2026-11-03: two, left and right): the input (anti-alias) and output
- * (reconstruction) filters' poles, the high-pass, the compander's envelope, the feedback's runaway low-pass and DELAY
- * HP's, the anti-alias filter's last three samples (the slowed clock's ticks) */
-typedef struct {
-    int32_t aa1, aa2, rc1, rc2, hp, env, run_lp;
-    float scoop;
-    int32_t h[3];
-} BbLine;
-
 typedef struct {
     uint32_t wpos_q16;                    /* record head, cells in Q16; wraps with the uint32 (65536 cells) */
     int32_t gap_q16, gap_tgt_q16;         /* head gap, cells in Q16 */
@@ -75,9 +117,6 @@ typedef struct {
     int32_t aa_lp;                        /* anti-alias low-pass on the record signal (slowed tape) */
     int32_t loss_lp, hp_lp;               /* playback head loss and high-pass states */
     int32_t loss2_lp, hp2_lp;             /* PING PONG: the near head's */
-    uint8_t last_bbd;                     /* the delay type the targets were computed for */
-    BbLine bb[2];                         /* BBD (DELAYTYPE_BBD): its two lines, left and right */
-    uint32_t bb_rng;                      /* the BBD's noise */
     int32_t run_lp;                       /* the runaway's low-pass in the tape's feedback (delay_fb) */
     float scoop;                          /* DELAY HP's low-pass in the tape's feedback (delay_fb) */
     uint32_t seed_rng;                    /* the runaway's hiss seed (the tape's) */
@@ -85,6 +124,11 @@ typedef struct {
      * sample it gave (the cell's value is read between it and the next at the crossing), each head's reconstruction */
     float aa_z[6], rc_z[4], rcb_z[4];     /* (the biquads' states: the record filter's, each head's; together) */
     int32_t aa_h[3];                      /* the record filter's last three samples, oldest first (the crossings) */
+    int32_t hz[3];                        /* TAPE_HALF: the decimator's last three inputs, oldest first */
+    int32_t ho_l[2], ho_r[2];             /* TAPE_HALF: the heads' last two half-rate outputs, [1] the newest */
+    uint32_t hstep;                       /* TAPE_HALF: half-rate steps (the wobble's update clock) */
+    int32_t hm[4];                        /* TAPE_HALF: the heads' pull and its step (m1, d1, m2, d2), across blocks */
+    uint8_t hph;                          /* TAPE_HALF: 1 when the next input completes a step's pair */
     uint32_t wow_ph2, flutter_ph2;        /* the second head's wow and flutter (WOW_INC2) */
     int32_t mt[2][2];                     /* the wow + flutter pull of each head, at the last 8-sample step (MOD_EVERY): [head][tape / BBD] */
 } TapeState;
@@ -120,10 +164,6 @@ static uint32_t rv_w;
 static int32_t rv_sring[RV_RING];
 static float rv_side_in[FX_BLOCK_MAX];             /* this pass's, for the front (fx_cross_to_rev writes it) */
 static uint32_t rv_side_n;                         /* its length; 0: none this pass */
-/* The delay send's side (2026-11-03): REV > DLY's (L - R) / 2 while the BBD runs (its two lines; the tape has one and
- * takes the mono sum alone), written by fx_cross_to_dly, taken by the BBD this pass */
-static float dl_side_in[FX_BLOCK_MAX];
-static uint32_t dl_side_n;
 /* The sends' limiters (2026-10-16): the summed sends of a few hot voices pass full scale (8 driven voices: +8 dB), and
  * the hard clamps that stood here clipped the chord before the reverb and the delay, the "digital buzz with reverb and
  * several voices" (measured: up to 21 % of the samples clipped). The master limiter's law instead: the envelope jumps
@@ -156,7 +196,10 @@ static void xf_init(void);                         /* the cross-feeds, below */
 void fx_init(void)
 {
     xf_init();
-    memset(tape, 0, sizeof tape);
+    memset(&tape_mem, 0, sizeof tape_mem);
+#if TAPE_MULAW
+    mulaw_init();
+#endif
     memset(sfx_rev_comb, 0, sizeof sfx_rev_comb);
     memset(sfx_rev_ap, 0, sizeof sfx_rev_ap);
     memset(comb_lp, 0, sizeof comb_lp);
@@ -164,7 +207,6 @@ void fx_init(void)
     tp.gap_q16 = tp.gap_tgt_q16 = 64 << 16;
     tp.speed_q24 = tp.speed_tgt_q24 = 1 << 24;
     tp.last_len = 64u;
-    tp.bb_rng = 0x2545F491u;
     tp.seed_rng = 0x6C8E9CF5u;
     tp.wow_ph2 = 0x6A000000u;                          /* (the second head starts out of step with the first) */
     tp.flutter_ph2 = 0x35000000u;
@@ -1033,6 +1075,7 @@ static void tape_degrade(uint32_t d, int32_t *wow, int32_t *flutter, uint32_t *f
 typedef struct { float b0, a1, a2; } TapeBq;              /* a low-pass biquad's coefficients (b1 = 2 b0, b2 = b0) */
 typedef struct { TapeBq aa[3], rc[2]; } TapeAA;
 /* fc_n: the cutoff as a share of the sample rate (< 0.5); q the Butterworth pole's */
+#if !TAPE_HALF
 static SYNTH_COLD TapeBq tape_bq(float fc_n, float q)
 {
     float x = 3.14159265f * fc_n;
@@ -1048,17 +1091,6 @@ static SYNTH_COLD TapeAA tape_aa(int32_t speed_q24)   /* (once a block) */
                  {tape_bq(TAPE_RC_FC * r, 0.5412f), tape_bq(TAPE_RC_FC * r, 1.3066f)}};
     return a;
 }
-static __attribute__((noinline)) float tape_bq_run(const TapeBq *c, float *z, float x)   /* transposed direct form II */
-{
-    float y = c->b0 * x + z[0];
-    z[0] = 2.f * c->b0 * x - c->a1 * y + z[1];
-    z[1] = c->b0 * x - c->a2 * y;
-    return y;
-}
-static inline int32_t tape_bq4(const TapeBq *c, float *z, int32_t x)   /* two in a row: 4th order */
-{
-    return (int32_t)tape_bq_run(c + 1, z + 2, tape_bq_run(c, z, (float)x));
-}
 /* Catmull-Rom between y1 and y2 (t 0 .. 1), y0 and y3 their outer neighbours: the slowed heads' interpolation (the
  * linear one's error, beating with the cell rate, was -30 dB spurs on a 5 kHz note) */
 static inline float tape_cr(float y0, float y1, float y2, float y3, float t)
@@ -1066,29 +1098,31 @@ static inline float tape_cr(float y0, float y1, float y2, float y3, float t)
     float c1 = 0.5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.f * y2 - 0.5f * y3, c3 = 1.5f * (y1 - y2) + 0.5f * (y3 - y0);
     return ((c3 * t + c2) * t + c1) * t + y1;
 }
-/* a slowed head's cell at its crossing, t = the crossing's place past the cell (Q16 cells) x 1 / speed: Catmull-Rom
- * a sample late, between h1 and h2 */
-static __attribute__((noinline)) int32_t tape_cross(int32_t h0, int32_t h1, int32_t h2, int32_t h3, uint32_t frac,
-                                                    float inv_sp)
+/* (2026-11-14) the tape echo's biquad, 4-point read and crossing, inlined into its loop with the filter states in locals for
+ * the whole block: the same sums in the same order (bit for bit: fx_hash), without a call and four memory trips a
+ * biquad. The slowed tape (PING PONG at a dotted eighth: every factory performance) cost ~64 ticks a sample more than
+ * the full-speed one on the FM1 (PROF, f.DLY 86 vs 22), on core 0's critical path. */
+#if TAPE_AA_N != 3 || TAPE_RC_N != 1
+#error "tape_delay_block's inlined filters are written for TAPE_AA_N 3, TAPE_RC_N 1"
+#endif
+static inline __attribute__((always_inline)) float tbq(const TapeBq *c, float *z0, float *z1, float x)
+{
+    float y = c->b0 * x + *z0;
+    *z0 = 2.f * c->b0 * x - c->a1 * y + *z1;
+    *z1 = c->b0 * x - c->a2 * y;
+    return y;
+}
+static inline __attribute__((always_inline)) float tape_cr_at(uint32_t r)
+{
+    uint32_t i = r >> 16;
+    return tape_cr((float)TAPE_RD(i - 1u), (float)TAPE_RD(i), (float)TAPE_RD(i + 1u), (float)TAPE_RD(i + 2u),
+                   (float)(r & 0xFFFFu) * (1.f / 65536.f));
+}
+static inline __attribute__((always_inline)) int32_t tape_cross_i(int32_t h0, int32_t h1, int32_t h2, int32_t h3,
+                                                                  uint32_t frac, float inv_sp)
 {
     float t = (float)frac * inv_sp * (1.f / 65536.f);
     return (int32_t)tape_cr((float)h0, (float)h1, (float)h2, (float)h3, 1.f - (t < 1.f ? t : 1.f));
-}
-/* the 4-point read at r (cells, Q16), between the cells around it */
-static __attribute__((noinline)) float tape_read_cr(uint32_t r)   /* (one copy: flash is short) */
-{
-    uint32_t i = r >> 16;
-    return tape_cr(tape[(i - 1u) & TAPE_MASK], tape[i & TAPE_MASK], tape[(i + 1u) & TAPE_MASK],
-                   tape[(i + 2u) & TAPE_MASK], (float)(r & 0xFFFFu) * (1.f / 65536.f));
-}
-/* the slowed play head at r (cells, Q16): 4-point between the cells around it, then the reconstruction */
-static __attribute__((noinline)) int32_t tape_read_slow(uint32_t r, const TapeBq *rc, float *z)
-{
-#if TAPE_RC_N == 1
-    return (int32_t)tape_bq_run(rc, z, tape_read_cr(r));
-#else
-    return (int32_t)tape_bq_run(rc + 1, z + 2, tape_bq_run(rc, z, tape_read_cr(r)));
-#endif
 }
 static void tape_bq_flush(float *z, int n)                 /* (no denormals; silence stays silence) */
 {
@@ -1096,22 +1130,18 @@ static void tape_bq_flush(float *z, int n)                 /* (no denormals; sil
         if (z[i] < 1e-3f && z[i] > -1e-3f) z[i] = 0.f;
 }
 
-#define BBD_TRACK 8192u                   /* a BBD line's track, cells: one in each half of the tape (2026-11-03) */
-#define BBD_N (BBD_TRACK - 128u)          /* the BBD's stages (bbd_delay_block): four MN3008s in a chain (8064: room in
-                                           * the track for the wobble, < 56 cells, and the 4-point read) */
-PS_STATIC_ASSERT(2u * BBD_TRACK <= TAPE_LEN, "the BBD's two tracks fit the tape");
+#endif
 
 /* the heads' targets for p's delay: the gap and the speed. Up to gap_max cells (the tape's whole loop, or the BBD's
  * stages) at full speed; longer delays slow down. Only a change of DELAY TIME / SYNC / PING PONG / TYPE pays for the
  * division. */
-static void delay_targets(const MasterPerformancePreset *p, int pp, int bbd)
+static void delay_targets(const MasterPerformancePreset *p, int pp)
 {
-    uint32_t len = delay_len(p) << pp, gap_max = bbd ? BBD_N : TAPE_GAP_MAX;
-    if (DELAY_SYNC(p) && (uint8_t)bbd == tp.last_bbd && len - tp.last_len + (tp.last_len >> 8) <= (tp.last_len >> 7))
+    uint32_t len = delay_len(p) << pp, gap_max = TAPE_GAP_MAX;
+    if (DELAY_SYNC(p) && len - tp.last_len + (tp.last_len >> 8) <= (tp.last_len >> 7))
         len = tp.last_len;                                 /* (a clock's wobble, within ~0.4 %: as it was) */
-    if (len != tp.last_len || (uint8_t)bbd != tp.last_bbd) {
+    if (len != tp.last_len) {
         tp.last_len = len;
-        tp.last_bbd = (uint8_t)bbd;
         if (len <= gap_max) {
             tp.gap_tgt_q16 = (int32_t)(len << 16);
             tp.speed_tgt_q24 = 1 << 24;
@@ -1145,7 +1175,6 @@ static void delay_targets(const MasterPerformancePreset *p, int pp, int bbd)
  * rings at FEEDBACK 112 and howls by 116 at every DELAY HP; the BBD, whose dark filters leave little above a high
  * cutoff, howls from 116 up to DELAY HP 100 and only at 127 at DELAY HP 127 (the top's 3.0 cap) */
 #define DELAY_HP_TOP_TAPE 200000.f
-#define DELAY_HP_TOP_BBD 550000.f
 /* LOOP TONE darker (2026-11-02, fx.h): the runaway's low-pass, in the loop at any FEEDBACK, each repeat through it
  * again: from ~7.6 kHz just under the middle to ~400 Hz at 0 (the lower of it and the runaway's own past 100). At
  * the middle and below FEEDBACK 101 the loop is as before, bit for bit */
@@ -1155,14 +1184,14 @@ static inline uint32_t tone_hp(uint8_t v) { return v > 64u ? ((uint32_t)(v > 127
 #define TONE_DARK_HZ 8000.f
 #define TONE_DARK_OCT 4.3f
 typedef struct { int32_t lo, hi, hi2, run_c; float scoop_c; int runaway, lp_on; } DelayFb;
-static DelayFb delay_fb(uint32_t knob, uint32_t degrade, uint32_t hp, int bbd, uint8_t tone)
+static DelayFb delay_fb(uint32_t knob, uint32_t degrade, uint32_t hp, uint8_t tone)
 {
     DelayFb f;
     /* the top: 1.22 at DEGRADE 0 .. 1.62 at 127 (a worn tape's or BBD's filters lose more each pass: without this,
      * DEGRADE 127 never howled) */
     f.scoop_c = hp ? DELAY_HP_C0 * amp_exp2f((float)(int32_t)(hp - 1u) * DELAY_HP_OCT) : 0.f;
     int32_t top = 40000 + (int32_t)(degrade > 127u ? 127u : degrade) * 104 +
-                  (int32_t)(f.scoop_c * (bbd ? DELAY_HP_TOP_BBD : DELAY_HP_TOP_TAPE));
+                  (int32_t)(f.scoop_c * DELAY_HP_TOP_TAPE);
     if (top > 98301) top = 98301;                          /* (lo, hi, hi2 <= 32767: each Q15 multiply < 2^31) */
     int32_t k = knob > 127u ? 127 : (int32_t)knob, g = k <= 100 ? k * 250 : 25000 + (k - 100) * (top - 25000) / 27;
     f.lo = g > 32767 ? 32767 : g;
@@ -1180,6 +1209,7 @@ static DelayFb delay_fb(uint32_t knob, uint32_t degrade, uint32_t hp, int bbd, u
     return f;
 }
 
+#if !TAPE_HALF
 /* The tape echo over a block. PING PONG: a second play head halfway along the gap, the first echo from it on the
  * left, the next from the far head on the right, which also feeds the record head (so each side's echoes are a whole
  * delay apart and the pair repeats every 2 delays: the tape runs as for a delay twice as long). Each head has its own
@@ -1188,14 +1218,14 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
                              uint32_t n)
 {
     const int pp = DELAY_PINGPONG(p) != 0u;
-    delay_targets(p, pp, 0);
+    delay_targets(p, pp);
     int32_t wow, flutter;
     uint32_t filter;
     tape_degrade(p->delay_degrade, &wow, &flutter, &filter);
     const int32_t gap_tgt = tp.gap_tgt_q16, speed_tgt = tp.speed_tgt_q24;
     const int32_t wow_q8 = wow * WOW_STEP_Q8, flutter_q8 = flutter * FLUTTER_STEP_Q8;
     const int32_t loss_c = head_loss_q15(filter), hp_c = tape_hp_q15(filter);
-    const DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), 0, fx_live[FX_L_TONE]);             /* (delay_fb: past 100 it self-oscillates) */
+    const DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), fx_live[FX_L_TONE]);             /* (delay_fb: past 100 it self-oscillates) */
     int32_t run_lp = tp.run_lp;
     float scoop = fb.scoop_c != 0.f ? tp.scoop : 0.f;
     uint32_t seed = tp.seed_rng;
@@ -1216,6 +1246,8 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
     } else {
         memset(tp.aa_z, 0, sizeof tp.aa_z + sizeof tp.rc_z + sizeof tp.rcb_z);
     }
+    float az0 = tp.aa_z[0], az1 = tp.aa_z[1], az2 = tp.aa_z[2], az3 = tp.aa_z[3], az4 = tp.aa_z[4], az5 = tp.aa_z[5];
+    float rz0 = tp.rc_z[0], rz1 = tp.rc_z[1], qz0 = tp.rcb_z[0], qz1 = tp.rcb_z[1];
 
     for (uint32_t s = 0; s < n; s++) {
         gap += (gap_tgt - gap) >> TAPE_SLEW;
@@ -1238,16 +1270,16 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
         int32_t mod_q8 = m1 >> 8;
         int32_t mod_q16 = (mod_q8 * speed_q16) >> 8;
 
-        /* play head: linear interpolation between the two cells around it (slowed: tape_read_slow) */
+        /* play head: linear interpolation between the two cells around it (slowed: tape_cr_at, then the reconstruction) */
         uint32_t r = wpos - (uint32_t)gap - (uint32_t)mod_q16;
         int32_t play;
         if (slow) {
-            play = tape_read_slow(r, aac.rc, tp.rc_z);
+            play = (int32_t)tbq(&aac.rc[0], &rz0, &rz1, tape_cr_at(r));
         } else {
             uint32_t i = r >> 16;
             int32_t frac = (int32_t)((r >> 1) & 0x7FFFu);
-            int32_t a = tape[i & TAPE_MASK];
-            int32_t b = tape[(i + 1u) & TAPE_MASK];
+            int32_t a = TAPE_RD(i);
+            int32_t b = TAPE_RD(i + 1u);
             play = a + (((b - a) * frac) >> 15);
         }
 
@@ -1271,12 +1303,12 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
             uint32_t r2 = wpos - ((uint32_t)gap >> 1) - (uint32_t)((mod2_q8 * speed_q16) >> 8);
             int32_t play2;
             if (slow) {
-                play2 = tape_read_slow(r2, aac.rc, tp.rcb_z);
+                play2 = (int32_t)tbq(&aac.rc[0], &qz0, &qz1, tape_cr_at(r2));
             } else {
                 uint32_t i2 = r2 >> 16;
                 int32_t f2 = (int32_t)((r2 >> 1) & 0x7FFFu);
-                int32_t a2 = tape[i2 & TAPE_MASK];
-                int32_t b2 = tape[(i2 + 1u) & TAPE_MASK];
+                int32_t a2 = TAPE_RD(i2);
+                int32_t b2 = TAPE_RD(i2 + 1u);
                 play2 = a2 + (((b2 - a2) * f2) >> 15);
             }
             loss2 += sfx_mulq15(play2 - loss2, loss_c);
@@ -1305,12 +1337,11 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
         int32_t aa_q15 = (speed_q16 >> 1) + (speed_q16 >> 2);    /* 0.75 x speed: the slowed tape's Nyquist */
         if (aa_q15 > 32767) aa_q15 = 32767;
         aa_lp += sfx_mulq15(rec - aa_lp, aa_q15);         /* (slowed, its tone stays: TapeAA only takes the top off) */
-#if TAPE_AA_N == 2
-        int32_t cell = slow ? tape_bq4(aac.aa, tp.aa_z, aa_lp) : aa_lp;
-#else
-        int32_t cell = slow ? (int32_t)tape_bq_run(aac.aa + 2, tp.aa_z + 4, (float)tape_bq4(aac.aa, tp.aa_z, aa_lp))
-                            : aa_lp;
-#endif
+        int32_t cell = aa_lp;
+        if (slow) {                                       /* the 6th-order low-pass (three biquads in a row) */
+            int32_t c4 = (int32_t)tbq(&aac.aa[1], &az2, &az3, tbq(&aac.aa[0], &az0, &az1, (float)aa_lp));
+            cell = (int32_t)tbq(&aac.aa[2], &az4, &az5, (float)c4);
+        }
 
         /* the record head moves at most one cell per sample, so it writes at most one cell; slowed, its value at
          * the crossing, t samples ago, read by Catmull-Rom a sample late (between h1 and h2: the tape one sample
@@ -1319,12 +1350,14 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
         wpos += (uint32_t)speed_q16;
         if ((wpos >> 16) != old_cell) {
             int32_t v = cell;
-            if (slow) v = tape_cross(h0, h1, h2, cell, wpos & 0xFFFFu, inv_sp);
-            tape[(wpos >> 16) & TAPE_MASK] = (int16_t)clamp16(v);
+            if (slow) v = tape_cross_i(h0, h1, h2, cell, wpos & 0xFFFFu, inv_sp);
+            TAPE_WR(wpos >> 16, clamp16(v));
         }
         h0 = h1; h1 = h2; h2 = cell;
     }
     tp.aa_h[0] = h0; tp.aa_h[1] = h1; tp.aa_h[2] = h2;
+    tp.aa_z[0] = az0; tp.aa_z[1] = az1; tp.aa_z[2] = az2; tp.aa_z[3] = az3; tp.aa_z[4] = az4; tp.aa_z[5] = az5;
+    tp.rc_z[0] = rz0; tp.rc_z[1] = rz1; tp.rcb_z[0] = qz0; tp.rcb_z[1] = qz1;
     tape_bq_flush(tp.aa_z, 14);                           /* (aa_z, rc_z, rcb_z) */
     tp.wpos_q16 = wpos;
     tp.wow_ph = wow_ph;
@@ -1343,184 +1376,140 @@ static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in
     tp.flutter_ph2 = flutter_ph2;
 }
 
-/* BBD (2026-10-16, DELAY TYPE): a bucket-brigade echo, dark. A BBD chip holds a fixed number of samples and is
- * clocked slower for a longer delay; here BBD_N = 8064 stages (2026-10-26, four MN3008s in a chain, as a long-delay
- * pedal's: with one chip's 2048 a 1 s echo clocked at ~2 kHz and sounded bitcrushed): up to 183 ms it runs at the
- * full rate, at the 1.0 s maximum its clock is ~8 kHz. The tape's mechanism is exactly that (the record head writes a
- * cell, a bucket, each clock tick; the gap is the stages), so it shares the tape, the heads and their slew, wow and
- * flutter (the clock's wobble). The BBD's own:
- *   - the buckets read with linear interpolation, as the tape's (2026-10-26; a held step let the clock's images
- *     through: grit);
- *   - 2-pole anti-alias and reconstruction low-passes, dark: from TAPE DEGRADE, ~5 kHz at 0, ~2.7 kHz at 36 (the
- *     default), ~0.9 kHz at 127, held below ~0.35 x the clock (a long echo at a low DEGRADE no longer aliases);
- *     every repeat goes through both again;
- *   - the compander's breath: noise that rises and falls with the echo (none in silence), more with DEGRADE;
- *   - its multiplies round toward zero (mr_mulq15), so a tail ends in silence.
- * 2026-11-03, stereo: two lines, a track each in the tape's two halves (BBD_TRACK cells: the BBD used half the tape,
- * so no more RAM), on one clock (the gap and speed shared), each its own clock wobble (the right's WOW_INC2), filters,
- * compander, saturation and feedback. PING PONG off: two echoes side by side, apart by their wobble and by REV > DLY's
- * side (dl_side_in: + left, - right). PING PONG on: a true ping pong, the left line's echo into the right line, the
- * right's back into the left with the FEEDBACK; each round goes through both lines (a little darker each pass than
- * the old two-head version), and at the full rate up to twice as long. About twice the old mono line's cost. */
-#define BBD_TMASK (BBD_TRACK - 1u)
+#endif
+#if TAPE_HALF
+/* a one-pole's coefficient (Q15) for half the rate: the same pole in time (1 - (1 - c)^2) */
+static inline int32_t half_c(int32_t c) { return 2 * c - (int32_t)(((int64_t)c * c) >> 15); }
 
-/* a track's slowed bucket read at r (cells, Q16), 4-point */
-static __attribute__((noinline)) float bbd_read_cr(const int16_t *t, uint32_t r)
-{
-    uint32_t i = r >> 16;
-    return tape_cr(t[(i - 1u) & BBD_TMASK], t[i & BBD_TMASK], t[(i + 1u) & BBD_TMASK], t[(i + 2u) & BBD_TMASK],
-                   (float)(r & 0xFFFFu) * (1.f / 65536.f));
-}
-
-/* line l's last bucket at r (track t): interpolated, the reconstruction filter and the high-pass; its envelope */
-static inline __attribute__((always_inline)) int32_t bbd_out(BbLine *l, const int16_t *t, uint32_t r, int slow,
-                                                             int32_t lp_c, int32_t hp_c)
-{
-    int32_t play;
-    if (slow) {
-        play = (int32_t)bbd_read_cr(t, r);
-    } else {
-        int32_t a = t[(r >> 16) & BBD_TMASK], fr = (int32_t)((r >> 1) & 0x7FFFu);
-        play = a + (((t[((r >> 16) + 1u) & BBD_TMASK] - a) * fr) >> 15);
-    }
-    l->rc1 += mr_mulq15(play - l->rc1, lp_c);
-    l->rc2 += mr_mulq15(l->rc1 - l->rc2, lp_c);
-    l->hp += mr_mulq15(l->rc2 - l->hp, hp_c);
-    int32_t o = l->rc2 - l->hp;
-    l->env += ((o < 0 ? -o : o) - l->env) >> 7;           /* (the compander's, tau ~3 ms) */
-    return o;
-}
-
-/* the feedback of o into line l: the darkening low-pass (past 100 or LOOP TONE darker), DELAY HP, the gain */
-static inline __attribute__((always_inline)) int32_t bbd_fb(BbLine *l, int32_t o, const DelayFb *fb)
-{
-    int32_t fbs = o;
-    if (fb->lp_on) {
-        l->run_lp += mr_mulq15(o - l->run_lp, fb->run_c);
-        fbs = l->run_lp;
-    }
-    if (fb->scoop_c != 0.f) {
-        l->scoop += ((float)fbs - l->scoop) * fb->scoop_c;
-        fbs -= (int32_t)l->scoop;
-    }
-    return mr_mulq15(fbs, fb->lo) + mr_mulq15(fbs, fb->hi) + mr_mulq15(fbs, fb->hi2);
-}
-
-/* line l's record: rec saturated, through the anti-alias filter; on a tick (cell c) into track t */
-static inline __attribute__((always_inline)) void bbd_rec(BbLine *l, int16_t *t, int32_t rec, int32_t lp_c, int tick,
-                                                          uint32_t c, int slow, uint32_t frac, float inv_sp)
-{
-    rec = tape_sat(rec);
-    l->aa1 += mr_mulq15(rec - l->aa1, lp_c);
-    l->aa2 += mr_mulq15(l->aa1 - l->aa2, lp_c);
-    if (tick) {
-        int32_t v = l->aa2;
-        if (slow) v = tape_cross(l->h[0], l->h[1], l->h[2], l->aa2, frac, inv_sp);   /* the tick's value, a sample late */
-        t[c & BBD_TMASK] = (int16_t)clamp16(v);
-    }
-    l->h[0] = l->h[1]; l->h[1] = l->h[2]; l->h[2] = l->aa2;
-}
-
-static void bbd_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r,
-                            uint32_t n)
+/* The half-rate tape (TAPE_HALF): the input pairs through a [1 3 3 1] / 8 decimator, one tape step each pair, the
+ * heads' outputs back up by the [1 3 3 1] / 4 interpolator (a quarter and three quarters of the way, a step late). The
+ * step itself is tape_delay_block's at full speed: heads read linearly, wow and flutter (their depth halved: a cell is
+ * two samples now), head loss and high-pass, the feedback's filters, the record saturation; each one-pole moved to the
+ * half rate (half_c), so the tone and the decay times stay. */
+static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r,
+                                  uint32_t n)
 {
     const int pp = DELAY_PINGPONG(p) != 0u;
-    delay_targets(p, 0, 1);                               /* (PING PONG: the two lines in a row, each the delay) */
+    delay_targets(p, pp);                               /* (its length; the speed it sets is not used here) */
+    uint32_t cells = (tp.last_len + 1u) >> 1;
+    if (cells > TAPE_GAP_MAX) cells = TAPE_GAP_MAX;
+    const int32_t gap_tgt = (int32_t)(cells << 16);
     int32_t wow, flutter;
     uint32_t filter;
     tape_degrade(p->delay_degrade, &wow, &flutter, &filter);
-    const int32_t inv = 128 - (int32_t)filter;
-    const int32_t gap_tgt = tp.gap_tgt_q16, speed_tgt = tp.speed_tgt_q24;
-    int32_t lp_c = 4000 + ((inv * inv * 12700) >> 14);         /* both filters' one-poles, Q15 */
-    const int32_t lp_cap = speed_tgt >> 8;                       /* ~0.35 x the clock (2 x speed, Q15) */
-    if (lp_c > lp_cap) lp_c = lp_cap;
-    const int32_t hp_c = tape_hp_q15(filter), nz_k = 8 + (int32_t)filter;
-    const int32_t wow_q8 = wow * WOW_STEP_Q8, flutter_q8 = flutter * FLUTTER_STEP_Q8;
-    const DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), 1, fx_live[FX_L_TONE]);
-    uint32_t wpos = tp.wpos_q16, wow_ph = tp.wow_ph, flutter_ph = tp.flutter_ph, rng = tp.bb_rng;
+    const int32_t wow_q8 = wow * WOW_STEP_Q8 / 2, flutter_q8 = flutter * FLUTTER_STEP_Q8 / 2;
+    const int32_t loss_c = half_c(head_loss_q15(filter)), hp_c = half_c(tape_hp_q15(filter));
+    DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), fx_live[FX_L_TONE]);
+    fb.run_c = half_c(fb.run_c);
+    fb.scoop_c = fb.scoop_c != 0.f ? 2.f * fb.scoop_c - fb.scoop_c * fb.scoop_c : 0.f;
+    int32_t run_lp = tp.run_lp;
+    float scoop = fb.scoop_c != 0.f ? tp.scoop : 0.f;
+    uint32_t seed = tp.seed_rng, step = tp.hstep;
+    uint32_t wpos = tp.wpos_q16, wow_ph = tp.wow_ph, flutter_ph = tp.flutter_ph;
     uint32_t wow_ph2 = tp.wow_ph2, flutter_ph2 = tp.flutter_ph2;
-    int32_t gap = tp.gap_q16, speed = tp.speed_q24;
-    BbLine L = tp.bb[0], R = tp.bb[1];
-    int32_t ml = 0, mr = 0, dl_ = 0, dr_ = 0;              /* the lines' pull, Q16, and its step */
-    if (fb.scoop_c == 0.f) L.scoop = R.scoop = 0.f;
-    if (pp) { R.run_lp = 0; R.scoop = 0.f; }             /* (the right feeds nothing back in a ping pong) */
-    int16_t *const tl = tape, *const tr = tape + BBD_TRACK;
-    const uint32_t nside = dl_side_n;
-    dl_side_n = 0u;
-    /* slowed (the clock under the sample rate): the buckets read 4-point and written at the clock's ticks, as the
-     * slowed tape's (TapeAA); its own dark filters stay the anti-aliasing */
-    const int slow = tp.speed_q24 < (1 << 24) || speed_tgt < (1 << 24);
-    const float inv_sp = slow ? 65536.f / (float)((tp.speed_q24 >> 8) | 1) : 1.f;
+    int32_t gap = tp.gap_q16, aa_lp = tp.aa_lp, loss_lp = tp.loss_lp, hp_lp = tp.hp_lp;
+    int32_t loss2 = tp.loss2_lp, hp2 = tp.hp2_lp;
+    int32_t z0 = tp.hz[0], z1 = tp.hz[1], z2 = tp.hz[2];
+    int32_t l0 = tp.ho_l[0], l1 = tp.ho_l[1], r0 = tp.ho_r[0], r1 = tp.ho_r[1];
+    int32_t m1 = tp.hm[0], d1 = tp.hm[1], m2 = tp.hm[2], d2 = tp.hm[3];
+    uint8_t ph = tp.hph;
+    tp.speed_q24 = 1 << 24;                                /* (the full-rate tape's, should the type change back) */
 
     for (uint32_t s = 0; s < n; s++) {
-        gap += (gap_tgt - gap) >> TAPE_SLEW;
-        speed += (speed_tgt - speed) >> TAPE_SLEW;
-        int32_t speed_q16 = speed >> 8;
-        wow_ph += WOW_INC;
-        flutter_ph += FLUTTER_INC;
-        wow_ph2 += WOW_INC2;
-        flutter_ph2 += FLUTTER_INC2;
-        if (!(s & (MOD_EVERY - 1u))) {
-            int32_t nl_ = (para_sine(wow_ph + MOD_EVERY * WOW_INC) * wow_q8 + para_sine(flutter_ph + MOD_EVERY * FLUTTER_INC) * flutter_q8) >> 15;
-            int32_t nr_ = (para_sine(wow_ph2 + MOD_EVERY * WOW_INC2) * wow_q8 + para_sine(flutter_ph2 + MOD_EVERY * FLUTTER_INC2) * flutter_q8) >> 15;
-            ml = tp.mt[0][1] << 8;
-            mr = tp.mt[1][1] << 8;
-            dl_ = (nl_ - tp.mt[0][1]) << 5;
-            dr_ = (nr_ - tp.mt[1][1]) << 5;
-            tp.mt[0][1] = nl_;
-            tp.mt[1][1] = nr_;
+        int32_t x = in[s];
+        if (!ph) {                                         /* the pair's first: the interpolator's late quarter */
+            z0 = z1; z1 = z2; z2 = x;
+            ph = 1;
+            out_l[s] = (3 * l1 + l0) >> 2;
+            out_r[s] = (3 * r1 + r0) >> 2;
+            continue;
         }
-        ml += dl_;
-        mr += dr_;
-        int32_t mod_l = ml >> 8, mod_r = mr >> 8;
-        uint32_t r = wpos - (uint32_t)gap;
-        int32_t ol = bbd_out(&L, tl, r - (uint32_t)((mod_l * speed_q16) >> 8), slow, lp_c, hp_c);
-        int32_t or_ = bbd_out(&R, tr, r - (uint32_t)((mod_r * speed_q16) >> 8), slow, lp_c, hp_c);
-        out_l[s] = ol;
-        out_r[s] = or_;
+        ph = 0;
+        int32_t xin = (z0 + 3 * z1 + 3 * z2 + x) >> 3;     /* the decimator, a step */
+        z0 = z1; z1 = z2; z2 = x;
 
-        /* the compander's breath: noise riding each echo's envelope, into its buckets with the input */
-        rng = rng * 1664525u + 1013904223u;
-        const int32_t dl = (int32_t)(int16_t)(rng >> 16);
-        rng = rng * 1664525u + 1013904223u;               /* (a draw each: an LCG's low bits are no noise) */
-        const int32_t dr = (int32_t)(int16_t)(rng >> 16);
-        int32_t nl = mr_mulq15(dl, (L.env * nz_k) >> 10), nr = mr_mulq15(dr, (R.env * nz_k) >> 10);
-        if (fb.runaway) {                                 /* past 100: the hiss seed (8x the tape's: its filters round
-                                                           * toward zero and swallowed a smaller seed; measured: from
-                                                           * silence at 127 both reach their howl in ~20 s) */
-            nl += dl >> 9;
-            nr += dr >> 9;
+        gap += (gap_tgt - gap) >> (TAPE_SLEW - 1);
+        wow_ph += 2u * WOW_INC;
+        flutter_ph += 2u * FLUTTER_INC;
+        if (!(step & (MOD_EVERY - 1u))) {
+            int32_t nt = (para_sine(wow_ph + MOD_EVERY * 2u * WOW_INC) * wow_q8 +
+                          para_sine(flutter_ph + MOD_EVERY * 2u * FLUTTER_INC) * flutter_q8) >> 15;
+            m1 = tp.mt[0][0] << 8;
+            d1 = (nt - tp.mt[0][0]) << 5;
+            tp.mt[0][0] = nt;
         }
-        int32_t sd = s < nside ? (int32_t)dl_side_in[s] : 0;
-        int32_t rl, rr;
-        if (pp) {                                         /* left: the send and the right's echo fed back; right: the
-                                                           * left's echo */
-            rl = in[s] + sd + bbd_fb(&L, or_, &fb) + nl;
-            rr = ol + (ol >> 4) - sd + nr;                /* (x 1.06: the round goes through both lines' filters and
-                                                           * saturations; the right's echo and the howl as before) */
-        } else {
-            rl = in[s] + sd + bbd_fb(&L, ol, &fb) + nl;
-            rr = in[s] - sd + bbd_fb(&R, or_, &fb) + nr;
+        m1 += d1;
+        uint32_t r = wpos - (uint32_t)gap - (uint32_t)(m1 >> 8);
+        uint32_t i = r >> 16;
+        int32_t a = TAPE_RD(i), b = TAPE_RD(i + 1u);
+        int32_t play = a + (((b - a) * (int32_t)((r >> 1) & 0x7FFFu)) >> 15);
+        loss_lp += sfx_mulq15(play - loss_lp, loss_c);
+        hp_lp += sfx_mulq15(loss_lp - hp_lp, hp_c);
+        int32_t o = loss_lp - hp_lp, ol = o;
+        if (pp) {                                          /* the near head, halfway */
+            wow_ph2 += 2u * WOW_INC2;
+            flutter_ph2 += 2u * FLUTTER_INC2;
+            if (!(step & (MOD_EVERY - 1u))) {
+                int32_t nt = (para_sine(wow_ph2 + MOD_EVERY * 2u * WOW_INC2) * wow_q8 +
+                              para_sine(flutter_ph2 + MOD_EVERY * 2u * FLUTTER_INC2) * flutter_q8) >> 15;
+                m2 = tp.mt[1][0] << 8;
+                d2 = (nt - tp.mt[1][0]) << 5;
+                tp.mt[1][0] = nt;
+            }
+            m2 += d2;
+            uint32_t r2 = wpos - ((uint32_t)gap >> 1) - (uint32_t)(m2 >> 8);
+            uint32_t i2 = r2 >> 16;
+            int32_t a2 = TAPE_RD(i2), b2 = TAPE_RD(i2 + 1u);
+            int32_t play2 = a2 + (((b2 - a2) * (int32_t)((r2 >> 1) & 0x7FFFu)) >> 15);
+            loss2 += sfx_mulq15(play2 - loss2, loss_c);
+            hp2 += sfx_mulq15(loss2 - hp2, hp_c);
+            ol = loss2 - hp2;
         }
-        uint32_t old_cell = wpos >> 16;
-        wpos += (uint32_t)speed_q16;
-        const int tick = (wpos >> 16) != old_cell;
-        bbd_rec(&L, tl, rl, lp_c, tick, wpos >> 16, slow, wpos & 0xFFFFu, inv_sp);
-        bbd_rec(&R, tr, rr, lp_c, tick, wpos >> 16, slow, wpos & 0xFFFFu, inv_sp);
+        int32_t fbs = o, hiss = 0;
+        if (fb.lp_on) {
+            run_lp += mr_mulq15(o - run_lp, fb.run_c);
+            fbs = run_lp;
+            if (fb.runaway) {
+                seed = seed * 1664525u + 1013904223u;
+                hiss = (int32_t)(int16_t)(seed >> 16) >> 12;
+            }
+        }
+        if (fb.scoop_c != 0.f) {
+            scoop += ((float)fbs - scoop) * fb.scoop_c;
+            fbs -= (int32_t)scoop;
+        }
+        int32_t rec = tape_sat(xin + sfx_mulq15(fbs, fb.lo) + sfx_mulq15(fbs, fb.hi) + sfx_mulq15(fbs, fb.hi2) + hiss);
+        aa_lp += sfx_mulq15(rec - aa_lp, 24575);           /* (the full-speed tape's record low-pass, 0.75) */
+        wpos += 1u << 16;
+        TAPE_WR(wpos >> 16, clamp16(aa_lp));
+        step++;
+        l0 = l1; l1 = ol;                                  /* the interpolator's step: a quarter of the newest */
+        r0 = r1; r1 = o;
+        out_l[s] = (l1 + 3 * l0) >> 2;
+        out_r[s] = (r1 + 3 * r0) >> 2;
     }
+    tp.hz[0] = z0; tp.hz[1] = z1; tp.hz[2] = z2;
+    tp.ho_l[0] = l0; tp.ho_l[1] = l1; tp.ho_r[0] = r0; tp.ho_r[1] = r1;
+    tp.hph = ph;
+    tp.hstep = step;
+    tp.hm[0] = m1; tp.hm[1] = d1; tp.hm[2] = m2; tp.hm[3] = d2;
     tp.wpos_q16 = wpos;
     tp.wow_ph = wow_ph;
     tp.flutter_ph = flutter_ph;
+    tp.gap_q16 = gap;
+    tp.aa_lp = aa_lp;
+    tp.loss_lp = loss_lp;
+    tp.hp_lp = hp_lp;
+    tp.loss2_lp = loss2;
+    tp.hp2_lp = hp2;
+    tp.run_lp = run_lp;
+    tp.scoop = scoop > 1e-3f || scoop < -1e-3f ? scoop : 0.f;
+    tp.seed_rng = seed;
     tp.wow_ph2 = wow_ph2;
     tp.flutter_ph2 = flutter_ph2;
-    tp.gap_q16 = gap;
-    tp.speed_q24 = speed;
-    tp.bb_rng = rng;
-    L.scoop = L.scoop > 1e-3f || L.scoop < -1e-3f ? L.scoop : 0.f;
-    R.scoop = R.scoop > 1e-3f || R.scoop < -1e-3f ? R.scoop : 0.f;
-    tp.bb[0] = L;
-    tp.bb[1] = R;
 }
+#endif
+
 
 /* ROOM's multiplies round toward zero (mr_mulq15, 2026-10-15): with sfx_mulq15's floor the combs held a residue for
  * ever, up to ~90 LSB at the top of REVERB TIME (measured). */
@@ -1764,11 +1753,11 @@ void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     if (n == 0u) return;
     send_limit(&dl_lim_env, in, din, n);
-    if (DELAY_TYPE(p) == DELAYTYPE_BBD)
-        bbd_delay_block(p, din, out_l, out_r, n);
-    else
+#if TAPE_HALF
+        tape_delay_block_half(p, din, out_l, out_r, n);
+#else
         tape_delay_block(p, din, out_l, out_r, n);
-    dl_side_n = 0u;                                       /* (the tape's one line takes no side) */
+#endif
 }
 
 void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in, int32_t *reverb_io, int32_t *wet_r,
@@ -1817,8 +1806,8 @@ void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in,
                                                            * ms detuned the loop's own resonances and it no longer held) */
 #define XF_WOW_THIN 0.25f                                 /* the thinner side's share of it */
 PS_STATIC_ASSERT((int)XF_WOW_BASE + (int)XF_WOW_EXC + 2 < (int)XF_WOW_LEN, "the wander fits its line");
-enum { XF_CL, XF_CR, XF_CM, XF_CM2, XF_NCH };            /* DLY > REV's left and right; REV > DLY's mono (the BBD:
-                                                           * left), the BBD's right */
+enum { XF_CL, XF_CR, XF_CM, XF_CM2, XF_NCH };            /* DLY > REV's left and right; REV > DLY's mono (CM2: the
+                                                           * removed BBD's right, unused) */
 typedef struct {
     float hp, lp, dc;                                     /* the band-limit; the lopsided saturation's DC */
     float d;                                              /* the wander's time at the last block's end, samples */
@@ -1856,6 +1845,7 @@ static void xf_init(void)                                 /* (the amounts, fx_li
 
 /* 1 if way j is on, or still ramping down to off */
 static inline int xf_on(int j) { return fx_cross[j] != 0u || xf.g[j] != 0.f; }
+int fx_cross_to_rev_on(void) { return xf_on(FX_X_DLY_REV); }
 
 /* the band-limit and the wear for LOOP TONE: the high-pass DELAY HP's where above ~150 Hz, the low-pass 4.5 kHz falling
  * to ~400 Hz; the wear from none at 64 to full at either end */
@@ -1995,18 +1985,6 @@ void fx_cross_to_dly(int32_t *delay_in, uint32_t n)
         return;
     for (uint32_t s = xf.nrev; s < n; s++) xf.rev_l[s] = xf.rev_r[s] = 0.f;   /* (a pass longer than the last) */
     float g = xf_begin(FX_X_REV_DLY, n, &dg, &lp_c);
-    if (tp.last_bbd) {                                    /* the BBD's two lines: each side on its own, as DLY > REV */
-        float zr[FX_BLOCK_MAX];
-        float pl = xf_chan(&xf.ch[XF_CM], xf.rev_l, z, n, g, dg, lp_c);
-        float pr = xf_chan(&xf.ch[XF_CM2], xf.rev_r, zr, n, g, dg, lp_c);
-        xf_level(FX_X_REV_DLY, pl > pr ? pl : pr);
-        for (uint32_t s = 0; s < n; s++) {
-            delay_in[s] += (int32_t)(0.5f * (z[s] + zr[s]) * XF_H);
-            dl_side_in[s] = 0.5f * (z[s] - zr[s]) * XF_H;
-        }
-        dl_side_n = n;
-        return;
-    }
     float m[FX_BLOCK_MAX];                                /* the tape: the mono sum */
     for (uint32_t s = 0; s < n; s++) m[s] = 0.5f * (xf.rev_l[s] + xf.rev_r[s]);
     xf_level(FX_X_REV_DLY, xf_chan(&xf.ch[XF_CM], m, z, n, g, dg, lp_c));

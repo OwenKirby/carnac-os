@@ -1,7 +1,7 @@
 /* Host test: the effects' output hashes (src/dsp/fx.c), every reverb type with the tape echo, PING PONG off and on,
  * TAPE DEGRADE, over 8 s of noise then silence, compared with src/host/fx_hash_golden.txt. "hot" rows send the noise
  * at about 4x full scale, as a loud chord's summed sends do: the sends' limiters (2026-10-16) and the headroom after.
- * "bbd" rows: the BBD delay (DELAY TYPE, 2026-10-16) with PING PONG and a worn DEGRADE. "hp" rows (2026-10-26): DELAY HP
+ * "bbd" rows: once the BBD delay (removed 2026-11-14), now the tape at the same settings (PING PONG, a worn DEGRADE). "hp" rows (2026-10-26): DELAY HP
  * in the feedback, the tape at 127 with PING PONG and FEEDBACK 112, the BBD at 64 and FEEDBACK 116. The render hashes play the
  * factory effects only (TOMB = the old ROOM network); this covers the tank (MOD, CELESTIAL, DOLMEN, TUMULUS) and the
  * stereo delay. A change meant to keep the sound must leave every line; one meant to alter it: listen, then --write.
@@ -31,9 +31,8 @@ int main(int argc, char **argv)
             memset(&p, 0, sizeof p);
             p.reverb_type = (uint8_t)types[k];
             p.reverb_decay = 100; p.reverb_damp = 50;
-            p.delay_time = 59;   /* ~0.47 s: past TAPE_GAP_MAX, the slowed tape */ p.delay_feedback = 80; p.delay_degrade = (uint8_t)(pp ? 110 : 36);
+            p.delay_time = 59;   /* ~0.47 s (the slowed tape, before the half-rate one) */ p.delay_feedback = 80; p.delay_degrade = (uint8_t)(pp ? 110 : 36);
             p.delay_pingpong = (uint8_t)((pp & 1) | (pp == 4 ? 127 << 1 : pp == 5 ? 64 << 1 : 0));
-            p.delay_type = (uint8_t)(bbd ? DELAYTYPE_BBD : DELAYTYPE_TAPE);
             if (hp) p.delay_feedback = (uint8_t)(pp == 4 ? 112 : 116);
             fx_init();
             unsigned h = 2166136261u, seed = 1;

@@ -47,6 +47,9 @@ uint32_t synth_prof_now(void) { return (uint32_t)__rdtsc(); }
 #define FS 44100.0
 
 static int32_t buf[HALF * 2];
+
+/* (the factory bank lives in the FM1's glue: on the host the K_FACT rows play the live defaults) */
+int pt_factory_load(uint8_t slot) { (void)slot; return -1; }
 static double ns100 = 280.0;
 
 /* a live state no scenario would make: every byte of the patches and lanes a pattern */
@@ -145,7 +148,7 @@ int main(int argc, char **argv)
                r->avg_pm * ns100 / 1000.0, r->voices, r->over ? "CUT " : "",
                !r->over && r->avg_pm <= 700 && r->peak_pm < 900 && !r->late ? "pass" : "FAIL");
         if (guard && !r->over) { printf("  ^ not cut by the guard\n"); fails++; }
-        if (!guard && strncmp(pt_name(i), "IDLE", 4) != 0 && !r->voices) {   /* (IDLE rows: none, by design) */
+        if (!guard && !strstr(pt_name(i), "IDLE") && !r->voices) {   /* (IDLE rows, FACT n IDLE too: none, by design) */
             printf("  ^ no voice sounded\n");
             fails++;
         }

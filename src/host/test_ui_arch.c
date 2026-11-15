@@ -680,17 +680,17 @@ int main(void)
         int k;
         sm.page = UIPAGE_TUNING;
         perf_state.delay_sync = 1u;                     /* DELAY SYNC on, TUNING EQUAL */
-        perf_state.delay_type = DELAYTYPE_BBD;          /* ROOT C */
+        perf_state.delay_type = 1u;                     /* ROOT C; bit 0 set (once DELAY TYPE: kept as it is) */
         k = find_row("ROOT");
         CHECK(k < 0 || ui_sm_row_state(&sm, (uint8_t)k) == UIROW_HIDDEN, "EQUAL: no ROOT");
         perf_state.delay_sync = (uint8_t)(TUNING_JUST << 1 | 1u);
-        perf_state.delay_type = (uint8_t)(2u << 1 | DELAYTYPE_BBD);
+        perf_state.delay_type = (uint8_t)(2u << 1 | 1u);
         k = find_row("TUNING");
         CHECK(k >= 0 && strcmp(ui_sm_row_text(&sm, (uint8_t)k), "JUST") == 0, "TUNING reads JUST");
         k = find_row("ROOT");
         r = k >= 0 ? ui_sm_row_state(&sm, (uint8_t)k) : UIROW_HIDDEN;
         CHECK(r == UIROW_ACTIVE && strcmp(ui_sm_row_text(&sm, (uint8_t)k), "D") == 0, "JUST: ROOT D");
-        CHECK(DELAY_SYNC(&perf_state) == 1u && DELAY_TYPE(&perf_state) == DELAYTYPE_BBD, "the delay's bits kept");
+        CHECK(DELAY_SYNC(&perf_state) == 1u && (perf_state.delay_type & 1u) == 1u, "the delay's bits kept");
         {   /* the knobs: TUNING and ROOT through their high-7 shadows, the delay's bits kept; ROOT greyed with no root */
             UiKnobInfo i;
             uint8_t *p = ui_sm_knob(&sm, UIPAGE_TUNING, 0, 1, &i);
@@ -702,7 +702,7 @@ int main(void)
                   "knob 2 -> RAST, SYNC kept; knob 3 reads D");
             *p = 9u;
             ui_sm_knob_written(&sm, UIPAGE_TUNING, 2u);
-            CHECK(PERF_TUNING_ROOT(&perf_state) == 9u && DELAY_TYPE(&perf_state) == DELAYTYPE_BBD, "knob 3 -> A, TYPE kept");
+            CHECK(PERF_TUNING_ROOT(&perf_state) == 9u && (perf_state.delay_type & 1u) == 1u, "knob 3 -> A, bit 0 kept");
             p = ui_sm_knob(&sm, UIPAGE_TUNING, 0, 3, &i);
             CHECK(p == &perf_state.bend_range && i.n_enum == 25u, "knob 4: BEND RANGE 0..24");
             perf_state.delay_sync = 1u;
@@ -712,7 +712,7 @@ int main(void)
         k = find_row("ROOT");
         CHECK(k < 0 || ui_sm_row_state(&sm, (uint8_t)k) == UIROW_HIDDEN, "USER 2: no ROOT");
         perf_state.delay_sync = 0u;
-        perf_state.delay_type = DELAYTYPE_TAPE;
+        perf_state.delay_type = 0;
         sm.page = was;
     }
 

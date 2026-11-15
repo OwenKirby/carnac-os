@@ -62,5 +62,7 @@ void fx_tone_sync(MasterPerformancePreset *p);
  * page's picture; written by the audio) */
 float fx_cross_level(void);
 void fx_cross_to_dly(int32_t *delay_in, uint32_t n);
+/* 1 while DLY > REV feeds the reverb (on, or fading out): only then does the reverb's front need this pass's echoes */
+int fx_cross_to_rev_on(void);
 void fx_cross_to_rev(const int32_t *delay_l, const int32_t *delay_r, int32_t *reverb_in, uint32_t n);
 void fx_cross_keep(const int32_t *rev_l, const int32_t *rev_r, uint32_t n);

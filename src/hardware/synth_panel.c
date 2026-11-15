@@ -293,10 +293,10 @@ static void syn_perf_tick(void)
  * interrupts on early): the factory's performance 0 whole, NEWGRANGE DAWN, always (a performance saved in slot 0 stays
  * there, loaded from the PERF page as before), so the first key played sounds the bank's opening patch with its
  * effects instead of the bare defaults */
-static void syn_boot_perf(void)
+static int syn_factory_whole(uint8_t slot)
 {
-    if (factory_perf(0u, &syn_perf_load) != 0)
-        return;
+    if (factory_perf(slot, &syn_perf_load) != 0)
+        return -1;
     perf_state = syn_perf_load.perf;
     settings_apply(&perf_state);
     engine_state[0] = syn_perf_load.engine[0];
@@ -306,8 +306,19 @@ static void syn_boot_perf(void)
     memcpy(seq_lanes, syn_perf_load.seq, sizeof seq_lanes);
     arp_state = syn_perf_load.arp;
     syn_link_names();
-    sm.perf_slot = 0u;
+    sm.perf_slot = slot;
     ui_sm_enforce(&sm);                             /* the performance's mode, its patches' architectures */
+    return 0;
+}
+static void syn_boot_perf(void) { (void)syn_factory_whole(0u); }
+/* the PERF TEST's K_FACT rows (perf_test.h): a factory performance whole, as the power-on load makes it (the
+ * performance's slot on the PERF page is left as it was) */
+int pt_factory_load(uint8_t slot)
+{
+    uint8_t keep = sm.perf_slot;
+    int rc = syn_factory_whole(slot);
+    sm.perf_slot = keep;
+    return rc;
 }
 
 

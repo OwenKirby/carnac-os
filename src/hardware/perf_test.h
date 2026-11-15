@@ -31,6 +31,7 @@ typedef struct {
     uint16_t ui_max_ms;              /* the slowest screen frame (draw only) */
     uint8_t voices;                  /* most voices sounding at once */
     uint8_t over;                    /* cut by the guard after PT_OVER_HALVES late halves: the figures run to the cut */
+    uint16_t floor_pm;               /* the measured room's floor at the end (synth_floor_pm, 2026-11-14; 0: unmeasured) */
     uint16_t cyc[SPROF_N];           /* the profile build (SYNTH_PROF): each stage's counter ticks a sample, else 0 */
 } PtResult;
 #define PT_HALF_FRAMES 512u          /* frames the audio side renders between two pt_audio_half calls */
@@ -53,3 +54,6 @@ uint8_t pt_tick(uint32_t now_ms);
 uint8_t pt_audio_half(uint32_t load_pm, uint8_t late);
 uint8_t pt_audio_ok(void);           /* 0: skip the render (silence) */
 void pt_ui_frame(uint32_t draw_us);
+/* the glue's (synth_panel.c; the host harness has its own): factory performance `slot` whole into the live state, as
+ * the power-on load makes it; 0, or -1 past the factory bank. The K_FACT rows. */
+int pt_factory_load(uint8_t slot);

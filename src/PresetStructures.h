@@ -94,7 +94,6 @@ enum { DRIVE_SOFT, DRIVE_HARD, DRIVE_FOLD, DRIVE_TAPE, DRIVE_TUBE, DRIVE_OVERDRI
  * CELESTIAL: was SHIMMER; DOLMEN: a cave (a small stone chamber); TUMULUS: a cavern (Tumulus Saint-Michel, Carnac) */
 enum { REVTYPE_SPRING, REVTYPE_TOMB, REVTYPE_MOD, REVTYPE_CELESTIAL, REVTYPE_DOLMEN, REVTYPE_TUMULUS, REVTYPE_COUNT };
 /* delay type (2026-10-16): TAPE the tape echo, BBD a bucket-brigade echo (fx.c bbd_delay_block). New ones at the end */
-enum { DELAYTYPE_TAPE, DELAYTYPE_BBD, DELAYTYPE_COUNT };
 enum { CLKSRC_INTERNAL, CLKSRC_MIDI, CLKSRC_COUNT };
 enum { VELCURVE_SOFT, VELCURVE_LINEAR, VELCURVE_HARD, VELCURVE_COUNT };   /* GLOBAL > VEL CURVE: incoming MIDI */
 enum { CLKOUT_OFF, CLKOUT_USB, CLKOUT_COUNT };                            /* GLOBAL > CLOCK OUT (X0X has no TRS out) */
@@ -731,7 +730,8 @@ typedef struct {
     uint8_t delay_pingpong;          /* bit 0 PING PONG: the echoes alternate left and right; bits 1..7 DELAY HP
                                       * (2026-10-26): the feedback's high-pass, 0 = off (older records: 0, no
                                       * version bump). Read them through DELAY_PINGPONG / DELAY_HP */
-    uint8_t delay_type;              /* DELAYTYPE_*: TAPE (default) or BBD */
+    uint8_t delay_type;              /* bits 1..7: TUNING's ROOT (PERF_TUNING_ROOT); bit 0 unused since the BBD went
+                                      * (2026-11-14: one delay, the tape; the name kept for the byte's place) */
     /* GLOBAL (4.6) */
     uint8_t midi_ch[NLAYER];         /* 0..15 = channel 1..16 (defaults 1, 2) */
     uint8_t cc1_num, cc2_num;        /* custom CC1 / CC2 controller numbers */
@@ -751,7 +751,6 @@ PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 70u, "MasterPerformancePrese
 /* GLOBAL > TUNING and ROOT (2026-10-29, dsp/tuning.h) ride in the high bits of delay_sync and delay_type (bits 1..7;
  * older records: 0 = EQUAL on C, no version bump). Read all four through these */
 #define DELAY_SYNC(p) ((uint8_t)((p)->delay_sync & 1u))
-#define DELAY_TYPE(p) ((uint8_t)((p)->delay_type & 1u))
 #define PERF_TUNING(p) ((uint8_t)((p)->delay_sync >> 1))
 #define PERF_TUNING_ROOT(p) ((uint8_t)((p)->delay_type >> 1))
 /* the built-in tunings first, the ones nearest Carnac's drones and stone-age sound at the top (user, 2026-10-29) */

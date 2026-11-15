@@ -1926,7 +1926,7 @@ static void pu_viz_fx(const UIStateMachine *sm)
     }
     sq_text_r(PV_X0 + PV_W, CAP_IN(S, 13), &AF_S, REV[p->reverb_type < REVTYPE_COUNT ? p->reverb_type : 0u], SQC(MID),
               SQC(BG));
-    sq_text(PV_X0 + 12, CAP_IN(S, 13), &AF_S, DELAY_TYPE(p) == DELAYTYPE_BBD ? "BBD" : "TAPE", SQC(MID));
+    sq_text(PV_X0 + 12, CAP_IN(S, 13), &AF_S, "TAPE", SQC(MID));
     if (DELAY_SYNC(p))
         sq_text(PV_X0 + 46, CAP_IN(S, 13), &AF_S, "SYNC", SQC(MID));
 }

@@ -8,6 +8,7 @@
 SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 volatile uint8_t voice_shed;
 volatile uint8_t voice_tail_cut;
+volatile uint8_t voice_room;
 uint8_t pool_pass;
 static uint8_t rr_last[NLAYER] = {0xFFu, 0xFFu};   /* each layer's last free-voice pick (allocate_voice_slot stage 1) */
 
@@ -115,6 +116,30 @@ have:
         *count = *count > (int)voice_shed + 2 ? *count - (int)voice_shed : 2;
 }
 
+void pool_alloc_range(uint8_t layer, int *first, int *count) {
+    static uint32_t key_c = 0xFFFFFFFFu;
+    static uint8_t room_c, n_c[NLAYER];
+    uint8_t room = voice_room;
+    pool_range(layer, first, count);
+    if (!room || layer >= NLAYER)
+        return;
+    uint8_t mode = perf_state.perf_mode < PERF_COUNT ? perf_state.perf_mode : (uint8_t)PERF_SINGL_SYNTH;
+    uint32_t key = (uint32_t)mode | (uint32_t)(perf_state.voice_mode[0] & 7u) << 2 | (uint32_t)(perf_state.voice_mode[1] & 7u) << 5 |
+                   (uint32_t)varch_voice_cost(&engine_state[0]) << 8 | (uint32_t)varch_voice_cost(&engine_state[1]) << 16;
+    if (key != key_c || room != room_c) {          /* (the fit is a search: once per change) */
+        uint8_t over = room < VOICE_CORE_COST ? (uint8_t)(VOICE_CORE_COST - room) : 0u;   /* (the MFX is in the floor) */
+        for (uint8_t l = 0; l < NLAYER; l++)
+            n_c[l] = layer_voice_limit_w(mode, varch_voice_cost(&engine_state[0]), varch_voice_cost(&engine_state[1]),
+                                         over, perf_state.voice_mode[0], perf_state.voice_mode[1], l);
+        key_c = key;
+        room_c = room;
+    }
+    if (n_c[layer] < *count) {                     /* never more than the table's */
+        if (layer == 1u) *first += *count - n_c[layer];   /* (layer 2 keeps the top of the pool) */
+        *count = n_c[layer];
+    }
+}
+
 SYNTH_COLD int check_if_any_other_voice_held(int current_voice_index, uint8_t layer) {
     for (int v = 0; v < POLYPHONY_VOICES; v++) {
         if (v != current_voice_index && poly_bank[v].layer == layer && poly_bank[v].is_gate_open) {
@@ -127,7 +152,7 @@ SYNTH_COLD int check_if_any_other_voice_held(int current_voice_index, uint8_t la
 /* -1 when the layer has no voices (layer 2 under SINGL_SYNTH), or a higher rank holds them all */
 int allocate_voice_slot(uint8_t layer, uint8_t src) {
     int first, count, end;
-    pool_range(layer, &first, &count);
+    pool_alloc_range(layer, &first, &count);       /* (the measured room's, inside pool_range's) */
     if (count <= 0) return -1;
     end = first + count;
 

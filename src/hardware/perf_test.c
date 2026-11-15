@@ -57,9 +57,15 @@ static void wt_to_flash(void)
     pt_wt_on = 0;
 }
 
-enum { K_IDLE, K_HELD, K_SEQ, K_RS, K_REC, K_ALL, K_LOOP, K_LOOPCH };   /* K_LOOP (2026-11-11): a played loop, not a torture: see loop_slot; K_LOOPCH: K_LOOP with a four-note chord on the keys (both layers) changed every PT_CHORD_MS, the tails piling up to the caps; K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS; K_REC: K_SEQ with
+enum { K_IDLE, K_HELD, K_SEQ, K_RS, K_REC, K_ALL, K_LOOP, K_LOOPCH, K_FACT };   /* K_LOOP (2026-11-11): a played loop, not a torture: see loop_slot; K_LOOPCH: K_LOOP with a four-note chord on the keys (both layers) changed every PT_CHORD_MS, the tails piling up to the caps; K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS; K_REC: K_SEQ with
                                                        * the REC page's loop playing too; K_ALL: K_REC with the chord held (every
                                                        * note source at once, 2026-11-06) */
+/* K_FACT (2026-11-14): a factory performance as it is played. The live drop-outs came from NEWGRANGE DAWN (perf 0)
+ * with its SEQ and ARP running and chords on the keys, a case none of the synthetic rows covers. The row loads factory
+ * performance `arch` whole (pt_factory_load, the glue's: the power-on load's path), starts both transports and strikes
+ * K_LOOPCH's chords over them, each left to ring out in the patch's own release. */
+#define PTF_NO_TRANSPORT 1u          /* K_FACT, in .flavour: SEQ and ARP stopped */
+#define PTF_NO_CHORDS 2u             /* K_FACT, in .flavour: no chords on the keys */
 enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_HEAVY 1u
 #define F_ONE 2u                     /* one note, not the cap */
@@ -67,7 +73,7 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_FX_CEL 8u                  /* the CELESTIAL reverb (the tank + the octave shifter) and PING PONG */
 #define F_FX_TUM 16u                 /* the TUMULUS reverb (the still tank, long) and PING PONG */
 #define F_FX_SPR 32u                 /* the SPRING reverb (two dispersive springs) and PING PONG */
-#define F_DLY_BBD 64u                /* the delay as a BBD (DELAY TYPE), with any of the above */
+/* (64u: F_DLY_BBD, the BBD delay, removed 2026-11-14) */
 /* (128u: F_ATK_FILT, STRIKE's, retired 2026-11-04) */
 #define F_HP 256u                    /* both filters' morph at 110 (SH-2: past BP, all five output taps) */
 #define F_PCM 512u                   /* PCM waves (needs the store uploaded): OSC1 CHOIR at SCAN 64 (both whole
@@ -99,6 +105,7 @@ typedef struct {
 } PtScen;
 
 static const PtScen SCEN[] = {
+#if !defined(PT_FACT_ONLY)          /* (-D PT_FACT_ONLY: the K_FACT rows alone, a two-minute run) */
     {"IDLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
     {"SINGLE 1V", K_HELD, VARCH_SINGLE, FLT_MULTI, F_ONE, UIPAGE_HOME1},
     {"SINGLE", K_HELD, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
@@ -141,8 +148,6 @@ static const PtScen SCEN[] = {
     {"SEQ+ARP SPRD CEL", K_SEQ, VARCH_SPREAD, FLT_MULTI, F_HEAVY | F_FX_CEL, UIPAGE_HOME1},
     /* 2026-10-16: SPRING against HEAVY CELEST+PP (the budget it was designed to), the BBD against the tape echo */
     {"HEAVY SPRING+PP", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_SPR, UIPAGE_HOME1},
-    {"HEAVY CEL+BBD PP", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_CEL | F_DLY_BBD, UIPAGE_HOME1},
-    {"SEQ+ARP SPR+BBD", K_SEQ, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_SPR | F_DLY_BBD, UIPAGE_HOME1},
     /* 2026-10-21: SH-2 (the dearest filter, ~1.9x MULTI on the host) at every architecture's cap: the caps must hold */
     {"SINGLE SH2 H", K_HELD, VARCH_SINGLE, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
     {"DUALOSC SH2 H", K_HELD, VARCH_DUAL_OSC, FLT_SH2, F_HEAVY, UIPAGE_HOME1},
@@ -213,7 +218,6 @@ static const PtScen SCEN[] = {
     {"HEAVY SPRING MIX", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_SPR | F_MIX, UIPAGE_HOME1},
     /* the stereo BBD in the loop (2026-11-03: its two lines, REV > DLY stereo, LOOP TONE's wear), beside HEAVY
      * CEL+BBD PP */
-    {"HEAVY CEL BBD MIX", K_HELD, VARCH_SINGLE, FLT_FORMANT, F_HEAVY | F_FX_CEL | F_DLY_BBD | F_MIX, UIPAGE_HOME1},
     /* TAPE FLANGER (2026-11-02): the full rate's two read heads a side */
     {"IDLE TAPE FLANGER", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX | F_MFXT(MFX_TAPE_FLANGER), UIPAGE_HOME1},
     {"IDLE TAPE FLNG x2", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_MFX2 | F_MFXT(MFX_TAPE_FLANGER), UIPAGE_HOME1},
@@ -291,6 +295,27 @@ static const PtScen SCEN[] = {
     {"LOOP HARP1", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX | F_MFXT(MFX_WIND_HARP), UIPAGE_HOME1},
     {"LOOP HARP2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_WIND_HARP), UIPAGE_HOME1},
     {"LOOP STON2", K_LOOP, VARCH_STACK, FLT_MULTI, F_LONGREL | F_FX_TUM | F_MFX2 | F_MFXT(MFX_RINGING_STONES), UIPAGE_HOME1},
+#else
+    {"IDLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},   /* (the reference) */
+#endif
+    /* the factory performances, played (K_FACT, 2026-11-14); KEYS / SEQ+ARP / IDLE take one part away */
+    {"FACT 0 PLAY", K_FACT, 0, 0, 0, UIPAGE_HOME1},
+    {"FACT 1 PLAY", K_FACT, 1, 0, 0, UIPAGE_HOME1},
+    {"FACT 2 PLAY", K_FACT, 2, 0, 0, UIPAGE_HOME1},
+    {"FACT 3 PLAY", K_FACT, 3, 0, 0, UIPAGE_HOME1},
+    {"FACT 4 PLAY", K_FACT, 4, 0, 0, UIPAGE_HOME1},
+    {"FACT 5 PLAY", K_FACT, 5, 0, 0, UIPAGE_HOME1},
+    {"FACT 6 PLAY", K_FACT, 6, 0, 0, UIPAGE_HOME1},
+    {"FACT 7 PLAY", K_FACT, 7, 0, 0, UIPAGE_HOME1},
+    {"FACT 0 KEYS", K_FACT, 0, PTF_NO_TRANSPORT, 0, UIPAGE_HOME1},
+    {"FACT 0 SEQ+ARP", K_FACT, 0, PTF_NO_CHORDS, 0, UIPAGE_HOME1},
+    {"FACT 0 IDLE", K_FACT, 0, PTF_NO_TRANSPORT | PTF_NO_CHORDS, 0, UIPAGE_HOME1},
+    {"FACT 1 KEYS", K_FACT, 1, PTF_NO_TRANSPORT, 0, UIPAGE_HOME1},
+    {"FACT 1 SEQ+ARP", K_FACT, 1, PTF_NO_CHORDS, 0, UIPAGE_HOME1},
+    {"FACT 1 IDLE", K_FACT, 1, PTF_NO_TRANSPORT | PTF_NO_CHORDS, 0, UIPAGE_HOME1},
+    {"FACT 6 KEYS", K_FACT, 6, PTF_NO_TRANSPORT, 0, UIPAGE_HOME1},
+    {"FACT 6 SEQ+ARP", K_FACT, 6, PTF_NO_CHORDS, 0, UIPAGE_HOME1},
+    {"FACT 6 IDLE", K_FACT, 6, PTF_NO_TRANSPORT | PTF_NO_CHORDS, 0, UIPAGE_HOME1},
 };
 #define NSCEN ((uint8_t)(sizeof SCEN / sizeof SCEN[0]))
 
@@ -537,7 +562,7 @@ static void setup(const PtScen *s)
 {
     uint8_t n, i;
     live_defaults();
-    if (s->kind != K_IDLE)
+    if (s->kind != K_IDLE && s->kind != K_FACT)
         patch(&engine_state[0], s);
     if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL) {
         patch(&engine_state[1], s);
@@ -547,7 +572,8 @@ static void setup(const PtScen *s)
         patch(&engine_state[1], s);
         loop_slot();
     }
-    MFX_PARAMS(0).type = MFX_PARAMS(1).type = MFX_OFF;
+    if (s->kind != K_FACT)
+        MFX_PARAMS(0).type = MFX_PARAMS(1).type = MFX_OFF;
     if (s->flags & (F_MFX | F_MFX2)) {
         static const MfxParams MP[MFX_COUNT] = {
             [MFX_STONE_PHASER] = {MFX_STONE_PHASER, {64, 41, 100, 127}, 64, {0, 0}},
@@ -574,7 +600,10 @@ static void setup(const PtScen *s)
             perf_state.perf_mode = PERF_DUAL_SYNTH;
         }
     }
-    if (s->flags & F_MIX) {
+    if (s->kind == K_FACT) {
+        (void)pt_factory_load(s->arch);             /* (its own effects, MFX and MIX page) */
+        for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = perf_state.mix[i];
+    } else if (s->flags & F_MIX) {
         static const uint8_t LIVE[FX_L_COUNT] = {40u, 24u, 110u, 110u};
         for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = LIVE[i];
     } else {
@@ -584,7 +613,6 @@ static void setup(const PtScen *s)
     if (s->flags & F_FX_ANY) {
         perf_state.reverb_type = (s->flags & F_FX_CEL) ? REVTYPE_CELESTIAL : (s->flags & F_FX_TUM) ? REVTYPE_TUMULUS
                                  : (s->flags & F_FX_SPR) ? REVTYPE_SPRING : REVTYPE_MOD;
-        perf_state.delay_type = (s->flags & F_DLY_BBD) ? DELAYTYPE_BBD : DELAYTYPE_TAPE;
         perf_state.reverb_decay = 110;
         perf_state.delay_pingpong = 1;
         perf_state.delay_degrade = 90;
@@ -599,11 +627,12 @@ static void setup(const PtScen *s)
         for (i = 0; i < n; i++)
             synth_midi_3(0x90, (uint8_t)(48 + i * 3), (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
     }
-    if (s->kind == K_LOOPCH) {
+    if (s->kind == K_LOOPCH || (s->kind == K_FACT && !(s->flavour & PTF_NO_CHORDS))) {
         pt.chord = 0;
         loop_chord(0x90);
     }
-    if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL || s->kind == K_LOOP || s->kind == K_LOOPCH) {
+    if (s->kind == K_SEQ || s->kind == K_REC || s->kind == K_ALL || s->kind == K_LOOP || s->kind == K_LOOPCH ||
+        (s->kind == K_FACT && !(s->flavour & PTF_NO_TRANSPORT))) {
         maq_set_playing(synth_seq(), 1);
         carp_set_playing(synth_arp(), 1);           /* (the ARP has its own transport since 2026-10-17) */
     }
@@ -693,7 +722,7 @@ uint8_t pt_tick(uint32_t now_ms)
         }
         pt.t_rs = now_ms;
     }
-    if (s->kind == K_LOOPCH && pt.phase != P_SETUP && now_ms - pt.t_rs >= PT_CHORD_MS) {
+    if ((s->kind == K_LOOPCH || (s->kind == K_FACT && !(s->flavour & PTF_NO_CHORDS))) && pt.phase != P_SETUP && now_ms - pt.t_rs >= PT_CHORD_MS) {
         loop_chord(0x80);                            /* let the chord go (its tails ring on), then the next */
         pt.chord++;
         loop_chord(0x90);
@@ -723,6 +752,7 @@ uint8_t pt_tick(uint32_t now_ms)
         r->peak_pm = sat16(ld.peak);
         r->late = sat16(ld.late);
         r->over = ld.over;
+        r->floor_pm = sat16(synth_floor_pm());
         r->ui_fps10 = sat16(dt ? ld.ui_frames * 10000u / dt : 0u);
         r->ui_max_ms = sat16((ld.ui_max_us + 999u) / 1000u);
 #if defined(SYNTH_PROF)
