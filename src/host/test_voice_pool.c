@@ -226,6 +226,38 @@ int main(void)
         voice_room = 0;
     }
 
+    /* POLY REUSE stays inside the room (2026-11-18, ALL SOULS: its BLOCK chord re-struck every cell recycled voices 6
+     * and 7 past a room of 6, so the room never trimmed it): a pitch restruck while its voice rings above the room
+     * takes a voice inside it */
+    {
+        synth_init();
+        perf_state.perf_mode = PERF_SINGL_SYNTH;
+        perf_state.voice_mode[0] = VMODE_POLY_REUSE;
+        engine_state[0] = sg;                        /* (7 tenths: room 22 = 3 a core, 6 voices) */
+        engine_load_count[0]++;
+        voice_room = 0;
+        for (int k = 0; k < 8; k++)
+            synth_midi_3(0x90, (uint8_t)(60 + k), 100);
+        static int32_t buf[2 * 64];
+        synth_render_q15(buf, 64);                   /* (the voices' first ticks: sounding, not free) */
+        int hi = -1;
+        for (int v = 0; v < POLYPHONY_VOICES; v++)
+            if (poly_bank[v].is_gate_open && poly_bank[v].active_note == 67) hi = v;
+        CHECK(hi == 7, "8 notes, table room: note 67 on voice 7 (%d)", hi);
+        synth_midi_3(0x80, 67, 0);                   /* released, ringing above the room-to-be */
+        CHECK(!voice_is_free(&poly_bank[7]), "voice 7 rings on in its release");
+        voice_room = 22;
+        int af, an;
+        pool_alloc_range(0, &af, &an);
+        CHECK(af == 0 && an == 6, "room 22: 6 voices for new notes (%d at %d)", an, af);
+        synth_midi_3(0x90, 67, 100);                 /* restruck */
+        int at = -1;
+        for (int v = 0; v < POLYPHONY_VOICES; v++)
+            if (poly_bank[v].is_gate_open && poly_bank[v].active_note == 67) at = v;
+        CHECK(at >= 0 && at < 6, "a restruck pitch above the room takes a voice inside it (voice %d)", at);
+        voice_room = 0;
+    }
+
     if (fails) { printf("%d failure(s)\n", fails); return 1; }
     printf("voice pool: priced caps, pairs inside the cores, top-aligned layer 2, source tails\n");
     return 0;

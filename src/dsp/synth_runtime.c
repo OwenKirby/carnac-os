@@ -336,8 +336,11 @@ static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_
         int slot = -1;
         if (mode == VMODE_POLY_REUSE) {
             /* restriking a pitch that still sounds recycles its voice (spec 5.3); one another source still holds is
-             * left alone */
-            for (int v = first; v < first + count && slot < 0; v++) {
+             * left alone. Only inside the measured room (2026-11-18): a voice above it is never taken again, or a
+             * BLOCK chord re-struck every cell (ALL SOULS) kept all 8 voices past a room of 6 */
+            int rf, rn;
+            pool_alloc_range(layer, &rf, &rn);
+            for (int v = rf; v < rf + rn && slot < 0; v++) {
                 SynthVoiceNode *s = &poly_bank[v];
                 if (s->layer == layer && s->active_note == note && (s->src == src || !s->is_gate_open) &&
                     !voice_is_free(s) && !s->choke)
@@ -693,6 +696,7 @@ static uint32_t (*pass_clock)(void);
 static uint32_t pass_tpf;
 static uint32_t vrun_ticks;
 static uint32_t floor_q8, floor_passes, slope_q8 = 95u * 256u / 10u;   /* (before any is measured: the table's 0.95 %) */
+static uint32_t slope_q16 = 95u * 65536u / 10u;                        /* (slope_q8's mean, 8 more bits) */
 static uint32_t half_ticks, half_frames, load_q8, spike_q8;   /* the halves' loads: their mean, the spikes over it */
 static uint32_t hs_total, hs_vrun, hs_frames, hs_passes, hs_c0, hs_c1, hs_guard, hs_last_t, hs_last_f;   /* the spike watch (hs_notes, hs_steals: above) */
 static uint32_t hs_last[4];
@@ -723,8 +727,14 @@ uint32_t synth_slope_q8(void) { return slope_q8; }
  *    a light patch with the SEQ running lost 2 of 8 voices, and a chord struck 1 s after a heavy sequence stopped
  *    got half its voices);
  *  - the slope, what a priced tenth of voices (PresetStructures.h varch_voice_cost) on the busier core costs in wall
- *    time this pass, smoothed over ~32 passes, measured only while 2 voices' worth or more sound. The table's fixed
- *    0.95 % was ~2x high for SINGLE voices and low for STACK + PCM ones (the PERF TEST with SYNTH_ROOM_OFF, 2026-11-14);
+ *    time this pass, up over ~64 passes and down over ~512 (~1.5 s), measured only while 2 voices' worth or more sound.
+ *    The table's fixed 0.95 % was ~2x high for SINGLE voices and low for STACK + PCM ones (the PERF TEST with
+ *    SYNTH_ROOM_OFF, 2026-11-14). Over ~32 passes (until 2026-11-18) it followed each chord: a sustained PCM choir
+ *    costs ~0.75 a tenth, its strike ~1.2..1.5, so between strikes the room opened to 8 voices and the next chord
+ *    struck all 8 (ALL SOULS played live: 8 voices a third of the time, peaks 97..106 %, a late half every ~40 s;
+ *    SAMHAIN peaks 108 %). Up fast and down slow (A/B on the FM1, 40 s of PLAY + a chord a second, 3 runs): ALL SOULS
+ *    4..6 voices, peaks 89..93, no late half; CAIRN SPIRIT 4, SAMHAIN 3 on layer 2, no late half; SIDHE DOOR and WILD
+ *    HUNT keep their 8. (Down slow alone, 512 both ways, still let 8 in: late halves in 3 of 5 runs.);
  *  - the spikes: each half's load over the halves' mean, the biggest held and let down over ~3 s;
  *  - the room: the tenths a core may carry for the pass to land on VOICE_ROOM_TARGET_PM, (target - floor) / slope,
  *    and for the mean plus the held spike to stay under VOICE_ROOM_PEAK_PM (whichever is less),
@@ -772,9 +782,11 @@ static void floor_pass(uint32_t total, uint32_t frames)
     else floor_q8 -= (floor_q8 - (pm << 8)) >> 5;                        /* the bursts; ~90 ms both ways) */
     if (t >= 20u) {
         uint32_t s = (vpm << 8) / t;
-        if (s > slope_q8) slope_q8 += (s - slope_q8) >> 5;
-        else slope_q8 -= (slope_q8 - s) >> 5;
-        if (slope_q8 < 64u) slope_q8 = 64u;         /* (0.25 % a tenth at least: a room stays finite) */
+        s <<= 8;                                   /* (Q16: a 512-pass mean in Q8 would stick 0.2 % a tenth wide) */
+        if (s > slope_q16) slope_q16 += (s - slope_q16) >> 6;   /* (up in ~64 passes: a strike's cost counts at once */
+        else slope_q16 -= (slope_q16 - s) >> 9;                 /* .. down in ~512, ~1.5 s: a held chord's lull does not) */
+        if (slope_q16 < 64u << 8) slope_q16 = 64u << 8;   /* (0.25 % a tenth at least: a room stays finite) */
+        slope_q8 = slope_q16 >> 8;
     }
     pm = floor_q8 >> 8;
     room = pm < VOICE_ROOM_TARGET_PM ? ((VOICE_ROOM_TARGET_PM - pm) << 8) / slope_q8 : 1u;
