@@ -32,7 +32,14 @@ typedef struct {
     uint8_t voices;                  /* most voices sounding at once */
     uint8_t over;                    /* cut by the guard after PT_OVER_HALVES late halves: the figures run to the cut */
     uint16_t floor_pm;               /* the measured room's floor at the end (synth_floor_pm, 2026-11-14; 0: unmeasured) */
-    uint16_t cyc[SPROF_N];           /* the profile build (SYNTH_PROF): each stage's counter ticks a sample, else 0 */
+    uint16_t pk_out_pm, pk_vox_pm;   /* the slowest half (2026-11-18, synth_half_last): its time outside the voices, the voices' */
+    uint8_t pk_notes, pk_steals;     /* .. notes started in it, on a sounding voice */
+    uint8_t pk_c0, pk_c1;            /* .. the most priced tenths each core carried in one of its passes */
+    uint16_t guarded;                /* halves the deadline guard acted in (synth_voice.h synth_ctrl_guard) */
+#if defined(SYNTH_PROF)
+    uint16_t cyc[SPROF_N];           /* the profile build: each stage's counter ticks a sample (only there since
+                                      * 2026-11-18: ~80 B a row of zeros put the normal build's pool under its 8 KiB spare) */
+#endif
 } PtResult;
 #define PT_HALF_FRAMES 512u          /* frames the audio side renders between two pt_audio_half calls */
 

@@ -29,6 +29,12 @@ void synth_set_core2(int (*run)(void (*fn)(uint32_t), uint32_t arg), int (*wait)
 void synth_set_clock(uint32_t (*now)(void), uint32_t ticks_per_frame);
 uint32_t synth_floor_pm(void);
 uint32_t synth_slope_q8(void);    /* the voices' measured cost a priced tenth on the busier core, per mille x 256 */
+/* The spike watch (2026-11-18): what one half did, taken (and cleared) once a half by the glue, which keeps the slowest's:
+ * o[0] its time outside the voices and o[1] the voices' wall time, per mille of the half; o[2] notes started | voices
+ * taken while still sounding (steals, reuses) << 8 | passes << 16; o[3] the most priced tenths a core carried in a pass,
+ * core 0 | core 1 << 8 (the pass where the busier core carried most). FM1 only (needs synth_set_clock). */
+void synth_half_take(uint32_t o[4]);
+const uint32_t *synth_half_last(void);   /* the last half taken (zeros before any: the host) */
 #if !defined(FELUCCA_ID)                      /* browser emulator only */
 int32_t *synth_web_buffer(void);
 void synth_web_render(uint32_t frames);

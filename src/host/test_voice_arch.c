@@ -357,8 +357,8 @@ int main(void)
     CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_MONO_RETRIG, 1) == 1,
           "both mono");
     base_patch(&engine_state[1], VARCH_STACK);
-    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_UNISON_STACK, 1) == 6,
-          "mono SINGLE + STACK: 1 + 6 (the mono voice, 10, and 3 STACK voices, 45, on core 0: 55 of 56)");
+    CHECK(layer_voice_limit(PERF_DUAL_SYNTH, &engine_state[0], &engine_state[1], VMODE_MONO_LEGATO, VMODE_UNISON_STACK, 1) == 7,
+          "mono SINGLE + STACK: 1 + 7 (2026-11-18 prices: core 0 the mono voice, 7, and 3 STACK voices, 36: 43; core 1 4 STACK voices, 48, of 56)");
 
     /* 4b. a full layer steals by source (2026-10-26): ARP below SEQ below the keys, never upward; inside the ARP / SEQ
      * the outer notes are kept, the keys lose their oldest */
@@ -393,6 +393,8 @@ int main(void)
     base_patch(&engine_state[0], VARCH_SINGLE);
     engine_state[0].filter[0].mod_amt = 0;
     for (int i = 0; i < 8; i++) synth_midi_3(0x90, (uint8_t)(48 + i * 2), 100);
+    engine_state[0].filter[0].flavour = engine_state[0].filter[1].flavour = FLT_SH2;   /* (so STACK below is capped at 6,
+                                                      * 2026-11-18; switched before the reference, not with the choke) */
     render(4096);
     {
         Stats before = render(4096);
@@ -404,12 +406,14 @@ int main(void)
         for (int i = 0; i < 8; i++) synth_midi_3(0x80, (uint8_t)(48 + i * 2), 0);
         for (int i = 0; i < 8; i++) synth_midi_3(0x90, (uint8_t)(48 + i * 2), 100);
         render(2048);
-        CHECK(sounding(0) == 6, "after the change STACK plays %d voices, want 6", sounding(0));
+        CHECK(sounding(0) == 6, "after the change STACK SH-2 plays %d voices, want 6", sounding(0));
     }
-    /* formant keeps the cap (measured no dearer): STACK stays at 6 */
+    /* formant is priced as a plain filter: STACK with SH-2 + FORMANT (12 + 2) gets 8 again */
     engine_state[0].filter[1].flavour = FLT_FORMANT;
+    for (int i = 0; i < 8; i++) synth_midi_3(0x80, (uint8_t)(48 + i * 2), 0);
+    for (int i = 0; i < 8; i++) synth_midi_3(0x90, (uint8_t)(48 + i * 2), 100);
     render(2048);
-    CHECK(sounding(0) == 6, "STACK + FORMANT: %d voices, want 6", sounding(0));
+    CHECK(sounding(0) == 8, "STACK SH-2 + FORMANT: %d voices, want 8", sounding(0));
 
     /* 6. unison: stack size = limit, detune spreads symmetrically, level close to one voice */
     synth_init();
@@ -478,9 +482,10 @@ int main(void)
     all_off();
     perf_state.voice_mode[0] = VMODE_UNISON_STACK;
     engine_state[0].arch = VARCH_STACK;               /* unison follows the architecture's limit */
+    engine_state[0].filter[0].flavour = engine_state[0].filter[1].flavour = FLT_SH2;   /* (STACK SH-2: 6) */
     synth_midi_3(0x90, 60, 100);
     render(2048);
-    CHECK(sounding(0) == 6, "UNISON on STACK stacked %d, want 6", sounding(0));
+    CHECK(sounding(0) == 6, "UNISON on STACK SH-2 stacked %d, want 6", sounding(0));
 
     /* 7. the noise colour morph makes sound and stays in range at its five colours and between them */
     static const uint8_t colours[] = {NOISE_WHITE, 8, NOISE_PINK, 24, NOISE_BROWN, 44, NOISE_RING, 68, NOISE_BAND, 104,

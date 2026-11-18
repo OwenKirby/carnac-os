@@ -22,24 +22,24 @@ arch 3 noise 1 slots 0  589a079f
 arch 3 noise 1 slots 1  0572df8c
 arch 3 noise 2 slots 0  e541d862
 arch 3 noise 2 slots 1  38276c2b
-arch 4 noise 0 slots 0  315efec9
-arch 4 noise 0 slots 1  c067267b
-arch 4 noise 1 slots 0  a8aa3a70
-arch 4 noise 1 slots 1  1f497ac0
-arch 4 noise 2 slots 0  9a2a93e8
-arch 4 noise 2 slots 1  4fa1e30e
-arch 5 noise 0 slots 0  d0a9bea1
-arch 5 noise 0 slots 1  672ac8e8
-arch 5 noise 1 slots 0  f88eb41a
-arch 5 noise 1 slots 1  6d4cbc99
-arch 5 noise 2 slots 0  9ce92bd0
-arch 5 noise 2 slots 1  54b60be9
-arch 6 noise 0 slots 0  bf1ab5bb
-arch 6 noise 0 slots 1  a272a1c0
-arch 6 noise 1 slots 0  89ce25cf
-arch 6 noise 1 slots 1  ced959eb
-arch 6 noise 2 slots 0  24aa8531
-arch 6 noise 2 slots 1  f24fbec1
+arch 4 noise 0 slots 0  0a048f09
+arch 4 noise 0 slots 1  1bc3df79
+arch 4 noise 1 slots 0  b2ff1e10
+arch 4 noise 1 slots 1  f3d29233
+arch 4 noise 2 slots 0  a28ffbc3
+arch 4 noise 2 slots 1  0296e7a8
+arch 5 noise 0 slots 0  c85a04ce
+arch 5 noise 0 slots 1  3d6da778
+arch 5 noise 1 slots 0  d0d14623
+arch 5 noise 1 slots 1  14248388
+arch 5 noise 2 slots 0  57d1b0f6
+arch 5 noise 2 slots 1  a1edceb4
+arch 6 noise 0 slots 0  4aafa165
+arch 6 noise 0 slots 1  b768ade1
+arch 6 noise 1 slots 0  5ad1f228
+arch 6 noise 1 slots 1  044f64bd
+arch 6 noise 2 slots 0  6dfbe620
+arch 6 noise 2 slots 1  8d958343
 arch 7 noise 0 slots 0  e072fb01
 arch 7 noise 0 slots 1  41ef9da0
 arch 7 noise 1 slots 0  bc5b8f2d
@@ -49,19 +49,19 @@ arch 7 noise 2 slots 1  69c8c84c
 dual layer  f51468f9
 seq ext 0 block 32  ead38c40
 seq ext 0 block 7  a6ed6ecd
-seq ext 0 block 128  fb890842
+seq ext 0 block 128  d6fd483d
 seq ext 1 block 32  7f993258
 seq ext 1 block 7  1703e36f
-seq ext 1 block 128  fdb5bd38
+seq ext 1 block 128  949cb763
 mfx L1 1 L2 1  5077eed5
 mfx L1 2 L2 2  d2e7adc8
-mfx L1 3 L2 3  5cd98388
+mfx L1 3 L2 3  2cdf4c37
 mfx L1 4 L2 4  cb1547c1
 mfx L1 5 L2 5  46a557c7
 mfx L1 6 L2 6  1523cde5
 mfx L1 7 L2 7  8bb00321
 mfx L1 8 L2 8  d6f2ac23
-mfx L1 9 L2 9  87186de0
+mfx L1 9 L2 9  5b9e17d1
 mfx L1 10 L2 10  86b4555c
 mfx L1 11 L2 11  a66ee8c7
 mfx L1 12 L2 12  2c0cc16e

@@ -573,9 +573,10 @@ static void mix_gains(float *g, int32_t l_q15, int32_t r_q15, float dry) {
     g[MIX_R] = (float)r_q15 * dry;
 }
 
+volatile uint8_t synth_ctrl_guard;
 uint8_t voice_tick_shift(SynthVoiceNode *voice) {
 #if SYNTH_CTRL_ADAPT
-    voice->ctrl_shift = (uint8_t)(SYNTH_CTRL_SHIFT + !(voice->snap || voice->choke || voice->ctrl_fast));
+    voice->ctrl_shift = (uint8_t)(SYNTH_CTRL_SHIFT + !(voice->snap || voice->choke || (voice->ctrl_fast && !synth_ctrl_guard)));
 #else
     voice->ctrl_shift = SYNTH_CTRL_SHIFT;
 #endif

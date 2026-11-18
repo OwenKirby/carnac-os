@@ -104,7 +104,7 @@ int main(void)
         ui_sm_handle(&sm, UIEV_ALGO_ENC, -1);
     }
     CHECK(engine_state[0].arch == VARCH_STACK, "ARCH not STACK: %u", engine_state[0].arch);
-    CHECK(ui_sm_row_value(&sm, (uint8_t)vox_row) == 6, "STACK max voices %u", ui_sm_row_value(&sm, (uint8_t)vox_row));
+    CHECK(ui_sm_row_value(&sm, (uint8_t)vox_row) == 8, "STACK max voices %u (2026-11-18 prices)", ui_sm_row_value(&sm, (uint8_t)vox_row));
     dump("HOME1 STACK");
     /* the cursor never lands on MAX VOICES */
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 20);

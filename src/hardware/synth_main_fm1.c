@@ -109,6 +109,7 @@ static uint32_t lk_t0, lk_ra, lk_max_us, lk_max_ra, lk_n1ms, lk_n3ms;
 static uint32_t dw_lat_max_us, dw_usb_max_us, dw_erases, dw_late_slow, dw_late_start, dw_late_lat_us, dw_late_us;
 static uint32_t dw_lat_ticks;                       /* this half's start delay (midi_drain) */
 static uint32_t dw_worst_mix;
+static uint32_t dw_worst_h[4];                     /* the slowest half's spike watch (synth_half_take) */
 static uint32_t room_clock(void) { return fm1_ticks(); }   /* (synth_set_clock: fm1_ticks is inline) */                       /* the slowest half's voices: held / releasing a layer, 4 bits each */
 static __attribute__((noinline)) void syn_lock(void)
 {
@@ -373,6 +374,12 @@ static uint32_t render_block(int32_t *o)            /* ALNK0: one half, measured
         audio_peak_pct = us * 100u / budget;
     syn_dbg.halves++;
     syn_dbg.last_us = us;
+    {
+        uint32_t h[4];
+        synth_half_take(h);                         /* (every half, so each holds one half's own) */
+        if (us > syn_dbg.max_us)
+            for (unsigned j = 0; j < 4u; j++) dw_worst_h[j] = h[j];
+    }
     if (us > syn_dbg.max_us) {
         uint32_t v, m = 0;
         syn_dbg.max_us = us;
@@ -649,7 +656,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         break;
     }
     case ED_STATS: {                                /* + the levels since the last read and the live settings */
-        uint32_t v[54], i, k, nv = 0, c1 = 0;
+        uint32_t v[58], i, k, nv = 0, c1 = 0;
         int32_t lv[4];
         synth_levels(lv);
         for (i = 0; i < POLYPHONY_VOICES; i++)
@@ -703,7 +710,8 @@ static void ed_handle(const uint8_t *f, uint32_t n)
             v[52] = (uint32_t)an0 | (uint32_t)an1 << 8;
             v[53] = synth_slope_q8();
         }
-        for (i = 0; i < 54u; i++)
+        for (i = 0; i < 4u; i++) v[54 + i] = dw_worst_h[i];   /* (2026-11-18: the slowest half's spike watch) */
+        for (i = 0; i < 58u; i++)
             for (k = 0; k < 5u; k++)
                 ed_b(v[i] >> (7u * k));               /* 35 bits each, 7 at a time, low first */
         if (na && a[0] == 1u) {
@@ -746,6 +754,16 @@ static void ed_handle(const uint8_t *f, uint32_t n)
             ed_str(pt_name((uint8_t)pi), 20);
             ed_b(r->floor_pm);                      /* (after the name: older tools stop at its 0) */
             ed_b(r->floor_pm >> 7);
+            ed_b(r->pk_out_pm);                     /* (2026-11-18: the slowest half's spike watch) */
+            ed_b(r->pk_out_pm >> 7);
+            ed_b(r->pk_vox_pm);
+            ed_b(r->pk_vox_pm >> 7);
+            ed_b(r->pk_notes > 127u ? 127u : r->pk_notes);
+            ed_b(r->pk_steals > 127u ? 127u : r->pk_steals);
+            ed_b(r->pk_c0 > 127u ? 127u : r->pk_c0);
+            ed_b(r->pk_c1 > 127u ? 127u : r->pk_c1);
+            ed_b(r->guarded);
+            ed_b(r->guarded >> 7);
 #if defined(SYNTH_PROF)
         } else if (a[0] == 5u) {                    /* the operation costs: ticks for MB_N of each, 21-bit */
             ed_b(plat_cycles_cpu() ? 1u : 0u);

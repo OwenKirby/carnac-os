@@ -673,6 +673,9 @@ static inline __attribute__((always_inline)) uint32_t pass_ramp_i(const uint8_t 
     return x;
 }
 
+/* (2026-11-18, tried and dropped: two reads in one pass, SPREAD's playheads in pairs and A + B at mid-SCAN, bit-exact;
+ * a same-build A/B on the FM1 ran SPREAD -0.2 and A + B +0.5..0.8 points: the second read's state costs more than the
+ * out[] load and store it saves.) */
 /* each mode's pass compiled once (2026-11-12: inlined at every call they cost ~5 KB of flash; a call a block is
  * nothing beside a block's samples) */
 #define PASS_FN(name, mode)     static __attribute__((noinline)) uint32_t name(const uint8_t *p, uint32_t x, uint32_t s, uint32_t l, int32_t w,                                                    int32_t *out, int m) { return pass_i(p, x, s, l, w, out, m, mode); }
@@ -734,25 +737,35 @@ static void render_attack(PcmOsc *q, int32_t *out, int m)
     const int use_a = pa && (wa != 0 || (ramp && q->ta != 0)), use_b = pb && (wb != 0 || (ramp && q->tb != 0));
     if (m <= 0)
         return;
+    int added = 0;                          /* (an attack alone: a decoded value, |v| <= 32767, times a weight <= 1:
+                                             * in range, no clamp needed, 2026-11-18) */
     q->pos_k = pass_ramp(q->pk, q->pos_k, q->step_k, 0, &wk, q->dk, q->tk, ramp, out, m, 0);
     if (q->pk2 && q->pos_k2 < q->end_k2) {  /* its reads while it lasts (then it stops where it ended) */
         int k2 = to_end(q->pos_k2, q->step_k2, q->end_k2);
         q->pos_k2 = pass(q->pk2, q->pos_k2, q->step_k2, 0, q->wk2, out, k2 < m ? k2 : m, P_ADD);
+        added = 1;
     }
+    /* the sum clamped by the last loop's pass as it adds (2026-11-18: the same sums, one pass over the block fewer; a
+     * chord of PCM attacks was the FACT rows' load spikes), else on its own */
     if (use_a) {
-        q->pos_a = pass_ramp(pa, q->pos_a, q->step_a, q->len_a, &wa, q->da, q->ta, ramp, out, m, P_WRAP | P_ADD);
+        if (use_b)
+            q->pos_a = pass_ramp(pa, q->pos_a, q->step_a, q->len_a, &wa, q->da, q->ta, ramp, out, m, P_WRAP | P_ADD);
+        else
+            q->pos_a = pass_ramp(pa, q->pos_a, q->step_a, q->len_a, &wa, q->da, q->ta, ramp, out, m,
+                                 P_WRAP | P_ADD | P_CLAMP);
     } else {
         if (pa) q->pos_a = skip(q->pos_a, q->step_a, q->len_a, m);
         wa = ramp_skip(wa, q->da, q->ta, ramp, m);
     }
     if (use_b) {
-        q->pos_b = pass_ramp(pb, q->pos_b, q->step_b, q->len_b, &wb, q->db, q->tb, ramp, out, m, P_WRAP | P_ADD);
+        q->pos_b = pass_ramp(pb, q->pos_b, q->step_b, q->len_b, &wb, q->db, q->tb, ramp, out, m, P_WRAP | P_ADD | P_CLAMP);
     } else {
         if (pb) q->pos_b = skip(q->pos_b, q->step_b, q->len_b, m);
         wb = ramp_skip(wb, q->db, q->tb, ramp, m);
     }
-    for (int i = 0; i < m; i++)
-        out[i] = clamp15(out[i]);
+    if (!use_a && !use_b && added)
+        for (int i = 0; i < m; i++)
+            out[i] = clamp15(out[i]);
     q->wk = wk; q->wa = wa; q->wb = wb;
     q->ramp = (uint8_t)(ramp > m ? ramp - m : 0);
 }
@@ -913,11 +926,40 @@ static void render_spread_steady(PcmOsc *q, int32_t *out, int m)
         spread_chunk(q, out + o, m - o < 16 ? m - o : 16);
 }
 
+/* SPREAD while the attack plays alone, the loops silent (their weights and targets 0: a new note's first tenth of a
+ * second): render_attack's passes, and the silent playheads moved on a block at a time, the same as render_spread's
+ * per-sample sums and turns (2026-11-18: ALL SOULS's chords spent their attacks in render_spread, ten wraps and two
+ * decodes a read a sample). Returns the samples done (0: not this case). */
+static int spread_attack_alone(PcmOsc *q, int32_t *out, int n)
+{
+    if (!q->pk || (q->pa && (q->wa != 0 || q->ta != 0)) || (q->pb && (q->wb != 0 || q->tb != 0)))
+        return 0;
+    uint32_t xk = q->pos_k, sk = q->step_k, end = q->end_k;
+    int na = xk < end ? (int)((end - xk + sk - 1u) / sk) : 0;
+    if (na <= 0) return 0;                  /* (an attack at its end already: render_spread reads it once more) */
+    if (na > n) na = n;
+    render_attack(q, out, na);              /* (the undetuned positions and the loops' weights move on there) */
+    for (int h = 0; h < 4; h++) {
+        if (!(q->slive & (1u << h))) continue;
+        if (q->pa) q->spa[h] = skip(q->spa[h], q->ssa[h], q->len_a, na);
+        if (q->pb) q->spb[h] = skip(q->spb[h], q->ssb[h], q->len_b, na);
+    }
+    if (q->pos_k >= end)
+        attack_done(q);
+    return na;
+}
+
 void pcm_render_block(PcmOsc *q, int32_t *out, int n)
 {
     int i = 0;
     q->idle = 0;
     if (q->sxf) {
+        int done = spread_attack_alone(q, out, n);
+        if (done) {
+            if (done == n) return;
+            out += done;
+            n -= done;
+        }
         int r = q->pk ? n : (q->ramp < n ? q->ramp : n);
         if (r > 0) {
             if (!q->pk && q->slive == 0xFu)

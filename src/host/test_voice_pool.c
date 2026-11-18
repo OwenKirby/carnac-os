@@ -32,24 +32,25 @@ int main(void)
 {
     EngineState e;
     /* costs, tenths of a plain voice */
-    e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0);  CHECK(varch_voice_cost(&e) == 10, "SPREAD 0 %u", varch_voice_cost(&e));
-    e = mk(VARCH_SPREAD, 40, FLT_MULTI, 0); CHECK(varch_voice_cost(&e) == 13, "SPREAD %u", varch_voice_cost(&e));
-    e = mk(VARCH_STACK, 0, FLT_MULTI, 0);   CHECK(varch_voice_cost(&e) == 15, "STACK %u", varch_voice_cost(&e));
-    e = mk(VARCH_STACK, 0, FLT_SH2, 0);     CHECK(varch_voice_cost(&e) == 19, "STACK SH-2 x2 %u", varch_voice_cost(&e));
-    e = mk(VARCH_STACK, 0, FLT_SH2, 1);     CHECK(varch_voice_cost(&e) == 23, "STACK SH-2 x2 PCM x2 %u", varch_voice_cost(&e));
-    e = mk(VARCH_BINAURAL, 0, FLT_SH2, 0);  CHECK(varch_voice_cost(&e) == 20, "BINAURAL SH-2 twice %u", varch_voice_cost(&e));
-    e = mk(VARCH_SPREAD, 40, FLT_MULTI, 1); CHECK(varch_voice_cost(&e) == 14, "SPREAD PCM %u", varch_voice_cost(&e));
+    e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0);  CHECK(varch_voice_cost(&e) == 7, "SPREAD 0 %u", varch_voice_cost(&e));
+    e = mk(VARCH_SPREAD, 40, FLT_MULTI, 0); CHECK(varch_voice_cost(&e) == 10, "SPREAD %u", varch_voice_cost(&e));
+    e = mk(VARCH_STACK, 0, FLT_MULTI, 0);   CHECK(varch_voice_cost(&e) == 12, "STACK %u", varch_voice_cost(&e));
+    e = mk(VARCH_STACK, 0, FLT_SH2, 0);     CHECK(varch_voice_cost(&e) == 16, "STACK SH-2 x2 %u", varch_voice_cost(&e));
+    e = mk(VARCH_STACK, 0, FLT_SH2, 1);     CHECK(varch_voice_cost(&e) == 18, "STACK SH-2 x2 PCM x2 %u", varch_voice_cost(&e));
+    e = mk(VARCH_BINAURAL, 0, FLT_SH2, 0);  CHECK(varch_voice_cost(&e) == 16, "BINAURAL SH-2 twice %u", varch_voice_cost(&e));
+    e = mk(VARCH_SPREAD, 40, FLT_MULTI, 1); CHECK(varch_voice_cost(&e) == 12, "SPREAD PCM %u", varch_voice_cost(&e));
 
-    /* the cap of one patch alone: what one core carries (56 tenths) */
+    /* the cap of one patch alone: what one core carries (56 tenths; the 2026-11-18 prices: 8 everywhere but SH-2 on the
+     * two-chain architectures, 6) */
     static const struct { uint8_t arch; int spread; uint8_t flt, pcm; unsigned want; const char *what; } C[] = {
         {VARCH_SPREAD, 0, FLT_MULTI, 0, 8, "SINGLE"},           {VARCH_SPREAD, 40, FLT_MULTI, 0, 8, "SPREAD"},
-        {VARCH_SPREAD, 40, FLT_SH2, 0, 6, "SPREAD SH-2"},       {VARCH_SPREAD, 40, FLT_MULTI, 1, 8, "SPREAD PCM"},
-        {VARCH_DUAL_OSC, 0, FLT_MULTI, 0, 8, "DUAL OSC"},       {VARCH_DUAL_OSC, 0, FLT_MULTI, 1, 6, "DUAL OSC PCM"},
-        {VARCH_DUAL_FILTER, 0, FLT_MULTI, 0, 8, "DUAL FILTER"}, {VARCH_DUAL_FILTER, 0, FLT_SH2, 0, 6, "DUAL FILTER SH-2"},
-        {VARCH_STACK, 0, FLT_MULTI, 0, 6, "STACK"},             {VARCH_STACK, 0, FLT_SH2, 0, 4, "STACK SH-2"},
-        {VARCH_STACK, 0, FLT_SH2, 1, 4, "STACK SH-2 PCM"},      {VARCH_BINAURAL, 0, FLT_MULTI, 0, 6, "BINAURAL"},
-        {VARCH_BINAURAL, 0, FLT_SH2, 0, 4, "BINAURAL SH-2"},    {VARCH_FULL, 0, FLT_MULTI, 0, 6, "FULL"},
-        {VARCH_FULL, 0, FLT_SH2, 0, 4, "FULL SH-2"},
+        {VARCH_SPREAD, 40, FLT_SH2, 0, 8, "SPREAD SH-2"},       {VARCH_SPREAD, 40, FLT_MULTI, 1, 8, "SPREAD PCM"},
+        {VARCH_DUAL_OSC, 0, FLT_MULTI, 0, 8, "DUAL OSC"},       {VARCH_DUAL_OSC, 0, FLT_MULTI, 1, 8, "DUAL OSC PCM"},
+        {VARCH_DUAL_FILTER, 0, FLT_MULTI, 0, 8, "DUAL FILTER"}, {VARCH_DUAL_FILTER, 0, FLT_SH2, 0, 8, "DUAL FILTER SH-2"},
+        {VARCH_STACK, 0, FLT_MULTI, 0, 8, "STACK"},             {VARCH_STACK, 0, FLT_SH2, 0, 6, "STACK SH-2"},
+        {VARCH_STACK, 0, FLT_SH2, 1, 6, "STACK SH-2 PCM"},      {VARCH_BINAURAL, 0, FLT_MULTI, 0, 8, "BINAURAL"},
+        {VARCH_BINAURAL, 0, FLT_SH2, 0, 6, "BINAURAL SH-2"},    {VARCH_FULL, 0, FLT_MULTI, 0, 8, "FULL"},
+        {VARCH_FULL, 0, FLT_SH2, 0, 6, "FULL SH-2"},
     };
     for (unsigned i = 0; i < sizeof C / sizeof C[0]; i++) {
         e = mk(C[i].arch, C[i].spread, C[i].flt, C[i].pcm);
@@ -72,37 +73,38 @@ int main(void)
         CHECK(voice_overhead(&ph, &br, 1) == 22 && voice_overhead(&br, &ph, 1) == 22,
               "a phaser beside a BRONZE AGE costs the BRONZE AGE's full price + 2 (%u)", voice_overhead(&ph, &br, 1));
         CHECK(voice_overhead(&br, &br, 0) == 13, "SINGL: only layer 1's MFX runs (%u)", voice_overhead(&br, &br, 0));
-        /* a BRONZE AGE on STACK (15): 43 a core left, 2 a core: 4 voices; SINGLE (10) 4 a core still fits */
+        /* a BRONZE AGE on STACK (12): 43 a core left, 3 a core: 6 voices; SINGLE (7) 4 a core still fits */
         e = mk(VARCH_STACK, 0, FLT_MULTI, 0); e.mfx.type = MFX_METAL;
-        CHECK(varch_voice_cap(&e) == 4, "STACK + BRONZE AGE: cap %u, want 4", varch_voice_cap(&e));
+        CHECK(varch_voice_cap(&e) == 6, "STACK + BRONZE AGE: cap %u, want 6", varch_voice_cap(&e));
         e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0); e.mfx.type = MFX_METAL;
         CHECK(varch_voice_cap(&e) == 8, "SINGLE + BRONZE AGE: cap %u, want 8", varch_voice_cap(&e));
-        /* two STACK layers with a BRONZE AGE each: 36 a core left, 2 + 2 */
+        /* two STACK layers with a BRONZE AGE each: 36 a core left, three STACK voices a core: 3 + 3 */
         EngineState sb = mk(VARCH_STACK, 0, FLT_MULTI, 0);
         sb.mfx.type = MFX_METAL;
-        CHECK(lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 0) == 2 && lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 1) == 2,
-              "STACK + STACK, BRONZE AGE on both: 2 + 2 (%u + %u)", lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 0),
+        CHECK(lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 0) == 3 && lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 1) == 3,
+              "STACK + STACK, BRONZE AGE on both: 3 + 3 (%u + %u)", lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 0),
               lim(&sb, &sb, PERF_DUAL_SYNTH, P, P, 1));
     }
-    /* a phaser takes 7 tenths off a core: SPREAD (13) 4 a core is 52, over the 49 left: 6 voices; SINGLE and STACK keep theirs */
+    /* a phaser takes 7 tenths off a core: SPREAD (10) 4 a core is 40, STACK (12) 48, DUAL FILTER (9) 36, all inside the 49
+     * left: 8 voices; a dear MFX (BRONZE AGE, above) still takes voices */
     e = mk(VARCH_SPREAD, 40, FLT_MULTI, 0); e.mfx.type = 1;
-    CHECK(varch_voice_cap(&e) == 6, "SPREAD + MFX: cap %u, want 6", varch_voice_cap(&e));
+    CHECK(varch_voice_cap(&e) == 8, "SPREAD + MFX: cap %u, want 8", varch_voice_cap(&e));
     e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0); e.mfx.type = 1;
     CHECK(varch_voice_cap(&e) == 8, "SINGLE + MFX: cap %u, want 8", varch_voice_cap(&e));
     e = mk(VARCH_STACK, 0, FLT_MULTI, 0); e.mfx.type = 1;
-    CHECK(varch_voice_cap(&e) == 6, "STACK + MFX: cap %u, want 6", varch_voice_cap(&e));
+    CHECK(varch_voice_cap(&e) == 8, "STACK + MFX: cap %u, want 8", varch_voice_cap(&e));
     e = mk(VARCH_DUAL_FILTER, 0, FLT_MULTI, 0); e.mfx.type = 1;
-    CHECK(varch_voice_cap(&e) == 6, "DUAL FILTER + MFX: cap %u, want 6", varch_voice_cap(&e));
+    CHECK(varch_voice_cap(&e) == 8, "DUAL FILTER + MFX: cap %u, want 8", varch_voice_cap(&e));
 
     /* two layers share the pool by price, each core's share inside 56, both layers at least 1 */
     EngineState sg = mk(VARCH_SPREAD, 0, FLT_MULTI, 0), st = mk(VARCH_STACK, 0, FLT_MULTI, 0), ss = mk(VARCH_STACK, 0, FLT_SH2, 1);
     CHECK(lim(&sg, &sg, PERF_DUAL_SYNTH, P, P, 0) == 4 && lim(&sg, &sg, PERF_DUAL_SYNTH, P, P, 1) == 4, "SINGLE + SINGLE 4 + 4");
     CHECK(lim(&sg, &st, PERF_DUAL_SYNTH, P, P, 0) == 4 && lim(&sg, &st, PERF_DUAL_SYNTH, P, P, 1) == 4, "SINGLE + STACK 4 + 4");
-    CHECK(lim(&st, &st, PERF_DUAL_SYNTH, P, P, 0) == 3 && lim(&st, &st, PERF_DUAL_SYNTH, P, P, 1) == 3,
-          "STACK + STACK 3 + 3 (%u + %u)", lim(&st, &st, PERF_DUAL_SYNTH, P, P, 0), lim(&st, &st, PERF_DUAL_SYNTH, P, P, 1));
+    CHECK(lim(&st, &st, PERF_DUAL_SYNTH, P, P, 0) == 4 && lim(&st, &st, PERF_DUAL_SYNTH, P, P, 1) == 4,
+          "STACK + STACK 4 + 4 (%u + %u)", lim(&st, &st, PERF_DUAL_SYNTH, P, P, 0), lim(&st, &st, PERF_DUAL_SYNTH, P, P, 1));
     unsigned a = lim(&sg, &ss, PERF_DUAL_SYNTH, P, P, 0), b = lim(&sg, &ss, PERF_DUAL_SYNTH, P, P, 1);
-    CHECK(a + b <= VOICE_POOL && a >= 1 && b >= 1 && voice_core_cost(10, (uint8_t)a, 23, (uint8_t)b, 0) <= VOICE_CORE_COST &&
-          voice_core_cost(10, (uint8_t)a, 23, (uint8_t)b, 1) <= VOICE_CORE_COST, "SINGLE + dear STACK fits the cores (%u + %u)", a, b);
+    CHECK(a + b <= VOICE_POOL && a >= 1 && b >= 1 && voice_core_cost(varch_voice_cost(&sg), (uint8_t)a, varch_voice_cost(&ss), (uint8_t)b, 0) <= VOICE_CORE_COST &&
+          voice_core_cost(varch_voice_cost(&sg), (uint8_t)a, varch_voice_cost(&ss), (uint8_t)b, 1) <= VOICE_CORE_COST, "SINGLE + dear STACK fits the cores (%u + %u)", a, b);
     CHECK(a >= b, "the cheap layer gets at least what the dear one does (%u + %u)", a, b);
     /* mono layers: one voice, the rest to the other layer as far as the cores carry it */
     CHECK(lim(&sg, &sg, PERF_DUAL_SYNTH, VMODE_MONO_RETRIG, P, 0) == 1 && lim(&sg, &sg, PERF_DUAL_SYNTH, VMODE_MONO_RETRIG, P, 1) == 7,
@@ -122,17 +124,19 @@ int main(void)
                     CHECK(n0 >= 1 && n1 >= 1 && n0 + n1 <= VOICE_POOL, "pair %u/%u: %u + %u", a1, a2, n0, n1);
                 }
 
-    /* placement: layer 2 at the top of the pool, so odd counts split the cores */
+    /* placement: layer 2 at the top of the pool, so odd counts split the cores (STACK + STACK, BRONZE AGE on both: 3 + 3) */
     synth_init();
     perf_state.perf_mode = PERF_DUAL_SYNTH;
     engine_state[0] = st;
     engine_state[1] = st;
+    engine_state[0].mfx.type = engine_state[1].mfx.type = MFX_METAL;   /* (36 a core left: three STACK voices a core) */
     int first, count;
     pool_range(0, &first, &count);
     CHECK(first == 0 && count == 3, "L1 range %d + %d", first, count);
     pool_range(1, &first, &count);
     CHECK(first == 5 && count == 3, "L2 range %d + %d (the top three: 5 6 7)", first, count);
-    CHECK(voice_core_cost(15, 3, 15, 3, 0) == 45 && voice_core_cost(15, 3, 15, 3, 1) == 45, "3 + 3 splits the cores 45 / 45");
+    CHECK(voice_core_cost(12, 3, 12, 3, 0) == 36 && voice_core_cost(12, 3, 12, 3, 1) == 36, "3 + 3 splits the cores 36 / 36");
+    engine_state[0].mfx.type = engine_state[1].mfx.type = MFX_OFF;
 
     /* source tails: the ARP, SEQ and REC loop keep SRC_TAILS released notes a layer; a third takes the oldest of its own */
     synth_init();
@@ -197,7 +201,7 @@ int main(void)
           "layer 2 stays in its own range");
 
     /* the measured room (2026-11-14): CAIRN SPIRIT's pair in DUAL (L1 MONO, L2 STACK PCM x2): the table gives 1 + 4; a
-     * room of 49 tenths (L2 priced 19 here) takes L2 to 3, at the top of the pool; room 0 is the table; a big room never exceeds it */
+     * room of 49 tenths (L2 priced 14 here, 2026-11-18) takes L2 to 5, at the top of the pool; room 0 is the table; a big room never exceeds it */
     {
         int f0, n0, f1, n1, af, an;
         perf_state.perf_mode = PERF_DUAL_SYNTH;
@@ -210,10 +214,10 @@ int main(void)
         pool_range(1, &f1, &n1);
         pool_alloc_range(1, &af, &an);
         CHECK(af == f1 && an == n1, "room 0: the table's range (%d+%d vs %d+%d)", af, an, f1, n1);
-        CHECK(n0 == 1 && n1 == 4, "CAIRN pair by the table: 1 + 4 (%d + %d)", n0, n1);
-        voice_room = 49;                             /* (core 0: L1's 12 + two of L2's 19 = 50: one over) */
+        CHECK(n0 == 1 && n1 == 7, "CAIRN pair by the table: 1 + 7 (%d + %d)", n0, n1);
+        voice_room = 49;                             /* (6 voices: core 0 L1's 10 + three of L2's 14 = 52, over; 5: 38 / 42) */
         pool_alloc_range(1, &af, &an);
-        CHECK(an == 3 && af + an == POLYPHONY_VOICES, "room 49: L2 3 at the top (%d at %d)", an, af);
+        CHECK(an == 5 && af + an == POLYPHONY_VOICES, "room 49: L2 5 at the top (%d at %d)", an, af);
         pool_alloc_range(0, &af, &an);
         CHECK(an == 1 && af == 0, "room 49: L1 MONO keeps its one (%d at %d)", an, af);
         voice_room = 200;

@@ -307,6 +307,15 @@ static void voice_release_one(SynthVoiceNode *v)
 }
 
 /* A layer's note-on (spec 5.3 View 1: Layer 1 Voice Mode). */
+#if defined(SYNTH_TICK_COUNT)
+uint32_t synth_tick_count[2];
+#endif
+#define VOICE_GUARD_HALF 512u        /* the FM1's half: the deadline the guard watches */
+#ifndef VOICE_GUARD_PM
+#define VOICE_GUARD_PM 900u          /* .. guarded when the half's time so far plus the passes to come at the last one's
+                                      * rate would pass this, per mille (late = past 1000, less the glue's own) */
+#endif
+static uint32_t hs_notes, hs_steals;      /* the spike watch (synth_half_take): notes started this half, on a sounding voice */
 static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_t src, int32_t route)
 {
     const EngineState *e = &engine_state[layer];
@@ -339,6 +348,8 @@ static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_
             slot = allocate_voice_slot(layer, src);
         if (slot < 0) return;
         SynthVoiceNode *v = &poly_bank[slot];
+        hs_notes++;                                             /* (the spike watch) */
+        hs_steals += !voice_is_free(v);
         v->glide_q16 = 0;
         v->glide_step_q16 = 0;
         if (glide_from[layer] != GLIDE_NOTE_NONE)               /* poly: every new note slides in from the last one */
@@ -683,6 +694,21 @@ static uint32_t pass_tpf;
 static uint32_t vrun_ticks;
 static uint32_t floor_q8, floor_passes, slope_q8 = 95u * 256u / 10u;   /* (before any is measured: the table's 0.95 %) */
 static uint32_t half_ticks, half_frames, load_q8, spike_q8;   /* the halves' loads: their mean, the spikes over it */
+static uint32_t hs_total, hs_vrun, hs_frames, hs_passes, hs_c0, hs_c1, hs_guard, hs_last_t, hs_last_f;   /* the spike watch (hs_notes, hs_steals: above) */
+static uint32_t hs_last[4];
+const uint32_t *synth_half_last(void) { return hs_last; }
+void synth_half_take(uint32_t o[4])
+{
+    uint32_t b = hs_frames * pass_tpf;
+    o[0] = b ? (hs_total > hs_vrun ? hs_total - hs_vrun : 0u) * 1000u / b : 0u;
+    o[1] = b ? hs_vrun * 1000u / b : 0u;
+    o[2] = (hs_notes > 255u ? 255u : hs_notes) | (hs_steals > 255u ? 255u : hs_steals) << 8 |
+           (hs_passes > 255u ? 255u : hs_passes) << 16 | (hs_guard > 255u ? 255u : hs_guard) << 24;
+    o[3] = (hs_c0 > 255u ? 255u : hs_c0) | (hs_c1 > 255u ? 255u : hs_c1) << 8;
+    hs_total = hs_vrun = hs_frames = hs_notes = hs_steals = hs_passes = hs_c0 = hs_c1 = hs_guard = 0;
+    synth_ctrl_guard = 0;                          /* (a new half starts unguarded) */
+    for (unsigned i = 0; i < 4u; i++) hs_last[i] = o[i];
+}
 void synth_set_clock(uint32_t (*now)(void), uint32_t ticks_per_frame)
 {
     pass_clock = now;
@@ -716,6 +742,16 @@ static void floor_pass(uint32_t total, uint32_t frames)
         if (!voice_is_free(&poly_bank[v]))
             core[(CORE1_VOICES >> v) & 1u] += w[poly_bank[v].layer < NLAYER ? poly_bank[v].layer : 0u];
     t = core[0] > core[1] ? core[0] : core[1];
+    hs_total += total;                             /* (the spike watch) */
+    hs_vrun += vrun_ticks;
+    hs_frames += frames;
+    hs_passes++;
+    hs_last_t = total;                             /* (the deadline guard's estimate of the passes to come) */
+    hs_last_f = frames;
+    if (t > (hs_c0 > hs_c1 ? hs_c0 : hs_c1)) {
+        hs_c0 = core[0];
+        hs_c1 = core[1];
+    }
     half_ticks += total;                           /* the spikes, by halves (512 frames: the FM1's deadline) */
     half_frames += frames;
     if (half_frames >= 512u) {
@@ -803,6 +839,10 @@ static void render_voice_run(MixBus *bus, uint32_t set, uint32_t from, uint32_t 
                 in.pan += voice->unison_pan;           /* UNISON stereo spread; the voice clamps the sum to 0..127 */
                 in.frame = pass_base + f;              /* the clock-synced LFOs and retriggers ask about this frame */
                 voice_tick_shift(voice);               /* the tick's length (SYNTH_CTRL_ADAPT) */
+#if defined(SYNTH_TICK_COUNT)                      /* (host studies only: the ticks a pass, fast and all) */
+                synth_tick_count[0]++;
+                synth_tick_count[1] += voice->ctrl_shift == SYNTH_CTRL_SHIFT;
+#endif
                 voice_glide_advance(voice);
                 voice_control_tick(voice, &in);
                 voice->ctrl_left = (uint8_t)(1u << voice->ctrl_shift);
@@ -1092,6 +1132,12 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
     SPROF_DECL;
     uint32_t pass_t0 = pass_clock ? pass_clock() : 0u;
     vrun_ticks = 0;
+    if (pass_clock && hs_last_f && hs_frames < VOICE_GUARD_HALF) {   /* THE DEADLINE GUARD (synth_voice.h) */
+        uint32_t proj = hs_total + hs_last_t / hs_last_f * (VOICE_GUARD_HALF - hs_frames);   /* (24 MHz ticks: a half is
+                                                      * ~280 k, so all of it fits 32 bits, x1000 too) */
+        synth_ctrl_guard = (uint8_t)(proj / VOICE_GUARD_HALF * 1000u > VOICE_GUARD_PM * pass_tpf);
+        hs_guard += synth_ctrl_guard;
+    }
     /* each bus cleared on its own (2026-10-16): the FM1's compiler (JieLi clang, -O2) turned the joint loop that was
      * here (both buses in one statement) into 64-bit stores for bus 0 placed 4 bytes low: every frame's reverb send was
      * cleared one iteration late, frame 127's never, and the word just below mix_bus was zeroed every pass. Frame 127's

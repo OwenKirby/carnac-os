@@ -117,6 +117,10 @@ extern volatile uint8_t voice_tail_cut;
  * limits themselves (pool_range: note-offs, the held notes) stay the table's, so a lower room never cuts a held note:
  * a released voice outside it is choked at the next layer tick (a steal), a new note steals inside it. */
 extern volatile uint8_t voice_room;
+/* PERF TEST pricing (2026-11-18, perf_test.c F_NV): non-zero = layer 1 gets exactly this many voices from the bottom of
+ * the pool and layer 2 none, past the price table and the measured room, so a row can time n voices of any patch.
+ * Always 0 outside the test. */
+extern volatile uint8_t pool_force;
 #define VOICE_ROOM_TARGET_PM 720u    /* the pass's average load the room aims at: peaks run ~6..15 over it (PERF TEST) */
 #define VOICE_ROOM_PEAK_PM 850u      /* .. and the average plus the spikes (an 11.6 ms half's over its mean, held ~3 s)
                                       * under this: a sequenced PCM stack spiked 20..26 points over its mean (2026-11-14) */

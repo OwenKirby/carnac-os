@@ -92,6 +92,9 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_AIR (1u << 26)            /* with F_HEAVY: noise COLOUR at AIR (the whistle, 2026-11-05) instead of 20 */
 #define F_MFX2T(t) ((uint32_t)(t) << 28)   /* with F_MFX2: layer 2's own type (MFX_*) instead of a copy of layer 1's */
 #define F_LONGREL (1u << 27)        /* both envelopes' RELEASE 110: every note rings on as a tail (a pad's) */
+#define F_NV(n) ((uint32_t)(n) << 20)   /* K_HELD (2026-11-18, the price rows): exactly n voices (1..8) whatever the patch costs
+                                      * (voice_allocator.h pool_force); bits 20..23, so never with F_MFX (its type reads 16..23) */
+#define F_NV_OF(f) (((f) >> 20) & 15u)
 #define F_MFXEQ (1u << 25)           /* BRONZE AGE with its EQ off noon (DIST 120, the scooped render's: every band run) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define PT_CHORD_MS 1000u            /* K_LOOPCH: a half bar at 120 BPM; with RELEASE 110 three chords ring at once */
@@ -105,7 +108,19 @@ typedef struct {
 } PtScen;
 
 static const PtScen SCEN[] = {
-#if !defined(PT_FACT_ONLY)          /* (-D PT_FACT_ONLY: the K_FACT rows alone, a two-minute run) */
+#if defined(PT_PRICE_ONLY)          /* (-D PT_PRICE_ONLY, 2026-11-18: each architecture at 2/4/6/8 voices, the price
+                                      * table's measurement: slope = cost a pair of voices, one on each core) */
+    {"IDLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
+#define PT_PR4(nm, a, flt, fl)     {nm " 2", K_HELD, a, flt, (fl) | F_NV(2), UIPAGE_HOME1}, {nm " 4", K_HELD, a, flt, (fl) | F_NV(4), UIPAGE_HOME1},     {nm " 6", K_HELD, a, flt, (fl) | F_NV(6), UIPAGE_HOME1}, {nm " 8", K_HELD, a, flt, (fl) | F_NV(8), UIPAGE_HOME1}
+#define PT_PRICE(nm, a)     PT_PR4("P " nm, a, FLT_MULTI, 0), PT_PR4("P " nm " H", a, FLT_MULTI, F_HEAVY),     PT_PR4("P " nm " SH2", a, FLT_SH2, F_HEAVY), PT_PR4("P " nm " PCM", a, FLT_MULTI, F_PCM)
+    PT_PRICE("SPRD0", VARCH_SINGLE),
+    PT_PRICE("SPRD", VARCH_SPREAD),
+    PT_PRICE("DOSC", VARCH_DUAL_OSC),
+    PT_PRICE("DFLT", VARCH_DUAL_FILTER),
+    PT_PRICE("STACK", VARCH_STACK),
+    PT_PRICE("BIN", VARCH_BINAURAL),
+    PT_PRICE("FULL", VARCH_FULL),
+#elif !defined(PT_FACT_ONLY)          /* (-D PT_FACT_ONLY: the K_FACT rows alone, a two-minute run) */
     {"IDLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
     {"SINGLE 1V", K_HELD, VARCH_SINGLE, FLT_MULTI, F_ONE, UIPAGE_HOME1},
     {"SINGLE", K_HELD, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
@@ -337,6 +352,8 @@ static struct {
 static volatile struct {
     uint32_t load_sum, halves, peak, late, ui_frames, ui_max_us;
     uint8_t over_run, over;
+    uint32_t pk[4];                     /* the slowest half's synth_half_last */
+    uint32_t guarded;                   /* halves the deadline guard acted in */
 } ld;
 
 uint8_t pt_count(void) { return NSCEN; }
@@ -362,6 +379,8 @@ const PtResult *pt_result(uint8_t i) { return i < NSCEN ? &pt.res[i] : 0; }
 static void tally_clear(void)
 {
     ld.load_sum = ld.halves = ld.peak = ld.late = ld.ui_frames = ld.ui_max_us = 0;
+    ld.pk[0] = ld.pk[1] = ld.pk[2] = ld.pk[3] = 0;
+    ld.guarded = 0;
 #if defined(SYNTH_PROF)
     {
         uint32_t i;
@@ -382,8 +401,12 @@ uint8_t pt_audio_half(uint32_t load_pm, uint8_t late)
         return 0;
     ld.load_sum += load_pm;
     ld.halves++;
-    if (load_pm > ld.peak)
+    ld.guarded += (synth_half_last()[2] >> 24) != 0u;
+    if (load_pm > ld.peak) {
+        const uint32_t *h = synth_half_last();     /* (the glue takes the half's spike watch before this call) */
         ld.peak = load_pm;
+        for (unsigned i = 0; i < 4u; i++) ld.pk[i] = h[i];
+    }
     if (late)
         ld.late++;
     if (load_pm > 1000u) {
@@ -617,13 +640,14 @@ static void setup(const PtScen *s)
         perf_state.delay_pingpong = 1;
         perf_state.delay_degrade = 90;
     }
+    pool_force = (uint8_t)(s->kind == K_HELD ? F_NV_OF(s->flags) : 0u);
     synth_restart();
     ld.over = 0;
     tally_clear();
     if (s->flags & F_HEAVY)
         synth_midi_3(0xB0, 1, 90);
     if (s->kind == K_HELD || s->kind == K_RS || s->kind == K_ALL) {
-        n = (s->flags & F_ONE) ? 1u : varch_voice_cap(&engine_state[0]);
+        n = (s->flags & F_ONE) ? 1u : pool_force ? pool_force : varch_voice_cap(&engine_state[0]);
         for (i = 0; i < n; i++)
             synth_midi_3(0x90, (uint8_t)(48 + i * 3), (uint8_t)((s->flags & F_HEAVY) ? 70 + i * 7 : 100));
     }
@@ -654,6 +678,7 @@ static void restore(void)
     MFX_PARAMS(0) = pt.mfx[0];
     MFX_PARAMS(1) = pt.mfx[1];
     for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = pt.live[i];
+    pool_force = 0;
     synth_restart();
     wt_to_flash();
     ld.over = 0;
@@ -753,6 +778,13 @@ uint8_t pt_tick(uint32_t now_ms)
         r->late = sat16(ld.late);
         r->over = ld.over;
         r->floor_pm = sat16(synth_floor_pm());
+        r->pk_out_pm = sat16(ld.pk[0]);
+        r->pk_vox_pm = sat16(ld.pk[1]);
+        r->pk_notes = (uint8_t)(ld.pk[2] & 0xFFu);
+        r->pk_steals = (uint8_t)(ld.pk[2] >> 8 & 0xFFu);
+        r->pk_c0 = (uint8_t)(ld.pk[3] & 0xFFu);
+        r->pk_c1 = (uint8_t)(ld.pk[3] >> 8 & 0xFFu);
+        r->guarded = sat16(ld.guarded);
         r->ui_fps10 = sat16(dt ? ld.ui_frames * 10000u / dt : 0u);
         r->ui_max_ms = sat16((ld.ui_max_us + 999u) / 1000u);
 #if defined(SYNTH_PROF)

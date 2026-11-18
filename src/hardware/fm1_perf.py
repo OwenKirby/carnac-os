@@ -94,7 +94,10 @@ def results():
         k = 12 + len(name) + 1                       # the measured floor after the name (2026-11-14), if sent
         rows.append(dict(name=name, avg=w(1) / 10, peak=w(3) / 10, late=w(5), fps=w(7) / 10,
                          ui_ms=b[9], voices=b[10], cut=bool(b[11]),
-                         floor=(b[k] | b[k + 1] << 7) / 10 if len(b) >= k + 2 else None))
+                         floor=(b[k] | b[k + 1] << 7) / 10 if len(b) >= k + 2 else None,
+                         pk=(w(k + 2) / 10, w(k + 4) / 10, b[k + 6], b[k + 7], b[k + 8], b[k + 9],
+                             w(k + 10) if len(b) >= k + 12 else 0)
+                         if len(b) >= k + 10 else None))
     return PT_STATE.get(st, st), rows
 
 
@@ -159,11 +162,17 @@ def verdict(r):
 
 def table(rows):
     fl = any(r.get("floor") for r in rows)          # the measured floor column, when the firmware sends one
-    out = ["| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms |" + (" floor % |" if fl else "") + " |",
-           "| --- | ---: | ---: | ---: | ---: | ---: | ---: |" + (" ---: |" if fl else "") + " --- |"]
+    pk = any(r.get("pk") for r in rows)             # the slowest half's spike watch (2026-11-18)
+    out = ["| scenario | avg % | peak % | late | voices | UI fps | slowest UI frame ms |" + (" floor % |" if fl else "") +
+           (" peak half: outside / voices % | notes (stolen) | tenths c0 / c1 | guarded halves |" if pk else "") + " |",
+           "| --- | ---: | ---: | ---: | ---: | ---: | ---: |" + (" ---: |" if fl else "") + (" ---: | ---: | ---: | ---: |" if pk else "") +
+           " --- |"]
     for r in rows:
         ui = "– | –" if r["cut"] else f"{r['fps']:.1f} | {r['ui_ms']}"   # cut: ~0.1 s, the screen starved
         f = f" {r['floor']:.1f} |" if fl and r.get("floor") is not None else (" – |" if fl else "")
+        if pk:
+            p = r.get("pk")
+            f += (f" {p[0]:.1f} / {p[1]:.1f} | {p[2]} ({p[3]}) | {p[4]} / {p[5]} | {p[6]} |" if p else " – | – | – | – |")
         out.append(f"| {r['name']} | {r['avg']:.1f} | {r['peak']:.1f} | {r['late']} | {r['voices']} | "
                    f"{ui} |{f} {verdict(r)}{' (cut by the guard)' if r['cut'] else ''} |")
     return out
@@ -274,6 +283,11 @@ def main():
                   (v[50] / 10, v[51], v[52] & 0xFF, v[52] >> 8))
         if n >= 54:
             print("voices' measured cost: %.2f %% a priced tenth on the busier core" % (v[53] / 2560))
+        if n >= 58:
+            print("slowest half: outside the voices %.1f %%, voices %.1f %%; %d notes started (%d on a sounding voice) "
+                  "in %d passes (%d guarded); most a core carried: core 0 %d / core 1 %d tenths" %
+                  (v[54] / 10, v[55] / 10, v[56] & 0xFF, v[56] >> 8 & 0xFF, v[56] >> 16 & 0xFF, v[56] >> 24 & 0xFF,
+                   v[57] & 0xFF, v[57] >> 8 & 0xFF))
 
         return 0
     if not a or a[0] not in ("build", "install", "run", "read", "all"):

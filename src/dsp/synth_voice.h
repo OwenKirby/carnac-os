@@ -28,6 +28,11 @@
 #endif
 #define SYNTH_CTRL_FAST_DELTA 512    /* an envelope moving more than this (Q15) in SYNTH_CTRL_PERIOD samples is fast:
                                       * full scale in under ~23 ms */
+/* THE DEADLINE GUARD (2026-11-18): set by the render (synth_runtime.c render_pass) while the half it is in is headed past
+ * its deadline; then a fast voice ticks at the slow length too (a new note's first tick and a choke stay at
+ * SYNTH_CTRL_PERIOD). A chord on a full pool turned 40..66 % of the ticks fast in its half (1..4 % otherwise): the
+ * live clicks of FACT 0 / 1 / 6. 0 on the host and in the browser (no clock): the renders are unchanged. */
+extern volatile uint8_t synth_ctrl_guard;
 
 /* Everything one voice needs for one control tick. Each source is normalised into these fields before the
  * voice runs, so the voice never reads MIDI, the front panel or the sequencer directly. Adapters below

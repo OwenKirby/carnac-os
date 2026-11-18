@@ -9,6 +9,7 @@ SynthVoiceNode poly_bank[POLYPHONY_VOICES];
 volatile uint8_t voice_shed;
 volatile uint8_t voice_tail_cut;
 volatile uint8_t voice_room;
+volatile uint8_t pool_force;
 uint8_t pool_pass;
 static uint8_t rr_last[NLAYER] = {0xFFu, 0xFFu};   /* each layer's last free-voice pick (allocate_voice_slot stage 1) */
 
@@ -106,6 +107,10 @@ void pool_range(uint8_t layer, int *first, int *count) {
 have:
     for (uint8_t l = 0; l < NLAYER; l++)
         n[l] = cache_n[l];
+    if (pool_force) {                               /* (the PERF TEST's price rows: n voices whatever they cost) */
+        n[0] = pool_force <= POLYPHONY_VOICES ? pool_force : POLYPHONY_VOICES;
+        n[1] = 0;
+    }
     /* layer 2 at the top of the pool (its voices end at the last one), layer 1 from the bottom: an odd count on either
      * layer then still splits the two cores evenly (PresetStructures.h voice_core_cost). The two limits never sum past
      * the pool. */
@@ -121,7 +126,7 @@ void pool_alloc_range(uint8_t layer, int *first, int *count) {
     static uint8_t room_c, n_c[NLAYER];
     uint8_t room = voice_room;
     pool_range(layer, first, count);
-    if (!room || layer >= NLAYER)
+    if (!room || pool_force || layer >= NLAYER)
         return;
     uint8_t mode = perf_state.perf_mode < PERF_COUNT ? perf_state.perf_mode : (uint8_t)PERF_SINGL_SYNTH;
     uint32_t key = (uint32_t)mode | (uint32_t)(perf_state.voice_mode[0] & 7u) << 2 | (uint32_t)(perf_state.voice_mode[1] & 7u) << 5 |

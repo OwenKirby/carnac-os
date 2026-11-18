@@ -541,7 +541,13 @@ static inline uint8_t varch_uses_fltmix(uint8_t a)
  * core, so what a patch may sound is what one core can carry: VOICE_CORE_COST. Measured: pass time ~ 14.6 % + 0.95 % a
  * tenth the busier core carries (SINGLE x8 40 -> 52.9 %, SPREAD SH-2 x8 60 -> 70.6 %, DUAL FILTER x7 56 -> 62.9 %). 56 keeps
  * every plain patch at its old voice count (8 SPREAD, 8 DUAL FILTER (the old 7 already put 4 on the busier core), 6 STACK / BINAURAL) and gives an SH-2 / PCM patch on a
- * two-chain architecture fewer. (A PCM wave costs a SPREAD voice only 1: its loops read through the spread block path.) */
+ * two-chain architecture fewer. (A PCM wave costs a SPREAD voice only 1: its loops read through the spread block path.)
+ * RE-PRICED 2026-11-18 (PT_PRICE_ONLY rows: each architecture held at 2/4/6/8 voices past the table, the slope = points a
+ * voice on its core; after the control-tick batch, the adaptive control rate and the PCM passes): SPREAD 0 5.3..6.1 (7),
+ * SPREAD 7.8..8.7 (10), DUAL OSC 7.8..8.9 (10), DUAL FILTER 7.8..8.6 (9), STACK 10.2..11.3 (12), BINAURAL 9.6..11.3 (12),
+ * FULL 10.3..11.4 (12); an SH-2 filter 1.4..1.5 (2); a PCM oscillator 0.5..1.0 (1), on SPREAD / SPREAD 0 1.6..2.0 (2).
+ * Every one of them at 8 voices ran without a late half (worst BINAURAL SH-2 78.9 % avg, 83 peak); the table gives 8
+ * everywhere without an MFX but SH-2 on STACK / BINAURAL / FULL (6). The measured room still trims a heavier live floor. */
 #define VOICE_POOL 8u                /* physical voices: SINGL_SYNTH may use all of them */
 #define VOICE_CORE_COST 56u
 #define VOICE_COST_PCM_FIRST 64u     /* OscParams.wavebank from here is a PCM wave (pcm_osc.h WAVE_PCM_FIRST) */
@@ -557,20 +563,21 @@ static inline uint8_t varch_voice_cost(const EngineState *e)
 {
     uint8_t a = varch_of(e), c, sh2 = 0, pcm = 0, bin = a == VARCH_BINAURAL;
     switch (a) {
-    case VARCH_SPREAD:      c = (e->oscmix.spread || route_to(e, MDST_SPREAD)) ? 13u : 10u; break;
-    case VARCH_DUAL_OSC:    c = 12u; break;
-    case VARCH_DUAL_FILTER: c = 14u; break;
-    case VARCH_STACK:       c = 15u; break;
-    case VARCH_BINAURAL:    c = 16u; break;
-    case VARCH_FULL:        c = 17u; break;
-    case VARCH_DUAL_SPREAD: c = 12u; break;     /* (retired: loads as DUAL OSC) */
-    default:                c = 10u; break;     /* SINGLE (retired: loads as SPREAD 0) */
+    case VARCH_SPREAD:      c = (e->oscmix.spread || route_to(e, MDST_SPREAD)) ? 10u : 7u; break;
+    case VARCH_DUAL_OSC:    c = 10u; break;
+    case VARCH_DUAL_FILTER: c = 9u; break;
+    case VARCH_STACK:       c = 12u; break;
+    case VARCH_BINAURAL:    c = 12u; break;
+    case VARCH_FULL:        c = 12u; break;
+    case VARCH_DUAL_SPREAD: c = 10u; break;     /* (retired: loads as DUAL OSC) */
+    default:                c = 7u; break;      /* SINGLE (retired: loads as SPREAD 0) */
     }
     sh2 = (uint8_t)((e->filter[0].flavour == FLT_SH2) * (bin ? 2 : 1) +
                     (varch_uses_filter2(a) && e->filter[1].flavour == FLT_SH2));
     pcm = (uint8_t)((e->osc[0].wavebank >= VOICE_COST_PCM_FIRST) * (bin ? 2 : 1) +
                     (varch_uses_osc2(a) && e->osc[1].wavebank >= VOICE_COST_PCM_FIRST));
-    return (uint8_t)(c + 2u * sh2 + (c == 13u ? 1u : 2u) * pcm);
+    return (uint8_t)(c + 2u * sh2 + (a == VARCH_SPREAD || a == VARCH_SINGLE ? 2u : 1u) * pcm);   /* (2026-11-18: PCM on
+                                    * SPREAD reads four playheads, 1.6..2.0 a voice; elsewhere 0.5..1.0 an oscillator) */
 }
 
 /* The cost one core carries when layer A sounds voices 0..na-1 and layer B the top nb of the pool (voice v is on core
