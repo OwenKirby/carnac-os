@@ -550,6 +550,39 @@ static void rt_seq_out(uint8_t status, uint8_t data1, uint8_t data2) { midi_in(s
 static void rt_arp_out(uint8_t status, uint8_t data1, uint8_t data2) { midi_in(status, data1, data2, VSRC_ARP); }
 static void rt_rec_out(uint8_t status, uint8_t data1, uint8_t data2) { midi_in(status, data1, data2, VSRC_REC); }
 
+/* The REC page's CLICK (2026-11-13): a beat's blip, a sine rung by the recorder's tick (krec.click_hit) and decaying
+ * over ~35 ms, added to the output after the limiter (no voice, no FX). A pass without one adds nothing. */
+#define CLICK_E_BAR 9300                       /* 2 sin(pi f / fs), Q15: ~2.0 kHz on a bar's first beat */
+#define CLICK_E_BEAT 6524                      /* .. ~1.4 kHz on the others */
+static int32_t click_x, click_y, click_env, click_e;
+static uint32_t pass_base;                     /* (its definition below, with the pass) */
+static void rec_click_mix(int32_t *out, uint32_t frames)
+{
+    uint32_t f = 0;
+    if (krec.click_hit) {
+        uint32_t off = krec.click_frame - pass_base;
+        f = off < frames ? off : 0u;           /* (a click due earlier: at once) */
+        click_e = krec.click_hit == 2u ? CLICK_E_BAR : CLICK_E_BEAT;
+        click_env = krec.click_hit == 2u ? 32767 : 21000;
+        click_x = 0;
+        click_y = 12000;
+        krec.click_hit = 0;
+    }
+    if (click_env <= 0)
+        return;
+    for (; f < frames && click_env > 0; f++) {
+        int32_t v, l, r;
+        click_x += (click_e * click_y) >> 15;  /* (the magic circle: a steady sine in integers) */
+        click_y -= (click_e * click_x) >> 15;
+        v = (click_y * click_env) >> 15;
+        click_env -= (click_env >> 8) + 1;     /* (+1: >> 8 alone stalls at 255 and the sine rings on as a whine) */
+        l = out[f * 2u] + v;
+        r = out[f * 2u + 1u] + v;
+        out[f * 2u] = l > Q15_MAX ? Q15_MAX : l < Q15_MIN ? Q15_MIN : l;
+        out[f * 2u + 1u] = r > Q15_MAX ? Q15_MAX : r < Q15_MIN ? Q15_MIN : r;
+    }
+}
+
 void synth_midi_at(uint32_t delay, uint8_t status, uint8_t data1, uint8_t data2)
 {
     uint32_t at = sample_clock + delay;
@@ -1330,6 +1363,7 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
         out[frame * 2u + 1u] = clamp_q15_64(right);
     }
     limit_env_q8 = env;
+    rec_click_mix(out, frames);
     if (pass_clock)
         floor_pass(pass_clock() - pass_t0, frames);
     PF_LAP(SPROF_F_TAIL);

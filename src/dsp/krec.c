@@ -107,7 +107,7 @@ static uint16_t insert_at(const Krec *k, uint16_t t)
 static void record_on(Krec *k, uint8_t ch, uint8_t note, uint8_t vel, uint32_t abs)
 {
     static const uint8_t Q[KQ_COUNT] = {1, KREC_TPB / 2u, KREC_TPB / 4u, KREC_TPB / 6u};
-    uint32_t q = Q[k->set.quantize < KQ_COUNT ? k->set.quantize : 0u], t = pos_of(k, abs), i, j, m;
+    uint32_t q = Q[k->set.quantize < KQ_COUNT ? k->set.quantize : 0u], t = k->wait ? 0u : pos_of(k, abs), i, j, m;
     KrecNote *n;
     if (k->nn >= KREC_NOTES) {
         k->full = 1;
@@ -126,7 +126,10 @@ static void record_on(Krec *k, uint8_t ch, uint8_t note, uint8_t vel, uint32_t a
     k->nn++;
     n = &k->n[i];
     n->fresh = 0;
-    if (k->len) {                                    /* overdub: the playhead keeps its place among the notes */
+    if (k->wait)                                     /* just before the top (krec_input): it sounded live, the playhead
+                                                      * reaches it first thing */
+        n->fresh = 1;
+    else if (k->len) {                               /* overdub: the playhead keeps its place among the notes */
         uint32_t pd = pos_of(k, k->done), ahead = (t + k->len - pd) % k->len;
         if (k->cursor > i || (k->cursor == i && ahead == 0u) || (k->cursor == i && ahead >= k->len / 2u))
             k->cursor++;
@@ -236,10 +239,20 @@ static void close_loop(Krec *k, uint32_t abs, uint32_t d)
 }
 
 /* ------------------------------------------------------------ the tick --- */
+/* CLICK: on a beat at pos (ticks from the top), the bar's first accented */
+static void click_at(Krec *k, uint32_t pos)
+{
+    uint8_t c;
+    if (pos % KREC_TPB) return;
+    c = pos % KREC_BAR ? 1u : 2u;
+    if (!k->click_hit) k->click_frame = k->tick_frame;
+    if (c > k->click_hit) k->click_hit = c;
+}
+
 static void tick(Krec *k, uint32_t abs)
 {
     uint32_t i;
-    uint16_t pos = pos_of(k, abs);
+    uint16_t pos;
     uint8_t rec = (uint8_t)(k->state == KREC_REC || k->state == KREC_ODUB);
     for (i = 0; k->nlive && i < 16u; i++)            /* note-offs due */
         if (k->act[i].live && (int32_t)(abs - k->act[i].off) >= 0) {
@@ -247,6 +260,18 @@ static void tick(Krec *k, uint32_t abs)
             k->act[i].live = 0;
             k->nlive--;
         }
+    if (k->wait) {                                   /* the count-in: its beats counted back from the top */
+        if ((int32_t)(abs - k->org) < 0) {
+            if (k->set.click != KC_OFF) click_at(k, k->org - abs);
+            return;
+        }
+        k->wait = 0;
+        k->cursor = 0;
+    }
+    pos = pos_of(k, abs);
+    if (k->set.click == KC_ON ? (k->state == KREC_REC || (k->playing && k->len))
+        : k->set.click == KC_REC && rec)
+        click_at(k, pos);
     if (k->state == KREC_REC && abs - k->org >= KREC_MAX) {   /* the first pass at 16 bars: it closes itself */
         close_loop(k, abs, KREC_MAX);
         pos = pos_of(k, abs);
@@ -297,6 +322,7 @@ SYNTH_COLD uint8_t krec_frame(Krec *k, uint32_t frame)
     if (!active(k))                                  /* (idle: nothing more, every sequencer frame; a start sets done) */
         return 1;
     abs = now_abs(k, frame);
+    k->tick_frame = frame;
     if ((int32_t)(abs - k->done) > (int32_t)(4u * KREC_SUB))   /* a long gap (the clock jumped): no burst of notes */
         k->done = abs - 1u;
     while ((int32_t)(abs - k->done) > 0)
@@ -333,29 +359,94 @@ static uint32_t start_org(const Krec *k, uint32_t abs)
 }
 
 /* ------------------------------------------------------------- input --- */
+/* CAPTURE's ring: every key's note, recording or not */
+_Static_assert(sizeof(KrecCap) == 8u, "CAPTURE's ring: 8 B a note");
+
+/* a kept note's absolute tick: back from the newest (none is newer) */
+static uint32_t cap_abs(const Krec *k, const KrecCap *c)
+{
+    return k->cap_last - (uint16_t)((uint16_t)k->cap_last - c->on);
+}
+
+static void cap_on(Krec *k, uint8_t ch, uint8_t note, uint8_t vel, uint32_t abs)
+{
+    KrecCap *c = &k->cap[k->cap_h];
+    k->cap_last = abs;
+    c->on = (uint16_t)abs;
+    c->len = KREC_LEN_OPEN;
+    c->note = note;
+    c->vel = vel;
+    c->ch = ch;
+    k->cap_h = (uint16_t)((k->cap_h + 1u) % KREC_CAP);
+    if (k->cap_n < KREC_CAP) k->cap_n++;
+}
+
+static void cap_off(Krec *k, uint8_t ch, uint8_t note, uint32_t abs)
+{
+    for (uint32_t i = 1; i <= k->cap_n; i++) {       /* the newest held one of that pitch */
+        KrecCap *c = &k->cap[(k->cap_h + KREC_CAP - i) % KREC_CAP];
+        if (c->len == KREC_LEN_OPEN && c->note == note && c->ch == ch) {
+            uint32_t d = abs - cap_abs(k, c);
+            c->len = (uint16_t)(d < 1u ? 1u : d > KREC_LEN_OPEN - 1u ? KREC_LEN_OPEN - 1u : d);
+            return;
+        }
+    }
+}
+
+/* a fixed LENGTH's loop, its top at org: the first overdub pass, wrapping from the start */
+static void start_fixed(Krec *k, uint32_t abs, uint32_t org)
+{
+    uint32_t bars = k->set.length > KREC_MAX_BARS ? KREC_MAX_BARS : k->set.length;
+    k->len = (uint16_t)(bars * KREC_BAR);
+    k->org = org;
+    k->pass = 0;
+    k->state = KREC_ODUB;
+    k->playing = 1;
+    k->cursor = 0;
+    k->touch[0] = k->touch[1] = k->hold[0] = k->hold[1] = 0;
+    k->wait = (uint8_t)((int32_t)(org - abs) > 0);
+    k->done = k->wait ? abs - 1u : abs;              /* (the count-in's first beat: this tick) */
+}
+
 SYNTH_COLD void krec_input(Krec *k, uint8_t status, uint8_t data1, uint8_t data2, uint32_t frame)
 {
     uint8_t kind = status & 0xF0u, ch = status & 0x0Fu;
-    uint8_t rec = (uint8_t)(k->state == KREC_REC || k->state == KREC_ODUB);
+    uint8_t rec = (uint8_t)(k->state == KREC_REC || k->state == KREC_ODUB), pre = 0;
     uint32_t abs;
-    if (k->state == KREC_EMPTY || (kind != 0x90u && kind != 0x80u && kind != 0xB0u && kind != 0xE0u))
+    if (kind != 0x90u && kind != 0x80u && kind != 0xB0u && kind != 0xE0u)
         return;
     abs = now_abs(k, frame);
+    if (kind == 0x90u && data2) cap_on(k, ch, data1, data2, abs);
+    else if (kind == 0x80u || kind == 0x90u) cap_off(k, ch, data1, abs);
+    if (k->state == KREC_EMPTY)
+        return;
+    if (k->wait && (int32_t)(abs - k->org) < 0) {    /* the count-in: a note just before the top goes on it (its
+                                                      * length as played) */
+        pre = 1;
+        rec = (uint8_t)(k->org - abs <= KREC_TPB / 4u);
+    }
     if (kind == 0x90u && data2) {
         if (k->state == KREC_ARMED) {                /* the first note starts the loop */
-            k->org = start_org(k, abs);
-            k->done = abs;
-            k->len = 0;
-            k->pass = 0;
-            k->state = KREC_REC;
-            k->out_ch = ch;
+            if (k->set.length) {
+                start_fixed(k, abs, start_org(k, abs));
+            } else {
+                k->org = start_org(k, abs);
+                k->done = abs;
+                k->len = 0;
+                k->pass = 0;
+                k->state = KREC_REC;
+            }
             rec = 1;
         }
+        if (rec && k->nn == 0u) k->out_ch = ch;
         if (rec)
             record_on(k, ch, data1, data2, abs);
     } else if (kind == 0x80u || kind == 0x90u) {
-        if (rec)
+        if (rec || (pre && k->state == KREC_ODUB))
             record_off(k, ch, data1, abs);
+    } else if (pre) {                                /* (a controller before the top: live only) */
+        k->live[kind == 0xE0u] = data2;
+        k->lout[kind == 0xE0u] = data2;
     } else if ((kind == 0xB0u && data1 == 1u) || kind == 0xE0u) {   /* the mod wheel, the pitch bend (7 bits, as
                                                                      * the engine reads it) */
         uint32_t l = kind == 0xE0u;
@@ -372,9 +463,10 @@ SYNTH_COLD void krec_input(Krec *k, uint8_t status, uint8_t data1, uint8_t data2
 }
 
 /* ------------------------------------------------------------- the UI --- */
-SYNTH_COLD void krec_init(Krec *k, KrecOut out)
+/* everything but CAPTURE's ring */
+static void reset_loop(Krec *k, KrecOut out)
 {
-    memset(k, 0, sizeof *k);
+    memset(k, 0, __builtin_offsetof(Krec, cap));
     k->out = out;
     memset(k->wheel, KREC_LANE_NONE, sizeof k->wheel);
     memset(k->bend, KREC_LANE_NONE, sizeof k->bend);
@@ -385,6 +477,14 @@ SYNTH_COLD void krec_init(Krec *k, KrecOut out)
     k->set.quantize = KQ_OFF;
     k->set.gate = 64;
     k->set.density = 127;
+    k->set.length = KREC_LEN_DEFAULT;
+    k->set.click = KC_REC;
+}
+
+SYNTH_COLD void krec_init(Krec *k, KrecOut out)
+{
+    memset(k, 0, sizeof *k);
+    reset_loop(k, out);
 }
 
 /* a new overdub: a new pass tag (the oldest merged into pass 0 when all 16 are taken) */
@@ -416,12 +516,32 @@ SYNTH_COLD void krec_arm(Krec *k)
         k->state = KREC_ARMED;
 }
 
+/* REC with a fixed LENGTH: the top on the sequencers' next bar when they run (this one, a 1/16 late), else a bar on
+ * (the count-in) */
+static void start_tap(Krec *k, uint32_t abs)
+{
+    uint32_t org = abs + KREC_BAR;
+    if (k->sync_run) {
+        uint32_t o = k->sync_origin * KREC_SUB, bar = o + (abs - o) / KREC_BAR * KREC_BAR;
+        org = abs - bar <= KREC_TPB / 4u ? bar : bar + KREC_BAR;
+    }
+    start_fixed(k, abs, org);
+}
+
 SYNTH_COLD void krec_tap(Krec *k, uint32_t frame)
 {
     uint32_t abs = now_abs(k, frame), d;
+    if (k->wait) {                                   /* in the count-in: called off */
+        krec_clear(k);
+        k->state = KREC_ARMED;
+        return;
+    }
     switch (k->state) {
-    case KREC_EMPTY: k->state = KREC_ARMED; break;
-    case KREC_ARMED: k->state = KREC_EMPTY; break;
+    case KREC_EMPTY:
+    case KREC_ARMED:
+        if (k->set.length) start_tap(k, abs);
+        else k->state = k->state == KREC_EMPTY ? KREC_ARMED : KREC_EMPTY;
+        break;
     case KREC_REC:                                   /* the loop closes on the nearest beat (at least one) */
         d = abs - k->org;
         d = (d + KREC_TPB / 2u) / KREC_TPB * KREC_TPB;
@@ -449,6 +569,11 @@ SYNTH_COLD void krec_set_playing(Krec *k, uint8_t on, uint32_t frame)
     uint32_t abs = now_abs(k, frame);
     if (!k->len)
         return;
+    if (!on && k->wait) {                            /* stopped in the count-in: back to armed */
+        krec_clear(k);
+        k->state = KREC_ARMED;
+        return;
+    }
     if (!on) {
         close_open(k, abs);
         all_off(k);
@@ -473,8 +598,8 @@ SYNTH_COLD uint8_t krec_undo(Krec *k)
 {
     int32_t p;
     uint32_t i, o = 0;
-    if (k->state == KREC_REC) {
-        krec_clear(k);                               /* the first pass going: nothing left */
+    if (k->state == KREC_REC || k->wait) {
+        krec_clear(k);                               /* the first pass going, or its count-in: nothing left */
         k->state = KREC_ARMED;
         return 1;
     }
@@ -515,7 +640,7 @@ SYNTH_COLD uint8_t krec_undo(Krec *k)
 
 SYNTH_COLD uint8_t krec_can_double(const Krec *k)
 {
-    return (uint8_t)(k->len && k->state >= KREC_PLAY && (uint32_t)k->len * 2u <= KREC_MAX &&
+    return (uint8_t)(k->len && !k->wait && k->state >= KREC_PLAY && (uint32_t)k->len * 2u <= KREC_MAX &&
                      (uint32_t)k->nn * 2u <= KREC_NOTES);
 }
 
@@ -560,7 +685,7 @@ SYNTH_COLD void krec_clear(Krec *k)
     uint8_t clocked = k->clocked, sr = k->sync_run;
     uint32_t so = k->sync_origin;
     all_off(k);
-    krec_init(k, out);
+    reset_loop(k, out);
     k->set = s;
     k->pc = pc; k->pulse_frame = pf; k->period_q8 = per; k->done = done; k->clocked = clocked;
     k->sync_run = sr; k->sync_origin = so;
@@ -568,11 +693,112 @@ SYNTH_COLD void krec_clear(Krec *k)
 
 SYNTH_COLD uint16_t krec_pos(const Krec *k, uint32_t frame)
 {
-    if (k->state < KREC_REC)
+    if (k->state < KREC_REC || k->wait)
         return 0;
     if (k->state != KREC_REC && !k->playing)
         return 0;
     return pos_of(k, now_abs(k, frame));
+}
+
+SYNTH_COLD uint8_t krec_countin(const Krec *k, uint32_t frame)
+{
+    uint32_t left;
+    int32_t d;
+    if (!k->wait) return 0;
+    d = (int32_t)(k->org - now_abs(k, frame));
+    if (d <= 0) return 4u;
+    left = ((uint32_t)d + KREC_TPB - 1u) / KREC_TPB;  /* beats to the top: 4 .. 1 */
+    return (uint8_t)(left >= 4u ? 1u : 5u - left);
+}
+
+/* ------------------------------------------------------------ CAPTURE --- */
+#define CAP_AT(k, i) (&(k)->cap[((k)->cap_h + KREC_CAP - (k)->cap_n + (i)) % KREC_CAP])   /* i: 0 oldest */
+
+/* the phrase to keep: its notes CAP_AT(*from .. cap_n - 1) and the loop's top and length; 0: nothing */
+static uint8_t cap_plan(const Krec *k, uint32_t now, uint32_t *org, uint32_t *len, uint32_t *from)
+{
+    uint32_t last, first, lim = k->set.length ? k->set.length * KREC_BAR : KREC_MAX, last_on, L, f_on;
+    if (k->nn || k->pass_mask || k->state == KREC_REC || k->wait || !k->cap_n)
+        return 0;
+    if (lim > KREC_MAX) lim = KREC_MAX;
+    last = k->cap_n - 1u;
+    last_on = k->cap_last;
+    if (now - last_on > KREC_MAX)                    /* the last note over 16 bars ago: nothing */
+        return 0;
+    for (first = last; first > 0u; first--) {        /* back to a bar's silence, or as far as the loop reaches */
+        const KrecCap *p = CAP_AT(k, first - 1u);
+        uint32_t p_on = cap_abs(k, p), pend = p->len == KREC_LEN_OPEN ? now : p_on + p->len;
+        if (last_on - p_on >= lim) break;
+        if ((int32_t)(cap_abs(k, CAP_AT(k, first)) - pend) >= (int32_t)KREC_BAR) break;
+    }
+    f_on = cap_abs(k, CAP_AT(k, first));
+    *from = first;
+    if (k->sync_run && (int32_t)(f_on - k->sync_origin * KREC_SUB) >= 0) {   /* on their bars */
+        uint32_t o = k->sync_origin * KREC_SUB;
+        if (k->set.length) {
+            L = lim;
+            *org = o + ((last_on - o) / KREC_BAR + 1u) * KREC_BAR - L;
+        } else {
+            *org = o + (f_on - o) / KREC_BAR * KREC_BAR;
+            L = ((last_on - *org) / KREC_BAR + 1u) * KREC_BAR;
+        }
+    } else {                                         /* the phrase's first note is the top */
+        *org = f_on;
+        L = k->set.length ? lim : ((last_on - *org) / KREC_BAR + 1u) * KREC_BAR;
+    }
+    *len = L > KREC_MAX ? KREC_MAX : L;
+    return 1;
+}
+
+SYNTH_COLD uint8_t krec_can_capture(const Krec *k, uint32_t frame)
+{
+    uint32_t o, l, f;
+    return cap_plan(k, now_abs(k, frame), &o, &l, &f);
+}
+
+SYNTH_COLD uint8_t krec_capture(Krec *k, uint32_t frame)
+{
+    uint32_t now = now_abs(k, frame), org, L, i, n = 0, from;
+    uint16_t pos;
+    uint8_t ch = 0;
+    if (!cap_plan(k, now, &org, &L, &from))
+        return 0;
+    for (i = from; i < k->cap_n; i++) {              /* (any notes inside the loop at all) */
+        uint32_t d = cap_abs(k, CAP_AT(k, i)) - org;
+        if ((int32_t)d >= 0 && d < L) n++;
+    }
+    if (!n)
+        return 0;
+    krec_clear(k);
+    for (i = from; i < k->cap_n && k->nn < KREC_NOTES; i++) {   /* oldest first: in order */
+        const KrecCap *c = CAP_AT(k, i);
+        uint32_t c_on = cap_abs(k, c), d = c_on - org, len;
+        KrecNote *m;
+        if ((int32_t)d < 0 || d >= L) continue;
+        len = c->len == KREC_LEN_OPEN ? now - c_on : c->len;
+        if (len < 1u) len = 1u;
+        if (len >= L) len = L - 1u;
+        m = &k->n[k->nn++];
+        m->t = (uint16_t)d;
+        m->len = (uint16_t)len;
+        m->note = c->note;
+        m->vel = c->vel;
+        m->chp = (uint8_t)(c->ch & 0x0Fu);
+        m->fresh = 0;
+        ch = c->ch;
+    }
+    k->len = (uint16_t)L;
+    k->org = org;
+    k->state = KREC_PLAY;
+    k->playing = 1;
+    k->pass = 0;
+    k->pass_mask = 1;
+    k->out_ch = ch;
+    k->done = now;
+    pos = pos_of(k, now);                            /* the playhead goes on where the music is */
+    k->cursor = 0;
+    while (k->cursor < k->nn && k->n[k->cursor].t <= pos) k->cursor++;
+    return 1;
 }
 
 #if defined(__clang__)

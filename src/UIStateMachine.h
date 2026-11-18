@@ -208,7 +208,7 @@ typedef struct {
                                       * PERF_TUNING_ROOT), the same way as sub6_knob */
     Krec *rec;                       /* the REC page's loop (ui_sm_attach_rec); NULL: REC only on SEQ / ARP */
     uint8_t rec_ask;                 /* the confirm popup asks DOUBLE (1) or CLEAR (2) for the loop; 0: not the loop's */
-    uint8_t rec_msg;                 /* a word over the loop for rec_msg_ms: 1 UNDO, 2 NOTHING TO UNDO, 3 FULL */
+    uint8_t rec_msg;                 /* a word over the loop for rec_msg_ms: 1 UNDO, 2 NOTHING TO UNDO, 3 FULL, 4 CAPTURED */
     uint16_t rec_msg_ms;
     /* the data the menu rows edit; owned by the caller, must stay valid while the machine runs */
     MasterPerformancePreset *perf;
@@ -432,7 +432,7 @@ void ui_sm_attach_rec(UIStateMachine *sm, Krec *rec);
 /* 1: REC acts on its release here (the loop's: a tap, or held, UNDO); 0: on its press (SEQ, ARP, a popup) */
 uint8_t ui_sm_rec_deferred(const UIStateMachine *sm);
 /* the REC page's rows (TRANSPOSE, QUANTIZE, DOUBLE, CLEAR): the row the cursor is on, UI_FOCUS_NONE for none */
-#define UIREC_NROWS 4u
+#define UIREC_NROWS 6u
 /* hand the machine the ARP engine (chord keys sound through it, and set its transposition) */
 void ui_sm_attach_arp(UIStateMachine *sm, CarpSeq *carp);
 

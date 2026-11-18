@@ -1,6 +1,7 @@
 /* The REC page's recorder (src/dsp/krec.c) on its own, on a stand-in clock: recording and closing a loop, its
  * playback, overdub, UNDO, DOUBLE, the lanes, GATE, DENSITY, QUANTIZE, the 16-bar limit, a full loop; and the same
  * run frame by frame and only on the frames krec_next_due names (the render's skip rule) giving the same events.
+ * 2026-11-13: a fixed LENGTH (REC's count-in, a note's start, the sequencers' bar), the CLICK, CAPTURE.
  *
  *   gcc -O2 -Isrc -Isrc/dsp src/dsp/krec.c src/host/test_krec.c -o test_krec */
 #include <stdio.h>
@@ -32,6 +33,10 @@ static int skip_mode;                /* 1: run krec_frame only on pulse frames a
 static uint32_t wake;
 static uint8_t have_wake;
 
+/* the clicks the render took (k.click_hit) */
+static struct { uint32_t frame; uint8_t hit; } clk[512];
+static int nclk;
+
 static void step_frame(void)
 {
     uint8_t pulse = frame % P == 0u;
@@ -40,6 +45,10 @@ static void step_frame(void)
     if (!skip_mode || pulse || (have_wake && (int32_t)(frame - wake) >= 0)) {
         krec_frame(&k, frame);
         have_wake = krec_next_due(&k, &wake);
+    }
+    if (k.click_hit) {
+        if (nclk < 512) { clk[nclk].frame = k.click_frame; clk[nclk].hit = k.click_hit; nclk++; }
+        k.click_hit = 0;
     }
     frame++;
 }
@@ -74,10 +83,25 @@ static int count(uint8_t st, uint8_t d1, uint32_t from, uint32_t to)
 static void reset(void)
 {
     krec_init(&k, out);
+    k.set.length = 0;                                /* (the tests before 2026-11-13: FREE) */
     frame = 0;
     pc_now = 0;
     nev = 0;
+    nclk = 0;
     have_wake = 0;
+}
+
+/* LENGTH 4, REC from a stopped clock: the count-in */
+static void count_in_scenario(void)
+{
+    reset();
+    k.set.length = 4;
+    k.set.click = KC_REC;
+    run(P * 3u + 100u);
+    krec_arm(&k);
+    cur_frame = frame;
+    krec_tap(&k, frame);
+    if (skip_mode) { krec_frame(&k, frame); have_wake = krec_next_due(&k, &wake); }   /* (the next render's first frame) */
 }
 
 /* the scenario both runs must agree on; returns the events' count */
@@ -299,6 +323,146 @@ int main(void)
         run(TICKS(4));
         CHECK(count(0x90, 60, f0, frame) == 1, "started: from the top (C at once)");
     }
+
+    /* ---- LENGTH 4: REC counts a bar in, then the loop runs, empty or not */
+    count_in_scenario();
+    {
+        uint32_t f0 = frame, i, fk;
+        CHECK(k.state == KREC_ODUB && k.wait && k.len == 4u * KREC_BAR && krec_countin(&k, frame) == 1,
+              "REC: a count-in (state %u wait %u len %u beat %u)", k.state, k.wait, k.len, krec_countin(&k, frame));
+        run(TICKS(2u * KREC_TPB));
+        CHECK(krec_countin(&k, frame) == 3, "count-in beat 3 (%u)", krec_countin(&k, frame));
+        key(50, 90); run(TICKS(10)); key(50, 0);     /* half way: plays live, not kept */
+        CHECK(k.nn == 0, "a note in the count-in's middle is not kept (%u)", k.nn);
+        run(TICKS(2u * KREC_TPB - 10u - 10u));
+        fk = frame;
+        key(61, 100); run(TICKS(3)); key(61, 0);     /* 10 ticks early, let go before the top */
+        run(TICKS(1));
+        key(60, 100);                                /* 6 ticks early, held over it */
+        CHECK(k.nn == 2 && k.n[0].t == 0 && k.n[1].t == 0, "early notes land on the top (n %u t %u)", k.nn, k.n[0].t);
+        run(TICKS(20)); key(60, 0);
+        CHECK(!k.wait && k.n[0].len == 3u && k.n[1].len >= 19u && k.n[1].len <= 21u,
+              "the top passed, the notes as long as played (%u %u)", k.n[0].len, k.n[1].len);
+        CHECK(nclk >= 5 && clk[0].hit == 2 && clk[1].hit == 1 && clk[2].hit == 1 && clk[3].hit == 1 && clk[4].hit == 2,
+              "clicks: count-in 2 1 1 1 then the top 2 (%d: %u %u %u %u %u)", nclk, clk[0].hit, clk[1].hit, clk[2].hit,
+              clk[3].hit, clk[4].hit);
+        CHECK(clk[0].frame - f0 < P, "the first count-in click at REC (%u vs %u)", clk[0].frame, f0);
+        for (i = 2; i < 5u && i < (uint32_t)nclk; i++)   /* (the first: on REC's tick, up to a tick late) */
+            CHECK(clk[i].frame - clk[i - 1u].frame >= TICKS(KREC_TPB) - 2u &&
+                  clk[i].frame - clk[i - 1u].frame <= TICKS(KREC_TPB) + 2u, "clicks a beat apart (%u: %u)", i,
+                  clk[i].frame - clk[i - 1u].frame);
+        f0 = frame;
+        run(TICKS(4u * KREC_BAR - 20u - 4u));        /* to just before the second cycle */
+        CHECK(count(0x90, 60, fk, frame) == 0 && count(0x90, 61, fk, frame) == 0,
+              "the early notes sounded live: not again in the first cycle (%d %d)", count(0x90, 60, fk, frame),
+              count(0x90, 61, fk, frame));
+        f0 = frame;
+        run(TICKS(16u));
+        CHECK(count(0x90, 60, f0, frame) == 1 && count(0x90, 61, f0, frame) == 1, "the second cycle plays them (%d %d)",
+              count(0x90, 60, f0, frame), count(0x90, 61, f0, frame));
+        CHECK(k.state == KREC_ODUB && k.len == 4u * KREC_BAR, "the loop goes on overdubbing");
+        k.set.click = KC_COUNT;
+        nclk = 0;
+        run(TICKS(KREC_BAR));
+        CHECK(nclk == 0, "CLICK COUNT: silent once recording (%d)", nclk);
+        k.set.click = KC_ON;
+        krec_tap(&k, frame);                         /* PLAY */
+        run(TICKS(KREC_BAR));
+        CHECK(nclk >= 4, "CLICK ON: playing too (%d)", nclk);
+    }
+    /* the same with the skip rule: the same events and clicks */
+    {
+        static Ev ref[8192];
+        static struct { uint32_t frame; uint8_t hit; } rclk[512];
+        int nref, nrc;
+        skip_mode = 0;
+        count_in_scenario();
+        run(TICKS(3u * KREC_TPB + 90u)); key(62, 100); run(TICKS(30)); key(62, 0); run(TICKS(5u * KREC_BAR));
+        nref = nev; nrc = nclk;
+        memcpy(ref, ev, sizeof ev); memcpy(rclk, clk, sizeof clk);
+        skip_mode = 1;
+        count_in_scenario();
+        run(TICKS(3u * KREC_TPB + 90u)); key(62, 100); run(TICKS(30)); key(62, 0); run(TICKS(5u * KREC_BAR));
+        CHECK(nev == nref && memcmp(ref, ev, (size_t)nev * sizeof(Ev)) == 0 && nclk == nrc &&
+              memcmp(rclk, clk, (size_t)nclk * sizeof clk[0]) == 0, "count-in, skip rule: %d/%d events, %d/%d clicks",
+              nev, nref, nclk, nrc);
+        CHECK(nref > 0 && nrc >= 8, "(the skip run had events %d and clicks %d)", nref, nrc);
+        skip_mode = 0;
+    }
+
+    /* ---- the count-in called off: REC again, UNDO, PLAY */
+    count_in_scenario();
+    run(TICKS(30));
+    krec_tap(&k, frame);
+    CHECK(k.state == KREC_ARMED && !k.wait && !k.len, "REC in the count-in: armed again");
+    krec_tap(&k, frame);
+    CHECK(k.wait && krec_undo(&k) && k.state == KREC_ARMED && !k.wait, "UNDO in the count-in: armed again");
+    krec_tap(&k, frame);
+    krec_set_playing(&k, 0, frame);
+    CHECK(k.state == KREC_ARMED && !k.wait, "PLAY in the count-in: armed again");
+
+    /* ---- LENGTH 2: a note starts the loop at once */
+    reset();
+    k.set.length = 2;
+    run(P * 2u + 7u);
+    krec_arm(&k);
+    key(64, 100); run(TICKS(40)); key(64, 0);
+    CHECK(k.state == KREC_ODUB && !k.wait && k.len == 2u * KREC_BAR && k.nn == 1 && k.n[0].t == 0,
+          "a note starts a fixed loop (state %u len %u n %u)", k.state, k.len, k.nn);
+    {
+        uint32_t f0 = frame;
+        run(TICKS(2u * KREC_BAR));
+        CHECK(count(0x90, 64, f0, frame) == 1, "and plays each cycle (%d)", count(0x90, 64, f0, frame));
+    }
+
+    /* ---- the sequencers running: REC starts on their next bar (this one when a 1/16 late) */
+    reset();
+    k.set.length = 1;
+    run(P * 5u);
+    krec_set_sync(&k, 1, 2);                         /* their pattern from pulse 2 */
+    run(TICKS(KREC_TPB * 2u));
+    krec_arm(&k);
+    krec_tap(&k, frame);
+    CHECK(k.wait && (k.org - 2u * KREC_SUB) % KREC_BAR == 0u, "synced: the top on their bar (org %u)", k.org);
+    reset();
+    k.set.length = 1;
+    run(P * 2u + 1u);
+    krec_set_sync(&k, 1, 2);
+    run(TICKS(KREC_BAR + 10u));                      /* their bar 2, 10 ticks in */
+    krec_arm(&k);
+    krec_tap(&k, frame);
+    CHECK(!k.wait && k.org == 2u * KREC_SUB + KREC_BAR, "synced, a little late: their bar now (org %u)", k.org);
+
+    /* ---- CAPTURE, FREE: the last phrase (after a bar's silence), its own bars */
+    reset();
+    run(P * 3u);
+    key(40, 100); run(TICKS(20)); key(40, 0);        /* an old note, then three bars' silence */
+    run(TICKS(3u * KREC_BAR));
+    {
+        uint32_t i;
+        for (i = 0; i < 8u; i++) {
+            key((uint8_t)(60 + i), 100); run(TICKS(40)); key((uint8_t)(60 + i), 0); run(TICKS(KREC_TPB - 40u));
+        }
+    }
+    run(TICKS(30));
+    CHECK(k.state == KREC_EMPTY && krec_can_capture(&k, frame), "something to capture");
+    CHECK(krec_capture(&k, frame) && k.state == KREC_PLAY && k.playing && k.len == 2u * KREC_BAR && k.nn == 8 &&
+          k.n[0].t == 0 && k.n[0].note == 60 && k.n[7].t == 7u * KREC_TPB && k.n[3].len == 40,
+          "CAPTURE FREE: 2 bars of 8 notes (len %u n %u t7 %u len3 %u)", k.len, k.nn, k.n[7].t, k.n[3].len);
+    {
+        uint32_t f0 = frame;
+        run(TICKS(2u * KREC_BAR));
+        CHECK(count(0x90, 0xFF, f0, frame) == 8, "and plays them (%d)", count(0x90, 0xFF, f0, frame));
+    }
+    CHECK(!krec_capture(&k, frame), "no CAPTURE over a loop");
+    CHECK(krec_undo(&k) && k.state == KREC_ARMED && krec_can_capture(&k, frame), "UNDO: gone, the ring kept");
+    k.set.length = 1;                                /* LENGTH 1: the last bar of it */
+    CHECK(krec_capture(&k, frame) && k.len == KREC_BAR && k.nn == 4 && k.n[0].note == 64,
+          "CAPTURE 1 bar: the last 4 (len %u n %u first %u)", k.len, k.nn, k.n[0].note);
+    krec_clear(&k);
+    CHECK(krec_can_capture(&k, frame), "CLEAR keeps the ring");
+    run(TICKS(KREC_MAX + 10u));
+    CHECK(!krec_can_capture(&k, frame), "over 16 bars later: nothing");
 
     if (fails) { printf("%d check(s) failed\n", fails); return 1; }
     printf("all recorder checks passed\n");
