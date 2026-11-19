@@ -250,7 +250,12 @@ typedef struct {
     volatile uint8_t q_head;
     volatile uint8_t q_tail;
     volatile uint8_t q_dropped;      /* events lost to a full queue, saturates at 255 */
+    /* the parameters ui_sm_cc / ui_sm_nrpn wrote since CC OUT last looked (UI_PAR_IN_FULL: more than fit) */
+    uint16_t par_in[8];
+    uint8_t par_in_n;
 } UIStateMachine;
+#define UI_PAR_IN_MAX 8u
+#define UI_PAR_IN_FULL 0xFFu
 
 /* boots onto HOME View 1 with nothing pending; the data pointers must be non-NULL */
 void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *layer1,
@@ -505,6 +510,27 @@ const char *ui_sm_arch_name(uint8_t arch);                         /* "SINGLE" .
  * UI_CHAR_MAP); none while a dialog is up (the popup owns the controls). GLOBAL: knob 4 is INT TEMPO while CLOCK
  * SOURCE is INTERNAL (greyed on MIDI clock); knobs 1..3 have nothing. */
 uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t knob, UiKnobInfo *info);
+/* MIDI Control Change in (the CC map, 2026-11-18): controller cc at value on the layers in the bitmask `layers` (the
+ * ones on its channel); the performance's own controllers (EFFECTS, MIX) only when perf (Layer 1's channel). Moves
+ * what the panel's knob or row moves. 1: cc is mapped. */
+uint8_t ui_sm_cc(UIStateMachine *sm, uint8_t cc, uint8_t layers, uint8_t perf, uint8_t value);
+/* NRPN (rpn 0) / RPN (rpn 1) in (step 3): an NRPN is a panel control by its fixed number (src/nrpn_map.h: the sound's
+ * pages but MOD, EFFECTS, MIX, HOME1 (the channel's layer), ZONES, GLOBAL, TUNING; numbered at first MSB the page,
+ * LSB 0..3 its knobs, 4 + r its row r, on AMP 16..19 the MFX's knobs, 20 the MFX type, 21 + r the MFX's row r + 1),
+ * the value exact (as stored); MSB 64 + i MOD route i (LSB 0 SOURCE, 1 VIA, 2 DEST, 3 AMOUNT, 4 VIA DEPTH). RPN 0 0 BEND RANGE, RPN 0 1 MASTER
+ * TUNE (on Layer 1's channel). value: DATA ENTRY MSB << 7 | LSB (only INT TEMPO and MASTER TUNE use the LSB). 1: taken */
+uint8_t ui_sm_nrpn(UIStateMachine *sm, uint8_t rpn, uint8_t msb, uint8_t lsb, uint8_t layers, uint8_t perf,
+                   uint16_t value);
+/* CC OUT and the editor's dump (step 4): the parameters the CC map and NRPNs reach, numbered 0..ui_sm_par_count() - 1
+ * (both layers). ui_sm_par_get: parameter i now (0: not there now: a hidden page, another MFX type's row, Layer 2's
+ * view of a performance page): its NRPN place and layer, v its NRPN value (ui_sm_nrpn takes it back exactly), cc its
+ * CC (0: none) and ccv the CC value (ui_sm_cc takes it back), wide: an NRPN value that needs DATA ENTRY LSB (the
+ * tempo). ui_sm_par_index: the number of an NRPN place (UI_PAR_NONE: none) */
+typedef struct { uint8_t msb, lsb, layer, v, cc, ccv, wide; } UiPar;
+#define UI_PAR_NONE 0xFFFFu
+uint16_t ui_sm_par_count(void);
+uint8_t ui_sm_par_get(UIStateMachine *sm, uint16_t i, UiPar *out);
+uint16_t ui_sm_par_index(uint8_t msb, uint8_t lsb, uint8_t layer);
 /* the knob's value as its list names it (UIKNOB_LIST, UIKNOB_SRC), NULL for a number the caller draws itself */
 const char *ui_sm_knob_text(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t knob);
 

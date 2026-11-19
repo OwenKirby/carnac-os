@@ -42,6 +42,46 @@ static uint32_t sample_clock;                  /* audio frames since boot */
 static uint32_t last_note_on[NLAYER];          /* sample_clock at the last note-on of each layer */
 static HeldNote held[NLAYER][HELD_MAX];        /* keys down per layer, oldest first */
 static uint8_t held_count[NLAYER];
+/* The channel controllers (the CC map, step 1, 2026-11-18). SUSTAIN (CC 64) holds the keys' note-offs on the layers of
+ * its channel: a key let go under the pedal leaves its voices' gates open, a bit each in sus_voices, and the pedal's
+ * release lets them go (a key down again by then keeps its note). The sequencers' notes are not held. */
+static uint8_t sus_on[NLAYER];                 /* the pedal down on the layer's channel */
+static uint8_t sus_voices;                     /* the voices the pedal holds, bit = voice (voice_play clears its own) */
+PS_STATIC_ASSERT(POLYPHONY_VOICES <= 8u, "sus_voices: a bit a voice");
+/* BANK SELECT (CC 0, the MSB; CC 32 ignored) per channel: what a Program Change on it loads (SYNTH_PCBANK_*). A patch
+ * loads at once, into every layer of the channel; a performance, sequence or arp pattern (Layer 1's channel only) is a
+ * request the panel's main loop takes (synth_pc_take): those come from flash and the UI shows them */
+static uint8_t pc_bank[16];
+static volatile uint8_t pc_req_bank = 0xFFu, pc_req_slot;   /* 0xFF: none */
+/* The sound's controllers (the CC map, step 2): channel, controller, value, for the panel's main loop (synth_cc_take),
+ * which moves the knob or row the controller is mapped to (UIStateMachine.c CC_MAP). One entry a controller: a newer
+ * value replaces a waiting one, so a fast sweep never fills the queue */
+#define CC_Q_MAX 32u
+static uint8_t cc_q[CC_Q_MAX][5];              /* channel | SYNTH_CCK_* << 4, the controller (or NRPN / RPN MSB, LSB),
+                                                  * value (DATA ENTRY MSB), DATA ENTRY LSB */
+static volatile uint8_t cc_qh, cc_qt;          /* written: head by the audio side, tail by the main loop */
+static uint8_t par_kind[16], par_hi[16], par_lo[16];   /* each channel's selected NRPN / RPN (step 3) */
+static uint8_t par_dm[16];                     /* its DATA ENTRY MSB so far (0xFF: none since the parameter was picked) */
+static void cc_queue(uint8_t k, uint8_t a, uint8_t b, uint8_t v, uint8_t lsb)
+{
+    uint8_t i, n = (uint8_t)(cc_qh - cc_qt), *e;
+    for (i = 0; i < n; i++) {                      /* one waiting for this controller already: just the newer value */
+        e = cc_q[(uint8_t)(cc_qt + i) % CC_Q_MAX];
+        if (e[0] == k && e[1] == a && e[2] == b) {
+            e[3] = v;
+            e[4] = lsb;
+            return;
+        }
+    }
+    if (n >= CC_Q_MAX) return;
+    e = cc_q[cc_qh % CC_Q_MAX];
+    e[0] = k;
+    e[1] = a;
+    e[2] = b;
+    e[3] = v;
+    e[4] = lsb;
+    cc_qh++;
+}
 /* poly portamento: the note each layer played last, and the note the chord now starting glides from (notes struck
  * within GLIDE_CHORD_WINDOW of each other are one chord: they all fan out from the note before it). NOTE_NONE: none */
 #define GLIDE_NOTE_NONE 0xFFu
@@ -251,6 +291,7 @@ SYNTH_COLD static void voice_play(SynthVoiceNode *v, uint8_t layer, uint8_t note
 {
     const EngineState *e = &engine_state[layer];
     uint8_t arch = varch_of(e);
+    sus_voices &= (uint8_t)~(1u << (v - poly_bank));   /* (a new note: the pedal no longer holds this voice) */
     if (v->choke || v->arch != arch) {
         retrig = 1;
         if (v->choke) {
@@ -434,12 +475,180 @@ static void note_off_layer(uint8_t layer, uint8_t note, uint8_t src)
     }
 }
 
+/* a note-off on one layer: under SUSTAIN a key's voices stay open, marked for the pedal's release */
+SYNTH_COLD static void layer_note_off(uint8_t layer, uint8_t note, uint8_t src)
+{
+    held_remove(layer, note, src);
+    if (src == VSRC_KEYS && sus_on[layer]) {
+        for (int v = 0; v < POLYPHONY_VOICES; v++) {
+            const SynthVoiceNode *s = &poly_bank[v];
+            if (s->layer == layer && s->is_gate_open && s->active_note == note && s->src == src)
+                sus_voices |= (uint8_t)(1u << v);
+        }
+        return;
+    }
+    note_off_layer(layer, note, src);
+}
+
 static void note_off(uint8_t note, uint8_t src)
 {
-    for (uint8_t l = 0; l < NLAYER; l++) {
-        held_remove(l, note, src);
-        note_off_layer(l, note, src);
+    for (uint8_t l = 0; l < NLAYER; l++)
+        layer_note_off(l, note, src);
+}
+
+SYNTH_COLD static int held_has(uint8_t layer, uint8_t note, uint8_t src)
+{
+    for (uint8_t i = 0; i < held_count[layer]; i++)
+        if (held[layer][i].note == note && held[layer][i].src == src) return 1;
+    return 0;
+}
+
+/* A layer on a MIDI channel (SINGL: layer 1 only), as the Program Change and the controllers find it. */
+static int layer_on_channel(uint8_t layer, uint8_t channel)
+{
+    return (perf_state.midi_ch[layer] & 0x0Fu) == channel && (layer == 0u || rt_perf_mode() != PERF_SINGL_SYNTH);
+}
+
+/* SUSTAIN up or down on one layer. Up: each voice it held whose key is not down again is let go (a mono layer falls
+ * back to a key still down, as a note-off does) */
+SYNTH_COLD static void sustain_set(uint8_t layer, uint8_t down)
+{
+    sus_on[layer] = down;
+    if (down) return;
+    for (int v = 0; v < POLYPHONY_VOICES; v++) {
+        if (!(sus_voices & (1u << v))) continue;
+        SynthVoiceNode *s = &poly_bank[v];
+        if (s->layer != layer) continue;
+        sus_voices &= (uint8_t)~(1u << v);
+        if (s->is_gate_open && !held_has(layer, s->active_note, s->src))
+            note_off_layer(layer, s->active_note, s->src);
     }
+}
+
+/* ALL NOTES OFF (CC 123, and the mode messages 124..127): the keys' notes on the layer, as if every key were let go
+ * (the pedal still holds them, as the MIDI spec has it). The sequencers' notes play on. */
+SYNTH_COLD static void layer_keys_off(uint8_t layer)
+{
+    for (uint8_t i = held_count[layer]; i-- > 0u;)
+        if (held[layer][i].src == VSRC_KEYS) held_remove(layer, held[layer][i].note, VSRC_KEYS);
+    for (int v = 0; v < POLYPHONY_VOICES; v++) {
+        const SynthVoiceNode *s = &poly_bank[v];
+        if (s->layer == layer && s->is_gate_open && s->src == VSRC_KEYS)
+            layer_note_off(layer, s->active_note, VSRC_KEYS);
+    }
+}
+
+/* ALL SOUND OFF (CC 120): every voice of the layer, whoever struck it, fades out over a few ms (a choke, no click);
+ * the effects' tails ring on */
+SYNTH_COLD static void layer_sound_off(uint8_t layer)
+{
+    held_count[layer] = 0;
+    for (int v = 0; v < POLYPHONY_VOICES; v++) {
+        SynthVoiceNode *s = &poly_bank[v];
+        if (s->layer != layer || voice_is_free(s)) continue;
+        sus_voices &= (uint8_t)~(1u << v);
+        s->is_gate_open = 0;
+        if (!s->choke) {
+            s->choke = 1;
+            s->choke_q15 = 32767;
+        }
+    }
+}
+
+/* A Control Change the map acts on itself; 0 hands it on to midi_io (the wheel, CUSTOM CC1 / CC2). A CUSTOM CC set to
+ * one of these numbers keeps it (GLOBAL's choice wins), the channel mode messages excepted. */
+SYNTH_COLD static int cc_apply(uint8_t channel, uint8_t cc, uint8_t value)
+{
+    if (cc < 120u && ((perf_state.cc1_num != 0u && cc == perf_state.cc1_num) ||
+                      (perf_state.cc2_num != 0u && cc == perf_state.cc2_num)))
+        return 0;
+    switch (cc) {
+    case 0u:                                       /* BANK SELECT MSB: what the next Program Change loads */
+        if (value < SYNTH_PCBANK_COUNT) pc_bank[channel] = value;
+        return 1;
+    case 32u:                                      /* BANK SELECT LSB: one bank of each kind, nothing to pick */
+        return 1;
+    case 64u:                                      /* SUSTAIN */
+        for (uint8_t l = 0; l < NLAYER; l++)
+            if (layer_on_channel(l, channel) && sus_on[l] != (value >= 64u)) sustain_set(l, (uint8_t)(value >= 64u));
+        return 1;
+    case 120u:                                     /* ALL SOUND OFF */
+        for (uint8_t l = 0; l < NLAYER; l++)
+            if (layer_on_channel(l, channel)) layer_sound_off(l);
+        return 1;
+    case 121u:                                     /* RESET ALL CONTROLLERS (RP-015: the bank and the volumes stay) */
+        master_midi.mod_wheel_val = 0;
+        master_midi.aftertouch_val = 0;
+        master_midi.pitch_bend_val = 0;
+        master_midi.custom_cc1_val = master_midi.custom_cc2_val = 0;
+        for (uint8_t l = 0; l < NLAYER; l++) {
+            if (!layer_on_channel(l, channel)) continue;
+            if (sus_on[l]) sustain_set(l, 0u);
+            for (int v = 0; v < POLYPHONY_VOICES; v++)
+                if (poly_bank[v].layer == l) poly_bank[v].poly_at = 0;
+        }
+        return 1;
+    case 122u:                                     /* LOCAL CONTROL: the panel's keys always play */
+        return 1;
+    default:
+        if (cc >= 123u) {                          /* ALL NOTES OFF; OMNI OFF / ON, MONO, POLY count as one */
+            for (uint8_t l = 0; l < NLAYER; l++)
+                if (layer_on_channel(l, channel)) layer_keys_off(l);
+            return 1;
+        }
+        if (cc == 1u)                              /* the wheel: midi_io's */
+            return 0;
+        if (cc == 99u || cc == 98u || cc == 101u || cc == 100u) {   /* NRPN / RPN number: MSB (odd), LSB (even) */
+            par_kind[channel] = cc >= 100u ? SYNTH_CCK_RPN : SYNTH_CCK_NRPN;
+            if (cc & 1u) par_hi[channel] = value;
+            else par_lo[channel] = value;
+            par_dm[channel] = 0xFFu;
+            return 1;
+        }
+        if (!instrument.cc_in)                     /* GLOBAL CC IN off: the map, NRPNs and RPNs not taken */
+            return 1;
+        if (cc == 6u || cc == 38u) {               /* DATA ENTRY MSB, LSB: the selected parameter (not the null 127 /
+                                                    * 127). The LSB refines the MSB before it (a value past 127: the
+                                                    * tempo, the tuning); an MSB alone is LSB 0 */
+            if (par_kind[channel] == SYNTH_CCK_CC || (par_hi[channel] & par_lo[channel]) == 127u)
+                return 1;
+            if (cc == 6u)
+                par_dm[channel] = value;
+            else if (par_dm[channel] == 0xFFu)
+                return 1;                          /* (an LSB with no MSB: nothing to refine) */
+            cc_queue((uint8_t)(channel | par_kind[channel] << 4), par_hi[channel], par_lo[channel], par_dm[channel],
+                     cc == 6u ? 0u : value);
+            return 1;
+        }
+        if (cc == 96u || cc == 97u)                /* INCREMENT, DECREMENT: not taken */
+            return 1;
+        cc_queue(channel, cc, 0u, value, 0u);      /* the sound's controllers: for the panel (synth_cc_take) */
+        return 1;
+    }
+}
+
+SYNTH_COLD int synth_cc_take(uint8_t e[5])
+{
+    const uint8_t *q;
+    if (cc_qt == cc_qh) return 0;
+    q = cc_q[cc_qt % CC_Q_MAX];
+    e[0] = q[0];
+    e[1] = q[1];
+    e[2] = q[2];
+    e[3] = q[3];
+    e[4] = q[4];
+    cc_qt++;                                       /* (after the read: the audio side may overwrite q[3] till then) */
+    return 1;
+}
+
+SYNTH_COLD int synth_pc_take(uint8_t *bank, uint8_t *slot)
+{
+    uint8_t b = pc_req_bank;
+    if (b == 0xFFu) return 0;
+    *slot = pc_req_slot;
+    *bank = b;
+    pc_req_bank = 0xFFu;
+    return 1;
 }
 
 /* Voice limits and architecture changes (5.3, 4.0): a voice outside its layer's range (the limit fell: an
@@ -518,7 +727,14 @@ SYNTH_COLD void synth_restart(void)
         global_lfo1_state[l].envelope_amp_q15 = 32767;
     }
     for (unsigned l = 0; l < NLAYER; l++)
-        held_count[l] = 0;                     /* (the voices are gone: a key still down at restart has no note to stack) */
+        held_count[l] = sus_on[l] = 0;         /* (the voices are gone: a key still down at restart has no note to stack) */
+    sus_voices = 0;
+    for (unsigned c = 0; c < 16u; c++) {
+        pc_bank[c] = SYNTH_PCBANK_PATCH;
+        par_kind[c] = SYNTH_CCK_CC;                /* (no NRPN / RPN selected) */
+        par_dm[c] = 0xFFu;
+    }
+    pc_req_bank = 0xFFu;
     seq_qn = 0;
     ext_h = ext_n = 0;
     maq_init(&maq, seq_lanes, &perf_state, rt_seq_out);     /* its notes and controllers take the MIDI path */
@@ -646,10 +862,20 @@ SYNTH_COLD static void midi_apply(uint8_t status, uint8_t data1, uint8_t data2, 
             v->poly_at = data2 & 0x7Fu;
             v->poly_seen = 1u;
         }
-    } else if (kind == 0xC0u) {                    /* Program Change: the stored patch into every layer on this channel */
-        for (uint8_t l = 0; l < NLAYER; l++)
-            if ((perf_state.midi_ch[l] & 0x0Fu) == channel && (l == 0u || rt_perf_mode() != PERF_SINGL_SYNTH))
-                patch_load(l, data1 & 0x7Fu);
+    } else if (kind == 0xC0u) {                    /* Program Change: what the channel's BANK SELECT picked */
+        uint8_t bank = pc_bank[channel];
+        if (!instrument.pc_in) {
+            /* (GLOBAL PC IN off) */
+        } else if (bank == SYNTH_PCBANK_PATCH) {          /* the stored patch into every layer on this channel */
+            for (uint8_t l = 0; l < NLAYER; l++)
+                if (layer_on_channel(l, channel))
+                    patch_load(l, data1 & 0x7Fu);
+        } else if (channel == (perf_state.midi_ch[0] & 0x0Fu)) {   /* the rest: Layer 1's channel, the panel loads */
+            pc_req_slot = data1 & 0x7Fu;
+            pc_req_bank = bank;
+        }
+    } else if (kind == 0xB0u && cc_apply(channel, data1 & 0x7Fu, data2 & 0x7Fu)) {
+        /* (the map's own controllers) */
     } else {
         midi_parse_three_bytes(&master_midi, status, data1, data2);
     }

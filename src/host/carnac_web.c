@@ -154,6 +154,7 @@ static void syn_unlock(void) {}
 uint8_t pt_state(void) { return PT_IDLE; }          /* no PERF TEST here */
 
 #include "hardware/synth_panel.c"
+static void syn_sysex_out(const uint8_t *p, uint32_t n) { (void)p; (void)n; }   /* (no MIDI out in the browser yet) */
 
 /* ------------------------------------------------------------- audio --- */
 /* synth_main_fm1.c's render path: MIDI in, a 256-frame block, the MASTER level (Q15 full scale at 2^22 of the

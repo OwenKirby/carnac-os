@@ -29,7 +29,7 @@ static void test_table(void)
         int len = WT_LEVEL_SAMPLES[level];
         for (int b = 0; b < NUM_BANKS; b++) {
             for (int f = 0; f < NUM_MORPH_STEPS; f++) {
-                const int16_t *frame = wavetable_frame(b, f, level);
+                const int8_t *frame = wavetable_frame(b, f, level);
                 long sum = 0;
                 double energy = 0.0;
                 int peak = 0;
@@ -87,7 +87,7 @@ static int all_sine(void)
 static void test_store(void)
 {
     CHECK(wavetable_attached(), "host build does not start attached");
-    CHECK(wavetable_frame(1, 3, 0) == (const int16_t *)(wavetable_image_host + WT_STORE_DATA_OFF) + (1 * 8 + 3) * 1024,
+    CHECK(wavetable_frame(1, 3, 0) == (const int8_t *)(wavetable_image_host + WT_STORE_DATA_OFF) + (1 * 8 + 3) * 1024,
           "frame (1, 3) is not where the image puts it");
     CHECK(wavetable_attach(wavetable_image_host) == 0, "the host image does not attach");
 
@@ -106,7 +106,7 @@ static void test_store(void)
 
     memcpy(image_copy, wavetable_image_host, sizeof image_copy);          /* a copy elsewhere attaches there */
     CHECK(wavetable_attach(image_copy) == 0 && wavetable_frame(13, 7, 6) ==
-              (const int16_t *)(void *)(image_copy + WT_STORE_DATA_OFF) + (13 * 8 + 7) * 1024 + 1008,
+              (const int8_t *)(void *)(image_copy + WT_STORE_DATA_OFF) + (13 * 8 + 7) * 1024 + 1008,
           "a good copy does not attach");
     CHECK(wavetable_attach(image_copy + 2) == -1, "misaligned image accepted");
     CHECK(wavetable_attach(wavetable_image_host) == 0, "the host image does not attach again");

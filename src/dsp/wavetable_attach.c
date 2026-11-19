@@ -3,7 +3,8 @@
  * Every build starts attached to the image linked in as wavetables_image.c: on the FM1 since 2026-10-16 it sits in the
  * firmware and is read in place through XIP (it was uploaded over USB-MIDI to the store flash at WT_STORE_BASE, which
  * now holds the saved presets). wavetable_attach checks an image's header and CRC; without a valid one every bank
- * plays wavetable_sine, like a sampler with its sample gone: the synth still sounds, in tune.
+ * plays wavetable_sine8, like a sampler with its sample gone: the synth still sounds, in tune. Since 2026-11-18 the
+ * frames are 8-bit (wavetables.h WT_STORE_VERSION 2), and the whole image is linked again (no spilled frames).
  * Since 2026-10-26 the image holds the banks from 1 (8 of them since 2026-11-05: Bone Flute, the three vocal banks and
  * the five the VCO plays as well retired, Overtone Halo, Passage Tomb and Aurora new; 14 before, 16 until Menhir and Hollow Reeds retired, 2026-10-27); bank 0 (Foundations) and,
  * since 2026-11-03, the image's last 6 frames on the FM1 (WT_IMAGE_SPILLED) are in the store flash's wavetable areas
@@ -12,28 +13,22 @@
 #include "wavetables.h"
 #include "dsp_cold.h"
 
-extern const uint8_t wavetable_image_host[WT_IMAGE_LINKED_LEN];  /* wavetables_image.c (the FM1: spilled frames out) */
-#define WT_START(b, f) ((const int16_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF) + \
+extern const uint8_t wavetable_image_host[WT_STORE_IMAGE_LEN];   /* wavetables_image.c */
+#define WT_START(b, f) ((const int8_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF) + \
                         ((b) * NUM_MORPH_STEPS + (f)) * WT_FRAME_SAMPLES)
 #define WT_START_BANK(b) WT_START(b, 0), WT_START(b, 1), WT_START(b, 2), WT_START(b, 3), \
                          WT_START(b, 4), WT_START(b, 5), WT_START(b, 6), WT_START(b, 7)
-#define WT_SINE_BANK wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine,                      wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine
+#define WT_SINE_BANK wavetable_sine8, wavetable_sine8, wavetable_sine8, wavetable_sine8, \
+                     wavetable_sine8, wavetable_sine8, wavetable_sine8, wavetable_sine8
 _Static_assert(NUM_MORPH_STEPS == 8 && NUM_BANKS == 9 && WT_BANK_FIRST_IMAGE == 1 && NUM_IMAGE_BANKS == 8,
                "WT_START_BANK / the initialiser below list every frame");
 #define WT_IMAGE_FRAMES (wavetable_frames + WT_BANK_FIRST_IMAGE * NUM_MORPH_STEPS)
 
-const int16_t *wavetable_frames[NUM_BANKS * NUM_MORPH_STEPS] = {
+const int8_t *wavetable_frames[NUM_BANKS * NUM_MORPH_STEPS] = {
     WT_SINE_BANK,                                          /* bank 0 until its image is attached */
     WT_START_BANK(0), WT_START_BANK(1), WT_START_BANK(2), WT_START_BANK(3), WT_START_BANK(4), WT_START_BANK(5),
-    WT_START_BANK(6),
-#ifdef WT_IMAGE_SPILLED                                   /* the last bank's frames 3..8: an area's, the sine until then */
-    WT_START(7, 0), WT_START(7, 1), wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine, wavetable_sine,
-    wavetable_sine,
-#else
-    WT_START_BANK(7),
-#endif
+    WT_START_BANK(6), WT_START_BANK(7),
 };
-_Static_assert(WT_SPILL_FRAMES == 6u, "the initialiser above leaves out the last 6 frames");
 static int wt_ok = 1;
 static uint32_t wt_area_len[WT_AREAS];                     /* each area's attached image (0: none) */
 static uint8_t wt_area_idx[WT_AREAS][WT_AREA_MAX_FRAMES], wt_area_n[WT_AREAS];   /* the frames it holds */
@@ -57,7 +52,7 @@ void wavetable_detach(void)
 {
     wt_ok = 0;
     for (uint32_t i = 0; i < WT_LINKED_FRAMES; i++)
-        WT_IMAGE_FRAMES[i] = wavetable_sine;
+        WT_IMAGE_FRAMES[i] = wavetable_sine8;
 }
 
 int wavetable_attached(void) { return wt_ok; }
@@ -75,12 +70,9 @@ int wavetable_attach(const uint8_t *image)
         h->levels != WT_LEVELS || h->data_off != WT_STORE_DATA_OFF || h->data_len != WT_STORE_DATA_LEN ||
         h->set_id != wavetable_set_id)
         return -3;                                         /* an image of another bank list: upload the matching one */
-#ifndef WT_IMAGE_SPILLED                                   /* (spilled: the CRC covers frames not linked; the
-                                                            * firmware package's own checks cover the rest) */
     if (wavetable_crc32(0, image + WT_STORE_DATA_OFF, WT_STORE_DATA_LEN) != h->crc)
         return -4;                                         /* damaged or half-written data */
-#endif
-    const int16_t *data = (const int16_t *)(const void *)(image + WT_STORE_DATA_OFF);
+    const int8_t *data = (const int8_t *)(const void *)(image + WT_STORE_DATA_OFF);
     for (uint32_t i = 0; i < WT_LINKED_FRAMES; i++)
         WT_IMAGE_FRAMES[i] = data + i * WT_FRAME_SAMPLES;
     wt_ok = 1;
@@ -93,7 +85,7 @@ SYNTH_COLD int wavetable_area_check(const uint8_t *img, uint32_t size)
     if (!img || ((uintptr_t)img & 3u) || size < WT_AREA_HDR_SIZE || h->magic != WT_AREA_MAGIC)
         return -1;
     if (h->version != WT_AREA_VERSION || h->hcrc != wavetable_crc32(0, h, sizeof *h - 4u) || !h->count ||
-        h->count > WT_AREA_MAX_FRAMES || h->len != WT_AREA_HDR_SIZE + h->count * WT_FRAME_SAMPLES * 2u ||
+        h->count > WT_AREA_MAX_FRAMES || h->len != WT_AREA_HDR_SIZE + h->count * WT_FRAME_SAMPLES ||
         h->len > size)
         return -2;
     for (uint32_t i = 0; i < h->count; i++)
@@ -106,13 +98,13 @@ SYNTH_COLD int wavetable_area_check(const uint8_t *img, uint32_t size)
     return h->count;
 }
 
-/* a frame no area holds: bank 0's the sine, the image's its linked frame (or the sine, spilled or no image) */
-static const int16_t *wt_frame_home(uint32_t f)
+/* a frame no area holds: bank 0's the sine, the image's its linked frame (or the sine, no image) */
+static const int8_t *wt_frame_home(uint32_t f)
 {
     uint32_t i = f - WT_BANK_FIRST_IMAGE * NUM_MORPH_STEPS;
     if (f < WT_BANK_FIRST_IMAGE * NUM_MORPH_STEPS || i >= WT_LINKED_FRAMES || !wt_ok)
-        return wavetable_sine;
-    return (const int16_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF) + i * WT_FRAME_SAMPLES;
+        return wavetable_sine8;
+    return (const int8_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF) + i * WT_FRAME_SAMPLES;
 }
 
 SYNTH_COLD void wavetable_area_detach(uint32_t slot)
@@ -132,7 +124,7 @@ SYNTH_COLD int wavetable_area_attach(uint32_t slot, const uint8_t *img, uint32_t
     wavetable_area_detach(slot);
     if (n < 0)
         return n;
-    const int16_t *data = (const int16_t *)(const void *)(img + WT_AREA_HDR_SIZE);
+    const int8_t *data = (const int8_t *)(const void *)(img + WT_AREA_HDR_SIZE);
     for (int i = 0; i < n; i++) {                          /* one aligned pointer each: the audio sees old or new */
         wt_area_idx[slot][i] = h->idx[i];
         wavetable_frames[h->idx[i]] = data + i * WT_FRAME_SAMPLES;

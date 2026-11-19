@@ -1,7 +1,7 @@
 /* Host test of the FM1 wavetable image and its editor commands (src/hardware/wt_store_fm1.c) since 2026-10-16, when
  * the image moved into the firmware: the banks start attached to the linked image (whose header and CRC must hold),
- * and the old upload, replayed from wt_store_upload.py's .syx file, is refused frame by frame without touching the
- * flash, which holds the saved presets now.
+ * and the old upload, replayed from wt_store_upload.py's .syx file, goes unanswered frame by frame without touching
+ * the flash, which holds the saved presets now (2026-11-18: the upload and sample-slot commands are gone, not refused).
  *   python src/hardware/wt_store_upload.py syx upload.syx
  *   gcc -O1 -Wall -Wextra -Isrc -Isrc/dsp -Isrc/hardware src/host/test_wt_store.c src/dsp/wavetable_attach.c \
  *       src/dsp/wavetables.c src/dsp/wavetables_image.c -o test_wt_store && ./test_wt_store upload.syx
@@ -15,7 +15,8 @@ static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
 
 /* the stand-ins the fragment needs (synth_main_fm1.c's editor helpers) */
-enum { ED_SMP_BEGIN = 11, ED_SMP_WRITE, ED_SMP_END, ED_SMP_ERASE, ED_SMP_INFO };
+enum { ED_SMP_BEGIN = 11, ED_SMP_WRITE, ED_SMP_END, ED_SMP_ERASE, ED_SMP_INFO };   /* (X0X's, gone here) */
+enum { ED_WT_BEGIN = 96, ED_WT_WRITE, ED_WT_END };                             /* (the old upload's, gone) */
 static uint8_t reply[600];
 static uint32_t reply_n;
 static void ed_b(uint32_t v) { if (reply_n < sizeof reply) reply[reply_n++] = (uint8_t)(v & 0x7Fu); }
@@ -29,23 +30,23 @@ static void ed_str(const char *s, uint32_t max)
 
 extern const uint8_t wavetable_image_host[WT_STORE_IMAGE_LEN];
 
-/* one request: cmd + args -> the reply's rc (WT_WRITE / SMP_WRITE: after the offset), -1 when not handled */
+/* one request: cmd + args -> the reply's first byte, -1 when not handled */
 static int req(uint32_t cmd, const uint8_t *a, uint32_t na)
 {
     reply_n = 0;
     if (!ed_wt_handle(cmd, a, na)) return -1;
-    return reply[cmd == ED_WT_WRITE ? 3 : cmd == ED_SMP_WRITE ? 4 : cmd == ED_SMP_BEGIN || cmd == ED_SMP_END ? 1 : 0];
+    return reply[0];
 }
 
 static int frames_on_image(void)
 {
-    const int16_t *data = (const int16_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF);
+    const int8_t *data = (const int8_t *)(const void *)(wavetable_image_host + WT_STORE_DATA_OFF);
     for (int i = 0; i < NUM_IMAGE_BANKS * NUM_MORPH_STEPS; i++)     /* banks 1..16; bank 0 has an image of its own */
         if (wavetable_frames[WT_BANK_FIRST_IMAGE * NUM_MORPH_STEPS + i] != data + i * WT_FRAME_SAMPLES) return 0;
     return 1;
 }
 
-/* the old tool's upload, frame by frame: every frame refused (rc 1) */
+/* the old tool's upload, frame by frame: no frame answered */
 static void replay(const char *path)
 {
     FILE *f = fopen(path, "rb");
@@ -61,12 +62,12 @@ static void replay(const char *path)
             CHECK(0, "malformed frame at byte %zu", i);
             return;
         }
-        refused += req(syx[i + 4], syx + i + 5, (uint32_t)(j - i - 5)) == 1;
+        refused += req(syx[i + 4], syx + i + 5, (uint32_t)(j - i - 5)) == -1;
         count++;
         i = j + 1;
     }
     CHECK(count == 2 + (int)(WT_STORE_DATA_LEN / 256u), "the upload has %d frames", count);
-    CHECK(refused == count, "%d of the old upload's %d frames not refused", count - refused, count);
+    CHECK(refused == count, "%d of the old upload's %d frames answered", count - refused, count);
 }
 
 int main(int argc, char **argv)
@@ -75,11 +76,11 @@ int main(int argc, char **argv)
     CHECK(wavetable_attached() && frames_on_image(), "the banks do not start on the linked image");
     CHECK(wavetable_attach(wavetable_image_host) == 0 && frames_on_image(), "the linked image's header or CRC is bad");
 
-    /* the old upload: refused, and nothing changes (this build has no flash hooks at all: the fragment cannot write) */
+    /* the old upload: unanswered, and nothing changes (this build has no flash hooks at all: the fragment cannot write) */
     if (argc > 1) replay(argv[1]);
-    CHECK(req(ED_WT_BEGIN, NULL, 0) == 1 && req(ED_WT_END, NULL, 0) == 1, "WT_BEGIN / WT_END not refused");
+    CHECK(req(ED_WT_BEGIN, NULL, 0) == -1 && req(ED_WT_END, NULL, 0) == -1, "WT_BEGIN / WT_END answered");
     { uint8_t a[4] = {0, 0x20, 0, 0};
-      CHECK(req(ED_WT_WRITE, a, sizeof a) == 1 && reply[0] == 0 && reply[1] == 0x20, "WT_WRITE not refused (or offset)"); }
+      CHECK(req(ED_WT_WRITE, a, sizeof a) == -1, "WT_WRITE answered"); }
     CHECK(wavetable_attached() && frames_on_image(), "a refused upload detached the banks");
 
     /* WT_INFO: attached, NUM_BANKS, the set id, no store, the names */
@@ -89,11 +90,11 @@ int main(int argc, char **argv)
     CHECK(id == wavetable_set_id, "WT_INFO set id 0x%08X", id);
     CHECK(!strcmp((const char *)reply + 8, wavetable_bank_names[0]), "WT_INFO first name");
 
-    /* the sample slots stay refused; SMP_INFO is the glue's */
+    /* the sample slots: none of their commands answered */
     uint8_t slot = 1, w[4 + 10] = {1, 0, 8, 0};
-    CHECK(req(ED_SMP_BEGIN, &slot, 1) == 1 && req(ED_SMP_ERASE, &slot, 1) == 1 &&
-          req(ED_SMP_WRITE, w, sizeof w) == 1 && req(ED_SMP_END, &slot, 1) == 1, "a sample-slot command got through");
-    CHECK(req(ED_SMP_INFO, NULL, 0) == -1, "SMP_INFO should stay the glue's");
+    CHECK(req(ED_SMP_BEGIN, &slot, 1) == -1 && req(ED_SMP_ERASE, &slot, 1) == -1 &&
+          req(ED_SMP_WRITE, w, sizeof w) == -1 && req(ED_SMP_END, &slot, 1) == -1 && req(ED_SMP_INFO, NULL, 0) == -1,
+          "a sample-slot command was answered");
 
     printf(failures ? "%d wavetable checks failed\n" : "wavetable image tests: all passed\n", failures);
     return failures;

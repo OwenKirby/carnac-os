@@ -4,12 +4,12 @@ arch 0 noise 1 slots 0  cfdf60bb
 arch 0 noise 1 slots 1  6beea62a
 arch 0 noise 2 slots 0  4bb2f871
 arch 0 noise 2 slots 1  c67403ab
-arch 1 noise 0 slots 0  35d5df3b
-arch 1 noise 0 slots 1  6e0d4f59
-arch 1 noise 1 slots 0  11a078b2
-arch 1 noise 1 slots 1  ea251745
-arch 1 noise 2 slots 0  cb0e8eb0
-arch 1 noise 2 slots 1  73f9cd2a
+arch 1 noise 0 slots 0  0d86af90
+arch 1 noise 0 slots 1  b65043a4
+arch 1 noise 1 slots 0  3943eae7
+arch 1 noise 1 slots 1  9c772c57
+arch 1 noise 2 slots 0  29fff1a5
+arch 1 noise 2 slots 1  e2d2f890
 arch 2 noise 0 slots 0  7d91f0e3
 arch 2 noise 0 slots 1  08fbcba7
 arch 2 noise 1 slots 0  1a5486b5
@@ -22,47 +22,47 @@ arch 3 noise 1 slots 0  589a079f
 arch 3 noise 1 slots 1  0572df8c
 arch 3 noise 2 slots 0  e541d862
 arch 3 noise 2 slots 1  38276c2b
-arch 4 noise 0 slots 0  0a048f09
-arch 4 noise 0 slots 1  1bc3df79
-arch 4 noise 1 slots 0  b2ff1e10
-arch 4 noise 1 slots 1  f3d29233
-arch 4 noise 2 slots 0  a28ffbc3
-arch 4 noise 2 slots 1  0296e7a8
+arch 4 noise 0 slots 0  eb66e356
+arch 4 noise 0 slots 1  8f591ebf
+arch 4 noise 1 slots 0  b891b3ef
+arch 4 noise 1 slots 1  ee8994be
+arch 4 noise 2 slots 0  52b5ddf4
+arch 4 noise 2 slots 1  53e7be49
 arch 5 noise 0 slots 0  c85a04ce
 arch 5 noise 0 slots 1  3d6da778
 arch 5 noise 1 slots 0  d0d14623
 arch 5 noise 1 slots 1  14248388
 arch 5 noise 2 slots 0  57d1b0f6
 arch 5 noise 2 slots 1  a1edceb4
-arch 6 noise 0 slots 0  4aafa165
-arch 6 noise 0 slots 1  b768ade1
-arch 6 noise 1 slots 0  5ad1f228
-arch 6 noise 1 slots 1  044f64bd
-arch 6 noise 2 slots 0  6dfbe620
-arch 6 noise 2 slots 1  8d958343
+arch 6 noise 0 slots 0  c3e1321c
+arch 6 noise 0 slots 1  b7e43a82
+arch 6 noise 1 slots 0  50c3cc31
+arch 6 noise 1 slots 1  4e048cb9
+arch 6 noise 2 slots 0  3ba565f6
+arch 6 noise 2 slots 1  60b156a0
 arch 7 noise 0 slots 0  e072fb01
 arch 7 noise 0 slots 1  41ef9da0
 arch 7 noise 1 slots 0  bc5b8f2d
 arch 7 noise 1 slots 1  843e28d3
 arch 7 noise 2 slots 0  4a8bd932
 arch 7 noise 2 slots 1  69c8c84c
-dual layer  f51468f9
+dual layer  075774a0
 seq ext 0 block 32  ead38c40
 seq ext 0 block 7  a6ed6ecd
 seq ext 0 block 128  d6fd483d
 seq ext 1 block 32  7f993258
 seq ext 1 block 7  1703e36f
 seq ext 1 block 128  949cb763
-mfx L1 1 L2 1  5077eed5
-mfx L1 2 L2 2  d2e7adc8
-mfx L1 3 L2 3  2cdf4c37
-mfx L1 4 L2 4  cb1547c1
-mfx L1 5 L2 5  46a557c7
-mfx L1 6 L2 6  1523cde5
-mfx L1 7 L2 7  8bb00321
-mfx L1 8 L2 8  d6f2ac23
-mfx L1 9 L2 9  5b9e17d1
-mfx L1 10 L2 10  86b4555c
-mfx L1 11 L2 11  a66ee8c7
-mfx L1 12 L2 12  2c0cc16e
-mfx L1 2 L2 0  37494a93
+mfx L1 1 L2 1  1f39f28b
+mfx L1 2 L2 2  1e97a617
+mfx L1 3 L2 3  e2380a10
+mfx L1 4 L2 4  ade4ebe7
+mfx L1 5 L2 5  20206737
+mfx L1 6 L2 6  ac0320a6
+mfx L1 7 L2 7  b4b60fab
+mfx L1 8 L2 8  75a62b6d
+mfx L1 9 L2 9  0c611006
+mfx L1 10 L2 10  19809a6a
+mfx L1 11 L2 11  211d40ea
+mfx L1 12 L2 12  9697af7a
+mfx L1 2 L2 0  ef6286ce

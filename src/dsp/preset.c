@@ -10,7 +10,7 @@ volatile uint8_t engine_load_count[NLAYER];
 MasterPerformancePreset perf_state;
 SequencerLane seq_lanes[SEQ_NLANE];
 ArpState arp_state;
-InstrumentSettings instrument = {64u, VELCURVE_LINEAR, CLKOUT_OFF};
+InstrumentSettings instrument = INSTRUMENT_DEFAULTS;
 
 /* GLOBAL > VEL CURVE on an incoming note-on's velocity 1..127: SOFT lifts the low end (2v - v^2/127), HARD presses it
  * down (v^2/127), LINEAR leaves it; never 0 (that would be a note-off) */

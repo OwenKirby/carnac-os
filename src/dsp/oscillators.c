@@ -532,21 +532,18 @@ int32_t wt_read_morph(int bank, int morph_q12, uint8_t level, uint32_t phase) {
     int32_t morph_frac_q15 = (morph_q12 & 0xFFF) << 3;
     if (morph >= NUM_MORPH_STEPS - 1) { morph = NUM_MORPH_STEPS - 1; morph_frac_q15 = 0; }
 
-    const int16_t *frame = wavetable_frame(bank, morph, level);
+    const int8_t *frame = wavetable_frame(bank, morph, level);
     uint32_t shift = WT_LEVEL_SHIFT[level];
     uint32_t index_low = phase >> shift;
     uint32_t index_high = (index_low + 1u) & (WT_LEVEL_SAMPLES[level] - 1u);
     int32_t fraction_q15 = (int32_t)((phase & ((1u << shift) - 1u)) >> (shift - 15u));
 
-    int32_t s_low_q15 = frame[index_low];
-    int32_t a_q15 = s_low_q15 + (((frame[index_high] - s_low_q15) * fraction_q15) >> 15);
+    int32_t a_q15 = wt_lerp8(frame, index_low, index_high, fraction_q15);
     if (morph_frac_q15 == 0) return a_q15;
 
     // The next frame of the same level, same offsets (not frame + WT_FRAME_SAMPLES: without a store image every
     // frame is the one sine, wavetable_attach.c)
-    const int16_t *next = wavetable_frame(bank, morph + 1, level);
-    s_low_q15 = next[index_low];
-    int32_t b_q15 = s_low_q15 + (((next[index_high] - s_low_q15) * fraction_q15) >> 15);
+    int32_t b_q15 = wt_lerp8(wavetable_frame(bank, morph + 1, level), index_low, index_high, fraction_q15);
     return a_q15 + (((b_q15 - a_q15) * morph_frac_q15) >> 15);
 }
 
@@ -693,7 +690,7 @@ int16_t osc_render(WavetableOsc *osc) {
 /* SPREAD with all four playheads live: osc_render's sum and crossfade unrolled over the block, the phases and steps
  * held in locals (memory loads are the cost on the FM1 core). Bit-exact with osc_render. */
 static void osc_render_spread4(WavetableOsc *osc, int32_t *out, int n) {
-    const int16_t *fa = osc->frame_a, *fb = osc->frame_b;
+    const int8_t *fa = osc->frame_a, *fb = osc->frame_b;
     const int32_t mf = osc->morph_frac_q15, xf = osc->xfade_q15;
     const uint32_t o0 = osc->rd_off[0], o1 = osc->rd_off[1], o2 = osc->rd_off[2], o3 = osc->rd_off[3], oc = osc->rd_off[4];
     const uint32_t h0 = osc->rd_shift[0], h1 = osc->rd_shift[1], h2 = osc->rd_shift[2], h3 = osc->rd_shift[3],
@@ -739,18 +736,16 @@ void osc_render_block(WavetableOsc *osc, int32_t *out, int n) {
         return;
     }
     /* wt_read_frames on the undetuned playhead, unrolled over the block (the phase steps before each read) */
-    const int16_t *a = osc->frame_a + osc->rd_off[4], *b = osc->frame_b + osc->rd_off[4];
+    const int8_t *a = osc->frame_a + osc->rd_off[4], *b = osc->frame_b + osc->rd_off[4];
     uint32_t phase = osc->center_phase, step = osc->center_step, shift = osc->rd_shift[4], mask = osc->rd_mask[4];
     int32_t mf = osc->morph_frac_q15;
     for (int i = 0; i < n; i++) {
         phase += step;
         uint32_t i0 = phase >> shift, i1 = (i0 + 1u) & mask;
         int32_t fr_q15 = (int32_t)((phase << (32u - shift)) >> 17);
-        int32_t s = a[i0];
-        int32_t va = s + (((a[i1] - s) * fr_q15) >> 15);
+        int32_t va = wt_lerp8(a, i0, i1, fr_q15);
         if (mf != 0) {
-            s = b[i0];
-            int32_t vb = s + (((b[i1] - s) * fr_q15) >> 15);
+            int32_t vb = wt_lerp8(b, i0, i1, fr_q15);
             va = va + (((vb - va) * mf) >> 15);
         }
         out[i] = (int16_t)va;
@@ -763,7 +758,7 @@ void osc_render_block(WavetableOsc *osc, int32_t *out, int n) {
  * and the four playheads and steps skulpt_spread_fixed leaves at spread 0), with the frames and the phase held in
  * locals; the mip level still follows each sample's frequency. A bank or the VCO, not a PCM wave. */
 void osc_render_fm_block(WavetableOsc *osc, const int32_t *w1, int depth, uint32_t freq2_q16, int32_t *out, int n) {
-    const int16_t *fa = osc->frame_a, *fb = osc->frame_b;
+    const int8_t *fa = osc->frame_a, *fb = osc->frame_b;
     const int32_t mf = osc->morph_frac_q15;
     const int vco = osc->vco;
     uint32_t ph = osc->center_phase, step = osc->step_increments[0];
@@ -801,7 +796,7 @@ void osc_render_pm_block(WavetableOsc *osc, const int32_t *w1, int depth, int32_
             out[i] = (int16_t)an_one(osc, ph + (uint32_t)((int32_t)(int16_t)w1[i] * depth * 258), step);
         }
     } else {
-        const int16_t *fa = osc->frame_a, *fb = osc->frame_b;
+        const int8_t *fa = osc->frame_a, *fb = osc->frame_b;
         const int32_t mf = osc->morph_frac_q15;
         const uint32_t off = osc->rd_off[4], sh = osc->rd_shift[4], mask = osc->rd_mask[4];
         for (int i = 0; i < n; i++) {

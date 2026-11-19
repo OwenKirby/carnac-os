@@ -1,0 +1,283 @@
+# The fixed MIDI numbers (src/host/test_nrpn_map.c): nrpn MSB LSB / cc number 0, the page, its item, the control.
+# Frozen at V1: lines are only ever added. K1..K4: the page's knobs by position.
+nrpn   0   0  OSC1       0  K1
+nrpn   0   1  OSC1       1  K2
+nrpn   0   2  OSC1       2  K3
+nrpn   0   3  OSC1       3  K4
+nrpn   0   4  OSC1       4  WAVE
+nrpn   0   5  OSC1       5  ENV3>SCAN
+nrpn   0   6  OSC1       6  KEY TRACK
+nrpn   1   0  OSC2       0  K1
+nrpn   1   1  OSC2       1  K2
+nrpn   1   2  OSC2       2  K3
+nrpn   1   3  OSC2       3  K4
+nrpn   1   4  OSC2       4  WAVE
+nrpn   1   5  OSC2       5  ENV3>SCAN
+nrpn   1   6  OSC2       6  FINE
+nrpn   1   7  OSC2       7  KEY TRACK
+nrpn   1   8  OSC2       8  OSC SYNC
+nrpn   2   0  OSCMIX     0  K1
+nrpn   2   1  OSCMIX     1  K2
+nrpn   2   2  OSCMIX     2  K3
+nrpn   2   3  OSCMIX     3  K4
+nrpn   2   4  OSCMIX     4  XMOD TYPE
+nrpn   2   5  OSCMIX     5  NOISE COLOUR
+nrpn   2   6  OSCMIX     6  COL MOD
+nrpn   2   7  OSCMIX     7  HARMONIC
+nrpn   2   8  OSCMIX     8  LEVEL MOD
+nrpn   2   9  OSCMIX     9  NOISE LEVEL
+nrpn   2  10  OSCMIX    10  R SCAN OFFSET
+nrpn   2  11  OSCMIX    11  SUB WAVE
+nrpn   3   0  FILTER1    0  K1
+nrpn   3   1  FILTER1    1  K2
+nrpn   3   2  FILTER1    2  K3
+nrpn   3   3  FILTER1    3  K4
+nrpn   3   4  FILTER1    4  DRIVE
+nrpn   3   5  FILTER1    5  FLAVOUR
+nrpn   3   6  FILTER1    6  KEY TRACK
+nrpn   4   0  FILTER2    0  K1
+nrpn   4   1  FILTER2    1  K2
+nrpn   4   2  FILTER2    2  K3
+nrpn   4   3  FILTER2    3  K4
+nrpn   4   4  FILTER2    4  DRIVE
+nrpn   4   5  FILTER2    5  FLAVOUR
+nrpn   4   6  FILTER2    6  KEY TRACK
+nrpn   5   0  FLTMIX     0  K1
+nrpn   5   1  FLTMIX     1  K2
+nrpn   5   2  FLTMIX     2  K3
+nrpn   5   3  FLTMIX     3  K4
+nrpn   6   0  ENV1       0  K1
+nrpn   6   1  ENV1       1  K2
+nrpn   6   2  ENV1       2  K3
+nrpn   6   3  ENV1       3  K4
+nrpn   6   4  ENV1       4  VEL > LEVEL
+nrpn   6   5  ENV1       5  VEL > ATTACK
+nrpn   6   6  ENV1       6  KEY > TIME
+nrpn   6   7  ENV1       7  RETRIG RATE
+nrpn   6   8  ENV1       8  RETRIG SYNC
+nrpn   6   9  ENV1       9  LEGATO
+nrpn   6  10  ENV1      10  AUTO DECAY
+nrpn   7   0  ENV2       0  K1
+nrpn   7   1  ENV2       1  K2
+nrpn   7   2  ENV2       2  K3
+nrpn   7   3  ENV2       3  K4
+nrpn   7   4  ENV2       4  VEL > LEVEL
+nrpn   7   5  ENV2       5  VEL > ATTACK
+nrpn   7   6  ENV2       6  KEY > TIME
+nrpn   7   7  ENV2       7  RETRIG RATE
+nrpn   7   8  ENV2       8  RETRIG SYNC
+nrpn   7   9  ENV2       9  LEGATO
+nrpn   7  10  ENV2      10  AUTO DECAY
+nrpn   7  11  ENV2      11  INVERT
+nrpn   8   0  ENV3       0  K1
+nrpn   8   1  ENV3       1  K2
+nrpn   8   2  ENV3       2  K3
+nrpn   8   3  ENV3       3  K4
+nrpn   8   4  ENV3       4  VEL > LEVEL
+nrpn   8   5  ENV3       5  VEL > ATTACK
+nrpn   8   6  ENV3       6  KEY > TIME
+nrpn   8   7  ENV3       7  RETRIG RATE
+nrpn   8   8  ENV3       8  RETRIG SYNC
+nrpn   8   9  ENV3       9  LEGATO
+nrpn   8  10  ENV3      10  AUTO DECAY
+nrpn   8  11  ENV3      11  INVERT
+nrpn   9   0  LFO1       0  K1
+nrpn   9   1  LFO1       1  K2
+nrpn   9   2  LFO1       2  K3
+nrpn   9   3  LFO1       3  K4
+nrpn   9   4  LFO1       4  WHEEL>DEPTH
+nrpn   9   5  LFO1       5  OSC1 AMT
+nrpn   9   6  LFO1       6  OSC2 AMT
+nrpn   9   7  LFO1       7  SHAPE
+nrpn   9   8  LFO1       8  DELAY
+nrpn   9   9  LFO1       9  CLOCK SYNC
+nrpn   9  10  LFO1      10  PHASE
+nrpn   9  11  LFO1      11  KEY RESET
+nrpn  10   0  LFO2       0  K1
+nrpn  10   1  LFO2       1  K2
+nrpn  10   2  LFO2       2  K3
+nrpn  10   3  LFO2       3  K4
+nrpn  10   4  LFO2       4  WHEEL>DEPTH
+nrpn  10   5  LFO2       5  CLOCK SYNC
+nrpn  10   6  LFO2       6  PHASE
+nrpn  10   7  LFO2       7  KEY RESET
+nrpn  11   0  LFO3       0  K1
+nrpn  11   1  LFO3       1  K2
+nrpn  11   2  LFO3       2  K3
+nrpn  11   3  LFO3       3  K4
+nrpn  11   4  LFO3       4  WHEEL>DEPTH
+nrpn  11   5  LFO3       5  CLOCK SYNC
+nrpn  11   6  LFO3       6  PHASE
+nrpn  11   7  LFO3       7  KEY RESET
+nrpn  13   0  AMP        0  K1
+nrpn  13   1  AMP        1  K2
+nrpn  13   2  AMP        2  K3
+nrpn  13   3  AMP        3  K4
+nrpn  13   4  AMP        4  DRV MODEL
+nrpn  13  16  AMP       16  MFX K1
+nrpn  13  17  AMP       17  MFX K2
+nrpn  13  18  AMP       18  MFX K3
+nrpn  13  19  AMP       19  MFX K4
+nrpn  13  20  AMP       20  MFX
+nrpn  13  21  AMP       21  MFX MODE
+nrpn  13  22  AMP       22  MFX ENV MODE
+nrpn  13  23  AMP       23  MFX POLARITY
+nrpn  13  24  AMP       24  MFX SPREAD
+nrpn  13  25  AMP       25  MFX L/R PHASE
+nrpn  13  26  AMP       26  MFX COLOUR
+nrpn  13  27  AMP       27  MFX AGE
+nrpn  13  28  AMP       28  MFX AGE
+nrpn  13  29  AMP       29  MFX ROOT
+nrpn  13  30  AMP       30  MFX CHORD
+nrpn  13  31  AMP       31  MFX WIDTH
+nrpn  13  32  AMP       32  MFX LEVEL
+nrpn  13  33  AMP       33  MFX LOW
+nrpn  14   0  EFFECTS    0  K1
+nrpn  14   1  EFFECTS    1  K2
+nrpn  14   2  EFFECTS    2  K3
+nrpn  14   3  EFFECTS    3  K4
+nrpn  14   4  EFFECTS    4  DELAY SYNC
+nrpn  14   5  EFFECTS    5  DEGRADE
+nrpn  14   6  EFFECTS    6  PING PONG
+nrpn  14   7  EFFECTS    7  REV TYPE
+nrpn  15   0  MIX        0  K1
+nrpn  15   1  MIX        1  K2
+nrpn  15   2  MIX        2  K3
+nrpn  15   3  MIX        3  K4
+nrpn  15   4  MIX        4  BALANCE
+nrpn  15   5  MIX        5  DRY/WET
+nrpn  15   6  MIX        6  LOOP TONE
+nrpn  15   7  MIX        7  DLY > REV
+nrpn  15   8  MIX        8  REV > DLY
+nrpn  16   0  HOME1      0  K1
+nrpn  16   1  HOME1      1  K2
+nrpn  16   2  HOME1      2  K3
+nrpn  16   3  HOME1      3  K4
+nrpn  16   4  HOME1      4  ARCH
+nrpn  16   5  HOME1      5  VOICING
+nrpn  16   6  HOME1      6  UNISON DETUNE
+nrpn  16   7  HOME1      7  PORTA
+nrpn  16   8  HOME1      8  PORTA TIME
+nrpn  16   9  HOME1      9  MAX VOICES
+nrpn  16  10  HOME1     10  ANALOG
+nrpn  18   0  HOME3      0  K1
+nrpn  18   1  HOME3      1  K2
+nrpn  18   2  HOME3      2  K3
+nrpn  18   3  HOME3      3  K4
+nrpn  18   4  HOME3      4  SPLIT NOTE
+nrpn  18   5  HOME3      5  SPLIT FADE
+nrpn  18   6  HOME3      6  VEL SPLIT
+nrpn  18   7  HOME3      7  VEL FADE
+nrpn  20   0  GLOBAL     0  K1
+nrpn  20   1  GLOBAL     1  K2
+nrpn  20   2  GLOBAL     2  K3
+nrpn  20   3  GLOBAL     3  K4
+nrpn  20   4  GLOBAL     4  MIDI CH LAYER1
+nrpn  20   5  GLOBAL     5  MIDI CH LAYER2
+nrpn  20   6  GLOBAL     6  CLOCK SRC
+nrpn  20   7  GLOBAL     7  CUSTOM CC1
+nrpn  20   8  GLOBAL     8  CUSTOM CC2
+nrpn  20   9  GLOBAL     9  CC IN
+nrpn  20  10  GLOBAL    10  CC OUT
+nrpn  20  11  GLOBAL    11  PC IN
+nrpn  20  12  GLOBAL    12  PC OUT
+nrpn  20  13  GLOBAL    13  VEL CURVE
+nrpn  20  14  GLOBAL    14  BASE VELOCITY
+nrpn  20  15  GLOBAL    15  CLOCK OUT
+nrpn  20  16  GLOBAL    16  INT TEMPO
+nrpn  20  17  GLOBAL    17  THEME
+nrpn  21   0  TUNING     0  K1
+nrpn  21   1  TUNING     1  K2
+nrpn  21   2  TUNING     2  K3
+nrpn  21   3  TUNING     3  K4
+nrpn  21   4  TUNING     4  MASTER TUNE
+nrpn  21   5  TUNING     5  TUNING
+nrpn  21   6  TUNING     6  ROOT
+nrpn  21   7  TUNING     7  BEND RANGE
+cc     3   0  HOME1     10  ANALOG
+cc     5   0  HOME1      8  PORTA TIME
+cc     9   0  HOME1      6  UNISON DETUNE
+cc    12   0  EFFECTS    0  K1
+cc    13   0  EFFECTS    1  K2
+cc    14   0  OSC1       0  K1
+cc    15   0  OSC1       1  K2
+cc    17   0  OSC1       2  K3
+cc    18   0  OSC1       3  K4
+cc    19   0  OSC1       5  ENV3>SCAN
+cc    20   0  OSC2       0  K1
+cc    21   0  OSC2       1  K2
+cc    22   0  OSC2       6  FINE
+cc    23   0  OSC2       2  K3
+cc    24   0  OSC2       3  K4
+cc    25   0  OSC2       5  ENV3>SCAN
+cc    26   0  OSCMIX     0  K1
+cc    27   0  OSCMIX     1  K2
+cc    28   0  OSCMIX     2  K3
+cc    29   0  OSCMIX     3  K4
+cc    30   0  OSC1       4  WAVE
+cc    31   0  OSC2       4  WAVE
+cc    40   0  ENV2       0  K1
+cc    41   0  ENV2       1  K2
+cc    42   0  ENV2       2  K3
+cc    44   0  ENV2       3  K4
+cc    45   0  ENV3       0  K1
+cc    46   0  ENV3       1  K2
+cc    47   0  ENV3       2  K3
+cc    48   0  ENV3       3  K4
+cc    49   0  LFO1       0  K1
+cc    50   0  LFO1       3  K4
+cc    51   0  LFO2       1  K2
+cc    52   0  LFO2       2  K3
+cc    53   0  LFO2       3  K4
+cc    54   0  LFO2       0  K1
+cc    55   0  LFO3       1  K2
+cc    56   0  LFO3       2  K3
+cc    57   0  LFO3       3  K4
+cc    58   0  LFO3       0  K1
+cc    59   0  AMP        0  K1
+cc    60   0  EFFECTS    2  K3
+cc    61   0  EFFECTS    3  K4
+cc    62   0  EFFECTS    5  DEGRADE
+cc    63   0  EFFECTS    6  PING PONG
+cc    70   0  FILTER1    0  K1
+cc    71   0  FILTER1    2  K3
+cc    72   0  ENV1       3  K4
+cc    73   0  ENV1       0  K1
+cc    74   0  FILTER1    1  K2
+cc    75   0  ENV1       1  K2
+cc    76   0  LFO1       1  K2
+cc    77   0  LFO1       2  K3
+cc    78   0  LFO1       8  DELAY
+cc    79   0  ENV1       2  K3
+cc    80   0  MIX        0  K1
+cc    81   0  MIX        1  K2
+cc    82   0  MIX        2  K3
+cc    83   0  MIX        3  K4
+cc    85   0  AMP       16  MFX K1
+cc    86   0  AMP       17  MFX K2
+cc    87   0  AMP       18  MFX K3
+cc    88   0  AMP       19  MFX K4
+cc    89   0  AMP       20  MFX
+cc    90   0  AMP        4  DRV MODEL
+cc    91   0  AMP        3  K4
+cc    92   0  AMP        1  K2
+cc    94   0  AMP        2  K3
+cc    95   0  EFFECTS    7  REV TYPE
+cc   102   0  FILTER1    3  K4
+cc   103   0  FILTER1    4  DRIVE
+cc   104   0  FILTER1    6  KEY TRACK
+cc   105   0  FILTER2    0  K1
+cc   106   0  FILTER2    1  K2
+cc   107   0  FILTER2    2  K3
+cc   108   0  FILTER2    3  K4
+cc   109   0  FILTER2    4  DRIVE
+cc   110   0  FILTER2    6  KEY TRACK
+cc   111   0  FLTMIX     0  K1
+cc   112   0  FLTMIX     1  K2
+cc   113   0  FLTMIX     2  K3
+cc   114   0  FLTMIX     3  K4
+cc   115   0  OSCMIX     9  NOISE LEVEL
+cc   116   0  OSCMIX     5  NOISE COLOUR
+cc   117   0  OSCMIX     7  HARMONIC
+cc   118   0  OSCMIX     6  COL MOD
+cc   119   0  OSCMIX     8  LEVEL MOD

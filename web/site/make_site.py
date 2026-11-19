@@ -9,10 +9,10 @@
   install/index.html            the web installer (web/site/installer.html with X0X's fm1pkg.js and fm1ota.js
                                 and the package's metadata inlined; Chrome or Edge, Web MIDI)
   firmware/carnac-VER.fwsc      the package the installer writes; also the download (+ .sha256)
-  firmware/pcm_areaN.bin        the PCM waves (src/dsp/pcm_area0.bin, pcm_area1.bin) and the wavetable areas
-  firmware/wt_areaN.bin         (src/dsp/wt_area2.bin: bank 0, Foundations, and three frames of Dust; wt_area3.bin:
-                                three more; since 2026-11-03), which the installer writes after the firmware where the
-                                FM1 lacks them (src/hardware/pcm_store_upload.py's protocol)
+  firmware/pcm_areaN.bin        the PCM waves (src/dsp/pcm_area0.bin, pcm_area1.bin, pcm_area2.bin: area 2 is PCM
+                                since 2026-11-05; the wavetable areas wt_area2/3.bin are gone, the 8-bit banks are in
+                                the firmware since 2026-11-18), which the installer writes after the firmware where
+                                the FM1 lacks them (src/hardware/pcm_store_upload.py's protocol and its sync)
   manual/index.html             the manual: docs/manual.md (the Claude Doc's export) in web/site/manual.html
   guide/index.html              the button guide (web/site/guide.html, self-contained: its own rune font and drawing)
   play/                         the browser synth (web/emu, built by web/emu/build.sh), unless --no-emu
@@ -49,9 +49,9 @@ TIP = "https://ko-fi.com/orbvorgis"
 LOOK_FILES = ("carnac.css", "stones.js", "carnac-rune.woff", "splash.png")   # the FM1's look, shared by both pages
 EMU_FILES = ("index.html", "worklet.js", "carnac.wasm")
 PCM_IMAGES = {0: REPO_DIR / "src" / "dsp" / "pcm_area0.bin", 1: REPO_DIR / "src" / "dsp" / "pcm_area1.bin",
-              2: REPO_DIR / "src" / "dsp" / "wt_area2.bin", 3: REPO_DIR / "src" / "dsp" / "wt_area3.bin"}
-PCM_AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000, 3: 0x2000}   # src/hardware/pcm_store_fm1.c PCM_AREA
-WT_AREAS = (2, 3)                                          # wavetable frames, not PCM (wavetables.h WT_AREA_*)
+              2: REPO_DIR / "src" / "dsp" / "pcm_area2.bin"}   # (pcm_store_upload.py IMAGES: the same three)
+PCM_AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000}          # src/hardware/pcm_store_fm1.c PCM_AREA
+WT_AREAS = ()                                              # wavetable frames: none since 2026-11-05 (were areas 2, 3)
 MANUAL = REPO_DIR / "docs" / "manual.md"
 EMU_CARD = ('    <a class="tablet" href="play/"><strong>Play it in the browser</strong><span>The same synth engine, with sound: '
             'mouse, touch or keyboard, no FM1 needed.</span></a>\n')

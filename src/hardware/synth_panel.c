@@ -26,7 +26,8 @@
  * writes once); a save mutes the audio for the sector erase (tens of ms, audio_silence), and core 1 is idle in RAM
  * then (fm1_cpu1.h). Room for more instrument settings: rsv. */
 static UIStateMachine sm;                           /* (the panel's state machine, defined below) */
-#define SET_VER 3u                                  /* 3 (2026-10-25): + the MIDI channels, CCs, BEND RANGE, CLOCK SOURCE */
+#define SET_VER 4u                                  /* 3 (2026-10-25): + the MIDI channels, CCs, BEND RANGE, CLOCK SOURCE;
+                                                     * 4 (2026-11-18): + CC IN / OUT, PC IN / OUT (midi_io) */
 #define SET_SAVE_MS 2000u
 typedef struct { uint8_t midi_ch[NLAYER], cc1, cc2, bend, clk; } SetInst;
 typedef struct {
@@ -35,10 +36,11 @@ typedef struct {
     uint8_t theme;                                  /* UITHEME_* */
     uint8_t master_tune, vel_curve, clock_out;      /* InstrumentSettings (ver 2) */
     SetInst inst;                                   /* set_inst (ver 3) */
-    uint8_t rsv[1];
+    uint8_t midi_io;                                /* (ver 4) bit 0 CC IN, 1 CC OUT, 2 PC IN, 3 PC OUT */
 } SynSettings;
 PS_STATIC_ASSERT(sizeof(SynSettings) == 16u, "SynSettings: the record in flash");
-#define SET_N (4u + sizeof(SetInst))                /* the settings compared: theme, tune, curve, clock out, set_inst */
+#define SET_N (5u + sizeof(SetInst))                /* the settings compared: theme, tune, curve, clock out, set_inst,
+                                                     * midi_io */
 static SetInst set_inst = {{0u, 1u}, 0u, 0u, 2u, CLKSRC_INTERNAL};   /* perf_defaults' */
 static uint8_t set_saved[SET_N];                    /* what flash holds (0xFF: nothing yet, settings_load) */
 static uint32_t set_changed_ms;
@@ -85,6 +87,8 @@ static void settings_now(uint8_t s[SET_N])
     s[2] = instrument.vel_curve;
     s[3] = instrument.clock_out;
     memcpy(&s[4], &set_inst, sizeof set_inst);
+    s[4u + sizeof set_inst] = (uint8_t)((instrument.cc_in ? 1u : 0u) | (instrument.cc_out ? 2u : 0u) |
+                                        (instrument.pc_in ? 4u : 0u) | (instrument.pc_out ? 8u : 0u));
 }
 
 /* the stored settings, when valid: 1 */
@@ -117,6 +121,12 @@ static void settings_load(void)
         if (r.ver >= 3u && r.inst.midi_ch[0] < 16u && r.inst.midi_ch[1] < 16u && r.inst.cc1 <= VAL_MAX &&
             r.inst.cc2 <= VAL_MAX && r.inst.bend <= VAL_MAX && r.inst.clk < CLKSRC_COUNT)
             set_inst = r.inst;
+        if (r.ver >= 4u && r.midi_io < 16u) {
+            instrument.cc_in = (uint8_t)(r.midi_io & 1u);
+            instrument.cc_out = (uint8_t)((r.midi_io >> 1) & 1u);
+            instrument.pc_in = (uint8_t)((r.midi_io >> 2) & 1u);
+            instrument.pc_out = (uint8_t)((r.midi_io >> 3) & 1u);
+        }
         settings_now(set_saved);
     }
 }
@@ -148,6 +158,7 @@ static void settings_tick(void)
     r.vel_curve = now[2];
     r.clock_out = now[3];
     r.inst = set_inst;
+    r.midi_io = now[SET_N - 1u];
     if (st_save(OBJ_SET, &r, sizeof r) == 0)
         memcpy(set_saved, now, sizeof now);         /* (a failed save retries SET_SAVE_MS later) */
     else
@@ -225,6 +236,200 @@ static void syn_commit(void)
     ps_commit_wait = 1;
 }
 
+/* ------------------------------------------------------------ CC OUT --- */
+/* GLOBAL CC OUT / PC OUT (the CC map, step 4, 2026-11-18). The panel's moves go out as they happen: a scan walks every
+ * parameter (ui_sm_par_get) against what was last sent (co_shadow) and sends the changed ones, a CC where the map has
+ * one, else an NRPN (99 / 98 / 6, 38 for the tempo), on the layer's channel (the performance's on Layer 1's; Layer 2's
+ * only when it has a channel of its own). A value that came in over MIDI is taken as sent (never echoed). Each load,
+ * and CC OUT turning on, sends the whole sound as a dump instead: SysEx in the editor frame, every parameter tagged by
+ * its NRPN place (ED_PAR_DUMP: layer, then MSB LSB value-MSB value-LSB per parameter, up to CO_DUMP_N a message; then
+ * ED_PAR_END with the count). The editor asks for one with ED_PAR_REQ, CC OUT on or off. PC OUT: a load on the panel
+ * sends BANK SELECT (0 patch, 1 performance, 2 sequence, 3 arp) and the Program Change (not one a Program Change made).
+ * Main loop only; a few packets a millisecond (USB takes 16). The includer gives syn_sysex_out (a whole F0..F7). */
+enum { ED_PAR_REQ = 56, ED_PAR_DUMP = 57, ED_PAR_END = 58 };
+#define CO_MAX 640u                                 /* parameters (ui_sm_par_count: both layers) */
+#define CO_NONE 0xFFu                               /* not sent (or not there) */
+#define CO_DUMP_N 24u
+#define CO_IDLE 0xFFFFu
+static uint8_t co_shadow[CO_MAX];
+static uint16_t co_scan, co_dump = CO_IDLE, co_dumped;
+static uint8_t co_lc[NLAYER], co_on, co_pc_midi, co_pc_pend, co_pc_bank, co_pc_slot, co_pc_ch;
+static uint32_t co_ms, co_dump_ms;
+static void syn_sysex_out(const uint8_t *p, uint32_t n);
+
+static uint16_t co_count(void)
+{
+    uint16_t n = ui_sm_par_count();
+    return n > CO_MAX ? (uint16_t)CO_MAX : n;
+}
+
+static void co_cc(uint8_t ch, uint8_t cc, uint8_t v)
+{
+    syn_lock();                                     /* (the audio ISR sends the clock into the same queue) */
+    plat_midi_out(0x0Bu | (uint32_t)(0xB0u | (ch & 0x0Fu)) << 8 | (uint32_t)(cc & 0x7Fu) << 16 |
+                  (uint32_t)(v & 0x7Fu) << 24);
+    syn_unlock();
+}
+
+/* a layer's moves go out: Layer 1's always, Layer 2's on a channel of its own */
+static uint8_t co_layer_out(uint8_t l)
+{
+    return (uint8_t)(l == 0u || (perf_state.perf_mode != PERF_SINGL_SYNTH &&
+                                 (perf_state.midi_ch[1] & 0x0Fu) != (perf_state.midi_ch[0] & 0x0Fu)));
+}
+
+/* one parameter out; the packets it took */
+static uint8_t co_send(const UiPar *p)
+{
+    uint8_t ch = (uint8_t)(perf_state.midi_ch[p->layer] & 0x0Fu);
+    if (p->cc != 0u) {
+        co_cc(ch, p->cc, p->ccv);
+        return 1u;
+    }
+    co_cc(ch, 99u, p->msb);
+    co_cc(ch, 98u, p->lsb);
+    co_cc(ch, 6u, p->wide ? (uint8_t)(p->v >> 7) : p->v);
+    if (!p->wide)
+        return 3u;
+    co_cc(ch, 38u, (uint8_t)(p->v & 0x7Fu));
+    return 4u;
+}
+
+static void co_dump_start(void)
+{
+    co_dump = 0u;
+    co_dumped = 0u;
+    co_dump_ms = fm1_ms - 3u;
+}
+
+/* the editor's ED_PAR_REQ */
+static void ccout_request(void) { co_dump_start(); }
+
+/* one message of the dump (one layer's, CO_DUMP_N parameters at most); the end after the last */
+static void co_dump_step(void)
+{
+    uint8_t b[6u + CO_DUMP_N * 4u + 1u], layer = 0u;
+    uint32_t m = 0u;
+    uint16_t n = co_count();
+    UiPar p;
+    while (co_dump < n && (m == 0u || m < 6u + CO_DUMP_N * 4u)) {
+        if (!ui_sm_par_get(&sm, co_dump, &p)) {
+            co_shadow[co_dump++] = CO_NONE;
+            continue;
+        }
+        if (m == 0u) {
+            b[0] = 0xF0u; b[1] = 0x7Du; b[2] = 0x46u; b[3] = 0x4Cu; b[4] = ED_PAR_DUMP;
+            b[5] = layer = p.layer;
+            m = 6u;
+        } else if (p.layer != layer) {
+            break;
+        }
+        co_shadow[co_dump++] = p.v;
+        b[m++] = p.msb;
+        b[m++] = p.lsb;
+        b[m++] = (uint8_t)(p.v >> 7);
+        b[m++] = (uint8_t)(p.v & 0x7Fu);
+    }
+    if (m != 0u) {
+        b[m++] = 0xF7u;
+        syn_sysex_out(b, m);
+        co_dumped = (uint16_t)(co_dumped + (m - 7u) / 4u);
+    }
+    if (co_dump >= n) {
+        b[0] = 0xF0u; b[1] = 0x7Du; b[2] = 0x46u; b[3] = 0x4Cu; b[4] = ED_PAR_END;
+        b[5] = (uint8_t)(co_dumped & 0x7Fu);
+        b[6] = (uint8_t)(co_dumped >> 7);
+        b[7] = 0xF7u;
+        syn_sysex_out(b, 8u);
+        co_dump = CO_IDLE;
+    }
+    co_dump_ms = fm1_ms;
+}
+
+/* the values the CC map and the NRPNs just wrote: as sent (inside syn_lock, after ui_sm_cc / ui_sm_nrpn) */
+static void ccout_absorb(void)
+{
+    UiPar p;
+    uint16_t i, n = co_count();
+    uint8_t k;
+    if (sm.par_in_n == UI_PAR_IN_FULL) {
+        for (i = 0u; i < n; i++)
+            co_shadow[i] = ui_sm_par_get(&sm, i, &p) ? p.v : (uint8_t)CO_NONE;
+    } else {
+        for (k = 0u; k < sm.par_in_n; k++)
+            if (sm.par_in[k] < n)
+                co_shadow[sm.par_in[k]] = ui_sm_par_get(&sm, sm.par_in[k], &p) ? p.v : (uint8_t)CO_NONE;
+    }
+    sm.par_in_n = 0u;
+}
+
+/* a load on the panel: PC OUT sends it (t: UISAVE_*; not the loads a Program Change made) */
+static void ccout_loaded(uint8_t t, uint8_t slot, uint8_t layer)
+{
+    if (co_pc_midi) {
+        co_pc_midi = 0u;
+        return;
+    }
+    co_pc_bank = t == UISAVE_PATCH_PRESET ? (uint8_t)SYNTH_PCBANK_PATCH : t == UISAVE_WHOLE_PERF ?
+                 (uint8_t)SYNTH_PCBANK_PERF : t == UISAVE_SEQ_SETTINGS ? (uint8_t)SYNTH_PCBANK_SEQ : (uint8_t)SYNTH_PCBANK_ARP;
+    co_pc_slot = slot;
+    co_pc_ch = (uint8_t)(perf_state.midi_ch[t == UISAVE_PATCH_PRESET && layer < NLAYER ? layer : 0u] & 0x0Fu);
+    co_pc_pend = 1u;
+}
+
+/* the main loop's (outside syn_lock) */
+static void ccout_tick(void)
+{
+    uint16_t n = co_count(), k;
+    uint8_t budget = 12u;
+    UiPar p;
+    if (fm1_ms == co_ms)
+        return;
+    co_ms = fm1_ms;
+    if (co_pc_pend) {
+        co_pc_pend = 0u;
+        if (instrument.pc_out) {
+            co_cc(co_pc_ch, 0u, co_pc_bank);
+            co_cc(co_pc_ch, 32u, 0u);
+            syn_lock();
+            plat_midi_out(0x0Cu | (uint32_t)(0xC0u | co_pc_ch) << 8 | (uint32_t)(co_pc_slot & 0x7Fu) << 16);
+            syn_unlock();
+            return;
+        }
+    }
+    if (instrument.cc_out != co_on) {               /* CC OUT on: the whole sound first */
+        co_on = instrument.cc_out;
+        if (co_on)
+            co_dump_start();
+    }
+    if (co_lc[0] != engine_load_count[0] || co_lc[1] != engine_load_count[1]) {   /* a load: the whole sound */
+        co_lc[0] = engine_load_count[0];
+        co_lc[1] = engine_load_count[1];
+        if (co_on)
+            co_dump_start();
+    }
+    if (co_dump != CO_IDLE) {
+        if (fm1_ms - co_dump_ms >= 3u)              /* (a message every 3 ms: about 35 packets) */
+            co_dump_step();
+        return;
+    }
+    if (!co_on || n == 0u)
+        return;
+    for (k = 0u; k < 64u && budget >= 4u; k++) {
+        uint16_t i = co_scan;
+        co_scan = (uint16_t)((co_scan + 1u) % n);
+        if (!ui_sm_par_get(&sm, i, &p)) {
+            co_shadow[i] = CO_NONE;
+            continue;
+        }
+        if (p.v == co_shadow[i])
+            continue;
+        co_shadow[i] = p.v;
+        if (co_layer_out(p.layer))
+            budget = (uint8_t)(budget - co_send(&p));
+    }
+}
+
 /* the machine's load_pending (the Preset Encoder): load_target from load_slot into the live state (inside syn_lock). A
  * performance waits for the main loop (syn_perf_tick): it is read from flash */
 static void syn_load(void)
@@ -247,6 +452,9 @@ static void syn_load(void)
             memcpy(sm.arp_name, syn_arp_name[s], NAME_LEN);
             break;
         }
+        ccout_loaded(t, s, sm.load_layer);
+    } else {
+        co_pc_midi = 0u;
     }
     ui_sm_load_done(&sm, ok);
 }
@@ -264,10 +472,41 @@ static void syn_link_names(void)
 
 /* the main loop's: the performance load syn_load left. Its slot from flash, outside syn_lock (a factory slot never
  * saved over: made, factory_perf), then the live state takes it whole inside the lock: the performance's settings, both
- * layers' patches, the sequence and the arp pattern. (The Preset Encoder waits: load_pending holds load_slot.) */
+ * layers' patches, the sequence and the arp pattern. (The Preset Encoder waits: load_pending holds load_slot.)
+ * First, a Program Change under BANK SELECT 1..3 (synth_pc_take): it loads as the Preset Encoder's turn would, so
+ * the screen, the names and the PERF page's links follow (an empty slot loads nothing) */
 static void syn_perf_tick(void)
 {
-    uint8_t ok;
+    uint8_t ok, b, s, e[5];
+    if (synth_cc_take(e)) {                         /* the CC map: controllers, NRPNs, RPNs (ui_sm_cc, ui_sm_nrpn) */
+        syn_lock();
+        do {
+            uint8_t ch = e[0] & 0x0Fu, k = e[0] >> 4, layers = 0u, l, perf;
+            for (l = 0; l < NLAYER; l++)
+                if ((perf_state.midi_ch[l] & 0x0Fu) == ch && (l == 0u || perf_state.perf_mode != PERF_SINGL_SYNTH))
+                    layers |= (uint8_t)(1u << l);
+            perf = (uint8_t)(ch == (perf_state.midi_ch[0] & 0x0Fu));
+            if (k == SYNTH_CCK_CC)
+                (void)ui_sm_cc(&sm, e[1], layers, perf, e[3]);
+            else
+                (void)ui_sm_nrpn(&sm, (uint8_t)(k == SYNTH_CCK_RPN), e[1], e[2], layers, perf,
+                                 (uint16_t)((e[3] & 0x7Fu) << 7 | (e[4] & 0x7Fu)));
+        } while (synth_cc_take(e));
+        ccout_absorb();                             /* (CC OUT: what came in is not echoed) */
+        syn_unlock();
+    }
+    ccout_tick();
+    if (!sm.load_pending && !syn_perf_req && synth_pc_take(&b, &s)) {
+        syn_lock();
+        sm.load_target = b == SYNTH_PCBANK_PERF ? (uint8_t)UISAVE_WHOLE_PERF
+                       : b == SYNTH_PCBANK_SEQ ? (uint8_t)UISAVE_SEQ_SETTINGS : (uint8_t)UISAVE_ARP_SEQ;
+        sm.load_slot = s;
+        sm.load_layer = 0;
+        sm.load_pending = 1;
+        co_pc_midi = 1u;                            /* (PC OUT: not sent back) */
+        syn_load();                                 /* (a performance: syn_perf_req, read below) */
+        syn_unlock();
+    }
     if (!syn_perf_req)
         return;
     ok = (uint8_t)(ps_perf_read(sm.load_slot, &syn_perf_load) == 0 || factory_perf(sm.load_slot, &syn_perf_load) == 0);
@@ -282,6 +521,9 @@ static void syn_perf_tick(void)
         memcpy(seq_lanes, syn_perf_load.seq, sizeof seq_lanes);
         arp_state = syn_perf_load.arp;
         syn_link_names();
+        ccout_loaded(UISAVE_WHOLE_PERF, sm.load_slot, 0u);
+    } else {
+        co_pc_midi = 0u;
     }
     ui_sm_load_done(&sm, ok);
     syn_unlock();

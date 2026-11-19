@@ -24,7 +24,7 @@ typedef struct {
     /* the table reads, worked out once per tick by osc_prepare (the bank, scan and mip levels hold still within a
      * tick): the two frames either side of the scan and the fraction between them, and each playhead's level as an
      * offset into the frame, the shift from phase to sample index and the index wrap mask. [4] is the undetuned one. */
-    const int16_t *frame_a, *frame_b;
+    const int8_t *frame_a, *frame_b;    // 8-bit frames (wavetables.h, 2026-11-18)
     int32_t morph_frac_q15;      // 0: frame_a alone
     uint16_t rd_off[5];
     uint16_t rd_mask[5];
@@ -49,21 +49,34 @@ typedef struct {
 extern int osc_bank0_vco;
 
 /* One sample of two frames at a cycle phase: linear within each frame (the level at off, its index shift and mask),
- * then across them by morph_frac_q15. Integer on purpose: int16 tables read with a 1-cycle add and a 10-cycle
- * multiply a lerp, where float would pay a 6-cycle add twice for each (fm1-measure-checklist.md op costs). */
-static inline int32_t wt_read_frames(const int16_t *fa, const int16_t *fb, int32_t morph_frac_q15, uint32_t off,
+ * then across them by morph_frac_q15. Integer on purpose: tables read with a 1-cycle add and a 10-cycle multiply a
+ * lerp, where float would pay a 6-cycle add twice for each (fm1-measure-checklist.md op costs). The frames are 8-bit
+ * since 2026-11-18 (wavetables.h): each lerp lands in Q15 (the sample << 8, the slope's fraction kept), so the
+ * interpolation between two 8-bit points stays smooth. */
+static inline int32_t wt_lerp8(const int8_t *a, uint32_t i0, uint32_t i1, int32_t fr_q15)
+{
+    int32_t s = a[i0];
+    return (s << 8) + (((a[i1] - s) * fr_q15) >> 7);
+}
+static inline int32_t wt_read_frames(const int8_t *fa, const int8_t *fb, int32_t morph_frac_q15, uint32_t off,
                                      uint32_t shift, uint32_t mask, uint32_t phase)
 {
     uint32_t i0 = phase >> shift, i1 = (i0 + 1u) & mask;
     int32_t fr_q15 = (int32_t)((phase << (32u - shift)) >> 17);
-    const int16_t *a = fa + off;
-    int32_t s = a[i0];
-    int32_t va = s + (((a[i1] - s) * fr_q15) >> 15);
+    int32_t va = wt_lerp8(fa + off, i0, i1, fr_q15);
     if (morph_frac_q15 == 0) return va;
-    const int16_t *b = fb + off;
-    s = b[i0];
-    int32_t vb = s + (((b[i1] - s) * fr_q15) >> 15);
+    int32_t vb = wt_lerp8(fb + off, i0, i1, fr_q15);
     return va + (((vb - va) * morph_frac_q15) >> 15);
+}
+/* The sub-oscillator's int16 tables (wavetable_sine, wavetable_sub_square: kept at 16 bits, a sub is pure): one table,
+ * one level, linear */
+static inline int32_t wt_read_table16(const int16_t *t, uint32_t off, uint32_t shift, uint32_t mask, uint32_t phase)
+{
+    uint32_t i0 = phase >> shift, i1 = (i0 + 1u) & mask;
+    int32_t fr_q15 = (int32_t)((phase << (32u - shift)) >> 17);
+    const int16_t *a = t + off;
+    int32_t s = a[i0];
+    return s + (((a[i1] - s) * fr_q15) >> 15);
 }
 
 /* Scan knob (0..127) in Q8 -> morph position in Q12 frames: scan * 7 / 127, by multiply (57795 = 7 * 16 / 127

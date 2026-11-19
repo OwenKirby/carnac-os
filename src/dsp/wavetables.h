@@ -26,13 +26,15 @@ static const uint8_t WT_LEVEL_SHIFT[WT_LEVELS] = {23, 24, 25, 26, 27, 28, 28};
  * image in Felucca's store flash, uploaded over USB-MIDI and read in place through XIP (src/hardware/wt_store_fm1.c);
  * host and browser builds link the same image as wavetables_image.c. Image layout, little-endian:
  *   +0                 wt_store_hdr_t (32 B; until 2026-10-26 the data started a 4 KiB sector later)
- *   +WT_STORE_DATA_OFF NUM_BANKS x NUM_MORPH_STEPS x WT_FRAME_SAMPLES int16 Q15, the levels one after another */
+ *   +WT_STORE_DATA_OFF NUM_IMAGE_BANKS x NUM_MORPH_STEPS x WT_FRAME_SAMPLES int8, the levels one after another: since
+ *                      2026-11-18 (version 2) a sample is 8 bits, the int16 table's top byte (gen_wavetables.py to8):
+ *                      the 8-bit grain the user chose, and half the flash. A read scales it back to Q15 (<< 8). */
 #define WT_STORE_BASE 0xA0000u          /* flash offset: Felucca's user sample slots USR1..USR3 */
 #define WT_STORE_SIZE 0x3C000u          /* .. 0xDBFFF (240 KiB) */
 #define WT_STORE_DATA_OFF 0x20u
 #define WT_STORE_MAGIC 0x42545746u      /* "FWTB" */
-#define WT_STORE_VERSION 1u
-#define WT_STORE_DATA_LEN ((uint32_t)NUM_IMAGE_BANKS * NUM_MORPH_STEPS * WT_FRAME_SAMPLES * 2u)
+#define WT_STORE_VERSION 2u              /* 2: 8-bit samples */
+#define WT_STORE_DATA_LEN ((uint32_t)NUM_IMAGE_BANKS * NUM_MORPH_STEPS * WT_FRAME_SAMPLES)
 #define WT_STORE_IMAGE_LEN (WT_STORE_DATA_OFF + WT_STORE_DATA_LEN)
 
 typedef struct {
@@ -52,16 +54,8 @@ _Static_assert(sizeof(wt_store_hdr_t) == 32, "wavetable store header layout");
 #define WT_IMAGE_MAX 0x48000u
 _Static_assert(WT_STORE_IMAGE_LEN <= WT_IMAGE_MAX, "the wavetable banks outgrow WT_IMAGE_MAX");
 
-/* The image's last WT_SPILL_FRAMES frames (bank 8, Dust, frames 3..8) are not linked into the FM1's app (2026-11-03:
- * the app flash was full; build_fm1 defines WT_IMAGE_SPILLED): they sit in the store flash's wavetable areas with
- * bank 0, below. Host and browser builds link the whole image. */
-#define WT_SPILL_FRAMES 6u
-#ifdef WT_IMAGE_SPILLED
-#define WT_LINKED_FRAMES ((uint32_t)NUM_IMAGE_BANKS * NUM_MORPH_STEPS - WT_SPILL_FRAMES)
-#else
+/* (2026-11-03 .. 11-18 the image's last six frames lived in the store flash, WT_IMAGE_SPILLED: the 8-bit image fits) */
 #define WT_LINKED_FRAMES ((uint32_t)NUM_IMAGE_BANKS * NUM_MORPH_STEPS)
-#endif
-#define WT_IMAGE_LINKED_LEN (WT_STORE_DATA_OFF + WT_LINKED_FRAMES * WT_FRAME_SAMPLES * 2u)
 
 /* ---- The wavetable areas (2026-11-03; before, area 2 held bank 0's image alone, "CRWB"): frames in the store flash,
  * uploaded over USB-MIDI like the PCM waves (src/hardware/pcm_store_fm1.c areas 2 and 3, pcm_store_upload.py,
@@ -69,9 +63,11 @@ _Static_assert(WT_STORE_IMAGE_LEN <= WT_IMAGE_MAX, "the wavetable banks outgrow 
  * other three. A frame no attached area holds plays wavetable_sine (or, when linked, the linked image's). Layout,
  * little-endian:
  *   +0                  wt_area_hdr_t (32 B, written last: magic and len where a PcmHdr has them)
- *   +WT_AREA_HDR_SIZE   count x WT_FRAME_SAMPLES int16 Q15, the levels one after another; frame i is idx[i] */
+ *   +WT_AREA_HDR_SIZE   count x WT_FRAME_SAMPLES int8 (as the image's), the levels one after another; frame i is idx[i]
+ * Since 2026-11-05 the FM1 attaches none (its areas hold PCM waves; bank 0 plays the VCO): host and browser builds
+ * attach area 2's image for Foundations' frames (SUB CURRENT on bank 0 with the VCO off, the drawings). */
 #define WT_AREA_MAGIC 0x46575243u       /* "CRWF" */
-#define WT_AREA_VERSION 1u
+#define WT_AREA_VERSION 2u              /* 2: 8-bit frames */
 #define WT_AREA_HDR_SIZE 32u
 #define WT_AREA_MAX_FRAMES 12u
 #define WT_AREAS 2u                     /* the store's wavetable areas (pcm_store_fm1.c areas 2 and 3) */
@@ -96,10 +92,11 @@ extern const uint32_t wavetable_store_bank_id;            /* CRC-32 of bank 0's 
  * The sine is also what every bank plays while no valid image is attached. */
 extern const int16_t wavetable_sine[WT_FRAME_SAMPLES];
 extern const int16_t wavetable_sub_square[WT_FRAME_SAMPLES];
+extern const int8_t wavetable_sine8[WT_FRAME_SAMPLES];    /* the sine at 8 bits: a bank frame no image holds */
 
-/* wavetable_attach.c. Every frame's address, bank-major: into the attached image, or all wavetable_sine. Each entry
+/* wavetable_attach.c. Every frame's address, bank-major: into the attached image, or all wavetable_sine8. Each entry
  * is one aligned pointer, so the audio interrupt never sees a torn one; detach before the store is erased. */
-extern const int16_t *wavetable_frames[NUM_BANKS * NUM_MORPH_STEPS];
+extern const int8_t *wavetable_frames[NUM_BANKS * NUM_MORPH_STEPS];
 
 /* Check an image (header, sizes, set id, data CRC) and point banks 1..16 at it: 0, or < 0 and those banks on the
  * sine. The image must stay readable (flash through XIP, or a const array) while attached. */
@@ -116,7 +113,7 @@ uint32_t wavetable_area_used(uint32_t slot);   /* the attached image's bytes (0:
 uint32_t wavetable_crc32(uint32_t crc, const void *p, uint32_t n);   /* zlib CRC-32, crc 0 to start */
 
 /* One frame at one level: WT_LEVEL_SAMPLES[level] samples of one cycle. */
-static inline const int16_t *wavetable_frame(int bank, int morph, int level)
+static inline const int8_t *wavetable_frame(int bank, int morph, int level)
 {
     return wavetable_frames[bank * NUM_MORPH_STEPS + morph] + wavetable_level_start[level];
 }

@@ -399,6 +399,10 @@ static const UiRow GLOBAL_ROWS[] = {   /* the MIDI setup first (2026-10-27, user
     {"CLOCK SRC", PERF(clock_source), 0, CLKSRC_COUNT - 1, RK_BYTE, 0, CLKSRC_NAMES, A_ALL},
     {"CUSTOM CC1", PERF(cc1_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CUSTOM CC2", PERF(cc2_num), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"CC IN", INST(cc_in), 0, 1, RK_INST, 0, BOOL_NAMES, A_ALL},      /* (2026-11-18, the CC map's step 4) */
+    {"CC OUT", INST(cc_out), 0, 1, RK_INST, 0, BOOL_NAMES, A_ALL},
+    {"PC IN", INST(pc_in), 0, 1, RK_INST, 0, BOOL_NAMES, A_ALL},
+    {"PC OUT", INST(pc_out), 0, 1, RK_INST, 0, BOOL_NAMES, A_ALL},
     {"VEL CURVE", INST(vel_curve), 0, VELCURVE_COUNT - 1, RK_INST, 0, VELCURVE_NAMES, A_ALL},
     {"BASE VELOCITY", PERF(base_velocity), 12, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"CLOCK OUT", INST(clock_out), 0, CLKOUT_COUNT - 1, RK_INST, 0, CLKOUT_NAMES, A_ALL},
@@ -742,7 +746,7 @@ static const UiKnob TUNING_KNOBS[4] = {
 /* GLOBAL's instrument settings: the attached ones, else a private copy at the defaults */
 static InstrumentSettings *ui_inst(const UIStateMachine *sm)
 {
-    static InstrumentSettings own = {64u, VELCURVE_LINEAR, CLKOUT_OFF};
+    static InstrumentSettings own = INSTRUMENT_DEFAULTS;
     return sm->inst != 0 ? sm->inst : &own;
 }
 
@@ -3540,6 +3544,8 @@ const char *ui_sm_name_text(const uint8_t name[NAME_LEN], char *buf)
     return buf;
 }
 
+static uint8_t cc_mapped(uint8_t cc);
+
 const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row)
 {
     const UiRow *r = vis_row(sm, row);
@@ -3561,6 +3567,8 @@ const char *ui_sm_row_text(const UIStateMachine *sm, uint8_t row)
     if (r->flags & RF_BIPOLAR) return bip_text(v);
     if (r->flags & RF_NOTE) return ui_sm_note_name(v, num_buf);
     if (r->flags & RF_CHANNEL) return num_text(v + 1u, 1u, "");
+    if ((r == &GLOBAL_ROWS[3] || r == &GLOBAL_ROWS[4]) && v != 0u && cc_mapped(v))
+        return num_text(v, 1u, "*");  /* a CUSTOM CC on a mapped controller: the CUSTOM CC's now, not the map's */
     if (r->flags & RF_BPM) return num_text(MIDI_CLOCK_BPM_BASE + v, 1u, " BPM");
     if (r->flags & RF_SLOT) return num_text(v, 3u, "");
     if (r->names != NULL && v <= r->max) return r->names[v];
@@ -3635,4 +3643,442 @@ const uint8_t *ui_sm_rename_name(const UIStateMachine *sm)
     if (sm->save_target == UISAVE_ARP_SEQ)
         return sm->arp_name;
     return sm->perf->name;           /* WHOLE_PERF (and an out-of-range target, read as WHOLE_PERF) */
+}
+
+/* ------------------------------------------------------------ CC map --- */
+/* MIDI Control Change in (the CC map, step 2, 2026-11-18): each mapped controller is a panel control, a page's knob or
+ * row, so it moves exactly what the knob or row moves and the screen follows. The knobs of the pages that change with
+ * the architecture or the MFX type (OSCMIXER, FILTER MIXER, the MFX's) are knob positions, as on the panel; everything
+ * else is a named parameter. 0..127 spreads over the control's range: a list in equal bands, a switch off below 64. */
+enum { CCI_ROW = 4u, CCI_MFX = 16u, CCI_MFX_TYPE = 20u, CCI_MFX_ROW = 21u };   /* item: 0..3 a knob,
+                                       * CCI_ROW + r a row, the MFX's knobs, type, rows (from its 2nd) */
+typedef struct { uint8_t cc, page, item; } UiCc;
+#define R(r) ((uint8_t)(CCI_ROW + (r)))
+static const UiCc CC_MAP[] = {
+    {3, UIPAGE_HOME1, R(6)},                                    /* ANALOG (HOME1: the layer's own LAYER view) */
+    {5, UIPAGE_HOME1, R(4)},                                    /* PORTA TIME */
+    {9, UIPAGE_HOME1, R(2)},                                    /* UNISON DETUNE */
+    {12, UIPAGE_EFFECTS, 0}, {13, UIPAGE_EFFECTS, 1},           /* DELAY TIME, FDBK (Effect Control 1 / 2) */
+    {14, UIPAGE_OSC1, 0}, {15, UIPAGE_OSC1, 1}, {17, UIPAGE_OSC1, 2}, {18, UIPAGE_OSC1, 3}, {19, UIPAGE_OSC1, R(1)},
+    {20, UIPAGE_OSC2, 0}, {21, UIPAGE_OSC2, 1}, {22, UIPAGE_OSC2, R(2)}, {23, UIPAGE_OSC2, 2}, {24, UIPAGE_OSC2, 3},
+    {25, UIPAGE_OSC2, R(1)},
+    {26, UIPAGE_OSCMIX, 0}, {27, UIPAGE_OSCMIX, 1}, {28, UIPAGE_OSCMIX, 2}, {29, UIPAGE_OSCMIX, 3},
+    {30, UIPAGE_OSC1, R(0)}, {31, UIPAGE_OSC2, R(0)},           /* WAVE: the list, VCO .. the PCM waves */
+    {40, UIPAGE_ENV2, 0}, {41, UIPAGE_ENV2, 1}, {42, UIPAGE_ENV2, 2}, {44, UIPAGE_ENV2, 3},   /* (43: expression LSB) */
+    {45, UIPAGE_ENV3, 0}, {46, UIPAGE_ENV3, 1}, {47, UIPAGE_ENV3, 2}, {48, UIPAGE_ENV3, 3},
+    {49, UIPAGE_LFO1, 0}, {50, UIPAGE_LFO1, 3},                 /* RISE, TO FILTER */
+    {51, UIPAGE_LFO2, 1}, {52, UIPAGE_LFO2, 2}, {53, UIPAGE_LFO2, 3}, {54, UIPAGE_LFO2, 0},   /* RATE DELAY FADE SHAPE */
+    {55, UIPAGE_LFO3, 1}, {56, UIPAGE_LFO3, 2}, {57, UIPAGE_LFO3, 3}, {58, UIPAGE_LFO3, 0},
+    {59, UIPAGE_AMP, 0},                                        /* AMP DRIVE */
+    {60, UIPAGE_EFFECTS, 2}, {61, UIPAGE_EFFECTS, 3}, {62, UIPAGE_EFFECTS, R(1)}, {63, UIPAGE_EFFECTS, R(2)},
+                                                                /* REVERB TIME, DAMP, TAPE DEGRADE, PING PONG */
+    {70, UIPAGE_FILTER1, 0}, {71, UIPAGE_FILTER1, 2}, {72, UIPAGE_ENV1, 3}, {73, UIPAGE_ENV1, 0},
+    {74, UIPAGE_FILTER1, 1}, {75, UIPAGE_ENV1, 1}, {76, UIPAGE_LFO1, 1}, {77, UIPAGE_LFO1, 2}, {78, UIPAGE_LFO1, R(4)},
+    {79, UIPAGE_ENV1, 2},                                       /* (GM2's sound controllers) */
+    {80, UIPAGE_MIX, 0}, {81, UIPAGE_MIX, 1}, {82, UIPAGE_MIX, 2}, {83, UIPAGE_MIX, 3},
+    {85, UIPAGE_AMP, CCI_MFX}, {86, UIPAGE_AMP, CCI_MFX + 1}, {87, UIPAGE_AMP, CCI_MFX + 2},
+    {88, UIPAGE_AMP, CCI_MFX + 3}, {89, UIPAGE_AMP, CCI_MFX_TYPE}, {90, UIPAGE_AMP, R(0)},   /* .. DRIVE MODEL */
+    {91, UIPAGE_AMP, 3}, {92, UIPAGE_AMP, 1}, {94, UIPAGE_AMP, 2},   /* REVERB SEND, TREMOLO, DELAY SEND (GS) */
+    {95, UIPAGE_EFFECTS, R(3)},                                 /* REVERB TYPE */
+    {102, UIPAGE_FILTER1, 3}, {103, UIPAGE_FILTER1, R(0)}, {104, UIPAGE_FILTER1, R(2)},
+    {105, UIPAGE_FILTER2, 0}, {106, UIPAGE_FILTER2, 1}, {107, UIPAGE_FILTER2, 2}, {108, UIPAGE_FILTER2, 3},
+    {109, UIPAGE_FILTER2, R(0)}, {110, UIPAGE_FILTER2, R(2)},
+    {111, UIPAGE_FLTMIX, 0}, {112, UIPAGE_FLTMIX, 1}, {113, UIPAGE_FLTMIX, 2}, {114, UIPAGE_FLTMIX, 3},
+    /* the noise, in every architecture: its own block, named parameters (its LEVEL is a different knob, or a row, by
+     * architecture; the OSCMIXER rows hold every noise byte whether they show or not) */
+    {115, UIPAGE_OSCMIX, R(5)}, {116, UIPAGE_OSCMIX, R(1)}, {117, UIPAGE_OSCMIX, R(3)}, {118, UIPAGE_OSCMIX, R(2)},
+    {119, UIPAGE_OSCMIX, R(4)},                                 /* NOISE LEVEL, COLOUR, HARMONIC, COL MOD, LEVEL MOD */
+};
+#undef R
+
+/* the fixed NRPN numbers (src/nrpn_map.h) */
+typedef struct { uint8_t msb, lsb, page, item; } UiNrpn;
+#define N(msb, lsb, page, item) {msb, lsb, UIPAGE_##page, item}
+static const UiNrpn NRPN_MAP[] = {
+#include "nrpn_map.h"
+};
+#undef N
+#define NRPN_N ((uint16_t)(sizeof NRPN_MAP / sizeof NRPN_MAP[0]))
+#define PAR_LAYER_N ((uint16_t)(NRPN_N + NROUTE * 5u))
+
+/* a value for a control of n steps: a CC spreads 0..127 over them in equal bands, an NRPN (exact) is the step itself
+ * (held to the last). For a 0..127 control both are the value */
+static uint8_t cc_val(uint8_t v, uint32_t n, uint8_t exact)
+{
+    return exact ? (uint8_t)(v < n ? v : n - 1u) : (uint8_t)((uint32_t)v * n / 128u);
+}
+
+/* v: a CC's 0..127, or an NRPN's 14-bit DATA ENTRY (MSB << 7 | LSB). The MSB is the value; a control with more than
+ * 128 values (INT TEMPO 0..215) takes the whole 14 bits, exact (2026-11-18) */
+#define CC_MSB(v, exact) ((uint8_t)((exact) ? (v) >> 7 : (v)))
+
+/* row r of `page` on `layer`, as the Algorithm Encoder sets it. A CC: a list row's allowed values (the encoder's walk:
+ * the wave list, ARCH_ORDER, what the mode allows) or a number's range in equal bands. An NRPN: the stored value
+ * (WAVE, ARCH: the place in the list), a value the row may not hold under the current mode refused */
+static void cc_row(UIStateMachine *sm, uint8_t page, uint8_t layer, const UiRow *r, uint16_t v, uint8_t exact)
+{
+    uint8_t keep_page = sm->page, keep_layer = sm->s.active_synth_layer, m = CC_MSB(v, exact), x = 0u, hi;
+    uint16_t t, n = 0u, k;
+    sm->page = page;
+    sm->s.active_synth_layer = layer;
+    hi = row_max(sm, r);
+    if (r->kind == RK_WAVE) {
+        x = wave_list_code(cc_val(m, wave_list_count(), exact));
+    } else if (r->kind == RK_ARCH) {                  /* (never SINGLE or DUAL SPREAD: not in the list) */
+        x = ARCH_ORDER[cc_val(m, ARCH_ORDER_N, exact)];
+    } else if (exact) {
+        t = hi > VAL_MAX ? v : m;
+        x = (uint8_t)(t < r->min ? r->min : t > hi ? hi : t);
+        n = (uint16_t)!value_allowed(sm, r, x);       /* (n: refused) */
+    } else if (row_is_list(r)) {
+        for (t = r->min; t <= hi; t++)
+            n = (uint16_t)(n + value_allowed(sm, r, (uint8_t)t));
+        k = cc_val(m, n ? n : 1u, 0u);
+        for (t = r->min; t <= hi; t++)
+            if (value_allowed(sm, r, (uint8_t)t) && k-- == 0u)
+                break;
+        x = (uint8_t)t;
+        n = (uint16_t)(t > hi);
+    } else {
+        x = (uint8_t)(r->min + cc_val(m, (uint32_t)(hi - r->min) + 1u, 0u));
+    }
+    if (n == 0u)
+        row_set(sm, r, x);
+    sm->page = keep_page;
+    sm->s.active_synth_layer = keep_layer;
+}
+
+static void par_wrote(UIStateMachine *sm, uint16_t i);
+static uint16_t par_index_at(uint8_t page, uint8_t item, uint8_t layer);
+PS_STATIC_ASSERT(sizeof AMP_ROWS / sizeof AMP_ROWS[0] + 4u <= 16u, "AMP's rows below the MFX's NRPN places");
+
+/* one controller on one layer (a performance page: the performance's) */
+static void cc_one(UIStateMachine *sm, const UiCc *c, uint8_t layer, uint16_t v, uint8_t exact)
+{
+    uint8_t page = c->page == UIPAGE_HOME1 ? (uint8_t)(UIPAGE_HOME1 + layer) : c->page, m = CC_MSB(v, exact);
+    if (page_def(sm, page, layer) != &UI_PAGES[page] || !ui_sm_page_visible(sm, page, layer))
+        return;                                      /* (OSC2's place is the NOISE page: nothing of OSC2's to move) */
+    par_wrote(sm, par_index_at(c->page, c->item, layer));   /* (CC OUT: not echoed) */
+    if (page == UIPAGE_AMP && c->item >= CCI_MFX) {  /* the MFX's knobs by position, its type, its rows (AMP's: past
+                                                      * AMP's own rows; on every other page 16.. are rows) */
+        MfxParams *mf = ui_sm_mfx(sm, layer);
+        const UiKnob *k;
+        if (c->item == CCI_MFX_TYPE) {
+            mfx_type_set(mf, cc_val(m, MFX_OFFERED, exact));
+            return;
+        }
+        if (c->item >= CCI_MFX_ROW) {                /* the type's own rows (not another type's: they share bytes) */
+            uint8_t ri = (uint8_t)(c->item - CCI_MFX_ROW + 1u);
+            if (ri < NROWS(MFX_ROWS) && mf->type < MFX_OFFERED && (MFX_ROWS[ri].archs & (1u << mf->type)) != 0u)
+                cc_row(sm, page, layer, &MFX_ROWS[ri], v, exact);
+            return;
+        }
+        k = &MFX_KNOBS[mf->type < MFX_OFFERED ? mf->type : MFX_OFF][c->item - CCI_MFX];
+        if (k->kind != UIKNOB_NONE)
+            ((uint8_t *)mf)[k->offset] = cc_val(m, k->kind == UIKNOB_LIST ? k->n_enum : 128u, exact);
+        return;
+    }
+    if (c->item >= CCI_ROW) {                        /* a row: as the Algorithm Encoder sets it, on that page */
+        if (c->item - CCI_ROW < UI_PAGES[page].nrows)
+            cc_row(sm, page, layer, &UI_PAGES[page].rows[c->item - CCI_ROW], v, exact);
+        return;
+    }
+    {                                                /* a knob: the byte it turns */
+        UiKnobInfo info;
+        uint8_t *p;
+        if (page == UIPAGE_AMP) {                    /* (AMP's own knobs, wherever the panel's cursor is) */
+            info.kind = AMP_KNOBS[c->item].kind;
+            info.n_enum = 0u;
+            p = (uint8_t *)&sm->engine[layer]->amp + AMP_KNOBS[c->item].offset;
+        } else {
+            p = ui_sm_knob(sm, page, layer, c->item, &info);
+        }
+        if (!p || info.kind == UIKNOB_PERF || info.kind == UIKNOB_SRC || info.kind == UIKNOB_DEST)
+            return;
+        if (info.kind == UIKNOB_BPM)                 /* GLOBAL TEMPO (INT TEMPO): 40..255 BPM, past a 7-bit value */
+            *p = exact ? (uint8_t)(v > MIDI_CLOCK_TEMPO_MAX ? MIDI_CLOCK_TEMPO_MAX : v)
+                       : cc_val(m, MIDI_CLOCK_TEMPO_MAX + 1u, 0u);
+        else
+            *p = cc_val(m, info.kind == UIKNOB_LIST ? info.n_enum
+                         : info.kind == UIKNOB_TUNE ? 2u * OSC_COARSE_MAX + 1u : 128u, exact);
+        if (p == &sm->sub6_knob)                     /* SUB WAVE: back into its two bytes */
+            sub6_set(&sm->engine[layer]->oscmix.sub_octave, sm->sub6_knob);
+        if (page >= UIPAGE_GLOBAL)                   /* TUNING / ROOT back into their bytes, the floors */
+            ui_sm_knob_written(sm, page, c->item);
+    }
+}
+
+/* on the layers in `layers`, or the performance's once (perf: on Layer 1's channel) */
+static void cc_apply_to(UIStateMachine *sm, const UiCc *c, uint8_t layers, uint8_t perf, uint16_t v, uint8_t exact)
+{
+    uint8_t l;
+    if (UI_PAGES[c->page].store != ST_ENGINE && c->page != UIPAGE_HOME1) {   /* the performance's: once */
+        if (perf)
+            cc_one(sm, c, 0u, v, exact);
+        return;
+    }
+    for (l = 0; l < NLAYER; l++)
+        if ((layers >> l) & 1u)
+            cc_one(sm, c, l, v, exact);
+}
+
+/* is cc in the map (GLOBAL's CUSTOM CC rows mark one that takes a mapped controller over) */
+static uint8_t cc_mapped(uint8_t cc)
+{
+    uint8_t i;
+    for (i = 0; i < sizeof CC_MAP / sizeof CC_MAP[0]; i++)
+        if (CC_MAP[i].cc == cc)
+            return 1u;
+    return 0u;
+}
+
+uint8_t ui_sm_cc(UIStateMachine *sm, uint8_t cc, uint8_t layers, uint8_t perf, uint8_t value)
+{
+    uint8_t i;
+    for (i = 0; i < sizeof CC_MAP / sizeof CC_MAP[0]; i++)
+        if (CC_MAP[i].cc == cc) {
+            cc_apply_to(sm, &CC_MAP[i], layers, perf, value & 0x7Fu, 0u);
+            return 1u;
+        }
+    return 0u;
+}
+
+/* NRPN / RPN (the CC map, step 3, 2026-11-18). An NRPN is a panel control by its fixed number (src/nrpn_map.h,
+ * 2026-11-19: numbered at first MSB the page, LSB the item as the CC map's: 0..3 the knobs, 4 + r row r; on AMP, past
+ * its own row, 16..19 the MFX's knobs, 20 its type, 21 + r MFX row r + 1, the type's own), exact (the stored value,
+ * not a band). MSB 64 + i: MOD route i (LSB 0 SOURCE, 1 VIA,
+ * 2 DEST, 3 AMOUNT, 4 VIA DEPTH), as stored (a route keeps its place: the panel tidies them, sorted by SOURCE, when its
+ * cursor leaves). RPN 0 0: BEND RANGE (semitones; the LSB's cents not taken), RPN 0 1: MASTER TUNE (GM's fine tuning:
+ * 8192 = A440, +-100 cents across the 14 bits, held to the FM1's +-50). value: DATA ENTRY MSB << 7 | LSB. 1: taken */
+#define NRPN_ROUTE 64u
+uint8_t ui_sm_nrpn(UIStateMachine *sm, uint8_t rpn, uint8_t msb, uint8_t lsb, uint8_t layers, uint8_t perf,
+                   uint16_t value)
+{
+    UiCc c;
+    uint8_t l, m;
+    value &= 0x3FFFu;
+    m = (uint8_t)(value >> 7);
+    if (rpn) {
+        if (!perf || msb != 0u || lsb > 1u)
+            return 0u;
+        if (lsb == 0u) {
+            sm->perf->bend_range = m > 24u ? 24u : m;
+        } else {
+            int32_t t = 64 + ((int32_t)value - 8192) * 100 / 8192;
+            ui_inst(sm)->master_tune = (uint8_t)(t < MASTER_TUNE_MIN ? MASTER_TUNE_MIN : t > MASTER_TUNE_MAX ?
+                                                 MASTER_TUNE_MAX : t);
+        }
+        return 1u;
+    }
+    if (msb >= NRPN_ROUTE && msb < NRPN_ROUTE + NROUTE && lsb <= 4u) {
+        for (l = 0; l < NLAYER; l++) {
+            uint8_t *f;
+            if (!((layers >> l) & 1u))
+                continue;
+            f = (uint8_t *)&sm->engine[l]->route[msb - NRPN_ROUTE];
+            par_wrote(sm, ui_sm_par_index(msb, lsb, l));
+            f[lsb == 0u ? offsetof(ModRoute, src) : lsb == 1u ? offsetof(ModRoute, via) : lsb == 2u ?
+              offsetof(ModRoute, dest) : lsb == 3u ? offsetof(ModRoute, amount) : offsetof(ModRoute, via_depth)] =
+                lsb < 2u ? cc_val(m, MSRC_COUNT, 1u) : lsb == 2u ? cc_val(m, MDST_COUNT, 1u) : m;
+        }
+        return 1u;
+    }
+    /* the controls of the pages a sound or a performance is made of, by their fixed numbers (src/nrpn_map.h; HOME1:
+     * the layer the channel plays) */
+    {
+        uint16_t j = ui_sm_par_index(msb, lsb, 0u);
+        if (j == UI_PAR_NONE)
+            return 0u;
+        c.cc = 0u;
+        c.page = NRPN_MAP[j].page;
+        c.item = NRPN_MAP[j].item;
+    }
+    cc_apply_to(sm, &c, layers, perf, value, 1u);
+    if (c.page >= UIPAGE_HOME1)
+        ui_sm_enforce(sm);                           /* (ARCH, VOICING, PERF MODE: the voices and pages follow) */
+    return 1u;
+}
+
+/* ------------------------------------------------- the parameters out --- */
+/* CC OUT and the editor's dump (the CC map, step 4, 2026-11-18): every control the CC map and the NRPNs reach, read
+ * back. Parameter i (per layer): NRPN_MAP's line i (src/nrpn_map.h, the fixed NRPN numbers), then the 16 routes' 5
+ * fields. Layer 2's performance pages are not parameters (they are Layer 1's). */
+
+uint16_t ui_sm_par_count(void) { return (uint16_t)(PAR_LAYER_N * NLAYER); }
+
+/* the parameter at NRPN msb / lsb on a layer, UI_PAR_NONE: none */
+uint16_t ui_sm_par_index(uint8_t msb, uint8_t lsb, uint8_t layer)
+{
+    uint16_t j;
+    if (layer >= NLAYER)
+        return UI_PAR_NONE;
+    if (msb >= NRPN_ROUTE && msb < NRPN_ROUTE + NROUTE)
+        return lsb <= 4u ? (uint16_t)(layer * PAR_LAYER_N + NRPN_N + (msb - NRPN_ROUTE) * 5u + lsb) : UI_PAR_NONE;
+    for (j = 0u; j < NRPN_N; j++)
+        if (NRPN_MAP[j].msb == msb && NRPN_MAP[j].lsb == lsb)
+            return (uint16_t)(layer * PAR_LAYER_N + j);
+    return UI_PAR_NONE;
+}
+
+/* the parameter that is control `item` of `page` (HOME1: the layer's LAYER view) */
+static uint16_t par_index_at(uint8_t page, uint8_t item, uint8_t layer)
+{
+    uint16_t j;
+    for (j = 0u; j < NRPN_N; j++)
+        if (NRPN_MAP[j].page == page && NRPN_MAP[j].item == item)
+            return (uint16_t)(layer * PAR_LAYER_N + j);
+    return UI_PAR_NONE;
+}
+
+/* a value in n equal bands as a CC sends it (the lowest CC of its band: cc_val takes it back to k) */
+static uint8_t band_cc(uint16_t k, uint32_t n)
+{
+    if (n == 0u)
+        return 0u;
+    if (k >= n)
+        k = (uint16_t)(n - 1u);
+    return (uint8_t)(((uint32_t)k * 128u + n - 1u) / n);
+}
+
+/* row r as cc_row sets it: *v the NRPN value, *ccv the CC's */
+static void par_row(UIStateMachine *sm, uint8_t page, uint8_t layer, const UiRow *r, uint8_t *v, uint8_t *ccv)
+{
+    uint8_t keep_page = sm->page, keep_layer = sm->s.active_synth_layer, x, hi;
+    uint16_t t, n = 0u, k = 0u;
+    sm->page = page;
+    sm->s.active_synth_layer = layer;
+    x = row_get(sm, r);
+    hi = row_max(sm, r);
+    if (r->kind == RK_WAVE) {
+        *v = (uint8_t)wave_list_pos(x);
+        *ccv = band_cc(*v, wave_list_count());
+    } else if (r->kind == RK_ARCH) {
+        *v = arch_pos(x);
+        *ccv = band_cc(*v, ARCH_ORDER_N);
+    } else if (row_is_list(r)) {
+        for (t = r->min; t <= hi; t++)
+            if (value_allowed(sm, r, (uint8_t)t)) {
+                if (t < x)
+                    k++;
+                n++;
+            }
+        *v = x;
+        *ccv = band_cc(k, n);
+    } else {
+        *v = x;
+        *ccv = band_cc((uint16_t)(x < r->min ? 0u : x - r->min), (uint32_t)(hi - r->min) + 1u);
+    }
+    sm->page = keep_page;
+    sm->s.active_synth_layer = keep_layer;
+}
+
+/* the control at c on a layer as cc_one moves it: 1 and its values, 0: not there now (the page hidden, the MFX type's
+ * row another type's, a knob with nothing) */
+static uint8_t par_read(UIStateMachine *sm, const UiCc *c, uint8_t layer, uint8_t *v, uint8_t *ccv)
+{
+    uint8_t page = c->page == UIPAGE_HOME1 ? (uint8_t)(UIPAGE_HOME1 + layer) : c->page;
+    if (page_def(sm, page, layer) != &UI_PAGES[page] || !ui_sm_page_visible(sm, page, layer))
+        return 0u;
+    if (page == UIPAGE_AMP && c->item >= CCI_MFX) {
+        MfxParams *mf = ui_sm_mfx(sm, layer);
+        const UiKnob *k;
+        if (c->item == CCI_MFX_TYPE) {
+            *v = mf->type;
+            *ccv = band_cc(mf->type, MFX_OFFERED);
+            return 1u;
+        }
+        if (c->item >= CCI_MFX_ROW) {
+            uint8_t ri = (uint8_t)(c->item - CCI_MFX_ROW + 1u);
+            if (ri >= NROWS(MFX_ROWS) || mf->type >= MFX_OFFERED || (MFX_ROWS[ri].archs & (1u << mf->type)) == 0u)
+                return 0u;
+            par_row(sm, page, layer, &MFX_ROWS[ri], v, ccv);
+            return 1u;
+        }
+        k = &MFX_KNOBS[mf->type < MFX_OFFERED ? mf->type : MFX_OFF][c->item - CCI_MFX];
+        if (k->kind == UIKNOB_NONE)
+            return 0u;
+        *v = ((const uint8_t *)mf)[k->offset];
+        *ccv = band_cc(*v, k->kind == UIKNOB_LIST ? k->n_enum : 128u);
+        return 1u;
+    }
+    if (c->item >= CCI_ROW) {
+        if (c->item - CCI_ROW >= UI_PAGES[page].nrows)
+            return 0u;
+        par_row(sm, page, layer, &UI_PAGES[page].rows[c->item - CCI_ROW], v, ccv);
+        return 1u;
+    }
+    {
+        UiKnobInfo info;
+        const uint8_t *p;
+        if (page == UIPAGE_AMP) {
+            info.kind = AMP_KNOBS[c->item].kind;
+            info.n_enum = 0u;
+            p = (const uint8_t *)&sm->engine[layer]->amp + AMP_KNOBS[c->item].offset;
+        } else {
+            p = ui_sm_knob(sm, page, layer, c->item, &info);
+        }
+        if (!p || info.kind == UIKNOB_PERF || info.kind == UIKNOB_SRC || info.kind == UIKNOB_DEST)
+            return 0u;
+        *v = *p;
+        *ccv = band_cc(*p, info.kind == UIKNOB_BPM ? MIDI_CLOCK_TEMPO_MAX + 1u : info.kind == UIKNOB_LIST ? info.n_enum
+                          : info.kind == UIKNOB_TUNE ? 2u * OSC_COARSE_MAX + 1u : 128u);
+        return 1u;
+    }
+}
+
+uint8_t ui_sm_par_get(UIStateMachine *sm, uint16_t i, UiPar *out)
+{
+    uint16_t j;
+    uint8_t layer, p;
+    UiCc c;
+    if (i >= PAR_LAYER_N * NLAYER)
+        return 0u;
+    layer = (uint8_t)(i / PAR_LAYER_N);
+    j = (uint16_t)(i % PAR_LAYER_N);
+    out->layer = layer;
+    out->cc = 0u;
+    out->wide = 0u;
+    if (j >= NRPN_N) {                               /* a route's field, as stored */
+        const ModRoute *rt;
+        j = (uint16_t)(j - NRPN_N);
+        rt = &sm->engine[layer]->route[j / 5u];
+        out->msb = (uint8_t)(NRPN_ROUTE + j / 5u);
+        out->lsb = (uint8_t)(j % 5u);
+        out->v = out->lsb == 0u ? rt->src : out->lsb == 1u ? rt->via : out->lsb == 2u ? rt->dest
+               : out->lsb == 3u ? rt->amount : rt->via_depth;
+        out->ccv = out->v;
+        return 1u;
+    }
+    p = NRPN_MAP[j].page;
+    c.page = p;
+    c.item = NRPN_MAP[j].item;
+    out->msb = NRPN_MAP[j].msb;
+    out->lsb = NRPN_MAP[j].lsb;
+    if (layer != 0u && UI_PAGES[p].store != ST_ENGINE && p != UIPAGE_HOME1)
+        return 0u;                                   /* (the performance's: Layer 1's) */
+    if (!par_read(sm, &c, layer, &out->v, &out->ccv))
+        return 0u;
+    for (j = 0u; j < sizeof CC_MAP / sizeof CC_MAP[0]; j++)
+        if (CC_MAP[j].page == p && CC_MAP[j].item == c.item) {
+            out->cc = CC_MAP[j].cc;
+            break;
+        }
+    out->wide = (uint8_t)(out->v > VAL_MAX || (p == UIPAGE_GLOBAL && (c.item == 3u ||
+                          (c.item >= CCI_ROW && (UI_PAGES[p].rows[c.item - CCI_ROW].flags & RF_BPM) != 0u))));
+    return 1u;
+}
+
+/* what the last ui_sm_cc / ui_sm_nrpn wrote (CC OUT does not echo it) */
+static void par_wrote(UIStateMachine *sm, uint16_t i)
+{
+    uint8_t k;
+    if (i == UI_PAR_NONE || sm->par_in_n == UI_PAR_IN_FULL)
+        return;
+    for (k = 0u; k < sm->par_in_n; k++)
+        if (sm->par_in[k] == i)
+            return;
+    if (sm->par_in_n >= UI_PAR_IN_MAX)
+        sm->par_in_n = UI_PAR_IN_FULL;
+    else
+        sm->par_in[sm->par_in_n++] = i;
 }

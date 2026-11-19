@@ -27,8 +27,8 @@
  * copied to RAM for the run and wavetable_frames pointed at the copies, then back. The same firmware, the same patches:
  * the difference against a normal run is what reading the wavetables through XIP flash costs. */
 static const uint8_t PT_WT_BANKS[2] = {0u, 3u};
-static int16_t pt_wt[2][NUM_MORPH_STEPS * WT_FRAME_SAMPLES] SYNTH_POOL;
-static const int16_t *pt_wt_saved[2][NUM_MORPH_STEPS];
+static int8_t pt_wt[2][NUM_MORPH_STEPS * WT_FRAME_SAMPLES] SYNTH_POOL;   /* (8-bit frames since 2026-11-18) */
+static const int8_t *pt_wt_saved[2][NUM_MORPH_STEPS];
 static uint8_t pt_wt_on, pt_run_mode;      /* the copies are in use; the last run's mode */
 
 static void wt_to_ram(void)
@@ -36,8 +36,8 @@ static void wt_to_ram(void)
     uint32_t b, f, i;
     for (b = 0; b < 2u; b++)
         for (f = 0; f < NUM_MORPH_STEPS; f++) {
-            const int16_t **slot = &wavetable_frames[PT_WT_BANKS[b] * NUM_MORPH_STEPS + f];
-            int16_t *dst = &pt_wt[b][f * WT_FRAME_SAMPLES];
+            const int8_t **slot = &wavetable_frames[PT_WT_BANKS[b] * NUM_MORPH_STEPS + f];
+            int8_t *dst = &pt_wt[b][f * WT_FRAME_SAMPLES];
             pt_wt_saved[b][f] = *slot;
             for (i = 0; i < WT_FRAME_SAMPLES; i++)
                 dst[i] = (*slot)[i];

@@ -16,10 +16,8 @@ static int16_t pcm_dec[256];
 
 void pcm_osc_init(void)
 {
-    for (int i = 0; i < 256; i++) {
-        float v = attack_mulaw[i];
-        pcm_dec[i] = (int16_t)(v > 32767.f ? 32767 : (v < -32767.f ? -32767 : (int)v));
-    }
+    for (int i = 0; i < 256; i++)
+        pcm_dec[i] = attack_mulaw_q15[i];       /* (the RAM copy: XIP reads miss the cache) */
 }
 
 /* ---- the wave list */
