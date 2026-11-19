@@ -25,6 +25,15 @@
     bc = new BroadcastChannel(EMU_CHANNEL);
     bc.onmessage = (e) => {
       if (e.data && e.data.type === "here") { emuSeen = Date.now(); emit("emu", e.data); }
+      else if (e.data && e.data.type === "sysex-out" && target === "emu") {   // the emulator's SysEx: F0..F7, back to back
+        const b = e.data.bytes || [];
+        for (let i = 0; i < b.length;) {
+          let j = i;
+          while (j < b.length && b[j] !== 0xF7) j++;
+          if (b[i] === 0xF0) emit("in", b.slice(i, j + 1));
+          i = j + 1;
+        }
+      }
     };
   }
 
@@ -85,6 +94,8 @@
   function send(bytes, what) {
     if (target.startsWith("port:") && port) {
       try { port.send(bytes); } catch (e) { emit("log", { bytes, what: "FAILED: " + e.message }); return false; }
+    } else if (target === "emu" && bc && bytes[0] === 0xF0) {
+      bc.postMessage({ type: "sysex", bytes });
     } else if (target === "emu" && bc) {
       for (let i = 0; i < bytes.length; i += 3) bc.postMessage({ type: "midi", b0: bytes[i], b1: bytes[i + 1] | 0, b2: bytes[i + 2] | 0 });
     }
@@ -109,7 +120,8 @@
       const s = 0xB0 | ch7(ch), v = Math.max(0, Math.min(16383, val | 0));
       return send([s, 99, v7(msb), s, 98, v7(lsb), s, 6, v >> 7, s, 38, v & 0x7F], what || `NRPN ${msb}:${lsb} = ${v}`);
     },
-    sysex(bytes, what) { return sysexOk ? send(bytes, what) : false; },
+    sysex(bytes, what) { return sysexOk || target === "emu" ? send(bytes, what) : false; },
+    get canSysex() { return target === "emu" ? !!bc : sysexOk && target.startsWith("port:"); },
     rpn(ch, msb, lsb, val, what) {
       const s = 0xB0 | ch7(ch);
       return send([s, 101, v7(msb), s, 100, v7(lsb), s, 6, v7(val)], what || `RPN ${msb}:${lsb} = ${v7(val)}`);

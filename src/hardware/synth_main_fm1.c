@@ -822,6 +822,10 @@ static void ed_service(void)
     }
     if (p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2)
         return;                                     /* not an editor frame: ota_service() reads it */
+    if (seqx_handle(p[3], p + 4, n - 4u)) {        /* the SEQ tab's (synth_panel.c; lanes are long frames) */
+        ota_frame_done();
+        return;
+    }
     if (p[3] >= ED_PCM_BEGIN && p[3] <= ED_PCM_INFO) {
         ed_handle(p, n);                            /* long frames (data): handled in place */
         ota_frame_done();

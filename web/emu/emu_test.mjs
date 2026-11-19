@@ -116,6 +116,20 @@ check(d.ex.web_lit_buttons() & (1 << BTN.PLAY), "PLAY is lit while the sequencer
 const flash = new Uint8Array(d.mem.buffer, d.ex.web_nor(), d.ex.web_nor_len()).slice();
 
 // ---- second power-on from that flash
+// the editor's SEQ tab over SysEx (web_sysex_in / web_sysex_out, as the page's BroadcastChannel bridge uses them)
+{
+  const inb = new Uint8Array(d.mem.buffer, d.ex.web_sysex_in_buf(), 8);
+  d.ex.web_sysex_out_take();
+  inb.set([0x7D, 0x46, 0x4C, 60]);
+  d.ex.web_sysex_in(4);
+  d.run(60);
+  const out = Array.from(new Uint8Array(d.mem.buffer, d.ex.web_sysex_out(), d.ex.web_sysex_out_len()));
+  d.ex.web_sysex_out_take();
+  const cmds = [];
+  for (let i = 0; i < out.length; i++) if (out[i] === 0xF0) cmds.push(out[i + 4]);
+  check(cmds.filter((c) => c === 61).length === 4 && cmds.includes(69) && cmds.includes(63),
+        `SEQ REQ: 4 lanes, the name and an ACK come out (${cmds.join(" ")})`);
+}
 const e = await power(flash);
 e.run(2200);
 shot("09-reboot", e.fb());

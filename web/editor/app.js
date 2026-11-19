@@ -338,8 +338,8 @@
       out.unshift(warn);
       return out;
     } },
-    { id: "seq", label: "SEQ", lore: "The procession, step by step.", build() {
-      return absent("Not built yet. Planned: SEQ upload over SysEx and a MAQ16/3-style SEQ control channel (notes on a channel of its own switch steps). This tab is their place.");
+    { id: "seq", label: "SEQ", lore: "The procession, step by step: the sequence playing now.", build() {
+      return window.CarnacSeq.build();          // (seq.js: its own SysEx, live edits, SAVE into a slot)
     } },
   ];
 
@@ -475,7 +475,7 @@
   }
 
   let dumpBuf = [], redrawTimer = 0;
-  const redrawSoon = () => { clearTimeout(redrawTimer); redrawTimer = setTimeout(() => { keep(); render(); }, 40); };
+  const redrawSoon = () => { clearTimeout(redrawTimer); redrawTimer = setTimeout(() => { keep(); if (S.tab !== "seq") render(); }, 40); };
   function takeDump(entries) {                   // ARCH and the MFX type first: the other controls follow them
     const first = entries.filter(([, m, l]) => { const a = AT[m + ":" + l]; return a && ((a[0] === "HOME1" && a[1] === C.CCI_ROW) || (a[0] === "AMP" && a[1] === C.CCI_MFX_TYPE)); });
     const lay = myLayer();
@@ -493,6 +493,7 @@
 
   const nr = { msb: 127, lsb: 127, dm: -1 };      // the FM1's NRPN as it comes (99 / 98 / 6 / 38)
   function takeIn(b) {
+    if (b[0] === 0xF0 && window.CarnacSeq.take(b)) return;   // (the SEQ tab's messages)
     if (b[0] === 0xF0) {
       const x = X.decode(b);
       if (!x) return;
@@ -520,9 +521,9 @@
   }
 
   function receive() {
-    if (!M.sysexOk) { status("SysEx was not allowed: allow it in the site settings to RECEIVE.", true); return; }
     dumpBuf = [];
-    if (!M.target.startsWith("port:")) { status("Pick the FM1's MIDI port first (RECEIVE needs the real FM1).", true); return; }
+    if (M.target.startsWith("port:") && !M.sysexOk) { status("SysEx was not allowed: allow it in the site settings to RECEIVE.", true); return; }
+    if (!M.canSysex) { status("Pick the FM1's MIDI port or the emulator first.", true); return; }
     if (!M.sysex(X.request(), "ED_PAR_REQ: send the whole sound")) { status("Could not send to the FM1.", true); return; }
     status("Asked the FM1 for the whole sound...");
   }
@@ -592,7 +593,7 @@
       const off = (t.id === "osc2" && !ARCH[arch()].osc2) || (t.id === "flt2" && !ARCH[arch()].filter2) ||
                   (t.id === "fltmix" && !ARCH[arch()].fltmix);
       if (off) b.classList.add("dim");
-      b.onclick = () => { S.tab = t.id; keep(); render(); };
+      b.onclick = () => { const was = S.tab; S.tab = t.id; keep(); render(); if (t.id === "seq" && was !== "seq") window.CarnacSeq.opened(); };
       nav.append(b);
     });
     const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
@@ -629,6 +630,7 @@
     $("file").onchange = (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ""; };
     $("receive").onclick = receive;
     M.on("in", takeIn);
+    window.CarnacSeq.init({ midi: M, status });
     $("panic").onclick = () => { M.cc(S.ch, 123, 0, "ALL NOTES OFF"); M.cc(S.ch, 120, 0, "ALL SOUND OFF"); };
     $("logbox").addEventListener("toggle", () => { $("log").textContent = logLines.join("\n"); });
     M.on("change", () => { syncLink(); });
@@ -639,6 +641,7 @@
     const ok = await M.init();
     fillOutputs();
     M.on("ports", fillOutputs);
+    if (S.tab === "seq") window.CarnacSeq.opened();
     status(ok ? "Pick the FM1's port and its channel, then move anything." :
       navigator.requestMIDIAccess ? "MIDI access was refused: allow it in the site settings, or use the emulator." :
       "This browser has no Web MIDI (use Chrome or Edge). The emulator target still works.", !ok);

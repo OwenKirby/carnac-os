@@ -441,12 +441,15 @@ midiBtn.addEventListener("click", async () => {
 // ---------------------------------------------------------------- the editor (web/editor) in another tab
 // The editor's "Carnac emulator" target talks to this page over a BroadcastChannel (same site, no MIDI port): its
 // messages go in as MIDI IN's do, and a ping is answered so the editor can show the link.
-if (typeof BroadcastChannel !== "undefined") {
-  const editorBc = new BroadcastChannel("carnac-midi");
+// SysEx goes both ways (2026-11-19): the editor's in (RECEIVE, the SEQ tab), the synth's back out as whole F0..F7
+// messages, one after another in "bytes".
+const editorBc = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("carnac-midi") : null;
+if (editorBc) {
   editorBc.onmessage = (e) => {
     const m = e.data || {};
     if (m.type === "ping") editorBc.postMessage({ type: "here", on: !!node });
     else if (m.type === "midi" && m.b0 >= 0x80 && m.b0 !== 0xF0) send({ type: "midi", b0: m.b0, b1: m.b1, b2: m.b2 });
+    else if (m.type === "sysex" && Array.isArray(m.bytes)) send({ type: "sysex", bytes: m.bytes.filter((b) => b < 0x80) });
   };
 }
 
@@ -474,6 +477,7 @@ async function switchOn() {
           window.carnacLast = m;
           if (m.load !== undefined) cpu.textContent = `Carnac uses ${m.load}% of this computer's time`;
           if (m.flash) flashSave(m.flash);
+          if (m.sysex && editorBc) editorBc.postMessage({ type: "sysex-out", bytes: Array.from(m.sysex) });
         }
       };
     });

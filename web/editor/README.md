@@ -13,10 +13,9 @@ the panel's pages. Plain HTML/CSS/JS, no build step.
 - **SEND:** *CC* sends a CC where the map has one, NRPN otherwise. *NRPN always* sends the exact stored value
   for everything.
 - **Without hardware:** pick *Carnac emulator* and open `web/emu/` (the site's `play/`) in another tab of the
-  same site. The two talk over a `BroadcastChannel("carnac-midi")`. This draft adds 12 lines to
-  `web/emu/index.html` for it. **The emulator on main was built before the CC map,** so it will not answer the
-  new CCs or NRPNs until `carnac.wasm` is rebuilt (`web/emu/build.sh`) from a tree that has the CC map. I did
-  not rebuild it here because it needs `x0x-firmware/` and emsdk.
+  same site. The two talk over a `BroadcastChannel("carnac-midi")`: MIDI and, since 2026-11-19, SysEx both ways
+  (RECEIVE and the SEQ tab work against the emulator). `carnac.wasm` is not in git: build it with
+  `web/emu/build.sh` (needs `x0x-firmware/` and emsdk) from a tree with the CC map and the SEQ SysEx.
 
 ## Files
 
@@ -25,7 +24,8 @@ the panel's pages. Plain HTML/CSS/JS, no build step.
 | `index.html`, `style.css` | the page: SAMHAIN orange on black, the site's rune face, dense tablets; works down to 320 px |
 | `app.js` | the controls, built from `params.js`. It holds values as the firmware stores them and works out each CC from them the way `ui_sm_cc` reads it back |
 | `midi.js` | the only module that sends bytes: Web MIDI port, emulator, or log only. CC, NRPN (99/98/6, sent whole every time), RPN, BANK SELECT + PC |
-| `sysex.js` | **stub**: the boundary for a future patch dump / request codec (`supported: false`) |
+| `sysex.js` | the sound dump's codec (ED_PAR_REQ 56 / DUMP 57 / END 58) |
+| `seq.js` | the SEQ tab: its own SysEx (60-69, below), the live sequence, SAVE into a slot |
 | `gen_params.py` | reads the firmware's tables and writes `params.js` |
 | `params.js` | **generated**: do not edit |
 | `check_params.py` | spot-checks `params.js` against the C source in a second, independent way |
@@ -63,7 +63,6 @@ It stops with an error if a table changes shape. The one piece it cannot read is
 
 - **RECEIVE FROM SYNTH:** disabled. It needs CC OUT or a SysEx dump. Until then the editor shows what it last
   sent, and a control never moved is drawn dim and sits at a default.
-- **SEQ tab:** a placeholder for SEQ upload SysEx and the MAQ16/3-style SEQ control channel.
 - **The MFX's rows** (MODE, POLARITY, AGE, COLOUR, WIDTH, ROOT, CHORD, LEVEL, LOW) are shown greyed. No CC or
   NRPN reaches them: AMP's page has one row (DRV MODEL), so NRPN 13:5+ is refused.
 - **WAVE names** are the banks plus the PCM waves *as built in this tree*. An FM1 with other waves uploaded
@@ -124,3 +123,27 @@ With the proto/cc-map firmware (fm1-ccout1 and later):
 - Tested in headless Chrome with a stand-in MIDI port playing a dump captured from the FM1
   (session scratchpad `edtest/make_rx_harness.py`): ARCH, routes, a CC and a 14-bit NRPN after it land; every tab
   draws with no errors. Not yet tried by hand against the FM1 in a real browser.
+
+## 2026-11-19: the SEQ tab
+
+Edits the sequence the FM1 plays **now** (heard at once); **SAVE** writes it into one of the 32 sequence slots
+under the name, as the panel's SAVE does; **LOAD** loads a slot as the Preset Encoder would. Opening the tab asks
+the FM1 for the sequence and the slot names. The panel's own SEQ edits come back as they happen (step record, a
+load, a performance), and the playhead lights the playing step.
+
+- Four lanes of 16 steps, each with EVENT, TARGET (layer, lane, or the lanes it acts on), STEP (prescale, with
+  musical names), MODE, and on NOTE lanes SCALE + ROOT. The loop: drag the rail's ends (or LOOP START / END on
+  the selected step, the only way on a phone).
+- NOTE lanes: drag a step up / down (by scale degree under a SCALE), the keyboard below the lanes, or the computer
+  keyboard: `A W S E D F T G Y H U J K` = C..C into the selected step and on to the next (Shift: add to its chord,
+  up to 4 notes), `Z X` octave. Value lanes: draw across the steps. REST / TIE / SKIP per step.
+- Lane tools: shift left / right and reverse inside the loop, transpose (-12 -1 +1 +12), RND, COPY / PASTE,
+  CLEAR. UNDO (Ctrl+Z) sends back what it restores. SAVE FILE / LOAD FILE: `.carnac-seq.json`.
+
+Firmware: `src/hardware/synth_panel.c` "SEQ OUT", wire format `src/seq_wire.h` (not the flash layout). Commands, in
+the editor frame `F0 7D 46 4C cmd .. F7`: 60 REQ, 61 LANE, 62 STEP, 63 NAME, 64 SAVE, 65 SLOTS, 66 LOAD, 67 POS
+(out), 68 PLAY, 69 ACK (out). **X0X's USB keeps one received SysEx at a time** and drops one that arrives before
+the main loop took it (measured: 5 sent back to back, 2 arrived), so every SEQ command is ACKed and the editor
+sends one at a time (resent after 250 ms; 16 step writes take ~24 ms on the FM1). Tests:
+`src/host/test_seq_sysex.c` (run_tests), `web/emu/emu_test.mjs`, and a headless-Chrome harness of this tab (not
+in the repo: scratchpad `edseq/make_harness.py`, 22 checks).
