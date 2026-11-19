@@ -160,7 +160,11 @@ right (ENV: ADSR, VEL · KEY, RETRIG). Two columns under 1260 px, one on a phone
 **MOD** is the ley-line map: every SOURCE down the left, the DESTs in use down the right, each route a line between
 them (bright and thick by its amount, broken when negative, its VIA a stone on the line with a thread back to the VIA
 source); click a line to pick its route in the list below (the routes in use and the next free one; ALL 16 for every
-route). **SEQUENCE** is seq.js, unchanged. **SETUP** is tablets like SOUND's, every number and list a knob: TUNING
+route). **SEQUENCE** is drawn as the FM1's SEQ page: the transport, four step cards for the selected lane's knob window (rock
+tablets with grass under them, the playing step's rimmed; a card turns like a knob), then four lanes of sixteen stones
+(viz.js seqLane: hewn outlines filled from the ground by each step's value, standing on the turf of the loop; the
+selected lane cream with its window bracketed; a rest hollow, a skip crumbled, a tie a fallen stone; drag the loop's
+ends along the grass), each with its footer of stone chips (STEP, EVENT, TARGET, SCALE, ROOT, MODE) and tools. **SETUP** is tablets like SOUND's, every number and list a knob: TUNING
 (an octave of stones from the ROOT), ZONES (the keyboard with the split stone), CLOCK (a sarsen circle lit a stone a
 sixteenth at INT TEMPO), VELOCITY (the curve), MIDI (channels and custom CCs as knobs, CC / PC IN / OUT as a stone-tablet
 menu), PROGRAM (a knob a bank picks the number; nothing is sent until its LOAD) and THEME (a menu of the nine palettes).

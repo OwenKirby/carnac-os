@@ -888,6 +888,7 @@
     } catch (_) { /* a canvas that cannot export: the plain colours stand in */ }
     redrawAll();
     drawBanner();
+    if (window.CarnacSeq && window.CarnacSeq.repaint) window.CarnacSeq.repaint();
     dirty = true;
   }
   function drawBanner() {
@@ -1177,7 +1178,7 @@
     requestAnimationFrame(frame);
     if (document.fonts && document.fonts.load) document.fonts.load('10px "Carnac Rune"').then(() => { dirty = true; }, () => {});   // (the pictures' words)
     let rz = 0;
-    window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { drawBanner(); dirty = true; }, 80); });
+    window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { drawBanner(); dirty = true; if (window.CarnacSeq.repaint) window.CarnacSeq.repaint(); }, 80); });
     const ok = await M.init();
     fillOutputs();
     M.on("ports", fillOutputs);

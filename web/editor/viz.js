@@ -866,6 +866,107 @@
     return { rock: make(rockTone), lane: make(laneTone) };
   }
 
-  window.CarnacViz = { tiles, mfx, sarsen, velCurve, zones, tuning, swatch, archMap, leys, drive, alignment, readPalette, dial, osc, mix, noise, filter, env, envGeom, envHead, segK, envT, fmtT, lfo, lfoHz, lfoAt, fx,
+  // ---------------------------------------------------------------------------------------------- the SEQ page
+  /* a menhir drawn as the SEQ page draws a step (ui_seq_draw.c sq_stone with an edge and a fill): its hewn outline in
+     `edge`, its bottom `fill` rows filled with the stone's grain in `c`; dashed: the outline broken (a SKIP crumbles) */
+  function stoneF(ctx, x, yb, w, h, fill, c, edge, seed, dashed) {
+    x |= 0; yb |= 0; w |= 0; h |= 0; fill = Math.max(0, Math.min(h, fill | 0));
+    if (h <= 0 || w <= 0) return;
+    const top = yb - h;
+    for (let r = 0; r < h; r++) {
+      let l = stoneIn(r, w, h, seed, 0), rt = w - stoneIn(r, w, h, seed, 1);
+      if (rt - l < 2) { l = ((l + rt) >> 1) - 1; rt = l + 2; }
+      for (let i = l; i < rt; i++) {
+        const onEdge = i === l || i === rt - 1 || r === 0;
+        if (r >= h - fill) {
+          const n = hash(i + Math.imul(seed, 131), h - r), gr = hash((i >> 1) + Math.imul(seed, 7), ((h - r) >> 1) + 300) >>> 29;
+          let t = gr < 6 ? 0 : 1;
+          if ((n >>> 27) === 0) t = 2;
+          if ((n >>> 26) === 1) { pset(ctx, x + i, top + r, mixc(c, PAL.hi, 0.35)); continue; }   // (the grain's lighter specks)
+          pset(ctx, x + i, top + r, onEdge ? edge : shade(c, t));
+        } else if (onEdge && !(dashed && ((i + r) % 3 === 0))) pset(ctx, x + i, top + r, edge);
+      }
+    }
+  }
+  /* one lane of the SEQ page: sixteen stones on the turf of the loop.
+     o: { steps: [{ fill 0..1, mute, skip, tie, label, more }], ls, le, act (the selected lane), win (the knob window's
+     first step, act only), sel (the selected step), ph (the playhead, or -1), bip (a value lane around its middle) }
+     Returns the geometry, for the pointer */
+  function seqLane(cv, o) {
+    const ctx = fitFine(cv);
+    if (!ctx) return null;
+    const W = ctx.width, H = ctx.height, g = H - 5, top = 8, slot = W / 16;
+    const sw = Math.max(5, Math.min(18, Math.floor(slot * 0.62))), sh = g - top;
+    const inL = (s) => s >= o.ls && s <= o.le;
+    for (let x = 0; x < W; x++) {                                    // the field; the loop's turf lit
+      const s = Math.min(15, Math.floor(x / slot)), n = hash(x, 900 + (o.seed || 0));
+      rect(ctx, x, g + 1, 1, 4, PAL.surf);                         // (the earth under the turf)
+      if ((hash(x, 5) >>> 29) === 0) pset(ctx, x, g + 2 + (n & 1), PAL.stone);
+      if (inL(s)) {                                                  // the loop's turf: a band of grass, lit
+        const lit = o.act ? PAL.accent : PAL.theme;
+        pset(ctx, x, g, (n >>> 30) === 0 ? PAL.mid : lit);
+        pset(ctx, x, g + 1, (n >>> 27) < 3 ? lit : PAL.dim);
+        if ((n >>> 29) < 6) pset(ctx, x, g - 1, (n >>> 12) & 1 ? lit : PAL.mid);
+        if ((n >>> 28) < 7) pset(ctx, x, g - 2 - ((n >>> 8) & 1), (n >>> 13) & 1 ? lit : PAL.dim);
+        if ((n >>> 26) < 2) pset(ctx, x, g - 4, lit);
+      } else {
+        pset(ctx, x, g, PAL.stone);
+        if ((n >>> 29) === 0) pset(ctx, x, g - 1, PAL.dim);
+      }
+    }
+    if (o.ls >= 0) {                                                 // the loop's two ends, to drag
+      [o.ls, o.le + 1].forEach((s, k) => { const x = Math.round(s * slot) - (k ? 1 : 0); rect(ctx, x, g - 4, 1, 7, o.act ? PAL.hi : PAL.accent); });
+    }
+    o.steps.forEach((st, s) => {
+      const x = Math.round(s * slot + (slot - sw) / 2), seed = 3 + s * 17 + (o.seed || 0) * 5;
+      const loop = inL(s), ph = o.ph === s;
+      let c = o.act ? (loop ? PAL.accent : PAL.mid) : (loop ? PAL.theme : PAL.dim);
+      let edge = o.act ? (loop ? PAL.accent : PAL.mid) : (loop ? mixc(PAL.theme, PAL.accent, 0.4) : PAL.dim);
+      if (ph) { c = o.act ? PAL.hi : PAL.accent; edge = c; }
+      if (st.tie) {                                                  // a tie: the stone fallen over, lying on the ground
+        const lw = Math.min(Math.round(slot) - 2, Math.round(sh * 0.7)), lh = Math.max(4, Math.round(sw * 0.55));
+        stoneF(ctx, Math.round(s * slot + (slot - lw) / 2), g, lw, lh, lh, c, edge, seed);
+      } else {
+        const fill = st.mute || st.skip ? 0 : Math.max(1, Math.round(sh * st.fill));
+        stoneF(ctx, x, g, sw, sh, fill, c, edge, seed, st.skip);
+        if (o.bip) { const y = g - Math.round(sh / 2); pset(ctx, x - 1, y, PAL.mid); pset(ctx, x + sw, y, PAL.mid); }
+      }
+      if (st.label) {                                                // its words, short where the step is narrow (a phone)
+        const room = slot * 2 - 3, fits = (t) => t.length * 6 - 1 <= room;
+        const words = fits(st.label) ? st.label : st.short && fits(st.short) ? st.short : s === o.sel ? (st.short || st.label) : "";
+        if (words) ctx.text(words, s * slot + slot / 2, top - 2.5, s === o.sel ? PAL.hi : loop ? PAL.text : PAL.mid, "c");
+      }
+      if (st.more) for (let k = 0; k < st.more; k++) pset(ctx, x + sw + 1, g - sh + 1 + k * 2, PAL.accent);   // (a chord's other notes)
+      if (s === o.sel) rect(ctx, x, g + 1, sw, 1, PAL.hi);
+    });
+    if (o.act && o.win >= 0) {                                       // the knob window: corner brackets, as the panel's
+      const x0 = Math.round(o.win * slot) + 1, x1 = Math.round((o.win + 4) * slot) - 2, y0 = top - 7 + 2, y1 = g + 2, L = 4;
+      const c = PAL.hi;
+      rect(ctx, x0, y0, L, 1, c); rect(ctx, x0, y0, 1, L - 1, c);
+      rect(ctx, x1 - L + 1, y0, L, 1, c); rect(ctx, x1, y0, 1, L - 1, c);
+      rect(ctx, x0, y1, L, 1, c); rect(ctx, x0, y1 - L + 2, 1, L - 1, c);
+      rect(ctx, x1 - L + 1, y1, L, 1, c); rect(ctx, x1, y1 - L + 2, 1, L - 1, c);
+    }
+    ctx.done();
+    return { slot, g, top, W, H };
+  }
+  /* a strip of grass across a canvas (under the SEQ page's step cards); lit: in the highlight's colour */
+  function turf(cv, lit, seed) {
+    const ctx = fitFine(cv);
+    if (!ctx) return;
+    const W = ctx.width, g = ctx.height - 2;
+    const c1 = lit ? PAL.hi : PAL.accent, c2 = lit ? PAL.accent : PAL.theme;   // (the panel's knob tablets: grass in the light tones)
+    for (let x = 0; x < W; x++) {
+      const n = hash(x, 77 + (seed || 0));
+      pset(ctx, x, g, (n >>> 30) === 0 ? PAL.mid : c2);
+      pset(ctx, x, g + 1, PAL.dim);
+      if ((n >>> 29) < 6) pset(ctx, x, g - 1, (n >>> 12) & 1 ? c2 : PAL.mid);
+      if ((n >>> 28) < 6) pset(ctx, x, g - 2, (n >>> 13) & 1 ? c1 : c2);
+      if ((n >>> 26) < 2) pset(ctx, x, g - 3, c1);
+    }
+    ctx.done();
+  }
+
+  window.CarnacViz = { seqLane, turf, tiles, mfx, sarsen, velCurve, zones, tuning, swatch, archMap, leys, drive, alignment, readPalette, dial, osc, mix, noise, filter, env, envGeom, envHead, segK, envT, fmtT, lfo, lfoHz, lfoAt, fx,
                        stone, grass, moon, fit, hash, get PAL() { return PAL; } };
 })();
