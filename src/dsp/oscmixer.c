@@ -368,7 +368,7 @@ int32_t osc_mixer_sub(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t 
                                                  *sub_phase);
         } else {
             const int16_t *table = mv->sub_waveform == SUBWAVE_SQUARE ? wavetable_sub_square : wavetable_sine;
-            sub_q15 = wt_read_frames(table, table, 0, off, shift, mask, *sub_phase);
+            sub_q15 = wt_read_table16(table, off, shift, mask, *sub_phase);
         }
         sub_q15 = (sub_q15 * mv->sub_gain_q15) >> 15;
     }
@@ -380,14 +380,6 @@ void osc_mixer_sub_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32
         return;                                /* osc_mixer_sub: 0, the phase held */
     uint8_t level = mv->sub_level;
     uint32_t off = wavetable_level_start[level], shift = WT_LEVEL_SHIFT[level], mask = WT_LEVEL_SAMPLES[level] - 1u;
-    const int16_t *fa, *fb;
-    int32_t mf;
-    if (mv->sub_waveform == SUBWAVE_CURRENT) {
-        fa = osc1->frame_a; fb = osc1->frame_b; mf = osc1->morph_frac_q15;
-    } else {
-        fa = fb = mv->sub_waveform == SUBWAVE_SQUARE ? wavetable_sub_square : wavetable_sine;
-        mf = 0;
-    }
     uint32_t phase = *sub_phase, step = mv->sub_step;
     int32_t gain = mv->sub_gain_q15;
     if (mv->sub_waveform == SUBWAVE_CURRENT && osc1->vco) {   /* the VCO's own shape (osc_mixer_sub) */
@@ -398,10 +390,19 @@ void osc_mixer_sub_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32
         *sub_phase = phase;
         return;
     }
-    for (int i = 0; i < n; i++) {
-        phase += step;
-        int32_t s = wt_read_frames(fa, fb, mf, off, shift, mask, phase);
-        acc[i] += ((s * gain) >> 15) >> 1;
+    if (mv->sub_waveform == SUBWAVE_CURRENT) {               /* OSC1's frames (8-bit) for this tick */
+        const int8_t *fa = osc1->frame_a, *fb = osc1->frame_b;
+        const int32_t mf = osc1->morph_frac_q15;
+        for (int i = 0; i < n; i++) {
+            phase += step;
+            acc[i] += ((wt_read_frames(fa, fb, mf, off, shift, mask, phase) * gain) >> 15) >> 1;
+        }
+    } else {                                                  /* SINE / SQUARE: the int16 tables */
+        const int16_t *t = mv->sub_waveform == SUBWAVE_SQUARE ? wavetable_sub_square : wavetable_sine;
+        for (int i = 0; i < n; i++) {
+            phase += step;
+            acc[i] += ((wt_read_table16(t, off, shift, mask, phase) * gain) >> 15) >> 1;
+        }
     }
     *sub_phase = phase;
 }

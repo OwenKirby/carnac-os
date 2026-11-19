@@ -13,4 +13,4 @@ typedef struct {
     uint8_t root;                    /* MIDI note it sounds at, or ATK_UNPITCHED */
 } AttackInfo;
 
-extern const float attack_mulaw[256];          /* mu-law byte -> sample (the PCM store's bytes too) */
+extern const int16_t attack_mulaw_q15[256];     /* mu-law byte -> Q15 sample (the PCM store's bytes too) */

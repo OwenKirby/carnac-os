@@ -543,7 +543,7 @@ int main(int argc, char **argv)
     perf_state.delay_sync = (uint8_t)(TUNING_MEANTONE << 1);
     perf_state.bend_range = 24u;
     {
-        static InstrumentSettings in = {84u, VELCURVE_LINEAR, CLKOUT_OFF};   /* +20 cents */
+        static InstrumentSettings in = {84u, VELCURVE_LINEAR, CLKOUT_OFF, 1u, 0u, 1u, 0u};   /* +20 cents */
         ui_sm_attach_instrument(&sm, &in);
         shot(dir, "tuning_meantone_up");
         ui_sm_attach_instrument(&sm, NULL);

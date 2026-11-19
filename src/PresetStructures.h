@@ -123,7 +123,11 @@ typedef struct {
     uint8_t master_tune;             /* MASTER_TUNE_MIN..MAX, 64 = 0 cents */
     uint8_t vel_curve;               /* VELCURVE_* */
     uint8_t clock_out;               /* CLKOUT_*: MIDI clock, start and stop out while the clock is internal */
+    uint8_t cc_in, cc_out;           /* GLOBAL CC IN / CC OUT (2026-11-18): the CC map and NRPNs in; the panel's moves
+                                      * out (CC, else NRPN) and a dump at each load */
+    uint8_t pc_in, pc_out;           /* GLOBAL PC IN / PC OUT: Program Changes in; the panel's loads out */
 } InstrumentSettings;
+#define INSTRUMENT_DEFAULTS {64u, VELCURVE_LINEAR, CLKOUT_OFF, 1u, 0u, 1u, 0u}   /* (CC OUT, PC OUT off: user) */
 enum { PERF_SINGL_SYNTH, PERF_DUAL_SYNTH, PERF_SPLIT_SYNTH, PERF_COUNT };   /* 5.3 View 1 */
 enum { VMODE_MONO_RETRIG, VMODE_MONO_LEGATO, VMODE_POLY_REUSE, VMODE_POLY_RESET, VMODE_UNISON_STACK,
        VMODE_COUNT };

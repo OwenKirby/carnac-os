@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-"""The wavetable areas' images (2026-11-03, wavetables.h wt_area_hdr_t): frames the FM1 reads from its store flash
-instead of the app, which was full.
-
-  area 2 (pcm_store_fm1.c, 24 KiB at 0xBC000): bank 0 (Foundations, from foundations_bank.bin) and the wavetable
-          image's frames 114..116 (bank 14, Dust, frames 3..5)
-  area 3 (8 KiB at 0xDE000): the image's frames 117..119 (Dust, frames 6..8)
-
-The image's last WT_SPILL_FRAMES (gen_wavetables.py SPILL_FRAMES) are left out of the FM1's app; host and browser
-builds link the whole image and attach area 2 for bank 0. Nothing is redrawn: the frames are copied byte for byte
-from src/dsp/foundations_bank.bin (gen_foundations.py) and src/dsp/wavetables_image.bin (gen_wavetables.py), so
-rerun this after either.
+"""The wavetable area image (wavetables.h wt_area_hdr_t): bank 0 (Foundations, from foundations_bank.bin) as frames
+host and browser builds attach (wavetable_area_attach). The FM1 attaches none since 2026-11-05: its store areas hold
+PCM waves, and bank 0 plays the VCO. From 2026-11-03 to 11-18 areas 2 and 3 also held six Dust frames the app had no
+room for; since the 8-bit banks (2026-11-18) the whole image is in the app again. The frames are the bank's, cut to
+8 bits as the image's are (gen_wavetables.py to8), so rerun this after gen_foundations.py.
 
 Usage
-  python gen_wt_areas.py      writes src/dsp/wt_area2.bin, src/dsp/wt_area3.bin (the images to upload:
-                              pcm_store_upload.py sync) and src/host/wt_areas_host.c (the same, for host builds)
+  python gen_wt_areas.py      writes src/dsp/wt_area2.bin and src/host/wt_areas_host.c (the same, for host builds)
 """
 import struct
 import zlib
@@ -22,17 +15,14 @@ from pathlib import Path
 DSP = Path(__file__).resolve().parent
 ROOT = DSP.parent.parent
 FRAMES = 8                       # NUM_MORPH_STEPS
-FRAME_BYTES = 1024 * 2           # WT_FRAME_SAMPLES int16
+SAMPLES = 1024                   # WT_FRAME_SAMPLES (int16 in foundations_bank.bin, 8-bit in the area)
 BANK_HDR = 32                    # wt_bank_hdr_t (foundations_bank.bin)
-IMAGE_DATA_OFF = 0x20            # WT_STORE_DATA_OFF
-FIRST_IMAGE = 1                  # WT_BANK_FIRST_IMAGE
-SPILL_FRAMES = 6                 # wavetables.h WT_SPILL_FRAMES, gen_wavetables.py SPILL_FRAMES
-MAGIC, VERSION, MAX_FRAMES = 0x46575243, 1, 12   # wavetables.h WT_AREA_* ("CRWF")
-AREA_SIZE = {2: 0x6000, 3: 0x2000}               # pcm_store_fm1.c PCM_AREA
+MAGIC, VERSION, MAX_FRAMES = 0x46575243, 2, 12   # wavetables.h WT_AREA_* ("CRWF"; 2: 8-bit frames)
+AREA_SIZE = {2: 0x6000}                          # (the image's bound: pcm_store_fm1.c's area 2)
 
 
 def area_image(tag, frames):
-    """frames: [(wavetable_frames index, 2048 bytes)] -> the image (wt_area_hdr_t + data)"""
+    """frames: [(wavetable_frames index, 1024 bytes)] -> the image (wt_area_hdr_t + data)"""
     assert 0 < len(frames) <= MAX_FRAMES
     data = b"".join(f for _, f in frames)
     idx = bytes(i for i, _ in frames) + b"\xFF" * (MAX_FRAMES - len(frames))
@@ -62,15 +52,14 @@ def main():
     bank_id = struct.unpack_from("<I", bank, 16)[0]
     set_id = struct.unpack_from("<I", image, 24)[0]
     tag = (set_id ^ bank_id) & 0xFF
-    n_image = (len(image) - IMAGE_DATA_OFF) // FRAME_BYTES
 
-    def img_frame(i):                            # the image's frame i, as wavetable_frames sees it
-        o = IMAGE_DATA_OFF + i * FRAME_BYTES
-        return (FIRST_IMAGE * FRAMES + i, image[o:o + FRAME_BYTES])
+    def to8(raw):                                # gen_wavetables.py to8: the int16 sample's top byte, rounded
+        vals = struct.unpack(f"<{SAMPLES}h", raw)
+        return struct.pack(f"<{SAMPLES}b", *(max(-128, min(127, round(v / 256.0))) for v in vals))
 
-    spill = [img_frame(i) for i in range(n_image - SPILL_FRAMES, n_image)]
-    found = [(f, bank[BANK_HDR + f * FRAME_BYTES:BANK_HDR + (f + 1) * FRAME_BYTES]) for f in range(FRAMES)]
-    images = {2: area_image(tag, found + spill[:3]), 3: area_image(tag, spill[3:])}
+    fb = SAMPLES * 2
+    found = [(f, to8(bank[BANK_HDR + f * fb:BANK_HDR + (f + 1) * fb])) for f in range(FRAMES)]
+    images = {2: area_image(tag, found)}
     for area, img in images.items():
         assert len(img) <= AREA_SIZE[area], f"area {area}: {len(img)} B over {AREA_SIZE[area]}"
         (DSP / f"wt_area{area}.bin").write_bytes(img)

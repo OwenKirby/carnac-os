@@ -15,6 +15,17 @@ void synth_midi_3(uint8_t status, uint8_t data1, uint8_t data2);
  * synth_render_q15 renders: it applies on that frame, after any queued before it. Outside a render only (the FM1's
  * audio ISR drains its stamped input before rendering; inside one it acts as synth_midi_3). */
 void synth_midi_at(uint32_t delay, uint8_t status, uint8_t data1, uint8_t data2);
+/* BANK SELECT (CC 0) values: what a Program Change loads. PATCH loads at once into the channel's layers; the others
+ * (on Layer 1's channel) wait for the panel's main loop, which takes them with synth_pc_take (1: one is waiting) */
+enum { SYNTH_PCBANK_PATCH, SYNTH_PCBANK_PERF, SYNTH_PCBANK_SEQ, SYNTH_PCBANK_ARP, SYNTH_PCBANK_COUNT };
+int synth_pc_take(uint8_t *bank, uint8_t *slot);
+/* the sound's Control Changes (not the wheel, CUSTOM CC1 / CC2, sustain, bank select or the channel mode messages) and
+ * the NRPN / RPN writes (a DATA ENTRY MSB, CC 6, then maybe its LSB, CC 38, on the parameter CC 99 / 98 or 101 / 100
+ * selected), in arrival order, one entry per controller and channel (the newest value): the panel takes them (1: one
+ * taken). e[0]: the channel | SYNTH_CCK_* << 4; e[1], e[2]: the controller and 0, or the parameter's MSB and LSB;
+ * e[3]: the value (an NRPN / RPN: DATA ENTRY MSB); e[4]: 0 (an NRPN / RPN: DATA ENTRY LSB) */
+enum { SYNTH_CCK_CC, SYNTH_CCK_NRPN, SYNTH_CCK_RPN };
+int synth_cc_take(uint8_t e[5]);
 /* the panel's CC1 / CC2 knobs (LAYER): the CUSTOMCC1 / 2 mod sources' value 0..127, as an incoming CUSTOM CC sets it */
 void synth_custom_cc(uint8_t which, uint8_t value);
 void synth_render_q15(int32_t *interleaved_lr, uint32_t frames);

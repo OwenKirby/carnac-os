@@ -510,12 +510,12 @@ extern void isr_timer5(void);
 
 /* ------------------------------------------------------------ editor --- */
 /* The editor protocol's frame (F0 7D 46 4C cmd args F7, felucca-firmware/web/EDITOR_PROTOCOL.md), X0X's helpers: INFO,
- * PING, and the wavetable store's commands (src/hardware/wt_store_fm1.c: WT_BEGIN .. WT_INFO, and the sample-slot
- * commands, refused: the slots hold the wavetables). */
+ * PING, WT_INFO (src/hardware/wt_store_fm1.c) and the PCM store's (pcm_store_fm1.c). X0X's sample-slot commands are
+ * gone (2026-11-18): they only refused. */
 #define ED_HDR0 0x7D
 #define ED_HDR1 0x46
 #define ED_HDR2 0x4C
-enum { ED_INFO = 1, ED_SMP_BEGIN = 11, ED_SMP_WRITE, ED_SMP_END, ED_SMP_ERASE, ED_SMP_INFO, ED_SMP_READ, ED_PING = 25 };
+enum { ED_INFO = 1, ED_PING = 25 };
 enum { ED_PERFT = 44 };                             /* X0X's number for its own PERF TEST (app/editor.c) */
 /* the audio's health while it plays (2026-10-16, fm1_perf.py stats): halves rendered, late halves, the slowest half
  * (us), the load now and its peak (%), voices shed and the voices held off now; [1] then zeroes the counts */
@@ -560,6 +560,7 @@ static void ed_send(void)
     ota_wire_send(ed_out, ed_n);
 }
 static void keys_release(void);
+static void syn_sysex_out(const uint8_t *p, uint32_t n) { (void)ota_wire_send(p, n); }   /* (CC OUT's dump) */
 
 #include "wt_store_fm1.c"                          /* (the upload commands, refused: the image is in the firmware) */
 #include "pcm_store_fm1.c"                         /* PCM waves in the free store flash: upload, attach */
@@ -576,6 +577,9 @@ static void ed_handle(const uint8_t *f, uint32_t n)
         return;
     }
     switch (cmd) {
+    case ED_PAR_REQ:                                /* the whole sound (synth_panel.c CC OUT): the dump is the reply */
+        ccout_request();
+        return;
     case ED_INFO:
         ed_str("CARNAC OS " SYNTH_VERSION, 24);
         ed_b(0);                                    /* no engines / parameters over this protocol */
@@ -799,15 +803,6 @@ static void ed_handle(const uint8_t *f, uint32_t n)
             return;
         }
         break;
-    case ED_SMP_INFO:                               /* the three slots, empty: they hold the wavetables */
-        ed_b(SMP_USER_SLOTS);
-        ed_b(SMP_USER_SIZE / 1024u);
-        for (i = 0; i < SMP_USER_SLOTS; i++) {
-            ed_b(0);
-            ed_str("", 8);
-            ed_b(0);
-        }
-        break;
     default:
         return;                                     /* not ours: no reply */
     }
@@ -827,7 +822,7 @@ static void ed_service(void)
     }
     if (p[0] != ED_HDR0 || p[1] != ED_HDR1 || p[2] != ED_HDR2)
         return;                                     /* not an editor frame: ota_service() reads it */
-    if ((p[3] >= ED_SMP_BEGIN && p[3] <= ED_SMP_READ) || (p[3] >= ED_WT_BEGIN && p[3] <= ED_PCM_INFO)) {
+    if (p[3] >= ED_PCM_BEGIN && p[3] <= ED_PCM_INFO) {
         ed_handle(p, n);                            /* long frames (data): handled in place */
         ota_frame_done();
         return;

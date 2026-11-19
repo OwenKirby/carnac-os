@@ -512,11 +512,14 @@ STORE_BASE = 0xA0000
 STORE_SIZE = 0x48000          # wavetables.h WT_IMAGE_MAX: the image is linked into the app (build_fm1 checks the slot)
 STORE_DATA_OFF = 0x20
 STORE_MAGIC = 0x42545746      # "FWTB"
-STORE_VERSION = 1
-# The image's last SPILL_FRAMES frames are not linked into the FM1's app (2026-11-03: the app flash was full): they
-# live in the store flash's wavetable areas (gen_wt_areas.py, wavetables.h WT_SPILL_FRAMES); host and browser builds
-# link them as before.
-SPILL_FRAMES = 6
+STORE_VERSION = 2             # 2 (2026-11-18): 8-bit samples (1: int16)
+
+
+def to8(table):
+    """The banks as the firmware stores them since 2026-11-18: 8 bits a sample, the int16 tables' top byte, rounded.
+    No dither: a table repeats, so its error is a fixed part of the cycle (the 8-bit wavetable grain the user chose
+    over the int16 tables, for half the flash)."""
+    return np.clip(np.rint(np.asarray(table, dtype=float) / 256.0), -128, 127).astype(np.int8)
 
 
 def build_bank(index, fn):
@@ -631,13 +634,20 @@ def write_c(path, names, sine, square):
         "const int16_t wavetable_sub_square[WT_FRAME_SAMPLES] = {",
     ]
     frame_rows(out, square)
+    out += [
+        "};",
+        "",
+        "/* wavetable_sine at 8 bits (to8): what a bank's frame plays while no image holds it (wavetable_attach.c) */",
+        "const int8_t wavetable_sine8[WT_FRAME_SAMPLES] = {",
+    ]
+    frame_rows(out, to8(sine))
     out.append("};")
     path.write_text("\n".join(out) + "\n", encoding="ascii")
 
 
 def store_image(table, names):
     """Header sector + data, exactly as it sits in flash at STORE_BASE (wavetables.h wt_store_hdr_t)."""
-    data = np.ascontiguousarray(table, dtype="<i2").tobytes()
+    data = np.ascontiguousarray(to8(table)).tobytes()
     assert STORE_DATA_OFF + len(data) <= STORE_SIZE, f"{len(names)} banks do not fit the store"
     hdr = struct.pack("<IHBBHBBIIII", STORE_MAGIC, STORE_VERSION, len(names), FRAMES, FRAME_LEN, WT_LEVELS, 0,
                       STORE_DATA_OFF, len(data), zlib.crc32(data) & 0xFFFFFFFF, set_id(names))
@@ -656,17 +666,12 @@ def write_image_c(path, image, names):
         " * Banks: " + ", ".join(f"{b + len(STORE_BANKS)} {n}" for b, n in enumerate(names)) + ". */",
         '#include "wavetables.h"',
         "",
-        "/* WT_IMAGE_SPILLED (the FM1): the last WT_SPILL_FRAMES frames are left out, read from the store flash instead",
-        " * (gen_wt_areas.py) */",
-        "_Alignas(4) const uint8_t wavetable_image_host[WT_IMAGE_LINKED_LEN] = {",
+        "_Alignas(4) const uint8_t wavetable_image_host[WT_STORE_IMAGE_LEN] = {",
         "    " + ", ".join(str(b) for b in image[:STORE_DATA_OFF]) + ",",
     ]
-    cut = len(image) - SPILL_FRAMES * FRAME_LEN * 2
     for i in range(STORE_DATA_OFF, len(image), 32):
-        if i == cut:
-            out.append("#ifndef WT_IMAGE_SPILLED")
         out.append("    " + ",".join(str(b) for b in image[i:i + 32]) + ",")
-    out += ["#endif", "};"]
+    out += ["};"]
     path.write_text("\n".join(out) + "\n", encoding="ascii")
 
 
@@ -733,7 +738,7 @@ def main():
     full = table[:, :, :N]                            # level 0: the full cycle, for the report and previews
 
     print(f"wrote {args.out} (app tables), {image_bin} ({len(image)} B store image: {len(names)} banks, "
-          f"{FRAMES}x{FRAME_LEN} int16 each in {WT_LEVELS} mip levels, set id 0x{set_id(names):08X}) "
+          f"{FRAMES}x{FRAME_LEN} 8-bit samples each in {WT_LEVELS} mip levels, set id 0x{set_id(names):08X}) "
           f"and wavetables_image.c")
     for b, name in enumerate(names):
         peak = int(np.abs(full[b]).max())
