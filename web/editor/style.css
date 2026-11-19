@@ -84,7 +84,7 @@ button.small { font-size: 14px; padding: 5px 9px 4px; }
 .ttab, .pgb { font: 10px/12px var(--rune); padding: 4px 6px 3px; background: var(--rock); color: var(--soft); }
 .ttab { min-width: 22px; }
 .ttab[aria-pressed="true"] { background: var(--theme); color: #000; }
-.ttab:hover:not(:disabled), .pgb:hover:not(:disabled) { background: var(--lane); color: var(--lane-hi); }
+.ttab:hover:not(:disabled), .pgb:hover:not(:disabled) { background-color: var(--lane); background-image: var(--lane-tex, none); color: var(--lane-hi); }
 .ttab[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent); color: #000; }
 .ttab:disabled { background: var(--groove); color: var(--stone); }
 .pages { display: inline-flex; gap: 2px; margin-left: auto; }
@@ -140,11 +140,11 @@ button.small { font-size: 14px; padding: 5px 9px 4px; }
 .sel select { appearance: none; -webkit-appearance: none; width: 100%; border: 0; background: var(--rock); color: var(--lane-hi);
               clip-path: var(--chip); padding: 4px 22px 3px 7px; font: 400 12px/1.2 var(--mono); cursor: pointer;
               text-overflow: ellipsis; }
-.sel select:hover { background: var(--lane); }
+.sel select:hover { background-color: var(--lane); background-image: var(--lane-tex, none); }
 .pick.cold select { color: var(--soft); }
 .pick.off { opacity: .4; }
 .tog { font: 10px/12px var(--rune); padding: 5px 8px 4px; background: var(--rock); color: var(--soft); flex: none; }
-.tog:hover:not(:disabled) { background: var(--lane); color: var(--lane-hi); }
+.tog:hover:not(:disabled) { background-color: var(--lane); background-image: var(--lane-tex, none); color: var(--lane-hi); }
 .tog[aria-pressed="true"] { background: var(--theme); color: #000; }
 .tog[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent); }
 .tog.cold { opacity: .75; }
@@ -155,6 +155,15 @@ button.small { font-size: 14px; padding: 5px 9px 4px; }
 .pstone.on { background: var(--rock); color: var(--text); border: 1px solid var(--dim); }
 .ley { flex: 1 0 6px; max-width: 18px; height: 2px; background: var(--dim); }
 
+/* the FM1's stone (applyTheme: sq_rock_tone and the highlight's noise in the THEME's tones, 2 px a texel) on every
+   parameter menu: the chips, the toggles, the menu rows, the tabs */
+.mrow, .sel select, .tog, .ttab, .view, .pstone.on, button.quiet {
+  background-image: var(--rock-tex, none); background-size: 128px 128px; image-rendering: pixelated; }
+.mrow:hover, .mrow[aria-pressed="true"], .sel select:hover, .tog:hover, .ttab:hover, .view[aria-selected="true"], button.quiet:hover {
+  background-size: 128px 128px; }
+.view[aria-selected="true"], button.quiet { background-image: var(--lane-tex, none); }
+.tog[aria-pressed="true"], .ttab[aria-pressed="true"], .ttab:disabled { background-image: none; }
+
 /* a stone-tablet menu (SETUP): rows of hewn tablets, a name at the left and a value at the right, the one that is ON
    in the panel's cursor colours */
 .menu { display: grid; gap: 3px; margin: 6px 0 2px; }
@@ -164,11 +173,12 @@ button.small { font-size: 14px; padding: 5px 9px 4px; }
         font: 10px/12px var(--rune); padding: 6px 9px 5px; background: var(--rock); color: var(--soft); clip-path: var(--hewn); text-align: left; }
 .mrow .mv { font: 400 12px/12px var(--mono); color: var(--lane-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mrow .mlab2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mrow:hover:not(:disabled) { background: var(--lane); color: var(--lane-hi); }
-.mrow[aria-pressed="true"] { background: var(--lane); color: var(--lane-hi); box-shadow: inset 3px 0 0 var(--theme); }
+.mrow:hover:not(:disabled) { background-color: var(--lane); background-image: var(--lane-tex, none); color: var(--lane-hi); }
+.mrow[aria-pressed="true"] { background-color: var(--lane); background-image: var(--lane-tex, none); color: var(--lane-hi); box-shadow: inset 3px 0 0 var(--theme); }
 .mrow[aria-pressed="true"] .mv { color: var(--accent); }
 .mrow.cold .mv { opacity: .6; }
 .mrow.load { justify-content: center; flex-direction: column; gap: 2px; padding: 5px 4px 4px; background: var(--lane); color: var(--lane-hi); }
+.mrow.load { background-image: var(--lane-tex, none); }
 .mrow.load:hover { background: var(--theme); color: #000; }
 .mrow.load:hover .mv { color: #000; }
 .mrow.theme { justify-content: flex-start; }

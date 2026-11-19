@@ -753,9 +753,19 @@
   /* SETUP: what is the performance's or the instrument's, not the sound's: the same tablets as SOUND, every number and
      list a knob, the switches and THEME stone menus */
   const rowsOf = (pid) => pageRows(pid);
+  /* the built-in tunings' cents a step from the root (src/dsp/tuning.c TUNING_TABLE, OVERTONE .. WERCKMEISTER III) */
+  const TUNING_CENTS = [
+    [0, 5, 4, -2, -14, -29, -49, 2, 41, 6, -31, -12], [0, 12, 4, 16, -14, -2, -10, 2, 14, -16, 18, -12],
+    [0, 14, 4, -6, 8, -2, 12, 2, -8, 6, -4, 10], [0, 19, 31, 16, -14, -2, -17, 2, 14, -16, -31, -12],
+    [0, 0, 0, 0, -50, 0, 0, 0, 0, 0, 0, -50], [0, -24, -7, 10, -14, 3, -21, -3, -27, -10, 7, -17],
+    [0, -10, -8, -6, -10, -2, -12, -4, -8, -12, -4, -8],
+  ];
   const modTuning = () => moduleOf({ id: "tuning", title: "TUNING", w: "w3", body() {
     const rows = rowsOf("TUNING");
-    const pic = picture("tune", (cv) => V.tuning(cv, vOf(rows, "ROOT", 0), vOf(rows, "MASTER TUNE", 64))).cv;
+    const pic = picture("tune", (cv) => {
+      const t = vOf(rows, "TUNING", 0), table = TUNING_CENTS[t - 1];   // (EQUAL and the USER tables: no offsets the editor knows)
+      V.tuning(cv, table || Array(12).fill(0), vOf(rows, "MASTER TUNE", 64), vOf(rows, "BEND RANGE", 2));
+    }).cv;
     return { sub: "L1 CH", pic, knobs: rows };
   } });
   const modZones = () => moduleOf({ id: "zones", title: "ZONES", w: "w3", body() {
@@ -844,6 +854,18 @@
     [[18, 18, 18], [200, 200, 195], [150, 152, 150], [235, 235, 230], [140, 140, 136], [84, 84, 82], [68, 68, 68], [64, 65, 64], [225, 225, 222], [244, 244, 243], [52, 52, 51], [28, 29, 28], [8, 8, 8]],
     [[26, 16, 7], [235, 175, 105], [215, 135, 55], [250, 215, 160], [164, 122, 74], [99, 74, 44], [97, 61, 25], [92, 58, 24], [244, 211, 172], [251, 239, 225], [61, 46, 27], [41, 26, 10], [12, 7, 3]],
   ];
+  const ROCKS = [
+    [[14, 5, 0], [36, 14, 0], [48, 19, 0], [62, 25, 0], [76, 31, 0]], [[14, 2, 0], [36, 5, 2], [48, 7, 4], [62, 9, 6], [76, 12, 8]],
+    [[11, 2, 0], [28, 4, 0], [38, 6, 0], [49, 10, 1], [61, 15, 2]], [[5, 9, 14], [13, 23, 36], [17, 30, 48], [22, 39, 62], [27, 48, 76]],
+    [[8, 12, 4], [20, 30, 10], [26, 40, 13], [34, 51, 17], [42, 63, 21]], [[13, 6, 10], [34, 15, 27], [45, 20, 36], [58, 26, 46], [72, 31, 57]],
+    [[10, 6, 14], [26, 16, 36], [35, 21, 48], [45, 27, 62], [55, 33, 76]], [[8, 8, 8], [21, 21, 21], [28, 29, 28], [37, 37, 37], [45, 46, 45]],
+    [[12, 7, 3], [30, 19, 8], [41, 26, 10], [53, 33, 13], [64, 40, 16]],
+  ];
+  const LANES = [
+    [[80, 28, 0], [140, 56, 0], [110, 42, 0]], [[80, 8, 6], [140, 18, 14], [110, 12, 10]], [[65, 15, 2], [120, 50, 13], [91, 30, 7]],
+    [[28, 50, 80], [49, 88, 140], [39, 69, 110]], [[44, 66, 22], [77, 115, 38], [60, 91, 30]], [[75, 33, 60], [132, 58, 104], [104, 45, 82]],
+    [[58, 35, 80], [102, 60, 140], [80, 47, 110]], [[46, 47, 46], [82, 84, 82], [64, 65, 64]], [[67, 42, 17], [118, 74, 30], [92, 58, 24]],
+  ];
   let themeNow = -1;
   function applyTheme() {
     const i = Math.max(0, Math.min(THEMES.length - 1, THEME_ROW >= 0 ? (S.values["GLOBAL:r" + THEME_ROW] ?? 0) : 0));
@@ -859,6 +881,11 @@
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = "#000000";
     V.readPalette();
+    try {
+      const tx = V.tiles(ROCKS[i], LANES[i]);
+      st.setProperty("--rock-tex", `url(${tx.rock})`);
+      st.setProperty("--lane-tex", `url(${tx.lane})`);
+    } catch (_) { /* a canvas that cannot export: the plain colours stand in */ }
     redrawAll();
     drawBanner();
     dirty = true;

@@ -812,18 +812,31 @@
     for (let x = Math.max(2, vx - vfade / 4); x < Math.min(W - 2, vx + vfade / 4); x++) pset(ctx, Math.round(x), vy - 1, PAL.accent);
     ctx.done();
   }
-  /* TUNING: an octave of twelve stones from the ROOT, the root lit; MASTER TUNE leans the moon over them */
-  function tuning(cv, root, tune) {
-    const ctx = fit(cv, PX);
+  /* TUNING, as the panel draws it (ui_page_draw.c pu_viz_tuning): thirteen stones from the ROOT to its octave, each
+     standing where its step falls, pulled off equal temperament's socket by its cents (a semitone a step's width), the
+     pull drawn along the ground; the root and the octave lit, a step more than 2 cents off a shade up. BEND RANGE: the
+     span a full bend reaches from the root; A4 in Hz at the top. cents: the 12 steps' offsets from the root */
+  function tuning(cv, cents, tune, bend) {
+    const ctx = fitFine(cv);
     if (!ctx) return;
-    const W = cv.width, H = cv.height, g = H - 3, sw = Math.max(4, Math.floor((W - 12) / 12) - 2), gap = (W - 8 - 12 * sw) / 11;
-    const BLACK = [1, 3, 6, 8, 10];
-    for (let i = 0; i < 12; i++) {
-      const pc = (root + i) % 12, h = Math.round((g - 12) * (BLACK.includes(pc) ? 0.55 : 0.8));
-      stone(ctx, Math.round(4 + i * (sw + gap)), g, sw, h, i === 0 ? PAL.accent : BLACK.includes(pc) ? PAL.dim : PAL.mid, 120 + pc);
+    const W = ctx.width, H = ctx.height, g = H - 4, x0 = 6, step = (W - 14) / 12;
+    const mt = tune - 64, hz10 = 4400 + Math.trunc((mt * 25415) / 10000) + Math.trunc((mt * mt * 7339) / 10000000);
+    ctx.text(`A4 ${Math.floor(hz10 / 10)}.${hz10 % 10} HZ`, 1, 6, mt ? PAL.theme : PAL.mid);
+    if (bend > 0) {
+      const n = Math.min(12, bend), x1 = Math.round(x0 + n * step), y = 10;
+      for (let x = x0; x <= x1; x += 3) pset(ctx, x, y, PAL.dim);
+      rect(ctx, x0, y - 2, 1, 5, PAL.mid); rect(ctx, x1, y - 2, 1, 5, PAL.mid);
+      if (bend > 12) { pset(ctx, x1 + 2, y - 1, PAL.mid); pset(ctx, x1 + 3, y, PAL.mid); pset(ctx, x1 + 2, y + 1, PAL.mid); }
     }
-    moon(ctx, Math.round(W / 2 + (tune - 64) / 64 * (W / 2 - 8)), 6, 3, 0.5 + (tune - 64) / 128, PAL.accent);
-    grass(ctx, 0, W, g, 29, true);
+    for (let x = 0; x < W; x++) { rect(ctx, x, g + 1, 1, 3, PAL.surf); if ((hash(x, 41) >>> 29) === 0) pset(ctx, x, g + 1 + ((hash(x, 7) >>> 31)), PAL.stone); }
+    for (let i = 0; i <= 12; i++) {
+      const c = cents[i % 12], sx = Math.round(x0 + i * step);
+      const x = Math.round(x0 + i * step + (c * step) / 100), h = Math.round((g - 12) * (0.5 + 0.5 * i / 12));
+      const lit = i === 0 || i === 12, off = c > 2 || c < -2;
+      rect(ctx, sx, g + 2, 1, 2, PAL.dim);                          // the socket: equal temperament's place
+      if (x !== sx) for (let k = Math.min(x, sx); k <= Math.max(x, sx); k++) pset(ctx, k, g + 1, off ? PAL.mid : PAL.dim);
+      stone(ctx, x - 2, g + 1, 5, h, lit ? PAL.theme : off ? PAL.mid : PAL.stone, i * 7 + 3);
+    }
     ctx.done();
   }
   /* a swatch for a THEME row: a lit stone in the theme's colours */
@@ -834,6 +847,25 @@
     ctx.done();
   }
 
-  window.CarnacViz = { mfx, sarsen, velCurve, zones, tuning, swatch, archMap, leys, drive, alignment, readPalette, dial, osc, mix, noise, filter, env, envGeom, envHead, segK, envT, fmtT, lfo, lfoHz, lfoAt, fx,
+  /* the FM1's two stone textures as tiles for the page's CSS (data: URLs), in the THEME's tones:
+       rock  sq_rock_tone: a tablet's face, two coarse mottles over a fine grit, SQ_ROCK's five tones
+       lane  the highlight's noise (SQ_LANE_NOISE: darker, lighter, base), the panel's cursor row */
+  function tiles(rock, lane) {
+    const make = (tone) => {
+      const cv = document.createElement("canvas"), s = surface(cv, 64, 64);
+      for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) s.put(x, y, tone(x, y));
+      s.done();
+      return cv.toDataURL();
+    };
+    const rockTone = (x, y) => {
+      const m = (hash((x / 7) | 0, ((y / 5) | 0) + 911) >>> 31) + (hash(((x + 3) / 4) | 0, (((y + 1) / 3) | 0) + 577) >>> 31);
+      const f = hash(x, y) >>> 29;
+      return rock[Math.max(0, Math.min(4, 1 + m + (f === 7) - (f === 0)))];
+    };
+    const laneTone = (x, y) => { const f = hash(x >> 1, (y >> 1) + 41) >>> 29; return f === 0 ? lane[0] : f === 7 ? lane[1] : lane[2]; };
+    return { rock: make(rockTone), lane: make(laneTone) };
+  }
+
+  window.CarnacViz = { tiles, mfx, sarsen, velCurve, zones, tuning, swatch, archMap, leys, drive, alignment, readPalette, dial, osc, mix, noise, filter, env, envGeom, envHead, segK, envT, fmtT, lfo, lfoHz, lfoAt, fx,
                        stone, grass, moon, fit, hash, get PAL() { return PAL; } };
 })();
