@@ -438,6 +438,18 @@ midiBtn.addEventListener("click", async () => {
   }
 });
 
+// ---------------------------------------------------------------- the editor (web/editor) in another tab
+// The editor's "Carnac emulator" target talks to this page over a BroadcastChannel (same site, no MIDI port): its
+// messages go in as MIDI IN's do, and a ping is answered so the editor can show the link.
+if (typeof BroadcastChannel !== "undefined") {
+  const editorBc = new BroadcastChannel("carnac-midi");
+  editorBc.onmessage = (e) => {
+    const m = e.data || {};
+    if (m.type === "ping") editorBc.postMessage({ type: "here", on: !!node });
+    else if (m.type === "midi" && m.b0 >= 0x80 && m.b0 !== 0xF0) send({ type: "midi", b0: m.b0, b1: m.b1, b2: m.b2 });
+  };
+}
+
 // ---------------------------------------------------------------- switching on
 const status = document.getElementById("status"), cpu = document.getElementById("cpu");
 async function switchOn() {
