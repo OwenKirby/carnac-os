@@ -56,6 +56,10 @@ class Carnac extends AudioWorkletProcessor {
       this.ex.web_master(m.value | 0);
     } else if (m.type === "midi") {
       this.ex.web_midi(m.b0 & 0xFF, m.b1 & 0x7F, m.b2 & 0x7F);
+    } else if (m.type === "sysex" && this.ex.web_sysex_in) {   // the editor's SysEx, without F0 / F7
+      const b = Uint8Array.from(m.bytes || []).subarray(0, 640);
+      new Uint8Array(this.mem.buffer, this.ex.web_sysex_in_buf(), b.length).set(b);
+      this.ex.web_sysex_in(b.length);
     }
   }
 
@@ -83,6 +87,11 @@ class Carnac extends AudioWorkletProcessor {
       this.flashDue = 0;
       msg.flash = new Uint8Array(this.mem.buffer, ex.web_nor(), ex.web_nor_len()).slice();
       transfer.push(msg.flash.buffer);
+    }
+    if (ex.web_sysex_out_len && ex.web_sysex_out_len()) {   // the synth's SysEx (CC OUT's dump, the SEQ tab's)
+      msg.sysex = new Uint8Array(this.mem.buffer, ex.web_sysex_out(), ex.web_sysex_out_len()).slice();
+      ex.web_sysex_out_take();
+      transfer.push(msg.sysex.buffer);
     }
     this.port.postMessage(msg, transfer);
   }

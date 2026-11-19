@@ -87,6 +87,10 @@ run perf_test_guard "$OUT/perf_test.exe" --guard
 build perf_test_prof -DSYNTH_PROF $DSP src/hardware/perf_test.c src/host/perf_test_host.c \
     && run perf_test_prof "$OUT/perf_test_prof.exe"
 run unity_check sh src/host/x0x_unity_check.sh
+# the web editor's SEQ tab over SysEx, on the browser build of the whole app (X0X's tree + the font the unity check made)
+FONT_DIR="${WORK:-${TMPDIR:-/tmp}/x0x_unity_check}/gen"
+[ -f "$FONT_DIR/felucca_font.h" ] || FONT_DIR=build/emu-gen
+build seq_sysex -std=gnu99 -DSYNTH_VERSION='"WEB"' -Ix0x-firmware/firmware/src -I"$FONT_DIR" $DSP src/host/pcm_images_host.c     src/host/wt_areas_host.c src/host/test_seq_sysex.c && run seq_sysex "$OUT/seq_sysex.exe"
 # the browser emulator (web/emu): built with Emscripten, then booted headless (node: on PATH, or the emsdk's)
 EMU_NODE=$(command -v node || ls ../emsdk/emsdk/node/*/node.exe 2>/dev/null | head -n 1)
 if [ -n "$EMU_NODE" ]; then

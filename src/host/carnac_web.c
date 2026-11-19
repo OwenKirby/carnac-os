@@ -154,7 +154,18 @@ static void syn_unlock(void) {}
 uint8_t pt_state(void) { return PT_IDLE; }          /* no PERF TEST here */
 
 #include "hardware/synth_panel.c"
-static void syn_sysex_out(const uint8_t *p, uint32_t n) { (void)p; (void)n; }   /* (no MIDI out in the browser yet) */
+/* SysEx out (2026-11-19: CC OUT's dump, the SEQ tab's messages): whole F0..F7 messages queued for the page, which
+ * takes them with web_sysex_out / web_sysex_out_len / web_sysex_out_take and hands them to the editor */
+#define WEB_SX_LEN 8192u
+static uint8_t web_sx[WEB_SX_LEN];
+static uint32_t web_sx_n;
+static void syn_sysex_out(const uint8_t *p, uint32_t n)
+{
+    if (web_sx_n + n <= WEB_SX_LEN) {               /* (a page that never takes them: the newest are dropped) */
+        memcpy(web_sx + web_sx_n, p, n);
+        web_sx_n += n;
+    }
+}
 
 /* ------------------------------------------------------------- audio --- */
 /* synth_main_fm1.c's render path: MIDI in, a 256-frame block, the MASTER level (Q15 full scale at 2^22 of the
@@ -312,6 +323,24 @@ EXPORT uint8_t *web_nor(void) { return nor + NOR_KEEP_OFF; }
 EXPORT uint32_t web_nor_len(void) { return NOR_KEEP_LEN; }
 EXPORT uint32_t web_nor_writes(void) { return nor_writes; }
 EXPORT void web_nor_erase(void) { memset(nor, 0xFF, sizeof nor); }
+
+/* SysEx in: one message without its F0 / F7 (the editor frame 7D 46 4C cmd ..): the FM1's ed_service, for the
+ * commands the browser has (the SEQ tab's, the sound dump request) */
+static uint8_t web_sx_in[640];
+EXPORT uint8_t *web_sysex_in_buf(void) { return web_sx_in; }
+EXPORT void web_sysex_in(uint32_t n)
+{
+    if (!booted || n < 4u || n > sizeof web_sx_in || web_sx_in[0] != 0x7Du || web_sx_in[1] != 0x46u ||
+        web_sx_in[2] != 0x4Cu)
+        return;
+    if (web_sx_in[3] == ED_PAR_REQ)
+        ccout_request();
+    else
+        (void)seqx_handle(web_sx_in[3], web_sx_in + 4, n - 4u);
+}
+EXPORT uint8_t *web_sysex_out(void) { return web_sx; }
+EXPORT uint32_t web_sysex_out_len(void) { return web_sx_n; }
+EXPORT void web_sysex_out_take(void) { web_sx_n = 0u; }
 
 EXPORT void web_boot(void)
 {

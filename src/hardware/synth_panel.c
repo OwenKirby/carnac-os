@@ -459,6 +459,228 @@ static void syn_load(void)
     ui_sm_load_done(&sm, ok);
 }
 
+/* ------------------------------------------------------------ SEQ OUT --- */
+/* The live sequence and the web editor's SEQ tab (2026-11-19). In the editor frame (F0 7D 46 4C cmd .. F7), lanes and
+ * steps in seq_wire.h's format, names in char_map indices (UI_CHAR_MAP):
+ *   ED_SEQ_REQ   []                         the whole sequence, its name and the playhead come back
+ *   ED_SEQ_LANE  [lane, SEQW_LANE_N bytes]  both ways: a whole lane (footer + 16 steps)
+ *   ED_SEQ_STEP  [lane, step, SEQW_STEP_N]  both ways: one step
+ *   ED_SEQ_NAME  [16 chars]                 both ways: the live sequence's name
+ *   ED_SEQ_SAVE  [slot, 16 chars]           the live sequence into a slot under that name, as the panel's SAVE;
+ *                                           answered [slot, rc] once it is in flash (0 saved, 1 failed, 2 busy)
+ *   ED_SEQ_SLOTS [first]                    answered [first, n, n x (used, 16 chars)], SQ_SLOTS_N at a time
+ *   ED_SEQ_LOAD  [slot]                     loads that slot, as the Preset Encoder would (the change comes back)
+ *   ED_SEQ_POS   out: [playing | recording << 1, lane 1..4's step (127: none)], when it moves
+ *   ED_SEQ_PLAY  [on]                       the SEQ's transport (the sequencer only, not the ARP)
+ *   ED_SEQ_ACK   out: [cmd], after each of the above is handled (after its answer). X0X's USB holds one received
+ *                SysEx at a time and drops one that comes before the main loop took it: the editor sends the next
+ *                only after the ACK (or sends again when none comes)
+ * Going out (once the editor has asked, or CC OUT is on): a scan of seq_lanes against what was last sent (sq_shadow),
+ * whatever changed it (the panel, a load, step record, a performance): a step alone, or the whole lane when its footer
+ * or more than two steps changed. What the editor wrote is taken as sent (not echoed), unless it had to be clamped:
+ * then the corrected lane goes back. Main loop only, paced like CC OUT's dump and never during it; reads the MAQ's
+ * playhead only (seq-skip rule: nothing here runs in the render). */
+#include "seq_wire.h"
+enum { ED_SEQ_REQ = 60, ED_SEQ_LANE, ED_SEQ_STEP, ED_SEQ_NAME, ED_SEQ_SAVE, ED_SEQ_SLOTS, ED_SEQ_LOAD, ED_SEQ_POS,
+       ED_SEQ_PLAY, ED_SEQ_ACK };
+#define SQ_SLOTS_N 8u
+#define SQ_FULL_NAME 0x10u
+static SequencerLane sq_shadow[SEQ_NLANE] SYNTH_POOL, sq_cur[SEQ_NLANE] SYNTH_POOL;
+static uint8_t sq_name[NAME_LEN], sq_pos[1u + SEQ_NLANE];
+static uint8_t sq_heard, sq_ccout, sq_full, sq_save, sq_save_slot;
+static uint32_t sq_ms, sq_wait;
+
+static void sq_out(uint8_t cmd, const uint8_t *a, uint32_t n)
+{
+    uint8_t b[6u + 2u + SQ_SLOTS_N * (1u + NAME_LEN)];
+    uint32_t i;
+    b[0] = 0xF0u; b[1] = 0x7Du; b[2] = 0x46u; b[3] = 0x4Cu; b[4] = cmd;
+    for (i = 0u; i < n && i < sizeof b - 6u; i++)
+        b[5u + i] = (uint8_t)(a[i] & 0x7Fu);
+    b[5u + i] = 0xF7u;
+    syn_sysex_out(b, 6u + i);
+}
+
+static void sq_send_all(void)
+{
+    sq_full = (uint8_t)((1u << SEQ_NLANE) - 1u | SQ_FULL_NAME);
+    sq_pos[0] = 0xFFu;                              /* (the playhead too) */
+}
+
+/* the editor's SEQ commands (main loop: ed_service, the frame still in place); 1: one of them */
+static uint8_t seqx_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
+{
+    uint8_t i, o[1u + SEQW_LANE_N];
+    if (cmd < ED_SEQ_REQ || cmd > ED_SEQ_PLAY)
+        return 0u;
+    sq_heard = 1u;
+    switch (cmd) {
+    case ED_SEQ_REQ:
+        sq_send_all();
+        break;
+    case ED_SEQ_LANE:
+        if (na < 1u + SEQW_LANE_N || a[0] >= SEQ_NLANE)
+            break;
+        syn_lock();
+        if (!seqw_lane_unpack(&seq_lanes[a[0]], a + 1)) {
+            seqw_lane_pack(&seq_lanes[a[0]], o);
+            if (!memcmp(o, a + 1, SEQW_LANE_N))     /* (as sent: no echo; clamped: the scan sends it back) */
+                sq_shadow[a[0]] = seq_lanes[a[0]];
+        }
+        syn_unlock();
+        break;
+    case ED_SEQ_STEP:
+        if (na < 2u + SEQW_STEP_N || a[0] >= SEQ_NLANE || a[1] >= SEQ_NSTEP)
+            break;
+        syn_lock();
+        seqw_step_unpack(&seq_lanes[a[0]].steps[a[1]], a + 2);
+        seqw_step_pack(&seq_lanes[a[0]].steps[a[1]], o);
+        if (!memcmp(o, a + 2, SEQW_STEP_N))
+            sq_shadow[a[0]].steps[a[1]] = seq_lanes[a[0]].steps[a[1]];
+        syn_unlock();
+        break;
+    case ED_SEQ_NAME:
+        if (na < NAME_LEN)
+            break;
+        syn_lock();
+        for (i = 0u; i < NAME_LEN; i++)
+            sm.seq_name[i] = sq_name[i] = a[i] < CHAR_MAP_LEN ? a[i] : 0u;
+        syn_unlock();
+        break;
+    case ED_SEQ_SAVE:
+        if (na < 1u + NAME_LEN || a[0] >= BANK_SLOTS)
+            break;
+        syn_lock();
+        if (ps_commit_wait || sm.commit_pending || sq_save) {
+            o[0] = a[0];
+            o[1] = 2u;
+            sq_out(ED_SEQ_SAVE, o, 2u);
+        } else {
+            uint8_t t = sm.save_target, s = sm.save_slot;   /* (the SAVE page's own choice stays) */
+            for (i = 0u; i < NAME_LEN; i++)
+                sm.seq_name[i] = sq_name[i] = a[1u + i] < CHAR_MAP_LEN ? a[1u + i] : 0u;
+            sm.save_target = UISAVE_SEQ_SETTINGS;
+            sm.save_slot = a[0];
+            syn_commit();
+            sm.save_target = t;
+            sm.save_slot = s;
+            sq_save = 1u;
+            sq_save_slot = a[0];
+        }
+        syn_unlock();
+        break;
+    case ED_SEQ_SLOTS: {
+        uint8_t f = na >= 1u && a[0] < BANK_SLOTS ? a[0] : 0u, n = 0u, b[2u + SQ_SLOTS_N * (1u + NAME_LEN)];
+        b[0] = f;
+        while (n < SQ_SLOTS_N && f + n < BANK_SLOTS) {
+            uint8_t *e = b + 2u + n * (1u + NAME_LEN);
+            memset(e + 1, 0, NAME_LEN);
+            e[0] = (uint8_t)(syn_slot_query(0, UISAVE_SEQ_SETTINGS, (uint8_t)(f + n), e + 1) == UISLOT_USED);
+            n++;
+        }
+        b[1] = n;
+        sq_out(ED_SEQ_SLOTS, b, 2u + n * (1u + NAME_LEN));
+        break;
+    }
+    case ED_SEQ_LOAD:
+        if (na < 1u || a[0] >= BANK_SLOTS)
+            break;
+        syn_lock();
+        if (!sm.load_pending && !syn_perf_req) {
+            sm.load_target = UISAVE_SEQ_SETTINGS;
+            sm.load_slot = a[0];
+            sm.load_layer = 0;
+            sm.load_pending = 1;
+            co_pc_midi = 1u;                        /* (PC OUT: not sent back) */
+            syn_load();
+        }
+        syn_unlock();
+        break;
+    case ED_SEQ_PLAY:
+        if (na >= 1u && sm.seq != 0) {
+            syn_lock();
+            maq_set_playing(sm.seq, a[0] ? 1u : 0u);
+            syn_unlock();
+        }
+        break;
+    default:
+        break;
+    }
+    o[0] = (uint8_t)cmd;
+    sq_out(ED_SEQ_ACK, o, 1u);
+    return 1u;
+}
+
+/* the main loop's (after ccout_tick): one message at most a turn */
+static void sq_tick(void)
+{
+    uint8_t l, s, o[2u + SEQW_LANE_N], name[NAME_LEN];
+    if (instrument.cc_out != sq_ccout) {
+        sq_ccout = instrument.cc_out;
+        if (sq_ccout)
+            sq_send_all();
+    }
+    if (!sq_heard && !sq_ccout)
+        return;
+    if (fm1_ms - sq_ms < sq_wait || co_dump != CO_IDLE)
+        return;
+    sq_ms = fm1_ms;
+    sq_wait = 1u;
+    if (sq_save && !ps_commit_wait) {               /* the editor's SAVE is in flash (or failed) */
+        sq_save = 0u;
+        o[0] = sq_save_slot;
+        o[1] = ps_last_ok ? 0u : 1u;
+        sq_out(ED_SEQ_SAVE, o, 2u);
+        return;
+    }
+    if (sm.seq != 0) {                              /* the playhead */
+        o[0] = (uint8_t)(maq_playing(sm.seq) | maq_recording(sm.seq) << 1);
+        for (l = 0u; l < SEQ_NLANE; l++) {
+            s = maq_lane_pos(sm.seq, l);
+            o[1u + l] = s < SEQ_NSTEP ? s : 127u;
+        }
+        if (memcmp(o, sq_pos, sizeof sq_pos)) {
+            memcpy(sq_pos, o, sizeof sq_pos);
+            sq_out(ED_SEQ_POS, o, sizeof sq_pos);
+            return;
+        }
+    }
+    syn_lock();
+    memcpy(sq_cur, seq_lanes, sizeof sq_cur);
+    memcpy(name, sm.seq_name, NAME_LEN);
+    syn_unlock();
+    for (l = 0u; l < SEQ_NLANE; l++) {
+        uint8_t nd = 0u, last = 0u;
+        if (!((sq_full >> l) & 1u) && !memcmp(&sq_cur[l], &sq_shadow[l], sizeof sq_cur[l]))
+            continue;
+        for (s = 0u; s < SEQ_NSTEP; s++)
+            if (memcmp(&sq_cur[l].steps[s], &sq_shadow[l].steps[s], sizeof sq_cur[l].steps[s])) {
+                nd++;
+                last = s;
+            }
+        o[0] = l;
+        if (((sq_full >> l) & 1u) || nd > 2u ||
+            memcmp(&sq_cur[l].event_type, &sq_shadow[l].event_type, sizeof sq_cur[l] - sizeof sq_cur[l].steps)) {
+            seqw_lane_pack(&sq_cur[l], o + 1);
+            sq_out(ED_SEQ_LANE, o, 1u + SEQW_LANE_N);
+            sq_shadow[l] = sq_cur[l];
+            sq_full &= (uint8_t)~(1u << l);
+            sq_wait = 3u;                           /* (about 42 packets) */
+            return;
+        }
+        o[1] = last;
+        seqw_step_pack(&sq_cur[l].steps[last], o + 2);
+        sq_out(ED_SEQ_STEP, o, 2u + SEQW_STEP_N);
+        sq_shadow[l].steps[last] = sq_cur[l].steps[last];
+        return;
+    }
+    if ((sq_full & SQ_FULL_NAME) || memcmp(name, sq_name, NAME_LEN)) {
+        memcpy(sq_name, name, NAME_LEN);
+        sq_full &= (uint8_t)~SQ_FULL_NAME;
+        sq_out(ED_SEQ_NAME, name, NAME_LEN);
+    }
+}
+
 /* a performance just loaded: the live sequence and arp pattern take the names of the slots they came from (seq_link,
  * arp_link), or none */
 static void syn_link_names(void)
@@ -496,6 +718,7 @@ static void syn_perf_tick(void)
         syn_unlock();
     }
     ccout_tick();
+    sq_tick();                                      /* (the editor's SEQ tab) */
     if (!sm.load_pending && !syn_perf_req && synth_pc_take(&b, &s)) {
         syn_lock();
         sm.load_target = b == SYNTH_PCBANK_PERF ? (uint8_t)UISAVE_WHOLE_PERF

@@ -99,6 +99,7 @@ static const PsKind PS_KIND[UISAVE_COUNT] = {
     {NULL, sizeof(WholePerformance), WHOLE_PERF_STORED_SIZE, PS_FIRST_PERF, FREC_VER_PERF, BANK_SLOTS},
 };
 static uint32_t ps_dirty;                           /* bit per chunk (PS_KIND[].first + chunk): to write */
+static uint8_t ps_last_ok = 1u;                    /* the last SAVE's write went through (the editor's SEQ SAVE) */
 static uint8_t ps_commit_wait;                      /* a SAVE waits for its chunk: ui_sm_commit_done after */
 static WholePerformance ps_perf_save;               /* the performance a SAVE took (syn_commit), for ps_tick to write */
 static uint8_t ps_perf_save_slot;
@@ -327,6 +328,7 @@ static void ps_tick(void)
     if (ps_commit_wait) {
         syn_lock();
         ui_sm_commit_done(&sm, (uint8_t)!rc);
+        ps_last_ok = (uint8_t)!rc;
         syn_unlock();
         ps_commit_wait = 0;
     }
