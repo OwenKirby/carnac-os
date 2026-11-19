@@ -869,24 +869,38 @@
   // ---------------------------------------------------------------------------------------------- the SEQ page
   /* a menhir drawn as the SEQ page draws a step (ui_seq_draw.c sq_stone with an edge and a fill): its hewn outline in
      `edge`, its bottom `fill` rows filled with the stone's grain in `c`; dashed: the outline broken (a SKIP crumbles) */
-  function stoneF(ctx, x, yb, w, h, fill, c, edge, seed, dashed) {
-    x |= 0; yb |= 0; w |= 0; h |= 0; fill = Math.max(0, Math.min(h, fill | 0));
+  function stoneF(ctx, x, yb, w, h, rise, c, edge, seed, dashed, outline) {
+    x |= 0; yb |= 0; w |= 0; h |= 0; rise = Math.max(0, Math.min(h, rise | 0));
     if (h <= 0 || w <= 0) return;
-    const top = yb - h;
+    const top = yb - h, sink = h - rise;
+    const rows = [];
     for (let r = 0; r < h; r++) {
       let l = stoneIn(r, w, h, seed, 0), rt = w - stoneIn(r, w, h, seed, 1);
       if (rt - l < 2) { l = ((l + rt) >> 1) - 1; rt = l + 2; }
-      for (let i = l; i < rt; i++) {
-        const onEdge = i === l || i === rt - 1 || r === 0;
-        if (r >= h - fill) {
-          const n = hash(i + Math.imul(seed, 131), h - r), gr = hash((i >> 1) + Math.imul(seed, 7), ((h - r) >> 1) + 300) >>> 29;
-          let t = gr < 6 ? 0 : 1;
-          if ((n >>> 27) === 0) t = 2;
-          if ((n >>> 26) === 1) { pset(ctx, x + i, top + r, mixc(c, PAL.hi, 0.35)); continue; }   // (the grain's lighter specks)
-          pset(ctx, x + i, top + r, onEdge ? edge : shade(c, t));
-        } else if (onEdge && !(dashed && ((i + r) % 3 === 0))) pset(ctx, x + i, top + r, edge);
-      }
+      rows.push([l, rt]);
     }
+    /* the full stone's outline, where it stands at its height: what the step could reach */
+    if (outline) rows.forEach(([l, rt], r) => {
+      for (let i = l; i < rt; i++) {
+        const onEdge = i === l || i === rt - 1 || r === 0 || (r > 0 && (i < rows[r - 1][0] || i >= rows[r - 1][1]));
+        if (onEdge && !(dashed && ((i + r) % 3 === 0))) pset(ctx, x + i, top + r, outline);
+      }
+    });
+    /* the stone itself, the same shape, risen out of the ground by the step's value: its top `rise` rows above the
+       ground, the rest still under it */
+    rows.forEach(([l, rt], r) => {
+      const y = top + r + sink;
+      if (y >= yb) return;
+      for (let i = l; i < rt; i++) {
+        const onEdge = i === l || i === rt - 1 || r === 0 || (r > 0 && (i < rows[r - 1][0] || i >= rows[r - 1][1]));
+        const n = hash(i + Math.imul(seed, 131), h - r), gr = hash((i >> 1) + Math.imul(seed, 7), ((h - r) >> 1) + 300) >>> 29;
+        let t = gr < 6 ? 0 : 1;
+        if ((n >>> 27) === 0) t = 2;
+        if (i === l) t = Math.max(t, 1);                             // (the shaded side)
+        if (!onEdge && (n >>> 26) === 1) { pset(ctx, x + i, y, mixc(c, PAL.hi, 0.35)); continue; }   // (the grain's lighter specks)
+        pset(ctx, x + i, y, onEdge ? edge : shade(c, t));
+      }
+    });
   }
   /* one lane of the SEQ page: sixteen stones on the turf of the loop.
      o: { steps: [{ fill 0..1, mute, skip, tie, label, more }], ls, le, act (the selected lane), win (the knob window's
@@ -896,7 +910,7 @@
     const ctx = fitFine(cv);
     if (!ctx) return null;
     const W = ctx.width, H = ctx.height, g = H - 5, top = 8, slot = W / 16;
-    const sw = Math.max(5, Math.min(18, Math.floor(slot * 0.62))), sh = g - top;
+    const sw = Math.max(6, Math.min(30, Math.floor(slot * 0.8))), sh = g - top;
     const inL = (s) => s >= o.ls && s <= o.le;
     for (let x = 0; x < W; x++) {                                    // the field; the loop's turf lit
       const s = Math.min(15, Math.floor(x / slot)), n = hash(x, 900 + (o.seed || 0));
@@ -921,14 +935,21 @@
       const x = Math.round(s * slot + (slot - sw) / 2), seed = 3 + s * 17 + (o.seed || 0) * 5;
       const loop = inL(s), ph = o.ph === s;
       let c = o.act ? (loop ? PAL.accent : PAL.mid) : (loop ? PAL.theme : PAL.dim);
-      let edge = o.act ? (loop ? PAL.accent : PAL.mid) : (loop ? mixc(PAL.theme, PAL.accent, 0.4) : PAL.dim);
-      if (ph) { c = o.act ? PAL.hi : PAL.accent; edge = c; }
+      let edge = o.act ? (loop ? PAL.hi : PAL.accent) : (loop ? mixc(PAL.theme, PAL.accent, 0.5) : PAL.mid);
+      let ring = o.act ? (loop ? mixc(PAL.accent, PAL.mid, 0.4) : PAL.dim) : (loop ? PAL.mid : PAL.dim);   // (the full height's outline)
+      if (ph) { c = o.act ? PAL.hi : PAL.accent; edge = c; ring = o.act ? PAL.accent : PAL.theme; }
       if (st.tie) {                                                  // a tie: the stone fallen over, lying on the ground
-        const lw = Math.min(Math.round(slot) - 2, Math.round(sh * 0.7)), lh = Math.max(4, Math.round(sw * 0.55));
+        const lw = Math.min(Math.round(slot) - 2, Math.round(sh * 0.8)), lh = Math.max(5, Math.round(sw * 0.5));
+        stoneF(ctx, x, g, sw, sh, 0, c, edge, seed, true, PAL.stone);   // (where it stood, faint)
         stoneF(ctx, Math.round(s * slot + (slot - lw) / 2), g, lw, lh, lh, c, edge, seed);
       } else {
-        const fill = st.mute || st.skip ? 0 : Math.max(1, Math.round(sh * st.fill));
-        stoneF(ctx, x, g, sw, sh, fill, c, edge, seed, st.skip);
+        const rise = st.mute || st.skip ? 0 : Math.max(2, Math.round(sh * st.fill));
+        stoneF(ctx, x, g, sw, sh, rise, c, edge, seed, st.skip, ring);
+        for (let k = 0; k < sw; k++) {                               // tufts in front of its foot: it stands in the turf
+          const n = hash(x + k, 333 + s);
+          if (loop && (n >>> 29) < 3) pset(ctx, x + k, g - 1, (n >>> 12) & 1 ? (o.act ? PAL.accent : PAL.theme) : PAL.mid);
+          if (loop && (n >>> 28) === 0) pset(ctx, x + k, g - 2, o.act ? PAL.hi : PAL.accent);
+        }
         if (o.bip) { const y = g - Math.round(sh / 2); pset(ctx, x - 1, y, PAL.mid); pset(ctx, x + sw, y, PAL.mid); }
       }
       if (st.label) {                                                // its words, short where the step is narrow (a phone)
