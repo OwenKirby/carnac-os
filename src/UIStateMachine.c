@@ -3040,9 +3040,10 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         if (r != NULL && r->kind != RK_SEQ_STEPS) {   /* (STEPS has no value: no popup either) */
             row_step(sm, r, arg);
             uint16_t pos;            /* (2026-11-13) a list's options while its value turns; a number has none (REC:
-                                      * its footer shows it) */
+                                      * its footer shows it). (2026-11-19, the user) an on/off row (two options) has
+                                      * none either: the popup is for seeing lists */
             sm->rowpop = (uint8_t)(sm->page != UIPAGE_REC &&
-                                   ui_sm_row_options(sm, sm->s.current_param_focus, &pos) > 1u);
+                                   ui_sm_row_options(sm, sm->s.current_param_focus, &pos) > 2u);
             if (!sm->rowpop && (sm->page == UIPAGE_SEQ || sm->page == UIPAGE_ARP))
                 sm->rowpop = UI_ROWPOP_ROWS;   /* (2026-11-14) SEQ / ARP numbers: the rows, the value changing */
             if (sm->page == UIPAGE_MOD && r->kind == RK_ROUTE)   /* AMOUNT: the route's card */
