@@ -16,6 +16,8 @@
   manual/index.html             the manual: docs/manual.md (the Claude Doc's export) in web/site/manual.html
   guide/index.html              the button guide (web/site/guide.html, self-contained: its own rune font and drawing)
   play/                         the browser synth (web/emu, built by web/emu/build.sh), unless --no-emu
+  editor/                       the web editor (web/editor: the sound, MOD, the sequencer and SETUP over Web MIDI; Chrome
+                                or Edge, on a computer or an Android phone)
 
   python3 web/site/make_site.py build/release-0.9.2/carnac-0.9.2.fwsc 0.9.2 build/site [--no-emu] [--tip URL]
 
@@ -48,6 +50,11 @@ REPO = "https://github.com/OwenKirby/carnac-os"
 TIP = "https://ko-fi.com/orbvorgis"
 LOOK_FILES = ("carnac.css", "stones.js", "carnac-rune.woff", "splash.png")   # the FM1's look, shared by both pages
 EMU_FILES = ("index.html", "worklet.js", "carnac.wasm")
+EDITOR_FILES = ("index.html", "style.css", "params.js", "sysex.js", "midi.js", "viz.js", "seq.js", "app.js")
+EDITOR_CARD = ('    <a class="tablet" href="editor/"><strong>Edit sounds in the browser</strong><span>The whole sound on one page, '
+               'the mod routes as ley lines, and the sequencer, from Chrome or Edge on a computer or an Android phone, with the '
+               'FM1 connected by USB. It works with the browser synth too.</span></a>
+')
 PCM_IMAGES = {0: REPO_DIR / "src" / "dsp" / "pcm_area0.bin", 1: REPO_DIR / "src" / "dsp" / "pcm_area1.bin",
               2: REPO_DIR / "src" / "dsp" / "pcm_area2.bin"}   # (pcm_store_upload.py IMAGES: the same three)
 PCM_AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000}          # src/hardware/pcm_store_fm1.c PCM_AREA
@@ -142,6 +149,10 @@ def main():
         emu_card = EMU_CARD
         print("  note  play/ is web/emu as built now: rebuild it from the release commit if the tree has moved on")
 
+    (out / "editor").mkdir(exist_ok=True)               # (its rune face is the site's, one level up)
+    for f in EDITOR_FILES:
+        shutil.copy(REPO_DIR / "web" / "editor" / f, out / "editor" / f)
+
     _, toc, body = manual_md.render(MANUAL.read_text(encoding="utf-8"))
     toc_html = "\n".join(f'    <li><a href="#{i}">{html.escape(t)}</a></li>' for i, t in toc)
     (out / "manual").mkdir(exist_ok=True)
@@ -155,12 +166,12 @@ def main():
     landing = (HERE / "index.html").read_text(encoding="utf-8")
     tip_card = (f'    <a class="tablet tip" href="{html.escape(a.tip)}" target="_blank" rel="noopener"><strong>Tip me</strong>'
                 '<span>Buy me a beer? I could definitely use one!</span></a>\n') if a.tip else ""
-    landing = (landing.replace("__EMU__", emu_card).replace("__TIP__", tip_card).replace("__VERSION__", version)
+    landing = (landing.replace("__EDITOR__", EDITOR_CARD).replace("__EMU__", emu_card).replace("__TIP__", tip_card).replace("__VERSION__", version)
                .replace("__PKG__", name).replace("__REPO__", REPO))
     (out / "index.html").write_text(landing, encoding="utf-8")
     (out / ".nojekyll").write_text("")
     print(f"site: {out}: index.html, install/ ({product}), firmware/{name} ({len(raw)} B, sha256 {sha[:12]}...)"
-          + f", {len(pcm)} PCM images, manual/ ({len(toc)} sections), guide/" + (", play/" if emu_card else "") + (f", tip {a.tip}" if a.tip else ", no tip link"))
+          + f", {len(pcm)} PCM images, manual/ ({len(toc)} sections), guide/, editor/" + (", play/" if emu_card else "") + (f", tip {a.tip}" if a.tip else ", no tip link"))
 
 
 if __name__ == "__main__":
