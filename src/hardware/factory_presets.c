@@ -93,9 +93,8 @@ enum { M_LP24 = 0, M_LP18 = 18, M_LP12 = 36, M_LP6 = 54, M_BP = 73, M_HP12 = 91,
  * catch it. DUAL OSC: OSC1 the Overtone Halo (a soft drone and one singing overtone climbing the harmonic series), its
  * SCAN walked up and down by LFO1 over ten seconds; OSC2 the PCM STR ENS (the warm SOLSTICE strings), 3 cents flat.
  * Each note starts as the singing halo and the strings swell in under it (ENV2 > MIX); a slow ENV3 opens the filter
- * over three seconds; each voice drifts through the stereo field on its own slewed random LFO3, which also breathes
- * the strings' tone (nine routes: 2026-11-19 trimmed from 14 after the PERF TEST, each costs every voice's tick). The
- * ENS+PHASER (the late-70s string chain) turns it all into the Jarre-era wash.
+ * over three seconds (seven routes: trimmed from 14 after the PERF TESTs, 2026-11-19 / 20, each costs every voice
+ * its tick, and the voice price counts them: the LFO3 drifts went last). The ENS+PHASER (the late-70s string chain) turns it all into the Jarre-era wash.
  * WHEEL: the overtones climb higher, the phaser speeds up, the filter opens and a vibrato comes in. */
 static const uint8_t FV_LUNAR[] = {
     V_(arch, VARCH_DUAL_OSC),
@@ -103,10 +102,10 @@ static const uint8_t FV_LUNAR[] = {
     V_(oscmix.balance, 46), V_(oscmix.sub_level, 26),
     V_FLT(0, MULTI, 10, M_LP24, 70, 30, 0), V_KT(0, 50),
     V_ENV(0, 60, 100, 120, 84), V_ENV(1, 90, 100, 110, 84), V_ENV(2, 96, 110, 80, 84),
-    V_LFO(0, L_TRI, 14), V_LFO(1, L_SINE, 82), V_(lfo[1].delay, 50), V_LFO(2, L_SLEW, 40),
+    V_LFO(0, L_TRI, 14), V_LFO(1, L_SINE, 82), V_(lfo[1].delay, 50),
     V_RT(0, LFO1, NONE, OSC1_SCAN, 24), V_RT(1, MODWHEEL, NONE, OSC1_SCAN, 30), V_RT(2, MODWHEEL, NONE, MFX_K3, 24),
     V_RT(3, MODWHEEL, NONE, F1_CUTOFF, 30), V_RT(4, ENV3, NONE, F1_CUTOFF, 30), V_RT(5, ENV2, NONE, OSC_MIX, 22),
-    V_RT(6, LFO3, NONE, PAN, 24), V_RT(7, LFO3, NONE, OSC2_SCAN, 14), V_RT(8, LFO2, MODWHEEL, PITCH, 3),
+    V_RT(6, LFO2, MODWHEEL, PITCH, 3),
     V_MFX(ENS_PHASER, 74, 64, 15, 100, 110, 30, 50),
     V_AMP(0, SOFT, 28, 80), V_(analog, 26),
     V_END};
@@ -481,7 +480,7 @@ static const uint8_t FV_FROST[] = {
     V_OSC(0, W_BELL, 40, 0), V_OSC(1, W_HALO, 30, 0), V_(osc[1].fine, 67 /* +3 c */),
     V_FLT(0, MULTI, 0, M_LP12, 100, 10, 0), V_KT(0, 64), V_FLT(1, MULTI, 0, M_LP24, 84, 20, 0), V_KT(1, 50),
     V_(fltmix.balance, 60), V_(fltmix.stack_xfeed, FP_BIP(16)),
-    V_ENV(0, 0, 90, 0, 90), V_ENV(1, 80, 100, 110, 96),
+    V_ENV(0, 0, 90, 0, 80), V_ENV(1, 80, 100, 110, 84),
     V_LFO(0, L_SINE, 16),
     V_RT(0, LFO1, NONE, OSC2_SCAN, 14), V_RT(1, MODWHEEL, NONE, BALANCE, 24), V_RT(2, MODWHEEL, NONE, OSC2_SCAN, 30),
     V_RT(3, KEYBOARD, NONE, PAN, 14),
@@ -662,7 +661,7 @@ typedef struct {
 #define FP_MONO VMODE_MONO_RETRIG
 static const FactoryPerf FP_TAB[FP_NPERF] = {
  /*     name                L1         mode         L2         L2 mode      ap bpm  reverb    dec dmp  dly fb  pp            deg  tone d>r r>d tuning */
- FP_ROW("LUNAR STANDSTILL", LUNAR,     DUAL_SYNTH,  MOONGLASS, FP_MONO,     1,  92, CELESTIAL,116, 50,  3, 50, FV_PP(1, 16),  30,   64,  0,  0, EQUAL, 0),
+ FP_ROW("LUNAR STANDSTILL", LUNAR,     DUAL_SYNTH,  MOONGLASS, FP_MONO,     1,  92, MOD,      116, 50,  3, 50, FV_PP(1, 16),  30,   64,  0,  0, EQUAL, 0),
     /* the hero, at power-on. Keys: the pad (layer 1). PLAY: the arp runs the MOON GLASS bells (layer 2, one voice, so
      * the pad keeps seven) up and down two octaves of minor-ninth chords, Dm9 - Bbm9 - Gm9 - Am9, two bars each; the
      * sequence holds the pad's root under each chord and rides its MOD WHEEL lane (the overtones
@@ -702,7 +701,7 @@ static const FactoryPerf FP_TAB[FP_NPERF] = {
      * (layer 2) fires into the echoes */
  FP_ROW("AURORA ALTAR",     AURORA,    SINGL_SYNTH, FROST,     FP_VM_PATCH, 0,  80, CELESTIAL,120, 50,  3, 50, FV_PP(1, 16),  30,   64,  0,  0, EQUAL, 0),
     /* 90s: major-ninth chords planing a bar each, Fmaj9 - Dbmaj9 - Ebmaj9 - Cmaj9, strummed */
- FP_ROW("FROST RUNES",      FROST,     SINGL_SYNTH, AURORA,    FP_VM_PATCH, 0,  96, CELESTIAL,112, 50,  3, 46, FV_PP(1, 16),  30,   64,  0,  0, EQUAL, 0),
+ FP_ROW("FROST RUNES",      FROST,     SINGL_SYNTH, AURORA,    FP_VM_PATCH, 0,  96, MOD,      112, 50,  3, 46, FV_PP(1, 16),  30,   64,  0,  0, EQUAL, 0),
     /* 90s: the bell-pad arpeggiated in sixteenths over open sus chords */
  FP_ROW("SINGING STONES",   SINGING,   SINGL_SYNTH, PASSAGE,   FP_VM_PATCH, 0,  66, TUMULUS,  120, 60,  4, 40, FV_PP(1, 16),  30,   64,  0,  0, PYTHAGOREAN, 2),
     /* 90s / ritual: chords of open fifths strummed down, in pure Pythagorean fifths on D, the stones answering */
@@ -715,7 +714,7 @@ static const FactoryPerf FP_TAB[FP_NPERF] = {
     /* hypnotic techno of stone and wood alone: STONE KIT (layer 1, the keys) the log drum four to the floor and the
      * wood knocking between, FLINT KIT (layer 2) the rain shaking and the menhir struck, its hits swapped by a wheel
      * lane over 7, the accents over 5 */
- FP_ROW("RAINMAKER",        RAIN,      SINGL_SYNTH, PASSAGE,   FP_VM_PATCH, 0,  84, CELESTIAL,116, 50,  3, 44, FV_PP(1, 16),  30,   64,  0,  0, EQUAL, 0),
+ FP_ROW("RAINMAKER",        RAIN,      SINGL_SYNTH, PASSAGE,   FP_VM_PATCH, 0,  84, TUMULUS,  116, 50,  3, 44, FV_PP(1, 16),  30,   64,  0,  0, EQUAL, 0),
     /* ritual: RAINMAKER's knocks and chimes walking up and down open chords, the rain swelling under them */
 };
 #undef FP_ROW
