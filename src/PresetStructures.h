@@ -129,8 +129,10 @@ typedef struct {
 } InstrumentSettings;
 #define INSTRUMENT_DEFAULTS {64u, VELCURVE_LINEAR, CLKOUT_OFF, 1u, 0u, 1u, 0u}   /* (CC OUT, PC OUT off: user) */
 enum { PERF_SINGL_SYNTH, PERF_DUAL_SYNTH, PERF_SPLIT_SYNTH, PERF_COUNT };   /* 5.3 View 1 */
+/* POLY UNISON (2026-11-20, Jupiter-6 style): a poly mode whose notes share the layer's voices as unison stacks, one
+ * note the whole stack, two half each, ... (synth_runtime.c poly_unison_start) */
 enum { VMODE_MONO_RETRIG, VMODE_MONO_LEGATO, VMODE_POLY_REUSE, VMODE_POLY_RESET, VMODE_UNISON_STACK,
-       VMODE_COUNT };
+       VMODE_POLY_UNISON, VMODE_COUNT };
 enum { PORTA_CONST_RATE, PORTA_CONST_TIME, PORTA_LEGATO_TIED, PORTA_COUNT };
 enum { ARPLAYER_L1, ARPLAYER_L2, ARPLAYER_BOTH, ARPLAYER_COUNT };          /* BOTH: DUAL_SYNTH only */
 enum {                               /* 8.2 time division: the ARP's TIMING, a step's length (1/32T 2026-10-21) */

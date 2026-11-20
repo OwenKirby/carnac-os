@@ -676,7 +676,7 @@ static int factory_perf(uint32_t s, WholePerformance *w)
     p->voice_mode[1] = fp->pmode == PERF_SINGL_SYNTH ? f->vmode : FV_TAB[fp->l2].vmode;
     p->porta_mode[0] = p->porta_mode[1] = (uint8_t)(f->porta >> 7);
     p->porta_time[0] = p->porta_time[1] = (uint8_t)(f->porta & 127u);
-    if (f->vmode == VMODE_UNISON_STACK)
+    if (f->vmode == VMODE_UNISON_STACK || f->vmode == VMODE_POLY_UNISON)
         p->unison_detune[0] = p->unison_detune[1] = f->unison;
     if (fp->pmode == PERF_DUAL_SYNTH && !FA_TAB[s].maq)
         p->midi_ch[1] = p->midi_ch[0];                    /* the keys play both layers at once, whichever is selected */

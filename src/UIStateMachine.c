@@ -135,7 +135,8 @@ static uint8_t arch_pos(uint8_t a)
             return i;
     return 0u;                       /* SINGLE, or out of range: SPREAD's place */
 }
-static const char *const VMODE_NAMES[] = {"MONO RETRIG", "MONO LEGATO", "POLY REUSE", "POLY RESET", "UNISON"};
+static const char *const VMODE_NAMES[] = {"MONO RETRIG", "MONO LEGATO", "POLY REUSE", "POLY RESET", "UNISON",
+                                           "POLY UNISON"};
 static const char *const PORTA_NAMES[] = {"CONST RATE", "CONST TIME", "LEGATO TIED"};
 static const char *const CLKSRC_NAMES[] = {"INTERNAL", "MIDI"};
 static const char *const VELCURVE_NAMES[] = {"SOFT", "LINEAR", "HARD"};
@@ -1401,7 +1402,8 @@ uint8_t ui_sm_row_state(const UIStateMachine *sm, uint8_t row)
     if (MFX_ROW(r) && r != &MFX_ROWS[0] &&           /* MFX: the type's own rows, none at OFF */
         (r->archs & (1u << ui_sm_mfx(sm, sm->s.active_synth_layer)->type)) == 0u)
         return UIROW_HIDDEN;
-    if ((flags & RF_UNISON) != 0u && layer_vmode(sm, row_layer(r)) != VMODE_UNISON_STACK)
+    if ((flags & RF_UNISON) != 0u && layer_vmode(sm, row_layer(r)) != VMODE_UNISON_STACK &&
+        layer_vmode(sm, row_layer(r)) != VMODE_POLY_UNISON)
         return UIROW_GREYED;
     if (r->kind == RK_VOICES)
         return UIROW_INFO;
@@ -1579,8 +1581,9 @@ uint8_t ui_sm_home_key(UIStateMachine *sm, uint8_t hk)
         *m = !vmode_mono(*m) || *m == VMODE_UNISON_STACK ? (uint8_t)VMODE_MONO_RETRIG
              : *m == VMODE_MONO_RETRIG ? (uint8_t)VMODE_MONO_LEGATO : (uint8_t)VMODE_UNISON_STACK;
         break;
-    case UIHK_POLY:
-        *m = *m == VMODE_POLY_REUSE ? (uint8_t)VMODE_POLY_RESET : (uint8_t)VMODE_POLY_REUSE;
+    case UIHK_POLY:                  /* REUSE -> RESET -> POLY UNISON -> REUSE (from a mono mode: REUSE) */
+        *m = *m == VMODE_POLY_REUSE ? (uint8_t)VMODE_POLY_RESET
+             : *m == VMODE_POLY_RESET ? (uint8_t)VMODE_POLY_UNISON : (uint8_t)VMODE_POLY_REUSE;
         break;
     default: return 0u;
     }

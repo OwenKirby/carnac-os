@@ -110,7 +110,7 @@ static void scenario(uint8_t mode, uint32_t seed)
 int main(void)
 {
     static const uint8_t modes[] = {VMODE_MONO_RETRIG, VMODE_MONO_LEGATO, VMODE_POLY_REUSE, VMODE_POLY_RESET,
-                                    VMODE_UNISON_STACK};
+                                    VMODE_UNISON_STACK, VMODE_POLY_UNISON};
     for (unsigned m = 0; m < sizeof modes; m++)
         for (uint32_t seed = 1; seed <= 3; seed++)
             scenario(modes[m], seed * 7919u);
