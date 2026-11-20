@@ -46,10 +46,11 @@ void fx_mix_block(const int32_t *delay_l, const int32_t *delay_r, int32_t *rev_l
  *    last); above, DELAY HP's high-pass there (each thinner). The cross-feeds' band-limits follow it.
  *  - DLY > REV, REV > DLY, the cross-feeds: the delay's output into the reverb's send, the reverb's into the delay's;
  *    both up, a loop that blooms (each way band-limited, so it darkens a pass, and soft-clipped on its own headroom,
- *    so it holds). A pass, on core 0: fx_cross_to_dly (the reverb's last pass into the delay's send), the delay,
- *    fx_cross_to_rev (this pass's echoes into the reverb's send) before fx_reverb_front, and after the back
- *    fx_cross_keep (the reverb's out, for the next pass: the back runs on core 1 while the delay does).
- *    fx_process_block does the same. */
+ *    so it holds). A pass: fx_cross_begin on core 0 before core 1 starts (each way's settings for the pass), then
+ *    on core 0 fx_cross_to_dly (REV > DLY's result from the reverb's last pass into the delay's send), the delay,
+ *    fx_cross_to_rev (this pass's echoes into the reverb's send) before fx_reverb_front; on core 1, after the back,
+ *    fx_cross_rev_job (REV > DLY's chain on the reverb's out, for the next pass; 2026-11-20, it was core 0's).
+ *    fx_process_block does the same, on one core. */
 enum { FX_L_BALANCE, FX_L_TONE, FX_L_DLY_REV, FX_L_REV_DLY, FX_L_COUNT };
 #define fx_live (perf_state.mix)                  /* (preset.h) */
 PS_STATIC_ASSERT(FX_L_COUNT == PERF_NMIX, "the MIX page's bytes in the performance");
@@ -61,8 +62,9 @@ void fx_tone_sync(MasterPerformancePreset *p);
 /* the loop's return as a share of its headroom (0..1, the louder way): how near it is to holding itself up (the MIX
  * page's picture; written by the audio) */
 float fx_cross_level(void);
+void fx_cross_begin(uint32_t n);
 void fx_cross_to_dly(int32_t *delay_in, uint32_t n);
 /* 1 while DLY > REV feeds the reverb (on, or fading out): only then does the reverb's front need this pass's echoes */
 int fx_cross_to_rev_on(void);
 void fx_cross_to_rev(const int32_t *delay_l, const int32_t *delay_r, int32_t *reverb_in, uint32_t n);
-void fx_cross_keep(const int32_t *rev_l, const int32_t *rev_r, uint32_t n);
+void fx_cross_rev_job(const int32_t *rev_l, const int32_t *rev_r, uint32_t n);

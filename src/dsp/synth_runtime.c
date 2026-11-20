@@ -1267,6 +1267,7 @@ static void fx_reverb_job(uint32_t arg)
 {
     (void)arg;
     fx_reverb_back(&perf_state, fx_rev_l, fx_rev_r, fx_frames);
+    fx_cross_rev_job(fx_rev_l, fx_rev_r, fx_frames);   /* REV > DLY's chain on what it just made, for the next pass */
 }
 
 /* The sequencers' frame: the MAQ, the ARP, and what each tells the other for the next. 1 when both were idle: their
@@ -1560,6 +1561,7 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
     fx_frames = frames;
     fx_tone_sync(&perf_state);                         /* LOOP TONE's thinner half is DELAY HP (fx.h) */
     fx_pulse_q8 = midi_clock_period_q8();              /* DELAY SYNC follows the tempo, internal or MIDI */
+    fx_cross_begin(frames);                            /* (both ways' settings, before core 1 starts: fx.h) */
     fx_cross_to_dly(fx_dly, frames);                   /* REV > DLY: the reverb's last pass (fx.h, 2026-11-02) */
     /* (2026-11-14: the delay alone on core 1 paid while the slowed tape cost more than the reverb's front and tank;
      * with the half-rate tape it is cheap at every DELAY TIME, and this way round balances the cores again) */
@@ -1573,7 +1575,6 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
         fx_reverb_job(0u);
     PF_LAP(SPROF_F_RVB);
 
-    fx_cross_keep(fx_rev_l, fx_rev_r, frames);         /* (core 1 done: the reverb's out, for the next pass) */
     for (uint32_t frame = 0; lvl_on && frame < frames; ++frame) {   /* the meters (synth_levels): before the wet sum */
         int32_t r = fx_rev_l[frame] < 0 ? -fx_rev_l[frame] : fx_rev_l[frame];
         int32_t d = fx_dly_l[frame] < 0 ? -fx_dly_l[frame] : fx_dly_l[frame];

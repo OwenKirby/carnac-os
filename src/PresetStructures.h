@@ -777,18 +777,20 @@ PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 70u, "MasterPerformancePrese
 /* THE EFFECTS ARE PRICED (2026-11-20, the user: "voice counts scale according to our CPU use"). Measured on the FM1
  * (perf_test.c PT_COST_ONLY rows, DUAL OSC at 4 and 8 voices): each a fixed cost, whatever the voices, over the defaults
  * the voice table was measured with (TOMB, no PING PONG): SPRING +2.6 points, TUMULUS +3.3, DOLMEN +3.8, MOD +4.0,
- * CELESTIAL +5.4, PING PONG +0.7; the MIX page's cross-feeds (DLY > REV and REV > DLY, either or both) +6.7; LOOP TONE's
- * wear 0.4 (unpriced). In tenths (0.95 points), rounded up. A performance-level overhead on top of the MFX's
- * (voice_overhead), taken off every core's share */
-#define VOICE_XF_COST 7u
+ * CELESTIAL +5.4, PING PONG +0.7. The MIX page's cross-feeds (DLY > REV and REV > DLY, either or both), re-measured
+ * 2026-11-20 after the half-rate loop with REV > DLY on core 1 (fx.c, claude-synth-0f): +4.2 at LOOP TONE 64 (was 7.0),
+ * +8.3 worn (LOOP TONE off its middle: the cross-feeds' wear and the tape's own, TAPE_WEAR; was 9.0); LOOP TONE's wear
+ * without the cross-feeds +1.1 (the tape's TAPE_WEAR; was 0.4, unpriced). In tenths (0.95 points), rounded up. A
+ * performance-level overhead on top of the MFX's (voice_overhead), taken off every core's share */
+#define VOICE_XF_COST 5u
 #define VOICE_XF_WORN_COST 9u
+#define VOICE_TAPE_WEAR_COST 2u
 static inline uint8_t perf_fx_overhead(const MasterPerformancePreset *p)
 {
     static const uint8_t REV[6] = {3u, 0u, 4u, 6u, 4u, 4u};   /* REVTYPE_*: SPRING TOMB MOD CELESTIAL DOLMEN TUMULUS */
-    /* (the cross-feeds' loop worn, LOOP TONE off its middle: +8.8 measured, claude-synth-0f 2026-11-20; the wear alone,
-     * without the cross-feeds, 0.4) */
     return (uint8_t)(REV[p->reverb_type < 6u ? p->reverb_type : 1u] + (p->delay_pingpong & 1u) +
-                     ((p->mix[2] || p->mix[3]) ? (p->mix[1] != 64u ? VOICE_XF_WORN_COST : VOICE_XF_COST) : 0u));
+                     ((p->mix[2] || p->mix[3]) ? (p->mix[1] != 64u ? VOICE_XF_WORN_COST : VOICE_XF_COST)
+                                               : (p->mix[1] != 64u ? VOICE_TAPE_WEAR_COST : 0u)));
                                                                /* (FX_L_TONE, FX_L_DLY_REV, FX_L_REV_DLY) */
 }
 PS_STATIC_ASSERT(REVTYPE_COUNT == 6, "a price for every reverb type");

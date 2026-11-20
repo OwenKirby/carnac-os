@@ -152,6 +152,8 @@ typedef struct {
     uint32_t brk_z;                       /* TAPE_BREAK: its random stream */
     int32_t brk_g, brk_tgt, brk_left;     /* the record level now and its target (Q15), the dropout's steps left */
     int32_t brk_snag;                     /* the heads' jolt, Q16 cells */
+    uint32_t tw_ph, tw_cnt, tw_z;         /* TAPE_WEAR: the breath's spin, the drift's block count, its random stream */
+    float tw_tgt, tw_v, tw_d, tw_dc;      /* TAPE_WEAR: the drift's target, its two smoothing stages (Q16 cells), the DC */
 } TapeState;
 
 static TapeState tp;
@@ -226,6 +228,7 @@ void fx_init(void)
     memset(comb_lp, 0, sizeof comb_lp);
     memset(&tp, 0, sizeof tp);
     tp.brk_g = tp.brk_tgt = 32767;                        /* TAPE_BREAK: the record level whole */
+    tp.tw_z = 0x2545F491u;                                /* TAPE_WEAR: its own random stream */
     tp.gap_q16 = tp.gap_tgt_q16 = 64 << 16;
     tp.speed_q24 = tp.speed_tgt_q24 = 1 << 24;
     tp.last_len = 64u;
@@ -1080,6 +1083,40 @@ static void tape_degrade(uint32_t d, int32_t *wow, int32_t *flutter, uint32_t *f
 #endif
 static inline uint32_t brk_rand(uint32_t *z) { *z = *z * 1664525u + 1013904223u; return *z; }
 
+/* TAPE_WEAR (2026-11-20, user: LOOP TONE should grunge up the delay, and its length and feedback move so a held loop
+ * evolves): away from LOOP TONE 64 the wear of the cross-feeds (xf_tone) enters the tape's own feedback, more the
+ * further the knob turns (64: none, to the bit):
+ *   - the grunge: the repeats driven into a soft clip, lopsided on the darker (tape) side (even harmonics, its DC taken
+ *     out), even on the thinner (desk) side, the make-up 1 / drive (a quiet echo passes as it was; a hot loop crunches
+ *     and holds lower);
+ *   - the drift: the delay's length walks slowly at random (a new target every ~1.5 s, two smoothing stages of ~1 s, so
+ *     the pitch glides without kinks), up to +-TW_DRIFT of the delay at full wear (the desk a third of it): each pass
+ *     smears a little further from the last;
+ *   - the breath: the feedback dips and returns on a slow spin (~0.07 Hz), up to TW_BREATH at full wear (never above
+ *     the knob: a breath cannot push the loop into a howl).
+ * The half-rate tape only (TAPE_HALF). */
+#ifndef TAPE_WEAR
+#define TAPE_WEAR 1
+#endif
+#ifndef TW_DRIFT
+#define TW_DRIFT 0.004f                                    /* the drift's reach, a share of the delay, at full wear (0.015
+                                                           * detuned the loop's resonances: a held drone died) */
+#endif
+#ifndef TW_BREATH
+#define TW_BREATH 0.06f                                    /* the breath's dip, a share of the feedback (~-0.5 dB) */
+#endif
+#ifndef TW_PUSH
+#define TW_PUSH 0.08f                                      /* the feedback's lift at full wear, past the knob */
+#endif
+#ifndef TW_DRIVE
+#define TW_DRIVE 3.f                                       /* the tape side's drive at full wear (1 + this) */
+#endif
+#ifndef TW_DRIVE_DESK
+#define TW_DRIVE_DESK 3.5f                                 /* the desk side's */
+#endif
+#define TW_BREATH_INC 6800u                                /* its spin a sample (0.07 Hz) */
+#define TW_DRIFT_BLOCKS 512u                               /* blocks between the drift's targets (~1.5 s at 128) */
+
 /* The slowed tape's anti-aliasing (2026-11-03, user: PING PONG "sounds very digital ... a bitcrushed sound ... in the
  * high end when tone is neutral ... definitely aliasing"). PING PONG runs the tape as for a delay twice as long, so
  * past ~185 ms it slows (at 0.5 s to ~0.37 speed: cells at ~16 kHz; at 1 s ~0.18, ~8 kHz), and the single one-pole at
@@ -1453,6 +1490,35 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
     const int32_t brk_k = p->delay_degrade > 64u ? (int32_t)(p->delay_degrade > 127u ? 127u : p->delay_degrade) - 64 : 0;
     const uint32_t brk_drop = (uint32_t)(brk_k * brk_k) * 74u, brk_snagp = (uint32_t)(brk_k * brk_k) * 34u;
 #endif
+#if TAPE_WEAR
+    const uint8_t tw_v = fx_live[FX_L_TONE];
+    const float tw = tw_v < 64u ? tone_dark(tw_v) : (float)tone_hp(tw_v) * (1.f / 127.f);
+    const int tw_on = tw > 0.f || tp.tw_d != 0.f || tp.tw_v != 0.f || tp.tw_dc != 0.f, tw_tape = tw_v < 64u;
+    float tw_drv = 1.f, tw_make = 32768.f, tw_asym = 0.f, tw_dc = tp.tw_dc;
+    int32_t tw_fbg = 32767, tw_pos = 0, tw_step = 0;
+    if (tw_on) {
+        tw_drv = (1.f + (tw_tape ? TW_DRIVE : TW_DRIVE_DESK) * tw) * (2.f / 3.f / 32768.f);   /* (u = 2x/3: unity when quiet) */
+        tw_make = 32768.f / (1.f + (tw_tape ? TW_DRIVE : TW_DRIVE_DESK) * tw);
+        tw_asym = tw_tape ? 0.35f * tw : 0.f;
+        tp.tw_ph += TW_BREATH_INC * n;
+        float br = 0.5f + 0.5f * (float)para_sine(tp.tw_ph) * (1.f / 32768.f);
+        tw_fbg = (int32_t)(32767.f * (1.f - TW_BREATH * tw * br));
+        tw_make *= 1.f + TW_PUSH * tw;                     /* (the push: the worn tape leans towards a howl, its clip holds it) */
+        if (++tp.tw_cnt >= TW_DRIFT_BLOCKS * 128u / (n ? n : 1u)) {   /* the drift's next target */
+            tp.tw_cnt = 0;
+            float u = (float)(int16_t)(brk_rand(&tp.tw_z) >> 16) * (1.f / 32768.f);
+            tp.tw_tgt = u * TW_DRIFT * (tw_tape ? 1.f : 0.33f) * tw * (float)gap_tgt;
+        }
+        if (tw == 0.f) tp.tw_tgt = 0.f;                    /* (turned back to 64: the length comes home) */
+        const float k = (float)n * (1.f / 44100.f);        /* (~1 s each stage) */
+        float v1 = tp.tw_v + (tp.tw_tgt - tp.tw_v) * k, d1 = tp.tw_d + (v1 - tp.tw_d) * k;
+        if (tw == 0.f && d1 < 64.f && d1 > -64.f && v1 < 64.f && v1 > -64.f) v1 = d1 = 0.f;
+        tw_pos = (int32_t)tp.tw_d;
+        tw_step = (int32_t)((d1 - tp.tw_d) * (2.f / (float)(n ? n : 1u)));   /* a half-rate step's share */
+        tp.tw_v = v1;
+        tp.tw_d = d1;
+    }
+#endif
 
     for (uint32_t s = 0; s < n; s++) {
         int32_t x = in[s];
@@ -1501,6 +1567,10 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
 #else
         uint32_t r = wpos - (uint32_t)gap - (uint32_t)(m1 >> 8);
 #endif
+#if TAPE_WEAR
+        tw_pos += tw_step;
+        r -= (uint32_t)tw_pos;                             /* the drift */
+#endif
         uint32_t i = r >> 16;
         int32_t a = TAPE_RD(i), b = TAPE_RD(i + 1u);
         int32_t play = a + (((b - a) * (int32_t)((r >> 1) & 0x7FFFu)) >> 15);
@@ -1525,6 +1595,9 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
 #if TAPE_BREAK
             r2 -= (uint32_t)tp.brk_snag;
 #endif
+#if TAPE_WEAR
+            r2 -= (uint32_t)(tw_pos >> 1);
+#endif
             uint32_t i2 = r2 >> 16;
             int32_t a2 = TAPE_RD(i2), b2 = TAPE_RD(i2 + 1u);
             int32_t play2 = a2 + (((b2 - a2) * (int32_t)((r2 >> 1) & 0x7FFFu)) >> 15);
@@ -1548,6 +1621,18 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
             scoop += ((float)fbs - scoop) * fb.scoop_c;
             fbs -= (int32_t)scoop;
         }
+#if TAPE_WEAR
+        if (tw_on) {                                       /* the grunge and the breath */
+            float u = (float)fbs * tw_drv;
+            if (tw_tape) {
+                float t = tw_asym * u * u;
+                tw_dc += 0.001f * (t - tw_dc);
+                u += t - tw_dc;
+            }
+            u = u > 1.f ? 1.f : u < -1.f ? -1.f : u * (1.5f - 0.5f * u * u);
+            fbs = sfx_mulq15((int32_t)(u * tw_make), tw_fbg);
+        }
+#endif
         int32_t rec = tape_sat(xin + sfx_mulq15(fbs, fb.lo) + sfx_mulq15(fbs, fb.hi) + sfx_mulq15(fbs, fb.hi2) + hiss);
         aa_lp += sfx_mulq15(rec - aa_lp, 24575);           /* (the full-speed tape's record low-pass, 0.75) */
         wpos += 1u << 16;
@@ -1590,6 +1675,9 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
     tp.seed_rng = seed;
     tp.wow_ph2 = wow_ph2;
     tp.flutter_ph2 = flutter_ph2;
+#if TAPE_WEAR
+    tp.tw_dc = tw_dc < 1e-6f && tw_dc > -1e-6f ? 0.f : tw_dc;
+#endif
 }
 #endif
 
@@ -1850,11 +1938,12 @@ void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in,
     int32_t din[FX_BLOCK_MAX], dl[FX_BLOCK_MAX], dr[FX_BLOCK_MAX];
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     memcpy(din, delay_in, n * sizeof din[0]);
+    fx_cross_begin(n);
     fx_cross_to_dly(din, n);
     fx_delay_block(p, din, dl, dr, n);
     fx_cross_to_rev(dl, dr, reverb_io, n);
     fx_reverb_block(p, reverb_io, wet_r, n);
-    fx_cross_keep(reverb_io, wet_r, n);
+    fx_cross_rev_job(reverb_io, wet_r, n);
     fx_mix_block(dl, dr, reverb_io, wet_r, n);
 }
 
@@ -1891,31 +1980,51 @@ void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in,
 PS_STATIC_ASSERT((int)XF_WOW_BASE + (int)XF_WOW_EXC + 2 < (int)XF_WOW_LEN, "the wander fits its line");
 enum { XF_CL, XF_CR, XF_CM, XF_CM2, XF_NCH };            /* DLY > REV's left and right; REV > DLY's mono (CM2: the
                                                            * removed BBD's right, unused) */
-typedef struct {
+/* 2026-11-20, the cores: REV > DLY's chain runs on core 1, at the end of the reverb's job (fx_cross_rev_job), on the
+ * tank's output it has just made; its result (xf_c1.pend) goes into the next pass's delay send, as the reverb's last
+ * pass always did (the same lag). Core 0 does everything the two ways share before core 1 starts (fx_cross_begin:
+ * LOOP TONE's coefficients, the gains, the drifts' new targets) and hands each way its block's settings (XfP), so
+ * core 1 only reads those and writes its own channel, level and result, each on lines of their own (FX_LINE). A
+ * knob turned reaches REV > DLY a pass (2.9 ms) later than before; held, the loop is the same. */
+typedef struct FX_LINE {                                  /* (a line each: core 1 runs XF_CM while core 0 runs CL, CR) */
     float hp, lp, dc;                                     /* the band-limit; the lopsided saturation's DC */
     float d;                                              /* the wander's time at the last block's end, samples */
     float wan, wan_tgt;                                   /* its random drift, -1 .. 1 */
     uint32_t ph, inc;                                     /* its spin */
     uint32_t wp;                                          /* the line's write position */
     float *buf;                                           /* its line (xf_wow: the band-limited source) */
+    float prev;                                           /* (XF_HALF) the last half-rate output, for the upsampling */
 } XfCh;
-static float xf_wow[XF_NCH][XF_WOW_LEN] SYNTH_POOL;       /* (4 KB: .pool, as every buffer here) */
+typedef struct {                                          /* a way's block: what core 0 worked out for it */
+    float g, dg;                                          /* the gain at the start and its step a sample */
+    float hp_c, lp_c;                                     /* the band-limit (lp_c heated) */
+    float drive, asym, make, wow;                         /* the wear */
+    float hp_h, lp_h;                                     /* (XF_HALF) the band-limit at the half rate */
+    int on;                                               /* 0: the way is off this pass */
+} XfP;
+static float xf_wow[XF_NCH][XF_WOW_LEN] SYNTH_POOL FX_LINE;   /* (4 KB: .pool, as every buffer here) */
 static struct {
     XfCh ch[XF_NCH];
     float g[2];                                           /* each way's gain at the last block's end */
-    float rev_l[FX_BLOCK_MAX], rev_r[FX_BLOCK_MAX];       /* the reverb's last pass (REV > DLY's source) */
-    uint32_t nrev;
     float hp_c, lp_c;                                     /* the band-limit's coefficients at LOOP TONE tone_key */
     float drive, asym, make, heat, wow;                   /* the wear at tone_key (64: 1, 0, 1, 0, 0) */
     int tone_key;
-    float lvl[2];                                         /* each way's return as a share of XF_H, held and falling */
+    float lvl_dr;                                         /* DLY > REV's return as a share of XF_H, held and falling */
     uint32_t rng, nblk;                                   /* the drifts' */
+    XfP pp[2];                                            /* this pass's settings, each way (fx_cross_begin) */
 } xf;
+static struct FX_LINE {                                   /* core 1's: REV > DLY's level and result */
+    float lvl;                                            /* its return as a share of XF_H, held and falling */
+    uint32_t npend;                                       /* the result's length (0: none) */
+    int32_t pend[FX_BLOCK_MAX] FX_LINE;                   /* for the next pass's delay send */
+} xf_c1;
+PS_STATIC_ASSERT(sizeof(XfCh) % 64u == 0u && sizeof xf_c1 % 64u == 0u, "core 1's lines");
 
 static void xf_init(void)                                 /* (the amounts, fx_live, are the UI's) */
 {
     static const uint32_t inc[XF_NCH] = {36035u, 51618u, 28244u, 39941u};   /* the spins: 0.37, 0.53, 0.29, 0.41 Hz */
     memset(&xf, 0, sizeof xf);
+    memset(&xf_c1, 0, sizeof xf_c1);
     xf.tone_key = -1;
     xf.rng = 0x1F2E3D4Cu;
     memset(xf_wow, 0, sizeof xf_wow);
@@ -1974,74 +2083,180 @@ static void xf_tone(void)
 }
 
 /* channel c's wander time at this block's end (spin and drift), samples; 0 with no wear */
-static float xf_wow_d(XfCh *c, uint32_t n)
+static float xf_wow_d(XfCh *c, uint32_t n, float wow)
 {
     c->ph += c->inc * n;
     c->wan += (c->wan_tgt - c->wan) * 0.03f;              /* (tau ~0.1 s) */
     float lfo = 0.6f * (float)para_sine(c->ph) * (1.f / 32768.f) + 0.4f * c->wan;
-    return xf.wow * (XF_WOW_BASE + XF_WOW_EXC * lfo);
+    return wow * (XF_WOW_BASE + XF_WOW_EXC * lfo);
 }
 
-/* channel c: src (n) band-limited (lp_c: the heated low-pass), wandered, times g (+ dg a sample), worn and clipped
- * into z (shares of XF_H); returns the peak before the make-up */
-static float xf_chan(XfCh *c, const float *src, float *z, uint32_t n, float g, float dg, float lp_c)
+/* 2026-11-20, half rate (XF_HALF 1): each chain runs at 22.05 kHz, a pair of samples a step (averaged in, linearly
+ * interpolated out, ~1.5 samples late); its band-limit is <= 4.5 kHz, so the pair average and the interpolation's
+ * images (> 17 kHz, falling) sit far above it. The half-rate saturator's harmonics fold below 11 kHz: a little
+ * grit, the loop's own. Coefficients rescaled (the poles squared), the wander halved in samples (the same time).
+ * Odd passes (none on the FM1: 128 frames): the last sample holds the last output. */
+#ifndef XF_HALF
+#define XF_HALF 1
+#endif
+/* What a chain reads and where its result goes (one loop, no copies in or out, 2026-11-20):
+ *  XS_L  DLY > REV's left: src a, the result kept in z (shares of XF_H) for the right's pass;
+ *  XS_R  its right: src a; the mean with z into the send o (+=), half the difference into the side so;
+ *  XS_M  REV > DLY: src the mean of a and b, the result into o (=, the units of the send). */
+enum { XS_L, XS_R, XS_M };
+#define XF_EMIT(S, V)                                                                                                  \
+    do {                                                                                                               \
+        if (mode == XS_L)                                                                                              \
+            z[S] = (V);                                                                                                \
+        else if (mode == XS_R) {                                                                                       \
+            o[S] += (int32_t)(0.5f * (z[S] + (V)) * XF_H);                                                             \
+            so[S] = 0.5f * (z[S] - (V)) * XF_H;                                                                        \
+        } else                                                                                                         \
+            o[S] = (int32_t)((V) * XF_H);                                                                              \
+    } while (0)
+
+/* channel c over n samples: band-limited (the heated low-pass), wandered, times the gain, worn and clipped;
+ * returns the peak before the make-up. worn 0: none of it (LOOP TONE 64); 1: the desk (drive, make-up, a little
+ * wander, no lopsided part); 2: the tape (all of it). Each variant its own loop (xf_loop_*), so each keeps only what
+ * it needs in registers */
+static inline __attribute__((always_inline)) float xf_run(XfCh *c, const XfP *q, uint32_t n, float d1, const int mode,
+                                                          const int worn, const int32_t *a, const int32_t *b,
+                                                          float *z, int32_t *o, float *so)
 {
-    const float hp_c = xf.hp_c, drive = xf.drive, asym = xf.asym, make = xf.make;
-    float hp = c->hp, lp = c->lp, dc = c->dc, peak = 0.f;
-    float d = c->d, d1 = xf_wow_d(c, n), dd = (d1 - d) * (1.f / (float)n);
-    const int wow = d != 0.f || d1 != 0.f;
+    const int half = XF_HALF;
+    const uint32_t m = half ? n >> 1 : n;
+    const float hp_c = half ? q->hp_h : q->hp_c, lp_c = half ? q->lp_h : q->lp_c;
+    const float asym = q->asym, mk = q->make, dck = half ? 0.001f : 0.0005f;
+    const float sc = worn ? q->drive * (1.f / XF_H) : (1.f / XF_H);   /* (the drive and the headroom in the gain) */
+    float g = q->g * sc, dg = q->dg * sc * (half ? 2.f : 1.f);
+    float hp = c->hp, lp = c->lp, dc = c->dc, peak = 0.f, prev = c->prev;
+    float d = c->d, dd = m ? (d1 - d) * (1.f / (float)m) : 0.f;
     uint32_t wp = c->wp;
-    for (uint32_t s = 0; s < n; s++) {
+    float *const buf = c->buf;
+    for (uint32_t k = 0; k < m; k++) {
+        float x;
+        if (half) {
+            const uint32_t s = 2u * k;
+            x = mode == XS_M ? 0.25f * (((float)a[s] + (float)b[s]) + ((float)a[s + 1u] + (float)b[s + 1u]))
+                             : 0.5f * ((float)a[s] + (float)a[s + 1u]);
+        } else
+            x = mode == XS_M ? 0.5f * ((float)a[k] + (float)b[k]) : (float)a[k];
         g += dg;
-        hp += hp_c * (src[s] - hp);
-        lp += lp_c * (src[s] - hp - lp);
+        hp += hp_c * (x - hp);
+        lp += lp_c * (x - hp - lp);
         float y = lp;
-        c->buf[wp & (XF_WOW_LEN - 1u)] = lp;
-        if (wow) {                                        /* the wander: d behind, linear */
+        if (worn) {                                       /* the wander: d behind, linear (a fresh line: d <= k) */
+            buf[wp & (XF_WOW_LEN - 1u)] = lp;
             d += dd;
             uint32_t i = (uint32_t)d;
-            float f = d - (float)i, a = c->buf[(wp - i) & (XF_WOW_LEN - 1u)];
-            y = a + f * (c->buf[(wp - i - 1u) & (XF_WOW_LEN - 1u)] - a);
+            float f = d - (float)i, r = buf[(wp - i) & (XF_WOW_LEN - 1u)];
+            y = r + f * (buf[(wp - i - 1u) & (XF_WOW_LEN - 1u)] - r);
+            wp++;
         }
-        wp++;
-        float u = g * y * (1.f / XF_H) * drive;
-        float t = asym * u * u;                           /* the lopsided part, its DC (tau ~50 ms) taken out */
-        dc += 0.0005f * (t - dc);
-        u += t - dc;
+        float u = g * y;
+        if (worn == 2) {                                  /* the lopsided part, its DC (tau ~50 ms) taken out */
+            float t = asym * u * u;
+            dc += dck * (t - dc);
+            u += t - dc;
+        }
         u = u > 1.f ? 1.f : u < -1.f ? -1.f : u * (1.5f - 0.5f * u * u);
-        float a = u < 0.f ? -u : u;
-        peak = a > peak ? a : peak;
-        z[s] = u * make;
+        float am = u < 0.f ? -u : u;
+        peak = am > peak ? am : peak;
+        if (worn) u *= mk;
+        if (half) {
+            const uint32_t s = 2u * k;
+            const float v0 = 0.5f * (prev + u);
+            XF_EMIT(s, v0);
+            XF_EMIT(s + 1u, u);
+            prev = u;
+        } else
+            XF_EMIT(k, u);
     }
+    if (half && (n & 1u))
+        XF_EMIT(n - 1u, prev);
     c->wp = wp & (XF_WOW_LEN - 1u);
-    c->d = d1;
+    c->d = worn ? d1 : 0.f;
+    c->prev = prev;
     c->hp = hp < 1e-3f && hp > -1e-3f ? 0.f : hp;         /* (no denormals) */
     c->lp = lp < 1e-3f && lp > -1e-3f ? 0.f : lp;
     c->dc = dc < 1e-7f && dc > -1e-7f ? 0.f : dc;
     return peak;
 }
 
-/* way j at a block's start: its gain (returned) and step *dg, its heated low-pass *lp_c; now and then the drifts'
- * new targets */
-static float xf_begin(int j, uint32_t n, float *dg, float *lp_c)
+/* the chain for a mode: its variants each a function of its own (noinline: one function calling xf_run twice let
+ * the compiler merge them back into one loop testing the flag every sample, with spills: no gain on the FM1) */
+#define XF_LOOP(MODE, WORN)                                                                                            \
+    static __attribute__((noinline)) float xf_loop_##MODE##_##WORN(XfCh *c, const XfP *q, uint32_t n, float d1,         \
+                                                                  const int32_t *a, const int32_t *b, float *z,        \
+                                                                  int32_t *o, float *so)                               \
+    {                                                                                                                  \
+        return xf_run(c, q, n, d1, MODE, WORN, a, b, z, o, so);                                                        \
+    }
+#define XF_CHAIN(MODE)                                                                                                 \
+    XF_LOOP(MODE, 0)                                                                                                   \
+    XF_LOOP(MODE, 1)                                                                                                   \
+    XF_LOOP(MODE, 2)                                                                                                   \
+    static float xf_chain_##MODE(XfCh *c, const XfP *q, uint32_t n, const int32_t *a, const int32_t *b, float *z,     \
+                                 int32_t *o, float *so)                                                                \
+    {                                                                                                                  \
+        float d1 = xf_wow_d(c, n, q->wow) * (XF_HALF ? 0.5f : 1.f);                                                    \
+        if (q->asym != 0.f || c->dc != 0.f)                                                                            \
+            return xf_loop_##MODE##_2(c, q, n, d1, a, b, z, o, so);                                                    \
+        if (q->drive != 1.f || q->make != 1.f || d1 != 0.f || c->d != 0.f)                                             \
+            return xf_loop_##MODE##_1(c, q, n, d1, a, b, z, o, so);                                                    \
+        return xf_loop_##MODE##_0(c, q, n, d1, a, b, z, o, so);                                                        \
+    }
+XF_CHAIN(XS_L)
+XF_CHAIN(XS_R)
+XF_CHAIN(XS_M)
+
+/* way j at a pass's start: its settings (xf.pp[j]: the gain and its step, the heated low-pass, the wear); now and
+ * then the drifts' new targets. On core 0, before core 1 starts (lvl: the way's level) */
+static void xf_begin(int j, uint32_t n, float lvl)
 {
-    xf_tone();
+    XfP *q = &xf.pp[j];
     float k = (float)(fx_cross[j] > 127u ? 127u : fx_cross[j]) * (1.f / 127.f), g1 = XF_MAX * k * k, g = xf.g[j];
-    *dg = (g1 - g) * (1.f / (float)n);
+    q->g = g;
+    q->dg = (g1 - g) * (1.f / (float)n);
     xf.g[j] = g1;
-    *lp_c = xf.lp_c * (1.f - xf.heat * xf.lvl[j]);
+    q->hp_c = xf.hp_c;
+    q->lp_c = xf.lp_c * (1.f - xf.heat * lvl);
+    q->drive = xf.drive;
+    q->asym = xf.asym;
+    q->make = xf.make;
+    q->wow = xf.wow;
+    q->hp_h = 1.f - (1.f - q->hp_c) * (1.f - q->hp_c);    /* (the same pole at half the rate) */
+    q->lp_h = 1.f - (1.f - q->lp_c) * (1.f - q->lp_c);
+    q->on = 1;
     if ((++xf.nblk & 31u) == 0u)                          /* (~46 ms, either way on) */
         for (int c = 0; c < XF_NCH; c++) {
             xf.rng = xf.rng * 1103515245u + 12345u;
             xf.ch[c].wan_tgt = (float)(int16_t)(xf.rng >> 16) * (1.f / 32768.f);
         }
-    return g;
 }
 
-/* way j's level, held and falling ~0.3 s */
-static void xf_level(int j, float peak) { xf.lvl[j] = peak > xf.lvl[j] * 0.97f ? peak : xf.lvl[j] * 0.97f; }
+/* a level, held and falling ~0.3 s */
+static inline float xf_level(float lvl, float peak) { return peak > lvl * 0.97f ? peak : lvl * 0.97f; }
 
-float fx_cross_level(void) { return xf.lvl[0] > xf.lvl[1] ? xf.lvl[0] : xf.lvl[1]; }
+float fx_cross_level(void) { return xf.lvl_dr > xf_c1.lvl ? xf.lvl_dr : xf_c1.lvl; }
+
+void fx_cross_begin(uint32_t n)
+{
+    if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
+    xf.pp[FX_X_REV_DLY].on = xf.pp[FX_X_DLY_REV].on = 0;
+    if (n == 0u)
+        return;
+    if (xf_on(FX_X_REV_DLY) || xf_on(FX_X_DLY_REV))
+        xf_tone();
+    if (xf_on(FX_X_REV_DLY))                              /* (the old order: REV > DLY's first) */
+        xf_begin(FX_X_REV_DLY, n, xf_c1.lvl);
+    else
+        xf_c1.lvl *= 0.97f;
+    if (xf_on(FX_X_DLY_REV))
+        xf_begin(FX_X_DLY_REV, n, xf.lvl_dr);
+    else
+        xf.lvl_dr *= 0.97f;
+}
 
 void fx_tone_sync(MasterPerformancePreset *p)
 {
@@ -2060,55 +2275,38 @@ void fx_tone_sync(MasterPerformancePreset *p)
 
 void fx_cross_to_dly(int32_t *delay_in, uint32_t n)
 {
-    float z[FX_BLOCK_MAX], dg, lp_c;
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
-    if (!xf_on(FX_X_REV_DLY))
-        xf.lvl[FX_X_REV_DLY] *= 0.97f;
-    if (n == 0u || !xf_on(FX_X_REV_DLY))
-        return;
-    for (uint32_t s = xf.nrev; s < n; s++) xf.rev_l[s] = xf.rev_r[s] = 0.f;   /* (a pass longer than the last) */
-    float g = xf_begin(FX_X_REV_DLY, n, &dg, &lp_c);
-    float m[FX_BLOCK_MAX];                                /* the tape: the mono sum */
-    for (uint32_t s = 0; s < n; s++) m[s] = 0.5f * (xf.rev_l[s] + xf.rev_r[s]);
-    xf_level(FX_X_REV_DLY, xf_chan(&xf.ch[XF_CM], m, z, n, g, dg, lp_c));
-    for (uint32_t s = 0; s < n; s++) delay_in[s] += (int32_t)(z[s] * XF_H);
+    uint32_t m = xf_c1.npend < n ? xf_c1.npend : n;       /* (core 1's, from the reverb's last pass) */
+    for (uint32_t s = 0; s < m; s++) delay_in[s] += xf_c1.pend[s];
+    xf_c1.npend = 0u;
 }
 
 void fx_cross_to_rev(const int32_t *delay_l, const int32_t *delay_r, int32_t *reverb_in, uint32_t n)
 {
-    float m[FX_BLOCK_MAX], zl[FX_BLOCK_MAX], zr[FX_BLOCK_MAX], dg, lp_c;
+    float zl[FX_BLOCK_MAX];
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
-    if (!xf_on(FX_X_DLY_REV))
-        xf.lvl[FX_X_DLY_REV] *= 0.97f;
-    if (n == 0u || !xf_on(FX_X_DLY_REV))
+    const XfP *q = &xf.pp[FX_X_DLY_REV];
+    if (n == 0u || !q->on)
         return;
-    float g = xf_begin(FX_X_DLY_REV, n, &dg, &lp_c);
-    for (uint32_t s = 0; s < n; s++) m[s] = (float)delay_l[s];
-    float pl = xf_chan(&xf.ch[XF_CL], m, zl, n, g, dg, lp_c);
-    for (uint32_t s = 0; s < n; s++) m[s] = (float)delay_r[s];
-    float pr = xf_chan(&xf.ch[XF_CR], m, zr, n, g, dg, lp_c);
-    xf_level(FX_X_DLY_REV, pl > pr ? pl : pr);
-    for (uint32_t s = 0; s < n; s++) {                    /* the mean into the send, half the difference its side */
-        reverb_in[s] += (int32_t)(0.5f * (zl[s] + zr[s]) * XF_H);
-        rv_side_in[s] = 0.5f * (zl[s] - zr[s]) * XF_H;
-    }
+    float pl = xf_chain_XS_L(&xf.ch[XF_CL], q, n, delay_l, 0, zl, 0, 0);
+    float pr = xf_chain_XS_R(&xf.ch[XF_CR], q, n, delay_r, 0, zl, reverb_in, rv_side_in);
+    xf.lvl_dr = xf_level(xf.lvl_dr, pl > pr ? pl : pr);
     rv_side_n = n;
 #ifdef XF_NO_SIDE                                         /* (host A/B: the reverb's input mono again) */
     rv_side_n = 0u;
 #endif
 }
 
-void fx_cross_keep(const int32_t *rev_l, const int32_t *rev_r, uint32_t n)
+void fx_cross_rev_job(const int32_t *rev_l, const int32_t *rev_r, uint32_t n)
 {
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
-    xf.nrev = 0u;
-    if (!xf_on(FX_X_REV_DLY))
+    const XfP *q = &xf.pp[FX_X_REV_DLY];
+    if (n == 0u || !q->on) {
+        xf_c1.npend = 0u;
         return;
-    for (uint32_t s = 0; s < n; s++) {
-        xf.rev_l[s] = (float)rev_l[s];
-        xf.rev_r[s] = (float)rev_r[s];
     }
-    xf.nrev = n;
+    xf_c1.lvl = xf_level(xf_c1.lvl, xf_chain_XS_M(&xf.ch[XF_CM], q, n, rev_l, rev_r, 0, xf_c1.pend, 0));
+    xf_c1.npend = n;
 }
 
 void fx_mix_block(const int32_t *delay_l, const int32_t *delay_r, int32_t *rev_l, int32_t *rev_r, uint32_t n)
