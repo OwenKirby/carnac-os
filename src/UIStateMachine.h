@@ -352,7 +352,7 @@ const char *ui_sm_mfx_name(uint8_t type);
 
 /* HOME held + a labelled black key (2026-11-13): settings and places, never a performance action (a missed click must
  * cost nothing). PIT: the TUNING page; GLO: GLOBAL; MONO: the focused layer's VOICING through MONO RETRIG -> MONO
- * LEGATO -> UNISON (from a POLY mode: MONO RETRIG); POLY: POLY REUSE <-> POLY RESET (from a mono one: POLY REUSE).
+ * LEGATO -> UNISON (from a POLY mode: MONO RETRIG); POLY: POLY REUSE -> POLY RESET -> POLY UNISON (from a mono one: POLY REUSE).
  * ui_sm_home_key returns 1 when it acted; ui_sm_home_key_led says how the key shows while HOME is held: 0 dark, 1 dim
  * (selectable), 2 lit (the page open, or the voicing's family) */
 enum { UIHK_NONE, UIHK_PIT, UIHK_GLO, UIHK_MONO, UIHK_POLY, UIHK_COUNT };

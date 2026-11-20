@@ -434,7 +434,7 @@ int main(void)
     CHECK(find_row("MASTER TUNE") < 0 && find_row("TUNING") < 0 && find_row("THEME") >= 0, "GLOBAL: no tuning rows");
     press(BTN_HOME);
     CHECK(sm.page == UIPAGE_HOME1, "GLOBAL: HOME -> LAYER (%u)", sm.page);
-    {   /* MONO: RETRIG -> LEGATO -> UNISON -> RETRIG; POLY: REUSE <-> RESET; from the other family its first */
+    {   /* MONO: RETRIG -> LEGATO -> UNISON -> RETRIG; POLY: REUSE -> RESET -> POLY UNISON; from the other family its first */
         uint8_t *vm = &perf_state.voice_mode[0], keep = *vm;
         *vm = VMODE_POLY_RESET;
         CHECK(ui_sm_home_key_led(&sm, UIHK_POLY) == 2u && ui_sm_home_key_led(&sm, UIHK_MONO) == 1u, "POLY lit");
@@ -450,6 +450,8 @@ int main(void)
         CHECK(*vm == VMODE_POLY_REUSE, "POLY from MONO: REUSE");
         ui_sm_home_key(&sm, UIHK_POLY);
         CHECK(*vm == VMODE_POLY_RESET, "POLY: RESET");
+        ui_sm_home_key(&sm, UIHK_POLY);
+        CHECK(*vm == VMODE_POLY_UNISON && ui_sm_home_key_led(&sm, UIHK_POLY) == 2u, "POLY: POLY UNISON");
         ui_sm_home_key(&sm, UIHK_POLY);
         CHECK(*vm == VMODE_POLY_REUSE && sm.page == UIPAGE_HOME1, "POLY: REUSE again, the page kept");
         ui_sm_set_layer_focus(&sm, 1);

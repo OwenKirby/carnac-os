@@ -59,7 +59,7 @@ static void off(uint8_t note) { synth_midi_3(0x80, note, 0); render(64); }
 int main(void)
 {
     static const uint8_t modes[] = {VMODE_MONO_RETRIG, VMODE_MONO_LEGATO, VMODE_POLY_REUSE, VMODE_POLY_RESET,
-                                    VMODE_UNISON_STACK};
+                                    VMODE_UNISON_STACK, VMODE_POLY_UNISON};
     for (unsigned m = 0; m < sizeof modes; m++) {
         int mono = modes[m] == VMODE_MONO_RETRIG || modes[m] == VMODE_MONO_LEGATO || modes[m] == VMODE_UNISON_STACK;
         fresh(modes[m]);
@@ -93,7 +93,9 @@ int main(void)
             cc(0, 64, 127);
             on(60); on(64); on(67);
             off(60); off(64); off(67);
-            CHECK(open_gates(-1) == 3, "mode %u: the pedal held %d of a 3-note chord", modes[m], open_gates(-1));
+            CHECK(open_gates(60) > 0 && open_gates(64) > 0 && open_gates(67) > 0 &&
+                  open_gates(-1) == (modes[m] == VMODE_POLY_UNISON ? 8 : 3),   /* (POLY UNISON: 3 + 3 + 2 voices) */
+                  "mode %u: the pedal held %d gates of a 3-note chord", modes[m], open_gates(-1));
             cc(0, 64, 0);
             CHECK(open_gates(-1) == 0, "mode %u: the chord outlived the pedal", modes[m]);
         }

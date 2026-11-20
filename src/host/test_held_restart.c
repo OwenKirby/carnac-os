@@ -31,7 +31,7 @@ static void render(uint32_t frames)
 int main(void)
 {
     static const uint8_t modes[] = {VMODE_MONO_RETRIG, VMODE_MONO_LEGATO, VMODE_POLY_REUSE, VMODE_POLY_RESET,
-                                    VMODE_UNISON_STACK};
+                                    VMODE_UNISON_STACK, VMODE_POLY_UNISON};
     for (unsigned m = 0; m < sizeof modes; m++) {
         synth_init();
         perf_state.voice_mode[0] = perf_state.voice_mode[1] = modes[m];

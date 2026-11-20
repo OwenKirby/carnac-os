@@ -1012,7 +1012,7 @@ window.CARNAC_PARAMS = {
     {
      "label": "VOICING",
      "min": 0,
-     "max": 4,
+     "max": 5,
      "rk": "RK_BYTE",
      "flags": [],
      "names": "VMODE_NAMES",
@@ -1087,7 +1087,7 @@ window.CARNAC_PARAMS = {
     {
      "label": "VOICING",
      "min": 0,
-     "max": 4,
+     "max": 5,
      "rk": "RK_BYTE",
      "flags": [
       "RF_LAYER2"
@@ -5041,7 +5041,8 @@ window.CARNAC_PARAMS = {
    "MONO LEGATO",
    "POLY REUSE",
    "POLY RESET",
-   "UNISON"
+   "UNISON",
+   "POLY UNISON"
   ],
   "XMOD_NAMES": [
    "FM",

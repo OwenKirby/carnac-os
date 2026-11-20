@@ -72,6 +72,32 @@ static int sounding(int layer)
     return c;
 }
 
+/* POLY UNISON: the voices holding a note */
+static int held_on(int note)
+{
+    int c = 0;
+    for (int v = 0; v < POLYPHONY_VOICES; v++)
+        c += poly_bank[v].is_gate_open && !poly_bank[v].choke && poly_bank[v].active_note == note;
+    return c;
+}
+
+/* .. and their detune and pan offsets a symmetric spread, the gain 1 / sqrt(n) */
+static int stack_ok(int note)
+{
+    int n = held_on(note), dsum = 0, psum = 0, gain_ok = 1, distinct = 1;
+    for (int v = 0; v < POLYPHONY_VOICES; v++) {
+        const SynthVoiceNode *s = &poly_bank[v];
+        if (!s->is_gate_open || s->active_note != note) continue;
+        dsum += s->detune_cents;
+        psum += s->unison_pan;
+        gain_ok &= s->unison_gain_q15 < 32767 - (n - 1) * 1000 || n == 1;
+        for (int w = 0; w < v; w++)
+            if (poly_bank[w].is_gate_open && poly_bank[w].active_note == note && poly_bank[w].detune_cents == s->detune_cents)
+                distinct = 0;
+    }
+    return n > 0 && dsum == 0 && psum == 0 && gain_ok && (n == 1 || distinct);
+}
+
 static void all_off(void)
 {
     for (int n = 0; n < 128; n++) { synth_midi_3(0x80, (uint8_t)n, 0); synth_midi_3(0x81, (uint8_t)n, 0); }
@@ -487,6 +513,45 @@ int main(void)
     synth_midi_3(0x90, 60, 100);
     render(2048);
     CHECK(sounding(0) == 6, "UNISON on STACK SH-2 stacked %d, want 6", sounding(0));
+
+    /* 6b. POLY UNISON (2026-11-20): the layer's voices shared between the notes held, each note a unison stack */
+    all_off();
+    synth_init();
+    base_patch(&engine_state[0], VARCH_SINGLE);
+    perf_state.voice_mode[0] = VMODE_POLY_UNISON;
+    perf_state.unison_detune[0] = 127;
+    {
+        int first, count;
+        pool_range(0, &first, &count);
+        CHECK(count == 8, "POLY UNISON: SINGLE has 8 voices (%d)", count);
+#define PUN_ON(n) do { synth_midi_3(0x90, (uint8_t)(n), 100); render(64); } while (0)
+#define PUN_OFF(n) do { synth_midi_3(0x80, (uint8_t)(n), 0); render(64); } while (0)
+        PUN_ON(60);
+        CHECK(held_on(60) == 8, "POLY UNISON one note: %d voices, want 8", held_on(60));
+        CHECK(stack_ok(60), "POLY UNISON one note: not a symmetric stack");
+        PUN_ON(64);
+        CHECK(held_on(60) == 4 && held_on(64) == 4, "two notes: %d + %d, want 4 + 4", held_on(60), held_on(64));
+        CHECK(stack_ok(60) && stack_ok(64), "two notes: a stack not re-spread");
+        PUN_ON(67);
+        CHECK(held_on(67) == 3 && held_on(64) == 3 && held_on(60) == 2, "three notes: %d %d %d, want 3 3 2 (newest first)",
+              held_on(67), held_on(64), held_on(60));
+        CHECK(stack_ok(60) && stack_ok(64) && stack_ok(67), "three notes: a stack not re-spread");
+        PUN_ON(71);
+        CHECK(held_on(60) == 2 && held_on(64) == 2 && held_on(67) == 2 && held_on(71) == 2, "four notes: 2 each");
+        PUN_OFF(64);                                  /* its voices ring out; nobody grows back */
+        CHECK(held_on(64) == 0 && held_on(60) == 2 && held_on(67) == 2 && held_on(71) == 2, "a release: the others keep 2");
+        CHECK(sounding(0) == 8, "a release: its voices still ring (%d sounding)", sounding(0));
+        PUN_ON(74);                                   /* four held again: the new note takes the released tails */
+        CHECK(held_on(74) == 2 && held_on(60) == 2 && held_on(67) == 2 && held_on(71) == 2, "a 4th again: 2 each");
+        for (int n = 76; n < 80; n++) PUN_ON(n);      /* eight held: one each */
+        for (int n = 60; n < 80; n++)
+            if (held_on(n) > 1) CHECK(0, "eight notes: note %d holds %d voices", n, held_on(n));
+        PUN_ON(81);                                   /* a ninth: the oldest note gives its voice up */
+        CHECK(held_on(81) == 1 && held_on(60) == 0, "a ninth note: the oldest (60) stolen (%d, %d)", held_on(81), held_on(60));
+        all_off();
+#undef PUN_ON
+#undef PUN_OFF
+    }
 
     /* 7. the noise colour morph makes sound and stays in range at its five colours and between them */
     static const uint8_t colours[] = {NOISE_WHITE, 8, NOISE_PINK, 24, NOISE_BROWN, 44, NOISE_RING, 68, NOISE_BAND, 104,

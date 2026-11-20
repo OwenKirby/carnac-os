@@ -357,6 +357,132 @@ uint32_t synth_tick_count[2];
                                       * rate would pass this, per mille (late = past 1000, less the glue's own) */
 #endif
 static uint32_t hs_notes, hs_steals;      /* the spike watch (synth_half_take): notes started this half, on a sounding voice */
+
+/* a unison stack's spread over its n voices: UNISON DETUNE evenly between +- the outer cents, the stereo spread, and
+ * 1 / sqrt(n) so a stack is no louder than one voice */
+static void unison_spread(SynthVoiceNode *v, int i, int n, int outer)
+{
+    v->detune_cents = n > 1 ? (outer * (2 * i - (n - 1))) / (n - 1) : 0;
+    v->unison_pan = varch_unison_pan(i, n);
+    v->unison_gain_q15 = unison_gain_q15[n - 1];
+}
+
+/* POLY UNISON (2026-11-20, user design after the Jupiter-6): every note held is a unison stack, and the layer's voices
+ * are shared between them: 8 voices are one note's 8, two notes' 4 + 4, three notes' 3 + 3 + 2, four 2 each, eight or
+ * more 1 each (the oldest notes give theirs up, as POLY steals). A share's remainder goes to the newest notes. A new
+ * note takes, in turn: free voices (round-robin), release tails and its own pitch re-struck (oldest first), then the
+ * held notes' voices past their new share (the biggest surplus first, the oldest note of a tie), only from notes of
+ * its own rank or below (keys > REC > SEQ > ARP): the notes held thin, their stacks re-spread over the voices they
+ * keep. A note let go releases its voices (they ring out, nobody grows back: user 2026-11-20). Every source splits. */
+static uint8_t pun_rr[NLAYER] = {0xFFu, 0xFFu};   /* each layer's last free voice taken (round-robin, as POLY) */
+SYNTH_COLD static void poly_unison_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_t src, int32_t route,
+                                         uint16_t boost, uint8_t porta_mode, uint8_t porta_time, int overlap)
+{
+    int first, count;
+    pool_alloc_range(layer, &first, &count);       /* (inside the measured room, as allocate_voice_slot) */
+    if (count <= 0) return;
+    if (count > POLYPHONY_VOICES) count = POLYPHONY_VOICES;
+    int outer = varch_unison_outer_cents(layer_unison_detune(layer));
+
+    /* the notes held now: a group a (note, source) with an open gate; g_of: each voice's group, -1 free, -2 a tail */
+    int8_t g_of[POLYPHONY_VOICES];
+    uint8_t g_note[POLYPHONY_VOICES], g_src[POLYPHONY_VOICES], g_n[POLYPHONY_VOICES], g_lost[POLYPHONY_VOICES];
+    uint32_t g_age[POLYPHONY_VOICES];
+    int ng = 0;
+    for (int i = 0; i < count; i++) {
+        const SynthVoiceNode *s = &poly_bank[first + i];
+        g_of[i] = voice_is_free(s) ? -1 : -2;
+        if (!s->is_gate_open || s->choke || s->layer != layer || (s->active_note == note && s->src == src))
+            continue;                              /* (a tail; the new note's own pitch re-struck counts as one) */
+        int g = 0;
+        while (g < ng && !(g_note[g] == s->active_note && g_src[g] == s->src)) g++;
+        if (g == ng) {
+            g_note[g] = (uint8_t)s->active_note;
+            g_src[g] = s->src;
+            g_n[g] = 0;
+            g_lost[g] = 0;
+            g_age[g] = 0;
+            ng++;
+        }
+        g_of[i] = (int8_t)g;
+        g_n[g]++;
+        if (s->age_counter > g_age[g]) g_age[g] = s->age_counter;
+    }
+
+    /* the shares, newest note first: the new note is rank 0, the held ones by age (rank = 1 + the newer ones) */
+    int total = ng + 1, base = count / total, extra = count % total;
+    int want = base + (extra > 0);                 /* (base 0: more notes than voices, the newest get one each) */
+    int surplus[POLYPHONY_VOICES];
+    for (int g = 0; g < ng; g++) {
+        int rank = 1;
+        for (int h = 0; h < ng; h++)
+            rank += g_age[h] < g_age[g] || (g_age[h] == g_age[g] && h < g);
+        surplus[g] = g_src[g] <= src ? (int)g_n[g] - (base + (rank < extra)) : 0;   /* (a higher rank keeps its own) */
+    }
+
+    /* the new note's voices (g_of -3: taken) */
+    int take[POLYPHONY_VOICES], nt = 0;
+    int start = (int)pun_rr[layer] + 1 - first;
+    if (start < 0 || start >= count) start = 0;
+    for (int k = 0; k < count && nt < want; k++) {   /* 1. free voices, round-robin */
+        int i = (start + k) % count;
+        if (g_of[i] == -1) {
+            take[nt++] = i;
+            g_of[i] = -3;
+            pun_rr[layer] = (uint8_t)(first + i);
+        }
+    }
+    while (nt < want) {                              /* 2. tails, the oldest first */
+        int best = -1;
+        for (int i = 0; i < count; i++)
+            if (g_of[i] == -2 && (best < 0 || poly_bank[first + i].age_counter >= poly_bank[first + best].age_counter))
+                best = i;
+        if (best < 0) break;
+        take[nt++] = best;
+        g_of[best] = -3;
+    }
+    while (nt < want) {                              /* 3. the held notes' surplus, the biggest first, the oldest of a tie */
+        int bg = -1;
+        for (int g = 0; g < ng; g++)
+            if (surplus[g] > 0 && (bg < 0 || surplus[g] > surplus[bg] || (surplus[g] == surplus[bg] && g_age[g] > g_age[bg])))
+                bg = g;
+        if (bg < 0) break;
+        int i = count - 1;                           /* (its highest voice: the stack keeps its lowest) */
+        while (g_of[i] != bg) i--;
+        take[nt++] = i;
+        g_of[i] = -3;
+        surplus[bg]--;
+        g_n[bg]--;
+        g_lost[bg] = 1;
+    }
+    if (nt == 0) return;                             /* every voice is a higher rank's: the note is dropped */
+
+    /* the notes that gave voices up: their stacks re-spread over what they keep (no retrigger) */
+    int other = 0;
+    for (int g = 0; g < ng; g++) {
+        other |= g_n[g] > 0;
+        if (!g_lost[g]) continue;
+        for (int i = 0, j = 0; i < count; i++)
+            if (g_of[i] == g) unison_spread(&poly_bank[first + i], j++, g_n[g], outer);
+    }
+
+    /* the new note's stack, in voice order */
+    for (int a = 0; a < nt; a++)
+        for (int b = a + 1; b < nt; b++)
+            if (take[b] < take[a]) { int t = take[a]; take[a] = take[b]; take[b] = t; }
+    hs_notes++;
+    for (int k = 0; k < nt; k++) {
+        SynthVoiceNode *v = &poly_bank[first + take[k]];
+        hs_steals += !voice_is_free(v);
+        v->glide_q16 = 0;
+        v->glide_step_q16 = 0;
+        if (glide_from[layer] != GLIDE_NOTE_NONE)
+            glide_to(v, glide_from[layer], note, porta_mode, porta_time, overlap);
+        unison_spread(v, k, nt, outer);
+        voice_play(v, layer, note, velocity, src, route, 1, other, boost);
+    }
+}
+
 static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_t src, int32_t route)
 {
     const EngineState *e = &engine_state[layer];
@@ -372,6 +498,13 @@ static void rt_voice_start(uint8_t layer, uint8_t note, uint8_t velocity, uint8_
     pool_range(layer, &first, &count);                         /* count: the layer's voice limit (5.3) */
     if (count <= 0) return;                                    /* the layer has no voices (LAYER2 under SINGL) */
     held_push(layer, note, velocity, src);
+
+    if (mode == VMODE_POLY_UNISON) {
+        poly_unison_start(layer, note, velocity, src, route, boost, porta_mode, porta_time, overlap);
+        if (!overlap)                                           /* LFO1: only a new phrase restarts it, as POLY */
+            lfo_phrase_reset(&e->lfo[0], &global_lfo1_state[layer]);
+        return;
+    }
 
     if (!is_mono_mode(mode)) {
         int slot = -1;

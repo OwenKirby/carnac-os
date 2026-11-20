@@ -3453,7 +3453,7 @@ static void pu_draw_hold(const UIStateMachine *sm)
  * ripples of each strike round its foot. MONO LEGATO: one stone, the wind streaming past it. UNISON: one stone and
  * its phased echoes either side. POLY RESET: the wind weaving through a row, left to right, until it spirals up round
  * its last stone. POLY REUSE: a row, the wind weaving through it, in front of one stone and behind the next, left to
- * right. */
+ * right. POLY UNISON (2026-11-20): three stacks in a row, each a stone and its echoes. */
 #define PU_VM_GY 202                 /* the plain */
 #define PU_VM_CX 120
 #define PU_VM_SW 24                  /* the stone */
@@ -3461,7 +3461,7 @@ static void pu_draw_hold(const UIStateMachine *sm)
 
 /* the cycles the two keys step through (ui_sm_home_key) */
 static const uint8_t PU_VM_MONO[3] = {VMODE_MONO_RETRIG, VMODE_MONO_LEGATO, VMODE_UNISON_STACK};
-static const uint8_t PU_VM_POLY[2] = {VMODE_POLY_REUSE, VMODE_POLY_RESET};
+static const uint8_t PU_VM_POLY[3] = {VMODE_POLY_REUSE, VMODE_POLY_RESET, VMODE_POLY_UNISON};
 
 /* a dotted half ellipse rx x ry round (cx, cy - oy), the near side (below cy) or the far (above) */
 static void pu_vm_ring(int32_t cx, int32_t cy, int32_t rx, int32_t ry, int32_t near, int32_t step, uint16_t c, int32_t oy)
@@ -3546,7 +3546,7 @@ static void pu_vm_weave(int32_t x1, int32_t arrow, int32_t front, int32_t oy)
 
 static void pu_vm_sign(uint8_t m, int32_t oy)
 {
-    int32_t x, i;
+    int32_t x, i, k;
     for (x = 20; x < 220; x += 2)
         cv_pset(x, PU_VM_GY - oy, PUC_STONE);
     switch (m) {
@@ -3583,6 +3583,17 @@ static void pu_vm_sign(uint8_t m, int32_t oy)
         pu_vm_weave(150, 0, 1, oy);
         pu_vm_helix(186, PU_VM_GY - 26, 1, oy);
         break;
+    case VMODE_POLY_UNISON:                          /* three stacks in a row, each a stone and its echoes */
+        for (k = 0; k < 3; k++) {
+            int32_t cx = 56 + k * 64, sh = 52 + (k == 1 ? 8 : 0);
+            for (i = 2; i >= 1; i--) {
+                uint16_t c = i == 1 ? SQC(DIM) : PUC_STONE;
+                pu_vm_stone(cx - i * 8, 14, sh - i * 4, c, 5300u + (uint32_t)k * 7u, 1u, oy);
+                pu_vm_stone(cx + i * 8, 14, sh - i * 4, c, 5300u + (uint32_t)k * 7u, 1u, oy);
+            }
+            pu_vm_stone(cx, 16, sh, k == 1 ? SQC(THEME) : SQC(MID), 5300u + (uint32_t)k * 7u, 0u, oy);
+        }
+        break;
     default:                                         /* POLY REUSE: a row of five */
         pu_vm_weave(214, 1, 0, oy);
         for (i = 0; i < 5; i++) {
@@ -3598,7 +3609,7 @@ static void pu_vm_sign(uint8_t m, int32_t oy)
 static uint8_t pu_vm_step(uint8_t m, int32_t d)
 {
     const uint8_t *c = PU_VM_POLY;
-    int32_t n = 2, i;
+    int32_t n = 3, i;
     if (m == VMODE_MONO_RETRIG || m == VMODE_MONO_LEGATO || m == VMODE_UNISON_STACK)
         c = PU_VM_MONO, n = 3;
     for (i = 0; i < n && c[i] != m; i++) {}
