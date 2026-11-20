@@ -2440,6 +2440,24 @@ static void arp_chord_key(UIStateMachine *sm, uint8_t note, uint8_t down, uint8_
         carp_hold(sm->carp, note, vel ? vel : (uint8_t)1u);       /* else arpeggiated live while held */
 }
 
+void ui_sm_chord_keys(UIStateMachine *sm, uint8_t on)
+{
+    sm->chord_keys = (uint8_t)(on != 0u);
+    if (!sm->chord_keys && sm->page != UIPAGE_ARP && sm->arp_chord_key != CARP_NOTE_NONE)
+        ui_arp_chord_off(sm);                        /* its chord stops with it (a latched one too) */
+    sm->arp_chord_down = sm->page == UIPAGE_ARP ? sm->arp_chord_down : (uint8_t)CARP_NOTE_NONE;
+}
+
+uint8_t ui_sm_chord_key(UIStateMachine *sm, uint8_t note, uint8_t down, uint8_t vel)
+{
+    if (!sm->chord_keys || sm->page == UIPAGE_ARP || sm->page == UIPAGE_SEQ || sm->page == UIPAGE_REC ||
+        sm->dialog != UIDLG_NONE || note > VAL_MAX)
+        return 0u;
+    sm->arp_rec = 0u;                                /* (never armed off the ARP page: no capture from here) */
+    arp_chord_key(sm, note, down, vel);
+    return 1u;
+}
+
 uint8_t ui_sm_arp_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t down, uint8_t vel)
 {
     uint8_t n, w = 0u;

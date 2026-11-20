@@ -891,6 +891,8 @@ static void key_edge(uint32_t k, uint32_t down)
         ui_sm_arp_latch(&sm, (uint8_t)!sm.arp_latch);
         return;
     }
+    if ((down || key_note[k] == NOTE_NONE) && ui_sm_chord_key(&sm, note, (uint8_t)down, key_vel()))
+        return;                                     /* CHORD KEYS: its chord (a note struck before it went on ends below) */
     if (keys_page()) {
         mods = (uint8_t)((oct_held[0] ? UISEQ_MOD_OCT_DOWN : 0u) | (oct_held[1] ? UISEQ_MOD_OCT_UP : 0u));
         if (oct_held[0]) oct_used[0] = 1;
@@ -1016,6 +1018,9 @@ static uint32_t panel_input(void)
                 save_held = 1;
                 save_chord = 0;
                 save_ms = fm1_ms;
+            } else if (i == B_ARP && home_held) {   /* HOME held + ARP: CHORD KEYS on / off (2026-11-20) */
+                home_chord = 1;
+                ui_sm_chord_keys(&sm, (uint8_t)!sm.chord_keys);
             } else if (i == B_ARP) {                /* acts on release too, unless a key makes it LATCH */
                 arp_btn_held = 1;
                 arp_btn_chord = 0;
@@ -1141,6 +1146,8 @@ static void panel_leds(void)
                  kr->state == KREC_REC || kr->state == KREC_ODUB ||
                  (kr->state == KREC_ARMED && ((fm1_ms / 125u) & 1u));   /* the loop: recording lit, armed flashing */
     uint8_t mods = (uint8_t)((oct_held[0] ? UISEQ_MOD_OCT_DOWN : 0u) | (oct_held[1] ? UISEQ_MOD_OCT_UP : 0u));
+    if (sm.chord_keys)
+        b |= 1u << B_ARP;                            /* CHORD KEYS on: ARP lit on every page */
     if (ui_sm_play_lit(&sm) || rec)
         b |= 1u << B_PLAY;
     if (rec)

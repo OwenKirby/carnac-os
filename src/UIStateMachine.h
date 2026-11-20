@@ -241,6 +241,8 @@ typedef struct {
     uint8_t arp_chord_down;          /* the chord key physically down (its note), CARP_NOTE_NONE */
     uint8_t arp_chord_hold;          /* arp_chord_key is a live hold (latchable), not a capture's block chord */
     uint8_t arp_latch;               /* LATCH on: a chord key's hold outlives the key */
+    uint8_t chord_keys;              /* CHORD KEYS (HOME + ARP, 2026-11-20): off the ARP / SEQ / REC pages every key is a
+                                      * chord key, as on CHORDS (ui_sm_chord_key); off at power-on, never stored */
     uint8_t arp_rec;                 /* REC armed on the ARP page */
     uint8_t arp_rec_cursor;          /* stopped record: the step the next chord goes into */
     uint8_t arp_rec_last;            /* the step written last while recording (ACCENT alone toggles it), CARP_POS_NONE */
@@ -433,6 +435,12 @@ enum { UIARP_CHORDS, UIARP_STEPS };
 #define UIARP_TRANSPOSE_ZERO 60u     /* CHORDS: C4 plays a pattern untransposed, a key below it down, above it up */
 /* LATCH on / off (ARP held + any key, or the LATCH row): a live chord key's arpeggio plays on after the key */
 void ui_sm_arp_latch(UIStateMachine *sm, uint8_t on);
+/* CHORD KEYS (2026-11-20, HOME held + ARP): the chord bank from the keyboard while designing a sound. On, a key on any
+ * page but ARP, SEQ and REC plays its chord exactly as a CHORDS key does (GENRE BANK, the live ARP knobs, LATCH, the
+ * transposition while the pattern plays; never recorded into the pattern). ui_sm_chord_key returns 1 when it took the
+ * key (the caller then plays no note). Turned off, the chord sounding stops. The ARP LED is lit while it is on. */
+void ui_sm_chord_keys(UIStateMachine *sm, uint8_t on);
+uint8_t ui_sm_chord_key(UIStateMachine *sm, uint8_t note, uint8_t down, uint8_t vel);
 
 /* hand the machine the REC page's recorder (dsp/krec.h) */
 void ui_sm_attach_rec(UIStateMachine *sm, Krec *rec);

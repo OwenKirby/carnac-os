@@ -260,6 +260,24 @@ int main(void)
     reset();
     CHECK(ui_sm_arp_key(&sm, 0, FM1_LOW, 1, 100) == 0, "not on the ARP page: plays");
     ui_sm_arp_key(&sm, 0, FM1_LOW, 0, 0);
+    {   /* CHORD KEYS (HOME + ARP, 2026-11-20): a sound page's keys play the chord bank, as CHORDS keys */
+        uint8_t pg = sm.page;
+        CHECK(pg != UIPAGE_ARP && pg != UIPAGE_SEQ && ui_sm_chord_key(&sm, 60, 1, 100) == 0, "CHORD KEYS off: a note");
+        ui_sm_chord_keys(&sm, 1);
+        CHECK(ui_sm_chord_key(&sm, 60, 1, 100) == 1 && sm.arp_chord_key == 60 && sm.page == pg,
+              "CHORD KEYS on: C4 a chord key, the page kept");
+        run(64);
+        CHECK(count(&la, 0x90) >= 1, "its chord sounds (%d on)", count(&la, 0x90));
+        CHECK(ui_sm_chord_key(&sm, 60, 0, 0) == 1 && sm.arp_chord_key == CARP_NOTE_NONE, "released: silent");
+        ui_sm_chord_key(&sm, 62, 1, 100);
+        ui_sm_chord_keys(&sm, 0);
+        CHECK(sm.arp_chord_key == CARP_NOTE_NONE && ui_sm_chord_key(&sm, 62, 0, 0) == 0, "off with a key down: its chord stops");
+        ui_sm_chord_keys(&sm, 1);
+        ui_sm_handle(&sm, UIEV_BUTTON, BTN_SEQ);
+        CHECK(ui_sm_chord_key(&sm, 60, 1, 100) == 0, "SEQ page: its keys are its own");
+        ui_sm_chord_keys(&sm, 0);
+        reset();
+    }
     ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
     CHECK(sm.page == UIPAGE_ARP && sm.arp_view == UIARP_CHORDS, "ARP opens the CHORDS view");
     CHECK(strcmp(ui_sm_row_label(&sm, 0), "GENRE BANK") == 0 && ui_sm_row_count(&sm) == 4, "CHORDS: 4 rows, GENRE BANK first");
