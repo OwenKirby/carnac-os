@@ -108,6 +108,9 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
  * 31; only without F_MFX / F_MFX2 (whose types read those bits) and without F_FX_* */
 #define F_RVT(t) ((uint32_t)((t) + 1u) << 16)
 #define F_PPON (1u << 31)
+/* (PT_COST_ONLY, the transport's price, 2026-11-20): with K_LOOP / K_LOOPCH, the REC page's loop playing too (bit 26: F_AIR,
+ * read only with F_HEAVY) */
+#define F_RECL (1u << 26)
 #define F_MFXEQ (1u << 25)           /* BRONZE AGE with its EQ off noon (DIST 120, the scooped render's: every band run) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define PT_CHORD_MS 1000u            /* K_LOOPCH: a half bar at 120 BPM; with RELEASE 110 three chords ring at once */
@@ -149,6 +152,16 @@ static const PtScen SCEN[] = {
     PT_FXR("DOLMEN 4", REVTYPE_DOLMEN, 0, 4), PT_FXR("TUM 4", REVTYPE_TUMULUS, 0, 4),
     PT_FXR("CEL PP 4", REVTYPE_CELESTIAL, F_PPON, 4),
     PT_FXR("TOMB 8", REVTYPE_TOMB, 0, 8), PT_FXR("CEL PP 8", REVTYPE_CELESTIAL, F_PPON, 8),
+    /* the transport, as a player leaves it running (loop_slot: a 16th bass line, the ARP's 16ths over pad chords, 120
+     * BPM), and the REC page's loop with it; the floor column against IDLE's is its cost (2026-11-20, the user: "don't
+     * ever assume that those will be off") */
+    {"C LOOP SPRD0", K_LOOP, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
+    {"C LOOP SPRD0 REC", K_LOOP, VARCH_SINGLE, FLT_MULTI, F_RECL, UIPAGE_HOME1},
+    {"C LOOP DOSC", K_LOOP, VARCH_DUAL_OSC, FLT_MULTI, 0, UIPAGE_HOME1},
+    {"C LOOP DOSC REC", K_LOOP, VARCH_DUAL_OSC, FLT_MULTI, F_RECL, UIPAGE_HOME1},
+    {"C LOOPCH DOSC", K_LOOPCH, VARCH_DUAL_OSC, FLT_MULTI, 0, UIPAGE_HOME1},
+    {"C LOOPCH DOSC REC", K_LOOPCH, VARCH_DUAL_OSC, FLT_MULTI, F_RECL, UIPAGE_HOME1},
+    {"C LOOP DOSC STOP", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_NV(4), UIPAGE_HOME1},
     {"C DOSC TUM 4", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_NV(4), UIPAGE_HOME1},
     {"C DOSC TUM 4 XF", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_XFONLY | F_NV(4), UIPAGE_HOME1},
     {"C DOSC TUM 4 WEAR", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_WEARONLY | F_NV(4), UIPAGE_HOME1},
@@ -744,7 +757,8 @@ static void setup(const PtScen *s)
         maq_set_playing(synth_seq(), 1);
         carp_set_playing(synth_arp(), 1);           /* (the ARP has its own transport since 2026-10-17) */
     }
-    if (s->kind == K_REC || s->kind == K_ALL)
+    if (s->kind == K_REC || s->kind == K_ALL ||
+        ((s->kind == K_LOOP || s->kind == K_LOOPCH) && (s->flags & F_RECL) && !(s->flags & F_HEAVY)))
         rec_loop();
 }
 

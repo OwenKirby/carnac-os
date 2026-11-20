@@ -434,12 +434,13 @@ int main(void)
         render(2048);
         CHECK(sounding(0) == 6, "after the change STACK SH-2 plays %d voices, want 6", sounding(0));
     }
-    /* formant is priced as a plain filter: STACK with SH-2 + FORMANT (12 + 2) gets 8 again */
+    /* formant is priced as a plain filter: STACK with SH-2 + FORMANT (12 + 2) gets 6 (4 x 14 = 56 is over the 51 the
+     * transport leaves, 2026-11-20) */
     engine_state[0].filter[1].flavour = FLT_FORMANT;
     for (int i = 0; i < 8; i++) synth_midi_3(0x80, (uint8_t)(48 + i * 2), 0);
     for (int i = 0; i < 8; i++) synth_midi_3(0x90, (uint8_t)(48 + i * 2), 100);
     render(2048);
-    CHECK(sounding(0) == 8, "STACK SH-2 + FORMANT: %d voices, want 8", sounding(0));
+    CHECK(sounding(0) == 6, "STACK SH-2 + FORMANT: %d voices, want 6", sounding(0));
 
     /* 6. unison: stack size = limit, detune spreads symmetrically, level close to one voice */
     synth_init();

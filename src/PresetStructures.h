@@ -635,10 +635,19 @@ static inline uint8_t voice_overhead(const EngineState *l1, const EngineState *l
     return 0;
 }
 
+/* THE TRANSPORT IS ALWAYS PRICED (2026-11-20, the user: "voice pricing needs to take into account basic sequencer /
+ * arp / record use. Don't ever assume that those will be off"): what the SEQ, the ARP and the REC page's loop cost as
+ * a player leaves them running (perf_test.c loop_slot: a 16th bass line, the ARP's 16ths over pad chords, 120 BPM, the
+ * REC loop on top), measured on the FM1 as the pass floor's rise over a stopped one, in tenths. Taken off every core's
+ * share whether they run or not, so pressing PLAY or REC never finds the voices over budget. Measured (PT_COST_ONLY
+ * C LOOP rows, 4 DUAL OSC voices held, floor 16.3 %): SEQ + ARP alone +0.2, with the REC loop +3.3..4.1 (keys' chords
+ * over it too: +3.9); 4.1 / 0.95, rounded up */
+#define VOICE_TRANSPORT_COST 5u
 /* The most voices one patch may sound alone: the most one core's share of them can carry. */
 static inline uint8_t varch_voice_cap(const EngineState *e)
 {
-    uint8_t w = varch_voice_cost(e), n, room = (uint8_t)(VOICE_CORE_COST - voice_overhead(e, e, 0u));
+    uint8_t w = varch_voice_cost(e), n,
+            room = (uint8_t)(VOICE_CORE_COST - VOICE_TRANSPORT_COST - voice_overhead(e, e, 0u));
     for (n = VOICE_POOL; n > 1u; n--)
         if (voice_core_cost(w, n, 0u, 0u, 0u) <= room) break;
     return n;
@@ -774,11 +783,15 @@ PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 70u, "MasterPerformancePrese
  * wear 0.4 (unpriced). In tenths (0.95 points), rounded up. A performance-level overhead on top of the MFX's
  * (voice_overhead), taken off every core's share */
 #define VOICE_XF_COST 7u
+#define VOICE_XF_WORN_COST 9u
 static inline uint8_t perf_fx_overhead(const MasterPerformancePreset *p)
 {
     static const uint8_t REV[6] = {3u, 0u, 4u, 6u, 4u, 4u};   /* REVTYPE_*: SPRING TOMB MOD CELESTIAL DOLMEN TUMULUS */
+    /* (the cross-feeds' loop worn, LOOP TONE off its middle: +8.8 measured, claude-synth-0f 2026-11-20; the wear alone,
+     * without the cross-feeds, 0.4) */
     return (uint8_t)(REV[p->reverb_type < 6u ? p->reverb_type : 1u] + (p->delay_pingpong & 1u) +
-                     ((p->mix[2] || p->mix[3]) ? VOICE_XF_COST : 0u));   /* (FX_L_DLY_REV, FX_L_REV_DLY) */
+                     ((p->mix[2] || p->mix[3]) ? (p->mix[1] != 64u ? VOICE_XF_WORN_COST : VOICE_XF_COST) : 0u));
+                                                               /* (FX_L_TONE, FX_L_DLY_REV, FX_L_REV_DLY) */
 }
 PS_STATIC_ASSERT(REVTYPE_COUNT == 6, "a price for every reverb type");
 /* THE VOICE BUDGET (2026-11-20): the voices each layer of performance p may sound with patches a and b, everything
@@ -789,7 +802,7 @@ static inline void perf_voice_limits(const MasterPerformancePreset *p, const Eng
 {
     uint8_t mode = p->perf_mode < PERF_COUNT ? p->perf_mode : (uint8_t)PERF_SINGL_SYNTH;
     uint8_t both = (uint8_t)(mode == PERF_DUAL_SYNTH || mode == PERF_SPLIT_SYNTH);
-    uint32_t over = (uint32_t)voice_overhead(a, b, both) + perf_fx_overhead(p);
+    uint32_t over = (uint32_t)voice_overhead(a, b, both) + perf_fx_overhead(p) + VOICE_TRANSPORT_COST;
     uint8_t wa = varch_voice_cost(a), wb = varch_voice_cost(b), l;
     if (over > VOICE_CORE_COST - 8u) over = VOICE_CORE_COST - 8u;   /* (a voice always fits: never below one) */
     for (l = 0u; l < NLAYER; l++)
