@@ -131,6 +131,7 @@ enum {
 #define UI_KB_MS 4000u               /* SAVE: the full-screen keyboard stays up this long after the last name knob detent
                                       * (2026-11-13; any button or encoder puts it away at once) */
 #define UI_HOLD_MS 200u              /* HOME / SAVE held this long: the hold strip shows what OCT- / OCT+ do */
+#define UI_VBPOP_MS 1500u            /* the VOICES popup (2026-11-20): up this long after an edit changed the voice budget */
 #define UI_VMPOP_MS 1500u            /* HOME + MONO / POLY: the VOICING popup stays up this long after the key */
 #define UI_ROWPOP_MS 1500u          /* the parameter list stays up this long after the last Select / Algorithm detent */
 #define UI_ROWPOP_MOD 2u           /* rowpop: the MOD MATRIX's popup, + the field (UIMODF_*) being turned */
@@ -188,6 +189,15 @@ typedef struct {
     uint16_t vmpop_ms;               /* HOME + MONO / POLY: the VOICING popup's time left (2026-11-13), ui_sm_tick; any
                                       * control or page change puts it away */
     uint8_t vmpop_layer;             /* .. the layer whose voicing it shows */
+    /* THE VOICES POPUP (2026-11-20, the user: "voice counts scale according to our CPU use ... display the voice budget
+     * so that the user is aware as they program"): an edit that changes a layer's voices (perf_voice_limits: the
+     * architecture, a filter, a wave, a route, the MFX, the reverb, PING PONG, the cross-feeds, the mode) shows them,
+     * from what they were; a load (another performance or patch) changes them silently. ui_sm_tick watches */
+    uint16_t vbpop_ms;               /* .. time left; any control or page change puts it away */
+    uint8_t vb_n[NLAYER];            /* the voices each layer had at the last look */
+    uint8_t vb_from[NLAYER], vb_to[NLAYER];   /* .. the change the popup shows */
+    uint8_t vb_seen;                 /* 1: vb_n holds a look */
+    uint8_t vb_key[3];               /* the performance slot and the two patch links at the last look (a load moves them) */
     InstrumentSettings *inst;        /* GLOBAL's instrument settings (ui_sm_attach_instrument; NULL: a private copy) */
     uint8_t hold;                    /* the button held as a modifier, BTN_HOME / BTN_SAVE, for the hold strip (the
                                       * caller sets it UI_HOLD_MS after the press, ui_sm_set_hold); BTN_COUNT: none */
