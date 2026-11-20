@@ -912,6 +912,16 @@
     const W = ctx.width, H = ctx.height, g = H - 5, top = 8, slot = W / 16;
     const sw = Math.max(6, Math.min(30, Math.floor(slot * 0.8))), sh = g - top;
     const inL = (s) => s >= o.ls && s <= o.le;
+    const inW = (s) => o.act && o.win >= 0 && s >= o.win && s < o.win + 4;
+    if (o.act && o.win >= 0) {                                       // the knob window: a band of light behind its four
+      const x0 = Math.round(o.win * slot) + 1, x1 = Math.round((o.win + 4) * slot) - 1;
+      for (let y = 1; y < g; y++) for (let x = x0; x < x1; x++) {
+        const edgeB = x === x0 || x === x1 - 1 || y === 1;
+        if (edgeB) { if ((x + y) % 2 === 0) pset(ctx, x, y, PAL.mid); }
+        else if ((hash(x >> 1, y >> 1) >>> 29) === 0) pset(ctx, x, y, PAL.stone);
+        else pset(ctx, x, y, PAL.surf);
+      }
+    }
     for (let x = 0; x < W; x++) {                                    // the field; the loop's turf lit
       const s = Math.min(15, Math.floor(x / slot)), n = hash(x, 900 + (o.seed || 0));
       rect(ctx, x, g + 1, 1, 4, PAL.surf);                         // (the earth under the turf)
@@ -936,11 +946,11 @@
       const loop = inL(s), ph = o.ph === s;
       let c = o.act ? (loop ? PAL.accent : PAL.mid) : (loop ? PAL.theme : PAL.dim);
       let edge = o.act ? (loop ? PAL.hi : PAL.accent) : (loop ? mixc(PAL.theme, PAL.accent, 0.5) : PAL.mid);
-      let ring = o.act ? (loop ? mixc(PAL.accent, PAL.mid, 0.4) : PAL.dim) : (loop ? PAL.mid : PAL.dim);   // (the full height's outline)
-      if (ph) { c = o.act ? PAL.hi : PAL.accent; edge = c; ring = o.act ? PAL.accent : PAL.theme; }
+      let ring = inW(s) ? PAL.hi : st.mute || st.skip || st.tie ? PAL.dim : null;   // (the full outline: the knob window's four; a rest's place faint)
+      if (ph) { c = o.act ? PAL.hi : PAL.accent; edge = c; }
       if (st.tie) {                                                  // a tie: the stone fallen over, lying on the ground
         const lw = Math.min(Math.round(slot) - 2, Math.round(sh * 0.8)), lh = Math.max(5, Math.round(sw * 0.5));
-        stoneF(ctx, x, g, sw, sh, 0, c, edge, seed, true, PAL.stone);   // (where it stood, faint)
+        if (ring) stoneF(ctx, x, g, sw, sh, 0, c, edge, seed, true, ring);   // (where it stood)
         stoneF(ctx, Math.round(s * slot + (slot - lw) / 2), g, lw, lh, lh, c, edge, seed);
       } else {
         const rise = st.mute || st.skip ? 0 : Math.max(2, Math.round(sh * st.fill));
@@ -960,14 +970,6 @@
       if (st.more) for (let k = 0; k < st.more; k++) pset(ctx, x + sw + 1, g - sh + 1 + k * 2, PAL.accent);   // (a chord's other notes)
       if (s === o.sel) rect(ctx, x, g + 1, sw, 1, PAL.hi);
     });
-    if (o.act && o.win >= 0) {                                       // the knob window: corner brackets, as the panel's
-      const x0 = Math.round(o.win * slot) + 1, x1 = Math.round((o.win + 4) * slot) - 2, y0 = top - 7 + 2, y1 = g + 2, L = 4;
-      const c = PAL.hi;
-      rect(ctx, x0, y0, L, 1, c); rect(ctx, x0, y0, 1, L - 1, c);
-      rect(ctx, x1 - L + 1, y0, L, 1, c); rect(ctx, x1, y0, 1, L - 1, c);
-      rect(ctx, x0, y1, L, 1, c); rect(ctx, x0, y1 - L + 2, 1, L - 1, c);
-      rect(ctx, x1 - L + 1, y1, L, 1, c); rect(ctx, x1, y1 - L + 2, 1, L - 1, c);
-    }
     ctx.done();
     return { slot, g, top, W, H };
   }

@@ -376,6 +376,8 @@ const char *ui_sm_name_text(const uint8_t name[NAME_LEN], char *buf);
 /* ------------------------------------------------------------- SEQ --- */
 /* hand the machine the sequencer engine that plays sm->lanes (the transport and step record go through it) */
 void ui_sm_attach_seq(UIStateMachine *sm, MaqSeq *seq);
+/* the web editor's SEQ selection: the SEQ page on that lane, the step's block of four on the knobs */
+void ui_sm_seq_select(UIStateMachine *sm, uint8_t lane, uint8_t step);
 
 /* A note key, on the SEQ page. key: 0 = the lowest key; note: its MIDI note; down: press 1 / release 0; mods:
  * UISEQ_MOD_*. Live (7.1, 2026-10-21): the bottom UISEQ_SELECTOR_KEYS white keys, counted from the lowest key, are the

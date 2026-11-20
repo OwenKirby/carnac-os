@@ -2093,6 +2093,21 @@ uint8_t ui_sm_seq_key(UIStateMachine *sm, uint8_t key, uint8_t note, uint8_t dow
 
 void ui_sm_attach_seq(UIStateMachine *sm, MaqSeq *seq) { sm->seq = seq; }
 
+/* the web editor's SEQ selection (ED_SEQ_SEL, 2026-11-19): the SEQ page on `lane`, the block of four that holds `step`
+ * on the knobs and the cursor on STEPS, as the SEQ button and a white key would leave them */
+void ui_sm_seq_select(UIStateMachine *sm, uint8_t lane, uint8_t step)
+{
+    if (lane >= SEQ_NLANE || step >= SEQ_NSTEP)
+        return;
+    if (sm->page != UIPAGE_SEQ)
+        enter_page(sm, UIPAGE_SEQ);
+    sm->s.active_seq_lane = lane;
+    sm->seq_step0 = (uint8_t)(step & ~3u);
+    sm->s.current_param_focus = 0u;
+    if (sm->rowpop == UI_ROWPOP_ROWS)
+        sm->rowpop = 0u;
+}
+
 const char *ui_sm_seq_ev_name(uint8_t event_type)
 {
     return SEQEV_NAMES[event_type < SEQEV_COUNT ? event_type : (uint8_t)SEQEV_NOTE];

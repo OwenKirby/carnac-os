@@ -13,6 +13,9 @@
      66 LOAD  [slot]
      67 POS   <- [playing | rec << 1, step of lane 1..4 (127: none)]
      68 PLAY  [on]
+     70 SEL   [lane, step]  both ways: the FM1's SEQ page goes to that lane with the step's block of four on its knobs;
+              from the FM1 [lane, first step, on the SEQ page] when the panel moves them. (A firmware older than
+              2026-11-19 never ACKs it: the editor lets it go quietly.)
      69 ACK   <- [cmd], once each of the above is handled. The FM1's USB holds one received SysEx at a time (a second
               one before the main loop took the first is lost), so the editor sends one, waits for its ACK, then the
               next; no ACK in 250 ms: sent again. A step queued twice is sent once, with its newest value.
@@ -24,7 +27,7 @@
 (function () {
   "use strict";
   const HDR = [0xF0, 0x7D, 0x46, 0x4C];
-  const CMD = { REQ: 60, LANE: 61, STEP: 62, NAME: 63, SAVE: 64, SLOTS: 65, LOAD: 66, POS: 67, PLAY: 68, ACK: 69 };
+  const CMD = { REQ: 60, LANE: 61, STEP: 62, NAME: 63, SAVE: 64, SLOTS: 65, LOAD: 66, POS: 67, PLAY: 68, ACK: 69, SEL: 70 };
   const NLANE = 4, NSTEP = 16, FOOT = 8, STEPN = 7, NSLOT = 32, NAMELEN = 16;
   const TIE = 127, F_MUTE = 1, F_TIE = 2, F_SKIP = 4;
   const CM = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/";
@@ -108,9 +111,9 @@
   /* the way out: one message in flight, the next after its ACK */
   const outq = [];
   let inflight = null;
-  function sx(cmd, args, what, key) {
+  function sx(cmd, args, what, key, quiet) {
     if (!can()) return false;
-    const m = { cmd, args, what, key };
+    const m = { cmd, args, what, key, quiet };
     const i = key === undefined ? -1 : outq.findIndex((x) => x.key === key);
     if (i >= 0) outq[i] = m; else outq.push(m);
     pump();
@@ -128,6 +131,7 @@
     if (!can()) { inflight = null; outq.length = 0; return; }
     if (Date.now() - inflight.t < 250) return;
     if (inflight.tries >= 4) {
+      if (inflight.quiet) { inflight = null; pump(); return; }   // (SEL on an older firmware: nothing to tell)
       api.status("The synth stopped answering the SEQ tab: check the port, then RECEIVE SEQ.", true);
       inflight = null; outq.length = 0; return;
     }
@@ -141,6 +145,11 @@
     for (let i = outq.length - 1; i >= 0; i--) if (outq[i].key && outq[i].key.startsWith(`s${l}:`)) outq.splice(i, 1);
     sx(CMD.LANE, [l, ...packLane(Q.lanes[l])], `SEQ lane ${l + 1} (whole)`, `l${l}`);
   }
+  /* the FM1's knobs onto the selected lane's block of four (its SEQ page follows) */
+  function sendSel() {
+    const w = Q.sel.s & ~3;
+    sx(CMD.SEL, [Q.sel.l, w], `SEQ select: lane ${Q.sel.l + 1}, steps ${w + 1}-${w + 4} on the FM1's knobs`, "sel", true);
+  }
   function request() {
     if (!can()) return false;
     sx(CMD.REQ, [], "SEQ: ask for the sequence");
@@ -150,7 +159,7 @@
 
   /* a message from the synth: 1 when it was the SEQ tab's */
   function take(b) {
-    if (b.length < 6 || !HDR.every((x, i) => b[i] === x) || b[4] < CMD.REQ || b[4] > CMD.ACK) return false;
+    if (b.length < 6 || !HDR.every((x, i) => b[i] === x) || b[4] < CMD.REQ || b[4] > CMD.SEL) return false;
     const a = b.slice(5, b[b.length - 1] === 0xF7 ? b.length - 1 : b.length);
     switch (b[4]) {
       case CMD.ACK:
@@ -172,6 +181,14 @@
       case CMD.NAME:
         Q.name = nameText(a.slice(0, NAMELEN)); keep();
         if (ui.name && document.activeElement !== ui.name) ui.name.value = Q.name;
+        break;
+      case CMD.SEL:                              // the panel moved its lane or its knob window: follow it
+        if (a.length >= 3 && a[2] && a[0] < NLANE && a[1] < NSTEP && (a[0] !== Q.sel.l || (Q.sel.s & ~3) !== (a[1] & ~3))) {
+          const old = Q.sel.l;
+          Q.sel = { l: a[0], s: a[1] & ~3, slot: 0 };
+          keep();
+          if (live()) { if (old !== Q.sel.l) { drawLane(old); drawLane(Q.sel.l); } else paintLane(Q.sel.l); drawCards(); drawInspector(); }
+        }
         break;
       case CMD.POS:
         run.playing = a[0] & 1; run.rec = (a[0] >> 1) & 1; run.pos = a.slice(1, 5);
@@ -275,18 +292,20 @@
     if (!chord) moveSel(1);
   }
   function moveSel(d) {
-    const L = lane(Q.sel.l);
+    const L = lane(Q.sel.l), w0 = Q.sel.s & ~3;
     let s = Q.sel.s + d;
     if (d > 0 && s > L.le) s = L.ls;              // (inside the loop, as the procession walks)
     if (d < 0 && s < L.ls) s = L.le;
     Q.sel.s = (s + NSTEP) % NSTEP;
     Q.sel.slot = 0;
     keep(); redrawCells(Q.sel.l, true);
+    if ((Q.sel.s & ~3) !== w0) sendSel();
   }
   function select(l, s) {
-    const old = Q.sel.l;
+    const old = Q.sel.l, w0 = Q.sel.s & ~3;
     Q.sel = { l, s, slot: Q.sel.l === l && Q.sel.s === s ? Q.sel.slot : 0 };
     keep();
+    if (old !== l || (s & ~3) !== w0) sendSel();
     if (!live()) return;
     if (old !== l) { drawLane(old); drawLane(l); } else paintLane(l);
     drawCards(); drawInspector();
