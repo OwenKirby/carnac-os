@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
-   Carnac web editor: the SEQ tab (2026-11-19). Edits the sequence the FM1 is playing now, heard at once; SAVE writes it
+   Carnac web editor: the SEQ view (2026-11-19), drawn as the FM1's SEQ page: lanes of stones on the turf of their loop. Edits the sequence the FM1 is playing now, heard at once; SAVE writes it
    into one of the 32 sequence slots under a name, as the panel's SAVE does.
 
    The firmware side is src/hardware/synth_panel.c "SEQ OUT" with the wire format of src/seq_wire.h, in the editor frame
@@ -13,6 +13,9 @@
      66 LOAD  [slot]
      67 POS   <- [playing | rec << 1, step of lane 1..4 (127: none)]
      68 PLAY  [on]
+     70 SEL   [lane, step]  both ways: the FM1's SEQ page goes to that lane with the step's block of four on its knobs;
+              from the FM1 [lane, first step, on the SEQ page] when the panel moves them. (A firmware older than
+              2026-11-19 never ACKs it: the editor lets it go quietly.)
      69 ACK   <- [cmd], once each of the above is handled. The FM1's USB holds one received SysEx at a time (a second
               one before the main loop took the first is lost), so the editor sends one, waits for its ACK, then the
               next; no ACK in 250 ms: sent again. A step queued twice is sent once, with its newest value.
@@ -24,7 +27,7 @@
 (function () {
   "use strict";
   const HDR = [0xF0, 0x7D, 0x46, 0x4C];
-  const CMD = { REQ: 60, LANE: 61, STEP: 62, NAME: 63, SAVE: 64, SLOTS: 65, LOAD: 66, POS: 67, PLAY: 68, ACK: 69 };
+  const CMD = { REQ: 60, LANE: 61, STEP: 62, NAME: 63, SAVE: 64, SLOTS: 65, LOAD: 66, POS: 67, PLAY: 68, ACK: 69, SEL: 70 };
   const NLANE = 4, NSTEP = 16, FOOT = 8, STEPN = 7, NSLOT = 32, NAMELEN = 16;
   const TIE = 127, F_MUTE = 1, F_TIE = 2, F_SKIP = 4;
   const CM = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/";
@@ -108,9 +111,9 @@
   /* the way out: one message in flight, the next after its ACK */
   const outq = [];
   let inflight = null;
-  function sx(cmd, args, what, key) {
+  function sx(cmd, args, what, key, quiet) {
     if (!can()) return false;
-    const m = { cmd, args, what, key };
+    const m = { cmd, args, what, key, quiet };
     const i = key === undefined ? -1 : outq.findIndex((x) => x.key === key);
     if (i >= 0) outq[i] = m; else outq.push(m);
     pump();
@@ -128,6 +131,7 @@
     if (!can()) { inflight = null; outq.length = 0; return; }
     if (Date.now() - inflight.t < 250) return;
     if (inflight.tries >= 4) {
+      if (inflight.quiet) { inflight = null; pump(); return; }   // (SEL on an older firmware: nothing to tell)
       api.status("The synth stopped answering the SEQ tab: check the port, then RECEIVE SEQ.", true);
       inflight = null; outq.length = 0; return;
     }
@@ -141,6 +145,11 @@
     for (let i = outq.length - 1; i >= 0; i--) if (outq[i].key && outq[i].key.startsWith(`s${l}:`)) outq.splice(i, 1);
     sx(CMD.LANE, [l, ...packLane(Q.lanes[l])], `SEQ lane ${l + 1} (whole)`, `l${l}`);
   }
+  /* the FM1's knobs onto the selected lane's block of four (its SEQ page follows) */
+  function sendSel() {
+    const w = Q.sel.s & ~3;
+    sx(CMD.SEL, [Q.sel.l, w], `SEQ select: lane ${Q.sel.l + 1}, steps ${w + 1}-${w + 4} on the FM1's knobs`, "sel", true);
+  }
   function request() {
     if (!can()) return false;
     sx(CMD.REQ, [], "SEQ: ask for the sequence");
@@ -150,7 +159,7 @@
 
   /* a message from the synth: 1 when it was the SEQ tab's */
   function take(b) {
-    if (b.length < 6 || !HDR.every((x, i) => b[i] === x) || b[4] < CMD.REQ || b[4] > CMD.ACK) return false;
+    if (b.length < 6 || !HDR.every((x, i) => b[i] === x) || b[4] < CMD.REQ || b[4] > CMD.SEL) return false;
     const a = b.slice(5, b[b.length - 1] === 0xF7 ? b.length - 1 : b.length);
     switch (b[4]) {
       case CMD.ACK:
@@ -172,6 +181,14 @@
       case CMD.NAME:
         Q.name = nameText(a.slice(0, NAMELEN)); keep();
         if (ui.name && document.activeElement !== ui.name) ui.name.value = Q.name;
+        break;
+      case CMD.SEL:                              // the panel moved its lane or its knob window: follow it
+        if (a.length >= 3 && a[2] && a[0] < NLANE && a[1] < NSTEP && (a[0] !== Q.sel.l || (Q.sel.s & ~3) !== (a[1] & ~3))) {
+          const old = Q.sel.l;
+          Q.sel = { l: a[0], s: a[1] & ~3, slot: 0 };
+          keep();
+          if (live()) { if (old !== Q.sel.l) { drawLane(old); drawLane(Q.sel.l); } else paintLane(Q.sel.l); drawCards(); drawInspector(); }
+        }
         break;
       case CMD.POS:
         run.playing = a[0] & 1; run.rec = (a[0] >> 1) & 1; run.pos = a.slice(1, 5);
@@ -275,22 +292,23 @@
     if (!chord) moveSel(1);
   }
   function moveSel(d) {
-    const L = lane(Q.sel.l);
+    const L = lane(Q.sel.l), w0 = Q.sel.s & ~3;
     let s = Q.sel.s + d;
     if (d > 0 && s > L.le) s = L.ls;              // (inside the loop, as the procession walks)
     if (d < 0 && s < L.ls) s = L.le;
     Q.sel.s = (s + NSTEP) % NSTEP;
     Q.sel.slot = 0;
     keep(); redrawCells(Q.sel.l, true);
+    if ((Q.sel.s & ~3) !== w0) sendSel();
   }
   function select(l, s) {
-    const old = Q.sel.l;
+    const old = Q.sel.l, w0 = Q.sel.s & ~3;
     Q.sel = { l, s, slot: Q.sel.l === l && Q.sel.s === s ? Q.sel.slot : 0 };
     keep();
+    if (old !== l || (s & ~3) !== w0) sendSel();
     if (!live()) return;
-    ui.lanes.forEach((b, k) => b.classList.toggle("act", k === l));
-    if (old !== l) fillCells(old);
-    fillCells(l); drawInspector();
+    if (old !== l) { drawLane(old); drawLane(l); } else paintLane(l);
+    drawCards(); drawInspector();
   }
 
   /* lane tools */
@@ -329,25 +347,75 @@
   }
 
   // ------------------------------------------------------------------------------------------- drawing
-  const ui = { root: null, lanes: [], cells: [], strips: [], insp: null, name: null, slotSel: null, saveSel: null, play: null };
+  /* The SEQ page as the FM1 draws it (ui_seq_draw.c): the transport over four step cards (the selected lane's knob
+     window, the playing step's card rimmed), then the four lanes of sixteen stones, each filled from the ground by its
+     step's value and standing on the turf of the loop, a footer of stone chips under each. The selected lane is cream,
+     its knob window bracketed, the playhead stone lit. The pictures are viz.js's, in the THEME's colours. */
+  const V = () => window.CarnacViz;
+  const ui = { root: null, lanes: [], canv: [], geo: [], cards: [], cardsBox: null, insp: null, name: null, slotSel: null, saveSel: null, play: null, state: null };
   const el = (t, c, txt) => { const e = document.createElement(t); if (c) e.className = c; if (txt !== undefined) e.textContent = txt; return e; };
   const live = () => ui.root && document.body.contains(ui.root);
   const cap = (node, e) => { try { node.setPointerCapture(e.pointerId); } catch (_) { /* (a pen lifted already) */ } };
+  const win = () => Q.sel.s & ~3;                // the knob window: the selected step's block of four, as the panel's keys snap
 
   function opt(sel, v, label, cur) {
     const o = el("option", "", label); o.value = String(v); if (v === cur) o.selected = true; sel.append(o); return o;
   }
-  function field(label, node, cls) {
-    const f = el("label", "sfield" + (cls ? " " + cls : ""));
-    f.append(el("span", "", label), node);
+  /* a list as a stone chip (the page's .pick): its name, then the select */
+  function chip(label, sel, wide) {
+    const f = el("label", "pick" + (wide ? " wide" : ""));
+    f.append(el("span", "plab", label));
+    const w = el("span", "sel"); w.append(sel); f.append(w);
     return f;
+  }
+  function tog(label, on, title, fn) {
+    const b = el("button", "tog", label);
+    b.type = "button"; b.title = title || ""; b.setAttribute("aria-pressed", String(!!on));
+    b.onclick = fn;
+    return b;
+  }
+  function tabletOf(title, cls) {
+    const sec = el("section", "tablet " + (cls || "")), face = el("div", "face"), head = el("header", "thead");
+    head.append(el("h2", "", title));
+    face.append(head); sec.append(face);
+    return { sec, face, head };
+  }
+
+  /* what a step shows: its fill (0..1), its words, its marks */
+  function stepLook(L, st, lo, hi, m) {
+    const E = EV[L.ev] || EV[0];
+    const tie = !!(st.f & F_TIE) || st.n[0] === TIE;
+    const o = { mute: !!(st.f & F_MUTE), skip: !!(st.f & F_SKIP), tie, fill: 0, label: "", more: 0 };
+    if (E.note) {
+      const notes = st.n.filter((x, i) => x !== null && !(i === 0 && x === TIE)).map((x) => snap(x, m));
+      if (notes.length && !tie) {
+        o.fill = 0.12 + 0.88 * (notes[0] - lo) / Math.max(1, hi - lo);
+        o.label = noteName(notes[0]);
+        o.more = notes.length - 1;
+      } else if (tie) o.label = "TIE";
+      if (o.skip) o.label = "SKIP"; else if (o.mute) o.label = "REST";
+    } else {
+      o.fill = Math.max(0.03, st.v / 127);
+      o.label = o.skip ? "SKIP" : o.mute ? "OFF" : E.f(st.v);
+    }
+    o.short = o.skip ? "S" : o.mute ? "-" : tie ? "T" : o.label.replace(/^[A-Z]+ /i, "");   // (VEL 95: 95)
+    return o;
+  }
+  function range(L) {
+    let lo = 127, hi = 0;
+    L.steps.forEach((st) => st.n.forEach((x, i) => { if (x !== null && !(i === 0 && x === TIE)) { lo = Math.min(lo, x); hi = Math.max(hi, x); } }));
+    if (hi - lo < 12) { const mid = (lo + hi) >> 1; lo = mid - 6; hi = mid + 6; }
+    return [lo, hi];
   }
 
   function build() {
     const root = el("div", "seq");
     ui.root = root;
-    // the strip: transport, name, slots, files
-    const top = el("section", "group seqtop");
+    // the transport: SEQ, PLAY / STOP, the tempo's place; the name, the slots, the files
+    const t = tabletOf("SEQ", "seqhead");
+    const state = el("span", "seqstate");
+    ui.state = state;
+    t.head.append(state);
     const play = el("button", "", run.playing ? "STOP" : "PLAY");
     play.type = "button"; play.title = "Start or stop the sequencer (Space)";
     play.onclick = () => sx(CMD.PLAY, [run.playing ? 0 : 1], run.playing ? "SEQ stop" : "SEQ play");
@@ -379,37 +447,43 @@
     const fsave = el("button", "quiet", "SAVE FILE"), fload = el("button", "quiet", "LOAD FILE"), undoB = el("button", "quiet", "UNDO");
     [fsave, fload, undoB].forEach((b) => { b.type = "button"; });
     fsave.onclick = saveFile; fload.onclick = loadFile; undoB.onclick = undoLast; undoB.title = "Ctrl+Z";
-    const row1 = el("div", "seqrow");
-    row1.append(play, get, field("NAME", name), undoB);
-    const row2 = el("div", "seqrow");
-    row2.append(field("SLOT", slotSel), load, field("SAVE TO", saveSel), save, fsave, fload);
-    top.append(row1, row2);
-    root.append(top);
+    const row = el("div", "seqbar");
+    const nm = el("label", "pick"); nm.append(el("span", "plab", "NAME"), name);
+    row.append(play, get, nm, chip("SLOT", slotSel), load, chip("SAVE TO", saveSel), save, undoB, fsave, fload);
+    t.face.append(row);
+    root.append(t.sec);
     ui.banner = null;
     if (!Q.got) {
-      const n = el("section", "group absent");
+      const n = el("p", "gone seqnote", can() ? "This is the editor's own copy: RECEIVE SEQ (or opening this view) brings the FM1's sequence."
+        : "Not connected: pick the FM1's port (allow SysEx) or the emulator, then RECEIVE SEQ. Edits made now stay in the editor until then.");
       ui.banner = n;
-      n.append(el("p", "", can() ? "This is the editor's own copy: RECEIVE SEQ (or opening this tab) brings the FM1's sequence."
-        : "Not connected: pick the FM1's port (allow SysEx) or the emulator, then RECEIVE SEQ. Edits made now stay in the editor until then."));
-      root.append(n);
+      t.face.append(n);
     }
-    ui.lanes = []; ui.cells = []; ui.strips = [];
-    const lanesBox = el("div", "lanes");
+    // the step cards: the knob window's four steps, as the panel's knob tablets
+    ui.cardsBox = el("div", "scards");
+    root.append(ui.cardsBox);
+    // the lanes
+    ui.lanes = []; ui.canv = []; ui.geo = [];
+    const lanesBox = el("div", "slanes");
     for (let l = 0; l < NLANE; l++) {
-      const box = el("section", "lane");
+      const box = el("section", "tablet slane");
+      const face = el("div", "face");
+      box.append(face);
       ui.lanes.push(box);
       lanesBox.append(box);
     }
     root.append(lanesBox);
-    ui.insp = el("section", "group insp");
-    root.append(ui.insp);
+    const it = tabletOf("STEP", "sinsp");
+    ui.insp = it;
+    root.append(it.sec);
     const help = el("p", "small", "");
-    help.innerHTML = "Keys: <b>A W S E D F T G Y H U J K</b> play C..C into the selected step (Shift: add to its chord), " +
-      "<b>Z X</b> octave, <b>← →</b> step, <b>↑ ↓</b> note or value (Shift: octave / x8), <b>Delete</b> rest, <b>.</b> tie, " +
-      "<b>1-4</b> lane, <b>Space</b> play, <b>Ctrl+Z</b> undo. Drag a note up or down; draw values across a lane; drag the loop's ends.";
+    help.innerHTML = "Click a stone to pick its step; drag a NOTE stone up or down to change its note, or draw a value lane's stones; " +
+      "drag the loop's ends on the grass; double-click: rest. A step card turns like a knob. Keys: <b>A W S E D F T G Y H U J K</b> " +
+      "play C..C into the selected step (Shift: add to its chord), <b>Z X</b> octave, <b>← →</b> step, <b>↑ ↓</b> note or value " +
+      "(Shift: octave / x8), <b>Delete</b> rest, <b>.</b> tie, <b>1-4</b> lane, <b>Space</b> play, <b>Ctrl+Z</b> undo.";
     root.append(help);
     for (let l = 0; l < NLANE; l++) drawLane(l);
-    drawInspector(); drawSlots(); drawPlayhead();
+    drawCards(); drawInspector(); drawSlots(); drawPlayhead();
     return [root];
   }
 
@@ -425,179 +499,129 @@
     });
   }
 
-  function redrawLane(l) { if (live()) { drawLane(l); if (Q.sel.l === l) drawInspector(); } }
-  /* a step changed: the cells only (the strip keeps a drag's pointer), and the inspector unless it made the change */
-  function redrawCells(l, insp) { if (live()) { fillCells(l); if (insp && Q.sel.l === l) drawInspector(); } }
-  function redrawAll() { if (live()) { for (let l = 0; l < NLANE; l++) drawLane(l); drawInspector(); } }
+  function redrawLane(l) { if (live()) { drawLane(l); if (Q.sel.l === l) { drawCards(); drawInspector(); } } }
+  /* a step changed: its lane's stones, the cards, and the inspector unless it made the change */
+  function redrawCells(l, insp) { if (live()) { paintLane(l); drawCards(); if (insp && Q.sel.l === l) drawInspector(); } }
+  function redrawAll() { if (live()) { for (let l = 0; l < NLANE; l++) drawLane(l); drawCards(); drawInspector(); } }
 
   function targetCtl(l) {
-    const L = lane(l), t = EV[L.ev].tg, box = el("span", "tgt");
+    const L = lane(l), t = EV[L.ev].tg;
     if (t === "mask") {
-      for (let k = 0; k < NLANE; k++) {
-        const b = el("button", "chip" + ((L.tg >> k) & 1 ? " on" : ""), String(k + 1));
-        b.type = "button"; b.title = `Acts on lane ${k + 1}`;
-        b.setAttribute("aria-pressed", String(!!((L.tg >> k) & 1)));
-        b.onclick = () => setFooter(l, "tg", L.tg ^ (1 << k));
-        box.append(b);
-      }
-      return field("ON LANES", box);
+      const box = el("span", "tgt");
+      box.append(el("span", "plab", "ON"));
+      for (let k = 0; k < NLANE; k++) box.append(tog(String(k + 1), (L.tg >> k) & 1, `Acts on lane ${k + 1}`, () => setFooter(l, "tg", L.tg ^ (1 << k))));
+      return box;
     }
     const sel = el("select");
     if (t === "lane") for (let k = 0; k < NLANE; k++) opt(sel, k, `LANE ${k + 1}`, L.tg);
     else ["L1", "L2", "BOTH"].forEach((n, k) => opt(sel, k, n, L.tg));
     sel.onchange = () => setFooter(l, "tg", parseInt(sel.value, 10));
-    return field(t === "lane" ? "OF LANE" : "TARGET", sel);
+    return chip(t === "lane" ? "OF" : "TARGET", sel);
   }
 
+  /* a lane: its stones, then the footer the panel draws under it (PRESCALE / position, EVENT, TARGET, SCALE, ROOT, MODE)
+     and the lane's tools */
   function drawLane(l) {
-    const box = ui.lanes[l], L = lane(l), E = EV[L.ev] || EV[0];
-    box.textContent = "";
+    const box = ui.lanes[l], face = box.firstChild, L = lane(l), E = EV[L.ev] || EV[0];
+    face.textContent = "";
     box.classList.toggle("act", Q.sel.l === l);
-    const head = el("div", "lhead");
-    const tag = el("button", "lname", `LANE ${l + 1}`);
-    tag.type = "button"; tag.onclick = () => select(l, Q.sel.l === l ? Q.sel.s : L.ls);
+    const head = el("header", "thead");
+    const tag = el("button", "ttab lname", `LANE ${l + 1}`);
+    tag.type = "button"; tag.setAttribute("aria-pressed", String(Q.sel.l === l));
+    tag.title = "Pick this lane (1-4)";
+    tag.onclick = () => select(l, Q.sel.l === l ? Q.sel.s : L.ls);
+    const pos = el("span", "tsub lpos");
+    head.append(tag, pos);
+    face.append(head);
+    const cv = el("canvas", "slanecv");
+    cv.setAttribute("aria-label", `Lane ${l + 1}: ${E.n}`);
+    ui.canv[l] = cv;
+    laneInput(cv, l);
+    face.append(cv);
+    const foot = el("div", "sfoot");
+    const ps = el("select");
+    for (let p = 1; p <= 32; p++) opt(ps, p, `G${String(p).padStart(2, "0")}` + (PRESCALE_NAME[p] ? "  " + PRESCALE_NAME[p] : ""), L.ps);
+    ps.onchange = () => setFooter(l, "ps", parseInt(ps.value, 10));
     const ev = el("select"); EV.forEach((e, k) => opt(ev, k, e.n, L.ev));
     ev.onchange = () => setFooter(l, "ev", parseInt(ev.value, 10));
-    const ps = el("select");
-    for (let p = 1; p <= 32; p++) opt(ps, p, `g${String(p).padStart(2, "0")}` + (PRESCALE_NAME[p] ? "  " + PRESCALE_NAME[p] : ""), L.ps);
-    ps.onchange = () => setFooter(l, "ps", parseInt(ps.value, 10));
     const md = el("select"); MODES.forEach((m, k) => opt(md, k, m, L.md));
     md.onchange = () => setFooter(l, "md", parseInt(md.value, 10));
-    head.append(tag, field("EVENT", ev), targetCtl(l), field("STEP", ps), field("MODE", md));
+    foot.append(chip("STEP", ps), chip("EVENT", ev), targetCtl(l));
     if (E.note) {
       const sc = el("select"); SCALES.forEach((n, k) => opt(sc, k, n, L.sc));
       sc.onchange = () => setFooter(l, "sc", parseInt(sc.value, 10));
-      head.append(field("SCALE", sc));
+      foot.append(chip("SCALE", sc));
       if (L.sc >= 2) {
         const rt = el("select"); NOTE.forEach((n, k) => opt(rt, k, n, L.rt));
         rt.onchange = () => setFooter(l, "rt", parseInt(rt.value, 10));
-        head.append(field("ROOT", rt));
+        foot.append(chip("ROOT", rt));
       }
     }
+    foot.append(chip("MODE", md));
     const tools = el("div", "ltools");
-    TOOLS.forEach(([t, title, fn, noteOnly]) => {
+    TOOLS.forEach(([tt, title, fn, noteOnly]) => {
       if (noteOnly && !E.note) return;
-      const b = el("button", "quiet small", t);
+      const b = el("button", "tog", tt);
       b.type = "button"; b.title = title;
       b.onclick = () => { mark(); if (fn(lane(l), l) !== "nosend") { sendLane(l); keep(); redrawLane(l); } else undo.pop(); };
       tools.append(b);
     });
-    head.append(tools);
-    box.append(head);
-
-    // the loop: a rail over the steps, its two ends dragged
-    const rail = el("div", "loop");
-    rail.title = "The loop: drag either end";
-    for (let s = 0; s < NSTEP; s++) {
-      const c = el("div", "lc" + (s >= L.ls && s <= L.le ? " in" : "") + (s === L.ls ? " st" : "") + (s === L.le ? " en" : ""));
-      rail.append(c);
-    }
-    let end = null;
-    const at = (e) => { const r = rail.getBoundingClientRect(); return Math.max(0, Math.min(NSTEP - 1, Math.floor(((e.clientX - r.left) / r.width) * NSTEP))); };
-    rail.onpointerdown = (e) => {
-      const s = at(e);
-      end = Math.abs(s - L.ls) <= Math.abs(s - L.le) && !(s > L.le) ? "ls" : "le";
-      cap(rail, e);
-      mark();
-      move(e);
-    };
-    const move = (e) => {
-      if (!end) return;
-      let s = at(e);
-      if (end === "ls") s = Math.min(s, L.le); else s = Math.max(s, L.ls);
-      if (L[end] !== s) { L[end] = s; [...rail.children].forEach((c, k) => { c.className = "lc" + (k >= L.ls && k <= L.le ? " in" : "") + (k === L.ls ? " st" : "") + (k === L.le ? " en" : ""); }); }
-    };
-    rail.onpointermove = move;
-    rail.onpointerup = rail.onpointercancel = () => { if (end) { end = null; sendLane(l); keep(); redrawLane(l); } };
-    box.append(rail);
-
-    // the steps
-    const strip = el("div", "steps" + (E.note ? " notes" : " values"));
-    ui.strips[l] = strip;
-    stepInput(strip, l);
-    box.append(strip);
-    fillCells(l);
+    foot.append(tools);
+    face.append(foot);
+    paintLane(l);
   }
 
-  function fillCells(l) {
-    const strip = ui.strips[l], L = lane(l), E = EV[L.ev] || EV[0];
-    if (!strip) return;
-    strip.textContent = "";
-    const cells = [];
-    const m = maskOf(L);
-    let lo = 127, hi = 0;
-    if (E.note) L.steps.forEach((st) => st.n.forEach((x, i) => { if (x !== null && !(i === 0 && x === TIE)) { lo = Math.min(lo, x); hi = Math.max(hi, x); } }));
-    if (hi - lo < 12) { const mid = (lo + hi) >> 1; lo = mid - 6; hi = mid + 6; }
-    for (let s = 0; s < NSTEP; s++) {
-      const st = L.steps[s], c = el("div", "cell");
-      if (s < L.ls || s > L.le) c.classList.add("out");
-      if (Q.sel.l === l && Q.sel.s === s) c.classList.add("sel");
-      if (st.f & F_MUTE) c.classList.add("mute");
-      if (st.f & F_SKIP) c.classList.add("skip");
-      const tie = (st.f & F_TIE) || st.n[0] === TIE;
-      if (tie) c.classList.add("tie");
-      c.dataset.s = String(s);
-      c.append(el("span", "num", String(s + 1)));
-      if (E.note) {
-        const notes = st.n.filter((x, i) => x !== null && !(i === 0 && x === TIE));
-        if (notes.length && !(st.n[0] === TIE)) {
-          const top = notes[0], mark_ = el("span", "pitch");
-          mark_.style.bottom = Math.round(((snap(top, m) - lo) / Math.max(1, hi - lo)) * 70 + 8) + "%";
-          c.append(mark_);
-          c.append(el("span", "nn", noteName(snap(top, m))));
-          if (notes.length > 1) c.append(el("span", "ch", notes.slice(1).map((x) => noteName(snap(x, m))).join(" ")));
-        }
-        c.append(el("span", "fl", st.f & F_SKIP ? "SKIP" : st.f & F_MUTE ? "REST" : tie ? "TIE" : ""));
-        c.title = `Step ${s + 1}: drag up / down to change the note; double-click: rest`;
-      } else {
-        const bar = el("span", "bar" + (E.bip ? " bip" : ""));
-        if (E.bip) {
-          const h = Math.abs(st.v - 64) / 64 * 50;
-          bar.style.height = h + "%";
-          bar.style.bottom = (st.v >= 64 ? 50 : 50 - h) + "%";
-        } else bar.style.height = Math.max(2, (st.v / 127) * 100) + "%";
-        c.append(bar, el("span", "vv", E.f(st.v)), el("span", "fl", st.f & F_SKIP ? "SKIP" : st.f & F_MUTE ? "OFF" : ""));
-        c.title = `Step ${s + 1}: ${E.f(st.v)} (draw across the lane to set values)`;
-      }
-      cells.push(c);
-      strip.append(c);
-    }
-    ui.cells[l] = cells;
-    drawPlayhead();
+  function paintLane(l) {
+    const cv = ui.canv[l];
+    if (!cv || !window.CarnacViz) return;
+    const L = lane(l), E = EV[L.ev] || EV[0], m = maskOf(L), [lo, hi] = range(L), act = Q.sel.l === l;
+    const steps = L.steps.map((st) => stepLook(L, st, lo, hi, m));
+    ui.geo[l] = V().seqLane(cv, { steps, ls: L.ls, le: L.le, act, win: act ? win() : -1, sel: act ? Q.sel.s : -1,
+                                  ph: run.pos[l] < NSTEP ? run.pos[l] : -1, bip: !!E.bip, seed: l });
+    const pos = ui.lanes[l] && ui.lanes[l].querySelector(".lpos");
+    if (pos) pos.textContent = `G${String(L.ps).padStart(2, "0")}/N${run.pos[l] < NSTEP ? String(run.pos[l] + 1).padStart(2, "0") : "--"} · ${E.n}`;
   }
 
-  /* pointer: a NOTE lane's step dragged up / down moves its note; a value lane is drawn across */
-  function stepInput(strip, l) {
+  /* the lane's stones under the pointer: a NOTE lane's stone dragged up / down moves its note; a value lane is drawn
+     across; the loop's ends dragged along the grass; double-click: rest */
+  function laneInput(cv, l) {
     let g = null;
-    const cellAt = (e) => {
-      const r = strip.getBoundingClientRect(), cols = getComputedStyle(strip).gridTemplateColumns.split(" ").length || NSTEP;
-      const rows = Math.ceil(NSTEP / cols), col = Math.floor(((e.clientX - r.left) / r.width) * cols), row = Math.floor(((e.clientY - r.top) / r.height) * rows);
-      const s = Math.max(0, Math.min(rows - 1, row)) * cols + Math.max(0, Math.min(cols - 1, col));
-      return Math.min(NSTEP - 1, s);
+    const at = (e) => {
+      const r = cv.getBoundingClientRect(), G = ui.geo[l];
+      const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+      const s = Math.max(0, Math.min(NSTEP - 1, Math.floor(x * NSTEP)));
+      const top = G ? (G.top / G.H) : 0.1, ground = G ? (G.g / G.H) : 0.9;
+      const v = Math.max(0, Math.min(127, Math.round(((ground - y) / Math.max(0.05, ground - top)) * 127)));
+      return { s, v, x, y, onGrass: y > ground - 0.04, edge: x * NSTEP };
     };
-    const valueAt = (e, s) => {
-      const c = ui.cells[l][s].getBoundingClientRect();
-      return Math.max(0, Math.min(127, Math.round((1 - (e.clientY - c.top) / c.height) * 127)));
-    };
-    strip.onpointerdown = (e) => {
+    cv.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
-      const s = cellAt(e), L = lane(l);
-      if (Q.sel.l !== l || Q.sel.s !== s) select(l, s);
-      mark();
-      cap(strip, e);
-      if (EV[L.ev].note) {
-        const st = L.steps[s];
-        g = { kind: "note", s, y: e.clientY, base: st.n[0] !== null && st.n[0] !== TIE ? st.n[0] : null, moved: false };
-      } else {
-        const v = valueAt(e, s);
-        g = { kind: "draw", last: s, lastV: v };
-        setStep(l, s, (st) => { st.v = v; }, true);
-      }
+      const p = at(e), L = lane(l);
+      cap(cv, e);
       e.preventDefault();
-    };
-    strip.onpointermove = (e) => {
-      if (!g) return;
-      const L = lane(l);
+      if (p.onGrass && (Math.abs(p.edge - L.ls) < 0.5 || Math.abs(p.edge - (L.le + 1)) < 0.5)) {
+        g = { kind: "loop", end: Math.abs(p.edge - L.ls) <= Math.abs(p.edge - (L.le + 1)) ? "ls" : "le" };
+        mark();
+        return;
+      }
+      if (Q.sel.l !== l || Q.sel.s !== p.s) select(l, p.s);
+      mark();
+      if (EV[L.ev].note) {
+        const st = L.steps[p.s];
+        g = { kind: "note", s: p.s, y: e.clientY, base: st.n[0] !== null && st.n[0] !== TIE ? st.n[0] : null, moved: false };
+      } else {
+        g = { kind: "draw", last: p.s, lastV: p.v };
+        setStep(l, p.s, (st) => { st.v = p.v; }, true);
+      }
+    });
+    cv.addEventListener("pointermove", (e) => {
+      const p = at(e), L = lane(l);
+      if (!g) { cv.style.cursor = p.onGrass && (Math.abs(p.edge - L.ls) < 0.5 || Math.abs(p.edge - (L.le + 1)) < 0.5) ? "ew-resize" : EV[L.ev].note ? "ns-resize" : "crosshair"; return; }
+      if (g.kind === "loop") {
+        let s = g.end === "ls" ? Math.max(0, Math.min(L.le, Math.round(p.edge))) : Math.max(L.ls, Math.min(NSTEP - 1, Math.round(p.edge) - 1));
+        if (L[g.end] !== s) { L[g.end] = s; paintLane(l); }
+        return;
+      }
       if (g.kind === "note") {
         if (g.base === null) return;
         const d = Math.round((g.y - e.clientY) / 9);
@@ -605,82 +629,133 @@
         g.moved = true;
         const n = stepBy(snap(g.base, maskOf(L)), d, maskOf(L));
         if (L.steps[g.s].n[0] !== n) setStep(l, g.s, (st) => { st.n[0] = n; }, true);
-      } else {
-        const s = cellAt(e), v = valueAt(e, s), n = Math.abs(s - g.last), dir = s > g.last ? 1 : -1;
-        const put = (k, x) => { if (L.steps[k].v !== x) { L.steps[k].v = x; sendStep(l, k); } };
-        if (!n) put(s, v);
-        for (let j = 1; j <= n; j++) put(g.last + dir * j, Math.round(g.lastV + ((v - g.lastV) * j) / n));   // (a line from the step before)
-        g.last = s; g.lastV = v;
-        keep(); redrawCells(l, true);
+        return;
       }
+      const n = Math.abs(p.s - g.last), dir = p.s > g.last ? 1 : -1;
+      const put = (k, x) => { if (L.steps[k].v !== x) { L.steps[k].v = x; sendStep(l, k); } };
+      if (!n) put(p.s, p.v);
+      for (let j = 1; j <= n; j++) put(g.last + dir * j, Math.round(g.lastV + ((p.v - g.lastV) * j) / n));   // (a line from the step before)
+      g.last = p.s; g.lastV = p.v;
+      keep(); redrawCells(l, true);
+    });
+    const end = () => {
+      if (g && g.kind === "loop") { sendLane(l); keep(); redrawLane(l); }
+      else if (g && g.kind === "note" && !g.moved) undo.pop();
+      g = null;
     };
-    strip.onpointerup = strip.onpointercancel = () => { if (g && g.kind === "note" && !g.moved) undo.pop(); g = null; };
-    strip.ondblclick = (e) => { const s = cellAt(e); setStep(l, s, (st) => { st.f ^= F_MUTE; }); };
+    cv.addEventListener("pointerup", end);
+    cv.addEventListener("pointercancel", end);
+    cv.addEventListener("dblclick", (e) => { const p = at(e); if (!p.onGrass) setStep(l, p.s, (st) => { st.f ^= F_MUTE; }); });
+  }
+
+  /* the four step cards: the selected lane's knob window, as the panel's knob tablets (STEP 05 over its value, grass
+     under it); the selected step's card lit, the playing one rimmed. A card turns like a knob */
+  function drawCards() {
+    if (!live()) return;
+    const box = ui.cardsBox, l = Q.sel.l, L = lane(l), E = EV[L.ev] || EV[0], m = maskOf(L), w = win();
+    box.textContent = "";
+    ui.cards = [];
+    for (let k = 0; k < 4; k++) {
+      const s = w + k, st = L.steps[s], look = stepLook(L, st, 0, 127, m);
+      const card = el("div", "scard" + (s === Q.sel.s ? " on" : "") + (run.pos[l] === s ? " ph" : "") + (s < L.ls || s > L.le ? " out" : ""));
+      const face = el("div", "sface");
+      face.append(el("span", "slab", `STEP ${String(s + 1).padStart(2, "0")}`), el("span", "sval", look.label || "—"));
+      const gr = el("canvas", "sgrass");
+      face.append(gr);
+      card.append(face);
+      card.tabIndex = 0;
+      card.setAttribute("role", "slider");
+      card.setAttribute("aria-label", `Lane ${l + 1} step ${s + 1}`);
+      card.setAttribute("aria-valuetext", look.label || "");
+      card.title = E.note ? "Drag up or down to change the note (or the arrow keys)" : "Drag up or down to change the value";
+      let d = null;
+      card.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        if (Q.sel.s !== s) select(l, s);
+        const q = lane(l).steps[s];
+        d = { y: e.clientY, base: EV[L.ev].note ? (q.n[0] !== null && q.n[0] !== TIE ? q.n[0] : null) : q.v, moved: false };
+        mark();
+        cap(card, e);
+        e.preventDefault();
+      });
+      card.addEventListener("pointermove", (e) => {
+        if (!d || d.base === null) return;
+        if (EV[L.ev].note) {
+          const n = stepBy(snap(d.base, maskOf(L)), Math.round((d.y - e.clientY) / 9), maskOf(L));
+          if (lane(l).steps[s].n[0] !== n) { d.moved = true; setStep(l, s, (q) => { q.n[0] = n; }, true); }
+        } else {
+          const v = Math.max(0, Math.min(127, Math.round(d.base + (d.y - e.clientY) / 1.4)));
+          if (lane(l).steps[s].v !== v) { d.moved = true; setStep(l, s, (q) => { q.v = v; }, true); }
+        }
+      });
+      const up = () => { if (d && !d.moved) undo.pop(); d = null; };
+      card.addEventListener("pointerup", up);
+      card.addEventListener("pointercancel", up);
+      box.append(card);
+      ui.cards.push({ card, gr, s });
+    }
+    requestAnimationFrame(() => ui.cards.forEach((c) => window.CarnacViz && V().turf(c.gr, c.s === Q.sel.s, c.s)));
   }
 
   function drawPlayhead() {
     if (!live()) return;
     if (ui.play) { ui.play.textContent = run.playing ? "STOP" : "PLAY"; ui.play.classList.toggle("on", !!run.playing); }
-    ui.cells.forEach((cells, l) => cells && cells.forEach((c, s) => c.classList.toggle("ph", run.pos[l] === s)));
+    if (ui.state) ui.state.textContent = (run.playing ? "▶ PLAY" : "■ STOP") + (run.rec ? " · REC" : "");
+    for (let l = 0; l < NLANE; l++) paintLane(l);
+    ui.cards.forEach(({ card, s }) => card.classList.toggle("ph", run.pos[Q.sel.l] === s));
   }
 
   function drawInspector() {
     if (!live()) return;
-    const box = ui.insp, { l, s } = Q.sel, L = lane(l), E = EV[L.ev], st = L.steps[s];
-    box.textContent = "";
-    box.append(el("h3", "", `LANE ${l + 1} · STEP ${s + 1} · ${E.n}`));
-    const row = el("div", "seqrow");
+    const t = ui.insp, { l, s } = Q.sel, L = lane(l), E = EV[L.ev], st = L.steps[s];
+    t.face.textContent = "";
+    const head = el("header", "thead");
+    head.append(el("h2", "", "STEP"), el("span", "tsub", `LANE ${l + 1} · STEP ${String(s + 1).padStart(2, "0")} · ${E.n}`));
+    t.face.append(head);
+    const row = el("div", "chips");
     if (E.note) {
       const m = maskOf(L);
       for (let i = 0; i < 4; i++) {
         const x = st.n[i], empty = x === null || (i === 0 && x === TIE);
-        const chip = el("button", "slot" + (Q.sel.slot === i ? " on" : "") + (empty ? " empty" : ""),
-          empty ? (i === 0 && x === TIE ? "TIE" : `+ NOTE ${i + 1}`) : noteName(snap(x, m)));
-        chip.type = "button"; chip.title = i ? "A chord note: pick, then play a key" : "The step's note";
-        chip.onclick = () => { Q.sel.slot = i; drawInspector(); };
-        row.append(chip);
-        if (i > 0 && !empty) {
-          const x_ = el("button", "quiet small", "×"); x_.type = "button"; x_.title = `Take note ${i + 1} out of the chord`;
-          x_.onclick = () => { setStep(l, s, (q) => { q.n[i] = null; }); Q.sel.slot = 0; };
-          row.append(x_);
-        }
+        const b = el("button", "mrow nslot", "");
+        b.type = "button";
+        b.setAttribute("aria-pressed", String(Q.sel.slot === i));
+        b.append(el("span", "mlab2", i ? `NOTE ${i + 1}` : "NOTE"), el("span", "mv", empty ? (i === 0 && x === TIE ? "TIE" : "+") : noteName(snap(x, m))));
+        b.title = i ? "A chord note: pick, then play a key" : "The step's note";
+        b.onclick = () => { Q.sel.slot = i; drawInspector(); };
+        row.append(b);
+        if (i > 0 && !empty) row.append(tog("×", false, `Take note ${i + 1} out of the chord`, () => { setStep(l, s, (q) => { q.n[i] = null; }); Q.sel.slot = 0; }));
       }
     } else {
       const r = el("input"); r.type = "range"; r.min = "0"; r.max = "127"; r.value = String(st.v);
-      r.style.setProperty("--fill", (st.v / 127) * 100 + "%");
-      const out = el("output", "val", E.f(st.v));
+      r.style.setProperty("--hi", (st.v / 127) * 100 + "%");
+      const out = el("output", "mv", E.f(st.v));
       let started = false;
       r.oninput = () => {
         if (!started) { mark(); started = true; }
         const v = parseInt(r.value, 10);
         setStep(l, s, (q) => { q.v = v; }, true, true);
-        out.textContent = E.f(v); r.style.setProperty("--fill", (v / 127) * 100 + "%");
+        out.textContent = E.f(v); r.style.setProperty("--hi", (v / 127) * 100 + "%");
       };
       r.onchange = () => { started = false; };
-      const w = el("div", "ctl wide"); const t = el("div", "top"); t.append(el("label", "lab", "VALUE"), out); w.append(t, r);
+      const w = el("label", "mbar svalbar"); const tp = el("span", "mtop"); tp.append(el("span", "mlab", "VALUE"), out); w.append(tp, r);
       row.append(w);
     }
-    [["REST", F_MUTE, "The step plays nothing (Delete)"], ["TIE", F_TIE, "Hold the notes before it through this step (.)"], ["SKIP", F_SKIP, "Leave the step out: the lane jumps over it"]].forEach(([n, f, t]) => {
-      const b = el("button", "chip" + (st.f & f ? " on" : ""), n);
-      b.type = "button"; b.title = t; b.setAttribute("aria-pressed", String(!!(st.f & f)));
-      b.onclick = () => setStep(l, s, (q) => { q.f ^= f; });
-      row.append(b);
+    [["REST", F_MUTE, "The step plays nothing (Delete)"], ["TIE", F_TIE, "Hold the notes before it through this step (.)"], ["SKIP", F_SKIP, "Leave the step out: the lane jumps over it"]].forEach(([n, f, tt]) => {
+      row.append(tog(n, st.f & f, tt, () => setStep(l, s, (q) => { q.f ^= f; })));
     });
-    [["LOOP START", "ls"], ["LOOP END", "le"]].forEach(([n, k]) => {   // (the loop rail's ends, for a phone too)
-      const b = el("button", "chip" + (L[k] === s ? " on" : ""), n);
-      b.type = "button"; b.title = `The lane's loop ${k === "ls" ? "starts" : "ends"} on this step`;
-      b.onclick = () => setFooter(l, k, s);
-      row.append(b);
+    [["LOOP START", "ls"], ["LOOP END", "le"]].forEach(([n, k]) => {   // (the loop's ends, for a phone too)
+      row.append(tog(n, L[k] === s, `The lane's loop ${k === "ls" ? "starts" : "ends"} on this step`, () => setFooter(l, k, s)));
     });
-    box.append(row);
-    if (E.note) box.append(piano(l, s));
+    t.face.append(row);
+    if (E.note) t.face.append(piano(l, s));
   }
 
   /* two octaves to click into the selected note slot, the scale's notes marked */
   function piano(l, s) {
     const L = lane(l), m = maskOf(L), wrap = el("div", "kbd"), cur = L.steps[s].n[Q.sel.slot];
-    const ctl = el("div", "seqrow");
-    const dn = el("button", "quiet small", "OCT −"), up = el("button", "quiet small", "OCT +");
+    const ctl = el("div", "chips");
+    const dn = el("button", "tog", "OCT −"), up = el("button", "tog", "OCT +");
     dn.type = up.type = "button";
     dn.onclick = () => { Q.oct = Math.max(0, Q.oct - 1); keep(); drawInspector(); };
     up.onclick = () => { Q.oct = Math.min(8, Q.oct + 1); keep(); drawInspector(); };
@@ -760,6 +835,7 @@
     build,
     take,
     opened() { request(); },
+    repaint() { if (live()) { for (let l = 0; l < NLANE; l++) paintLane(l); drawCards(); } },   // (a THEME, a resize)
     _q: () => Q,                                 // (tests)
   };
 })();

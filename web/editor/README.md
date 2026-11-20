@@ -21,7 +21,8 @@ the panel's pages. Plain HTML/CSS/JS, no build step.
 
 | file | what |
 |---|---|
-| `index.html`, `style.css` | the page: SAMHAIN orange on black, the site's rune face, dense tablets; works down to 320 px |
+| `index.html`, `style.css` | the page: the THEME's colours (SAMHAIN until the FM1 says otherwise), the site's rune face, hewn tablets; one column on a phone, up to four wide |
+| `viz.js` | the pictures, in whole pixels like the FM1's screen: moon dials, the oscillator's frames, the mixer's menhirs, noise fog, filter response, envelope barrows (draggable, a light running in real time), LFO shapes with a moving playhead and moon, the delay's stones and the reverb's fog |
 | `app.js` | the controls, built from `params.js`. It holds values as the firmware stores them and works out each CC from them the way `ui_sm_cc` reads it back |
 | `midi.js` | the only module that sends bytes: Web MIDI port, emulator, or log only. CC, NRPN (99/98/6, sent whole every time), RPN, BANK SELECT + PC |
 | `sysex.js` | the sound dump's codec (ED_PAR_REQ 56 / DUMP 57 / END 58) |
@@ -147,3 +148,40 @@ the main loop took it (measured: 5 sent back to back, 2 arrived), so every SEQ c
 sends one at a time (resent after 250 ms; 16 step writes take ~24 ms on the FM1). Tests:
 `src/host/test_seq_sysex.c` (run_tests), `web/emu/emu_test.mjs`, and a headless-Chrome harness of this tab (not
 in the repo: scratchpad `edseq/make_harness.py`, 22 checks).
+
+## 2026-11-19: the whole sound at a glance
+
+The tabs are gone. **SOUND** fits a laptop screen (1440 x 900): nine tablets on a 12-column grid in the order the
+signal runs. Row 1: VOICE (the ARCH drawn as its signal path, lights running down the ley lines), OSC [1 2], MIXER
+[MIX NOISE], FILTER [1 2 MIX]. Row 2: ENV [1 2 3] (the other two envelopes faint behind), LFO [1 2 3], AMP [DRIVE MFX].
+Row 3: FX [DLY · REV, MIX] and the MOD map at a glance (click it to open MOD). A tab the ARCH lacks is unlit. Every
+tablet shows a picture, four knobs and its lists and toggles; its other knobs are on sub-pages named at the tablet's
+right (ENV: ADSR, VEL · KEY, RETRIG). Two columns under 1260 px, one on a phone.
+**MOD** is the ley-line map: every SOURCE down the left, the DESTs in use down the right, each route a line between
+them (bright and thick by its amount, broken when negative, its VIA a stone on the line with a thread back to the VIA
+source); click a line to pick its route in the list below (the routes in use and the next free one; ALL 16 for every
+route). **SEQUENCE** is drawn as the FM1's SEQ page: the transport, four step cards for the selected lane's knob window (rock
+tablets with grass under them, the playing step's rimmed; a card turns like a knob), then four lanes of sixteen stones
+(viz.js seqLane: each stone rises out of the ground by its step's value, its shape whole, inside the outline of its full height, on the turf of the loop; the
+selected lane cream with its window bracketed; a rest hollow, a skip crumbled, a tie a fallen stone; drag the loop's
+ends along the grass), each with its footer of stone chips (STEP, EVENT, TARGET, SCALE, ROOT, MODE) and tools. **SETUP** is tablets like SOUND's, every number and list a knob: TUNING
+(an octave of stones from the ROOT), ZONES (the keyboard with the split stone), CLOCK (a sarsen circle lit a stone a
+sixteenth at INT TEMPO), VELOCITY (the curve), MIDI (channels and custom CCs as knobs, CC / PC IN / OUT as a stone-tablet
+menu), PROGRAM (a knob a bank picks the number; nothing is sent until its LOAD) and THEME (a menu of the nine palettes).
+
+- The ENV picture outlines the other two envelopes over the selected one's earth (the first dashed, the second dotted).
+- The MFX tab animates its type from its own knobs: phasers sweep notches along the plain, ENSEMBLE / CHORUS drift three
+  voices of a wave, the flangers sweep a comb (BBD in steps), PITCH SHIFT climbs echoes of a shifted wave, BBD ECHO runs
+  a light down a row of darkening stones, BRONZE AGE crushes a wave on its rails with sparks, WIND HARP shakes four
+  strings between two stones as gusts pass, RINGING STONES sends rings out from the stones as they are struck.
+
+- Knobs are moon dials (the panel's parameter popup: left horizon 0, overhead the middle, right horizon the top).
+  Drag up or right; Shift for fine; arrow / Page / Home / End keys; double-click or Delete for the default; the wheel
+  once the knob has been clicked. Lists are chips, two-way rows toggles, the routes' amounts small bars.
+- Envelope times show as the firmware sets them (envelopes.c: 1 ms x 20000^((k/127)^0.75)), LFO rates in Hz
+  (lfo.c: 0.05 x 800^(k/127)) or a division when synced. The pictures use the firmware's curves and LFO shape ring;
+  the filter curve is a sketch of a 4-pole loop, not the exact circuit; the drive picture a sketch of each model.
+- THEME (GLOBAL) recolours the page with the FM1's palettes, whether it is set here or received.
+- Moving pictures redraw at 30 fps, only while on screen. On a touch screen the envelope picture lets the page scroll,
+  so its corners move sideways there (SUSTAIN on its knob).
+- A tablet's tab or sub-page rebuilds only that tablet (mount()); the controls it drops stop being drawn.

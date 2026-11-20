@@ -472,6 +472,10 @@ static void syn_load(void)
  *   ED_SEQ_LOAD  [slot]                     loads that slot, as the Preset Encoder would (the change comes back)
  *   ED_SEQ_POS   out: [playing | recording << 1, lane 1..4's step (127: none)], when it moves
  *   ED_SEQ_PLAY  [on]                       the SEQ's transport (the sequencer only, not the ARP)
+ *   ED_SEQ_SEL   [lane, step]              both ways (2026-11-19): the SEQ page's lane and the block of four on
+ *                                           the knobs. In: the panel goes to the SEQ page on that lane with step's
+ *                                           block on the knobs. Out: [lane, first step, on the SEQ page] when the
+ *                                           panel's change (the SEQ button, a white key, the Select Encoder)
  *   ED_SEQ_ACK   out: [cmd], after each of the above is handled (after its answer). X0X's USB holds one received
  *                SysEx at a time and drops one that comes before the main loop took it: the editor sends the next
  *                only after the ACK (or sends again when none comes)
@@ -482,11 +486,11 @@ static void syn_load(void)
  * playhead only (seq-skip rule: nothing here runs in the render). */
 #include "seq_wire.h"
 enum { ED_SEQ_REQ = 60, ED_SEQ_LANE, ED_SEQ_STEP, ED_SEQ_NAME, ED_SEQ_SAVE, ED_SEQ_SLOTS, ED_SEQ_LOAD, ED_SEQ_POS,
-       ED_SEQ_PLAY, ED_SEQ_ACK };
+       ED_SEQ_PLAY, ED_SEQ_ACK, ED_SEQ_SEL };
 #define SQ_SLOTS_N 8u
 #define SQ_FULL_NAME 0x10u
 static SequencerLane sq_shadow[SEQ_NLANE] SYNTH_POOL, sq_cur[SEQ_NLANE] SYNTH_POOL;
-static uint8_t sq_name[NAME_LEN], sq_pos[1u + SEQ_NLANE];
+static uint8_t sq_name[NAME_LEN], sq_pos[1u + SEQ_NLANE], sq_sel[3];   /* sq_sel: lane, first step, on the page */
 static uint8_t sq_heard, sq_ccout, sq_full, sq_save, sq_save_slot;
 static uint32_t sq_ms, sq_wait;
 
@@ -505,13 +509,14 @@ static void sq_send_all(void)
 {
     sq_full = (uint8_t)((1u << SEQ_NLANE) - 1u | SQ_FULL_NAME);
     sq_pos[0] = 0xFFu;                              /* (the playhead too) */
+    sq_sel[0] = 0xFFu;                              /* (and the selection) */
 }
 
 /* the editor's SEQ commands (main loop: ed_service, the frame still in place); 1: one of them */
 static uint8_t seqx_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
 {
     uint8_t i, o[1u + SEQW_LANE_N];
-    if (cmd < ED_SEQ_REQ || cmd > ED_SEQ_PLAY)
+    if (cmd < ED_SEQ_REQ || (cmd > ED_SEQ_PLAY && cmd != ED_SEQ_SEL))
         return 0u;
     sq_heard = 1u;
     switch (cmd) {
@@ -596,6 +601,16 @@ static uint8_t seqx_handle(uint32_t cmd, const uint8_t *a, uint32_t na)
         }
         syn_unlock();
         break;
+    case ED_SEQ_SEL:
+        if (na < 2u)
+            break;
+        syn_lock();
+        ui_sm_seq_select(&sm, a[0], a[1]);
+        sq_sel[0] = sm.s.active_seq_lane;           /* (the editor's own: not sent back) */
+        sq_sel[1] = sm.seq_step0;
+        sq_sel[2] = (uint8_t)(sm.page == UIPAGE_SEQ);
+        syn_unlock();
+        break;
     case ED_SEQ_PLAY:
         if (na >= 1u && sm.seq != 0) {
             syn_lock();
@@ -644,6 +659,14 @@ static void sq_tick(void)
             sq_out(ED_SEQ_POS, o, sizeof sq_pos);
             return;
         }
+    }
+    o[0] = sm.s.active_seq_lane;                    /* the SEQ page's lane and knob window, when the panel moves them */
+    o[1] = sm.seq_step0;
+    o[2] = (uint8_t)(sm.page == UIPAGE_SEQ);
+    if (memcmp(o, sq_sel, sizeof sq_sel)) {
+        memcpy(sq_sel, o, sizeof sq_sel);
+        sq_out(ED_SEQ_SEL, o, sizeof sq_sel);
+        return;
     }
     syn_lock();
     memcpy(sq_cur, seq_lanes, sizeof sq_cur);

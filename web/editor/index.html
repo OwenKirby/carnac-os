@@ -1,12 +1,14 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-only
      Carnac OS editor (DRAFT): edit a Carnac sound from a computer or a phone over Web MIDI: CCs, NRPNs, Program
-     Changes. The parameters come from the firmware's own tables (params.js, written by gen_params.py). Plain files,
-     no build step: open index.html, or serve the folder. See README.md. -->
+     Changes. The whole sound on one page, module by module, in the FM1's own look (stones, grass, the rune face, the
+     THEME palettes). The parameters come from the firmware's own tables (params.js, written by gen_params.py). Plain
+     files, no build step: open index.html, or serve the folder. See README.md. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
 <title>Carnac Editor</title>
 <meta name="description" content="Edit a Carnac OS sound on the FM1 from the browser, over MIDI CC and NRPN.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16,30 +18,36 @@
 </head>
 <body>
 <header class="bar">
-  <h1><span class="rune">CARNAC</span> <span class="sub">EDITOR</span> <span class="draft">DRAFT</span></h1>
-  <div class="conn">
-    <span id="link" class="dot" title="not sending"></span>
-    <label class="field"><span>OUT</span><select id="out" aria-label="MIDI output"></select></label>
-    <label class="field"><span>CH</span><select id="ch" aria-label="MIDI channel (the layer's)"></select></label>
-    <label class="field"><span>SEND</span><select id="mode" aria-label="What a control sends">
-      <option value="cc">CC (NRPN where no CC)</option>
-      <option value="nrpn">NRPN always (exact)</option>
-    </select></label>
+  <canvas id="banner" class="banner" aria-hidden="true"></canvas>
+  <div class="brand">
+    <h1><span class="rune">CARNAC</span> <span class="sub">EDITOR</span> <span class="draft">DRAFT</span></h1>
+    <p class="ctx"><span id="ctx"></span></p>
   </div>
 </header>
 
-<div class="tools">
-  <button id="sendedit" type="button" title="Send every control you have moved or loaded">SEND EDITED</button>
-  <button id="sendall" type="button" class="quiet" title="Send every control the architecture shows">SEND ALL</button>
-  <button id="receive" type="button" class="quiet" title="Ask the FM1 for the whole sound (SysEx)">RECEIVE FROM SYNTH</button>
-  <button id="save" type="button" class="quiet">SAVE FILE</button>
-  <button id="load" type="button" class="quiet">LOAD FILE</button>
-  <input id="file" type="file" accept=".json,application/json" hidden>
-  <button id="panic" type="button" class="quiet" title="ALL NOTES OFF and ALL SOUND OFF on the channel">PANIC</button>
-  <p id="status" role="status" aria-live="polite"></p>
+<div class="toolbar">
+<nav id="views" class="views" role="tablist" aria-label="Views"></nav>
+<div class="conn">
+  <span id="link" class="dot" title="not sending"></span>
+  <label class="field"><span>OUT</span><select id="out" aria-label="MIDI output"></select></label>
+  <label class="field"><span>CH</span><select id="ch" aria-label="MIDI channel (the layer's)"></select></label>
+  <label class="field"><span>SEND</span><select id="mode" aria-label="What a control sends">
+    <option value="cc">CC (NRPN where no CC)</option>
+    <option value="nrpn">NRPN always (exact)</option>
+  </select></label>
 </div>
 
-<nav id="tabs" class="tabs" role="tablist" aria-label="Panel pages"></nav>
+<p id="status" role="status" aria-live="polite"></p>
+<div class="tools">
+  <button id="receive" type="button" title="Ask the FM1 for the whole sound (SysEx)">RECEIVE</button>
+  <button id="sendedit" type="button" class="quiet" title="Send every control you have moved or loaded">SEND EDITED</button>
+  <button id="sendall" type="button" class="quiet" title="Send every control the architecture shows">SEND ALL</button>
+  <button id="save" type="button" class="quiet" title="Save the editor's sound as a file">SAVE</button>
+  <button id="load" type="button" class="quiet" title="Load a sound file (SEND ALL puts it on the synth)">LOAD</button>
+  <input id="file" type="file" accept=".json,application/json" hidden>
+  <button id="panic" type="button" class="quiet" title="ALL NOTES OFF and ALL SOUND OFF on the channel">PANIC</button>
+</div>
+</div>
 <main id="panel"></main>
 
 <footer>
@@ -47,14 +55,16 @@
     <summary>MIDI LOG</summary>
     <pre id="log"></pre>
   </details>
-  <p class="small">The channel picks the layer (GLOBAL's MIDI CH LAYER1 / LAYER2). Controls marked <b>L1 CH</b> are the
-    performance's: they answer on Layer 1's channel only. A DUAL performance with both layers on one channel moves both.
-    RECEIVE brings the FM1's sound (SysEx); with GLOBAL CC OUT on, the panel's moves follow. A dim control has not been moved or received.</p>
+  <p class="small">Drag a moon up or right to raise it (Shift: finer); arrow keys once it is focused; double-click for its
+    default. Drag an envelope's corners. The channel picks the layer (GLOBAL's MIDI CH LAYER1 / LAYER2); controls marked
+    <b>L1 CH</b> are the performance's and answer on Layer 1's channel only. RECEIVE brings the FM1's sound (SysEx); with
+    GLOBAL CC OUT on, the panel's moves follow. A dim control has not been moved or received.</p>
 </footer>
 
 <script src="params.js"></script>
 <script src="sysex.js"></script>
 <script src="midi.js"></script>
+<script src="viz.js"></script>
 <script src="seq.js"></script>
 <script src="app.js"></script>
 </body>

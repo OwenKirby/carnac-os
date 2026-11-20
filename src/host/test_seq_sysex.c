@@ -219,6 +219,30 @@ int main(void)
     k = find(ED_SEQ_POS, -1);
     CHECK(k >= 0 && !(m_arg[k][0] & 1u), "STOP: shown stopped");
 
+    /* SEL: the editor picks lane 3, step 10: the panel's SEQ page on lane 3 with steps 9..12 on the knobs, not sent
+     * back; the panel's SEQ button moves the lane and the editor hears it */
+    a[0] = 2; a[1] = 9;
+    send(ED_SEQ_SEL, a, 2);
+    run(100);
+    collect();
+    CHECK(sm.page == UIPAGE_SEQ && sm.s.active_seq_lane == 2 && sm.seq_step0 == 8,
+          "SEL: the SEQ page, lane 3, steps 9..12 (page %u lane %u step0 %u)", sm.page, sm.s.active_seq_lane, sm.seq_step0);
+    CHECK(count(ED_SEQ_SEL) == 0, "SEL: the editor's own is not sent back (%u)", count(ED_SEQ_SEL));
+    {
+        uint8_t ln, st;
+        ui_sm_seq_knob_target(&sm, 1, &ln, &st);
+        CHECK(ln == 2 && st == 9, "SEL: knob 2 edits lane 3 step 10 (%u %u)", ln, st);
+    }
+    web_buttons(1u << 9); run(60); web_buttons(0); /* (the panel's SEQ button, as the emulator presses it: the next lane) */
+    run(100);
+    collect();
+    k = find(ED_SEQ_SEL, -1);
+    CHECK(k >= 0 && m_arg[k][0] == 3 && m_arg[k][1] == 8 && m_arg[k][2] == 1,
+          "SEL out: the panel's lane change goes out (%d: %u %u %u)", k, k >= 0 ? m_arg[k][0] : 0, k >= 0 ? m_arg[k][1] : 0, k >= 0 ? m_arg[k][2] : 0);
+    a[0] = 9; a[1] = 0;
+    send(ED_SEQ_SEL, a, 2);                              /* (a lane past the four: ignored, still ACKed) */
+    CHECK(sm.s.active_seq_lane == 3, "SEL: lane 10 ignored");
+
     printf("seq_sysex: %s (%d failures)\n", fails ? "FAIL" : "ok", fails);
     return fails ? 1 : 0;
 }
