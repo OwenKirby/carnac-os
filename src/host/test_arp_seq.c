@@ -232,12 +232,13 @@ int main(void)
     CHECK(k >= 0 && near(la.ev[k].frame, (2u * CELL * 65u) >> 7), "~ extends the gate over 2 cells, off at %u",
           k >= 0 ? la.ev[k].frame : 0);
     reset();
-    step(0, 48, 64, 0, ARPSTYLE_UP, 19);             /* 10T: o o _ (triplet) */
+    step(0, 48, 64, 0, ARPSTYLE_UP, 19);             /* 5.10: o o _ (3 cells) */
     arp_state.sequence_length = 1;
     arp_state.current_genre_bank = G_UTIL_MAJ;
     play(1);
-    run(QUARTER - 10u);
-    CHECK(count(&la, 0x90) == 2 && near(on_frame(1), QUARTER / 3u), "triplet cells: a third of the step, %u", on_frame(1));
+    run(QUARTER - 10u);                              /* cells o o _ o: the rhythm runs round at RATE, no squeeze */
+    CHECK(count(&la, 0x90) == 3 && near(on_frame(1), CELL) && near(on_frame(2), 3u * CELL),
+          "3-cell rhythm: cells one RATE long, %u %u", on_frame(1), on_frame(2));
     reset();
     step(0, 48, 64, 0, ARPSTYLE_UP, 0);
     step(2, 50, 64, 0, ARPSTYLE_UP, 0);              /* step 2 (index 1) empty, step 4 beyond the length */

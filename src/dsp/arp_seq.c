@@ -11,8 +11,8 @@
 #define CARP_AUD_KEEP 0x80u          /* req_aud: a latched key's release (carp_latch_up), in the root byte's free top bit */
 #define CARP_PULSES_PER_FRAME_MAX MAQ_PULSES_PER_FRAME_MAX
 
-/* 8.3 rhythm_variation_table: row r, column A / B. 0 = _ rest, 1 = o strike, 2 = ~ tie. Rows 7..12's B column is a
- * triplet: 3 cells (the 4th byte unused). */
+/* 8.3 rhythm_variation_table: row r, column A / B. 0 = _ rest, 1 = o strike, 2 = ~ tie. Rows 7..12's B column is 3
+ * cells long (the 4th byte unused), each cell one RATE as every other: a triplet feel comes from a T RATE. */
 static const uint8_t CARP_RHYTHM[12][2][4] = {
     {{1, 0, 0, 0}, {1, 1, 0, 0}},    /* 01 */
     {{0, 1, 0, 0}, {1, 0, 1, 0}},    /* 02 */
@@ -176,14 +176,15 @@ static uint8_t carp_step_len(const CarpSeq *a)
     return (uint8_t)carp_div_ticks(ARP_TIMING(a->st));
 }
 
-/* the step's cells from this frame: its rhythm at its RATE (4 RATEs a pass, split evenly between the rhythm's cells),
- * running round as long as the step lasts. A cell is struck only if half of it fits before the step's end (the next
- * step's first cell comes on the clock, and a cell ending with the step would double it); HOLD strikes once. */
+/* the step's cells from this frame: its rhythm, every cell one RATE long (a 3-cell rhythm too: VARIATION is the
+ * pattern only, RATE alone the division; 2026-11-20, a triplet's 3 cells were squeezed into 4 RATEs), running round as
+ * long as the step lasts. A cell is struck only if half of it fits before the step's end (the next step's first cell
+ * comes on the clock, and a cell ending with the step would double it); HOLD strikes once. */
 static void carp_cells_start(CarpSeq *a)
 {
     uint32_t p = midi_clock_period_q8(), step = ((uint32_t)a->step_ticks * p) >> 8;   /* 192 ticks at 40 BPM: ~529k */
-    uint32_t pass = ((uint32_t)a->rate_q * p) >> 8, half, m;                          /* 4 x rate_q 96ths */
-    a->cell_frames = a->ncell ? pass / a->ncell : pass;
+    uint32_t half, m;
+    a->cell_frames = ((uint32_t)a->rate_q * p) >> 10;                                 /* rate_q 96ths = rate_q/4 pulses */
     if (a->cell_frames == 0u) a->cell_frames = 1u;
     half = a->cell_frames >> 1;
     m = step > half ? (step - half - 1u) / a->cell_frames + 1u : 1u;

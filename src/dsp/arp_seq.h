@@ -10,9 +10,10 @@
  * pulse; one started while the other plays waits for the other's next bar (MAQ_SYNC_PULSES from its first step), so
  * the two stay on one grid. Under CLOCK SOURCE MIDI, MIDI Start starts it from the top and MIDI Stop stops it, as
  * the MAQ. Every step lasts the pattern's TIMING (ARPDIV_*: 2 .. 1/32T, ARP_TIMING) and plays its rhythm (8.3
- * rhythm_variation_table: 4 cells, or 3 for a triplet B column) at its own RATE (knob 1, ARPRATE_*: 1/2 .. 1/128, a
- * 4-cell rhythm's cell; a triplet's 3 cells span the same 4), round and round until the step ends (2026-10-21: RATE was
- * the step's length, the rhythm always filling it). o strikes, ~ holds the strike before it, _ rests.
+ * rhythm_variation_table: 4 cells, or 3 for rows 7..12's B column) at its own RATE (knob 1, ARPRATE_*: 1/2 .. 1/128,
+ * one cell; 2026-11-20: a 3-cell rhythm's cells are RATE long too, VARIATION never changes the division), round and
+ * round until the step ends (2026-10-21: RATE was the step's length, the rhythm always filling it). o strikes, ~ holds
+ * the strike before it, _ rests.
  * Cells, gates and strums are scheduled in frames from the pulse period, so they stay sample-accurate at any tempo.
  *
  * A strike plays the step's chord as its STYLE orders it: BLOCK the whole chord, UP / DOWN / UP-DN / DN-UP / RANDOM one
