@@ -580,7 +580,15 @@ static inline uint8_t varch_voice_cost(const EngineState *e)
                     (varch_uses_filter2(a) && e->filter[1].flavour == FLT_SH2));
     pcm = (uint8_t)((e->osc[0].wavebank >= VOICE_COST_PCM_FIRST) * (bin ? 2 : 1) +
                     (varch_uses_osc2(a) && e->osc[1].wavebank >= VOICE_COST_PCM_FIRST));
-    return (uint8_t)(c + 2u * sh2 + (a == VARCH_SPREAD || a == VARCH_SINGLE ? 2u : 1u) * pcm);   /* (2026-11-18: PCM on
+    /* THE ROUTES (2026-11-20, measured on the FM1, PT_COST_ONLY rows): each route in use costs every voice ~0.2 points on
+     * its core (DUAL OSC, 2/4/6/8 voices: 1 route 8.9 a voice, 8 routes 10.5, 16 routes 11.7). The table above was
+     * measured with one route; past it, 2 tenths each 9 routes, rounded: 4..7 routes +1, 8..12 +2, 13..16 +3 */
+    uint8_t r = 0;
+    for (uint8_t i = 0u; i < NROUTE; i++)
+        r = (uint8_t)(r + (e->route[i].src != MSRC_NONE && e->route[i].dest != MDST_NONE &&
+                           e->route[i].amount != BIPOLAR_CENTER));
+    uint8_t rt = r > 1u ? (uint8_t)(((r - 1u) * 2u + 4u) / 9u) : 0u;
+    return (uint8_t)(c + 2u * sh2 + (a == VARCH_SPREAD || a == VARCH_SINGLE ? 2u : 1u) * pcm + rt);   /* (2026-11-18: PCM on
                                     * SPREAD reads four playheads, 1.6..2.0 a voice; elsewhere 0.5..1.0 an oscillator) */
 }
 
@@ -757,6 +765,34 @@ typedef struct {
                                       * 0 must mean that feature's off / default (flash_record.h, THE ZERO RULE) */
 } MasterPerformancePreset;
 PS_STATIC_ASSERT(sizeof(MasterPerformancePreset) == 70u, "MasterPerformancePreset flash layout");
+/* THE EFFECTS ARE PRICED (2026-11-20, the user: "voice counts scale according to our CPU use"). Measured on the FM1
+ * (perf_test.c PT_COST_ONLY rows, DUAL OSC at 4 and 8 voices): each a fixed cost, whatever the voices, over the defaults
+ * the voice table was measured with (TOMB, no PING PONG): SPRING +2.6 points, TUMULUS +3.3, DOLMEN +3.8, MOD +4.0,
+ * CELESTIAL +5.4, PING PONG +0.7; the MIX page's cross-feeds (DLY > REV and REV > DLY, either or both) +6.7; LOOP TONE's
+ * wear 0.4 (unpriced). In tenths (0.95 points), rounded up. A performance-level overhead on top of the MFX's
+ * (voice_overhead), taken off every core's share */
+#define VOICE_XF_COST 7u
+static inline uint8_t perf_fx_overhead(const MasterPerformancePreset *p)
+{
+    static const uint8_t REV[6] = {3u, 0u, 4u, 6u, 4u, 4u};   /* REVTYPE_*: SPRING TOMB MOD CELESTIAL DOLMEN TUMULUS */
+    return (uint8_t)(REV[p->reverb_type < 6u ? p->reverb_type : 1u] + (p->delay_pingpong & 1u) +
+                     ((p->mix[2] || p->mix[3]) ? VOICE_XF_COST : 0u));   /* (FX_L_DLY_REV, FX_L_REV_DLY) */
+}
+PS_STATIC_ASSERT(REVTYPE_COUNT == 6, "a price for every reverb type");
+/* THE VOICE BUDGET (2026-11-20): the voices each layer of performance p may sound with patches a and b, everything
+ * priced (each patch's architecture, filters, waves and routes; both layers' MFX; the effects). One reckoning for the
+ * pool (voice_allocator.c pool_range), the panel's VOICES popup (UIStateMachine.c) and the tests. */
+static inline void perf_voice_limits(const MasterPerformancePreset *p, const EngineState *a, const EngineState *b,
+                                     uint8_t n[NLAYER])
+{
+    uint8_t mode = p->perf_mode < PERF_COUNT ? p->perf_mode : (uint8_t)PERF_SINGL_SYNTH;
+    uint8_t both = (uint8_t)(mode == PERF_DUAL_SYNTH || mode == PERF_SPLIT_SYNTH);
+    uint32_t over = (uint32_t)voice_overhead(a, b, both) + perf_fx_overhead(p);
+    uint8_t wa = varch_voice_cost(a), wb = varch_voice_cost(b), l;
+    if (over > VOICE_CORE_COST - 8u) over = VOICE_CORE_COST - 8u;   /* (a voice always fits: never below one) */
+    for (l = 0u; l < NLAYER; l++)
+        n[l] = layer_voice_limit_w(mode, wa, wb, (uint8_t)over, p->voice_mode[0], p->voice_mode[1], l);
+}
 #define DELAY_PINGPONG(p) ((uint8_t)((p)->delay_pingpong & 1u))
 #define DELAY_HP(p) ((uint8_t)((p)->delay_pingpong >> 1))
 /* GLOBAL > TUNING and ROOT (2026-10-29, dsp/tuning.h) ride in the high bits of delay_sync and delay_type (bits 1..7;

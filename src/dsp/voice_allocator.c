@@ -92,12 +92,13 @@ void pool_range(uint8_t layer, int *first, int *count) {
     uint32_t key = (uint32_t)mode |(uint32_t)(perf_state.voice_mode[0] & 7u) << 2 | (uint32_t)(perf_state.voice_mode[1] & 7u) << 5 |
                    (uint32_t)varch_voice_cost(&engine_state[0]) << 8 | (uint32_t)varch_voice_cost(&engine_state[1]) << 16 |
                    (uint32_t)(engine_state[0].mfx.type & 15u) << 24 | (uint32_t)(engine_state[1].mfx.type & 15u) << 28;   /* (the MFX is priced by type) */
+    uint8_t xf = perf_fx_overhead(&perf_state);    /* (the effects, 2026-11-20: their price, in the key) */
+    static uint8_t cache_xf = 0xFFu;
     int n[NLAYER];
-    if (key != cache_key) {
-        for (uint8_t l = 0; l < NLAYER; l++)
-            cache_n[l] = layer_voice_limit(mode, &engine_state[0], &engine_state[1], perf_state.voice_mode[0],
-                                           perf_state.voice_mode[1], l);
+    if (key != cache_key || xf != cache_xf) {
+        perf_voice_limits(&perf_state, &engine_state[0], &engine_state[1], cache_n);   /* (PresetStructures.h) */
         cache_key = key;
+        cache_xf = xf;
     }
     if (pool_pass) {
         pass_lc[0] = engine_load_count[0];
