@@ -53,8 +53,7 @@ EMU_FILES = ("index.html", "worklet.js", "carnac.wasm")
 EDITOR_FILES = ("index.html", "style.css", "params.js", "sysex.js", "midi.js", "viz.js", "seq.js", "app.js")
 EDITOR_CARD = ('    <a class="tablet" href="editor/"><strong>Edit sounds in the browser</strong><span>The whole sound on one page, '
                'the mod routes as ley lines, and the sequencer, from Chrome or Edge on a computer or an Android phone, with the '
-               'FM1 connected by USB. It works with the browser synth too.</span></a>
-')
+               'FM1 connected by USB. It works with the browser synth too.</span></a>\n')
 PCM_IMAGES = {0: REPO_DIR / "src" / "dsp" / "pcm_area0.bin", 1: REPO_DIR / "src" / "dsp" / "pcm_area1.bin",
               2: REPO_DIR / "src" / "dsp" / "pcm_area2.bin"}   # (pcm_store_upload.py IMAGES: the same three)
 PCM_AREA_SIZE = {0: 0x9000, 1: 0xE000, 2: 0x6000}          # src/hardware/pcm_store_fm1.c PCM_AREA

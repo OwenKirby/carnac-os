@@ -9,7 +9,8 @@ editor INFO answer) and a driver that presses the buttons; each case is one page
 server so the page fetches the real package. Cases: an update from an older Carnac, a test build and a newer
 Carnac (both need the tick), stock firmware, an FM1 left in update mode, and no FM1; the waves (PCM areas 0 and 1,
 wavetable bank 0 in area 2) after each good install, alone when the right version lacks them, not again when the FM1
-holds them, and again when area 2 holds another image of the same length (found by PCM_ID's header CRC)."""
+holds them, and again when area 2 holds another image of the same length (found by PCM_ID's header CRC; area 2 is PCM
+since 2026-11-06, its frame count worked out from the site's image)."""
 import functools
 import http.server
 import json
@@ -157,6 +158,7 @@ const out = (o) => { const p = document.createElement("pre"); p.id = "RESULT"; p
 </script>
 """
 
+AREA2_FRAMES = [0]   # BEGIN, a WRITE per PCM_CHUNK (256) after the 32-byte header, END: from area 2's image (main)
 CASES = {   # case -> (query, check)
     "older Carnac -> this one": ("case=older&after={v}", lambda r, v: r["device"].endswith("Carnac OS 0.9.0.") and not r["confirm"]
                        and r["tipShown"] == r["tipWanted"]
@@ -177,7 +179,7 @@ CASES = {   # case -> (query, check)
                                       and r["pcmOk"] and r["pcmFrames"] == 0 and r["status"].startswith("Done.")),
     "same version, Foundations out of date": ("case=same&after={v}&pcm=old2", lambda r, v: "waves are missing" in r["device"]
                                               and r["goText"] == "Write the waves" and not r["written"] and r["pcmOk"]
-                                              and r["pcmFrames"] == 66 and r["status"].startswith("Done.")),
+                                              and r["pcmFrames"] == AREA2_FRAMES[0] and r["status"].startswith("Done.")),
     "wrong version after install": ("case=older&after=0.9.0", lambda r, v: r["written"] and r["bad"] and not r["tipShown"]
                                     and "reports Carnac OS 0.9.0" in r["status"] and r["pcmFrames"] == 0),
     "no FM1": ("case=none", lambda r, v: r["bad"] and r["status"].startswith("FM1 not found") and not r["written"]),
@@ -190,6 +192,7 @@ def main(site):
     if not browser:
         sys.exit("no Edge or Chrome found")
     page = (site / "install" / "index.html").read_text(encoding="utf-8")
+    AREA2_FRAMES[0] = 2 + -(-((site / "firmware" / "pcm_area2.bin").stat().st_size - 32) // 256)
     meta = re.search(r"const meta = (\{.*?\});", page)
     version = re.search(r'"version": "([^"]+)"', meta[1])[1]
     test = page.replace("<head>", "<head>\n" + MOCK, 1).replace(
