@@ -105,7 +105,7 @@ static void rec_draw(UIStateMachine *sm, uint32_t force);   /* the REC page (ui_
 #define PU_DLG_H 70
 
 enum { PUR_HEAD, PUR_KNOB0, PUR_MENU = PUR_KNOB0 + 4, PUR_VIZ, PUR_GLYPH, PUR_TRACK, PUR_DLG, PUR_BROWSE, PUR_ROWPOP,
-       PUR_NAMEKB, PUR_VMPOP, PUR_COUNT };
+       PUR_NAMEKB, PUR_VMPOP, PUR_VBPOP, PUR_COUNT };
 static uint32_t pu_sig[PUR_COUNT];
 static uint8_t pu_top;               /* the first menu row shown */
 
@@ -3637,14 +3637,56 @@ static void pu_draw_vmpop(const UIStateMachine *sm, uint32_t force)
     }
 }
 
+/* THE VOICES POPUP (2026-11-20): an edit changed the voice budget (UIStateMachine.h vbpop_ms). The layer it shows is
+ * the one under the panel's focus if its voices changed, else the other; the title says which in DUAL / SPLIT; WAS and
+ * the count it had small, the voices now large, eight stones below lit for them; the other layer's change, if any, a
+ * line under */
+static void pu_draw_vbpop(const UIStateMachine *sm, uint32_t force)
+{
+    uint8_t one = (uint8_t)(sm->perf->perf_mode == PERF_SINGL_SYNTH), f = sm->s.active_synth_layer < NLAYER ?
+                  sm->s.active_synth_layer : 0u, l, o, i;
+    char t[16], w[12], v[6], x[16], *p;
+    int32_t oy;
+    l = one ? 0u : (sm->vb_from[f] != sm->vb_to[f] ? f : (uint8_t)(f ^ 1u));
+    o = (uint8_t)(l ^ 1u);
+    if (!pu_dirty(PUR_VBPOP, sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)sm->vb_from[0] | (uint32_t)sm->vb_to[0] << 4 |
+                  (uint32_t)sm->vb_from[1] << 8 | (uint32_t)sm->vb_to[1] << 12 | (uint32_t)l << 16), force))
+        return;
+    pu_cat(t, one ? "VOICES" : l ? "L2  VOICES" : "L1  VOICES");
+    p = pu_cat(w, "WAS ");
+    pu_num(p, sm->vb_from[l], 0u, 1u);
+    pu_num(v, sm->vb_to[l], 0u, 1u);
+    x[0] = '\0';
+    if (!one && sm->vb_from[o] != sm->vb_to[o]) {
+        p = pu_cat(x, o ? "L2  " : "L1  ");
+        p = pu_num(p, sm->vb_from[o], 0u, 1u);
+        p = pu_cat(p, " > ");
+        pu_num(p, sm->vb_to[o], 0u, 1u);
+    }
+    for (oy = 0; oy < 240; oy += PU_POP_BAND) {
+        cv_begin(240, PU_POP_BAND, SQC(BG));
+        pu_tablet(4, 4, 232, 232, 63u, oy);
+        pu_pop_line(14, t, SQC(MID), 1, oy);
+        pu_pop_line(34, w, SQC(DIM), 2, oy);
+        pu_pop_line(64, v, SQC(THEME), 4, oy);
+        for (i = 0u; i < VOICE_POOL; i++)                /* the pool, a stone a voice: lit for this layer's */
+            sq_stone(30 + (int32_t)i * 24, 178 - oy, 12, 30, 30, i < sm->vb_to[l] ? SQC(THEME) : SQC(DIM), i * 7u + 5u,
+                     i < sm->vb_to[l] ? 0u : 1u, 0u);   /* (the rest of the pool: outlines) */
+        if (x[0])
+            pu_pop_line(186, x, SQC(MID), 2, oy);
+        cv_blit(0, (uint32_t)oy);
+    }
+}
+
 static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint32_t force)
 {
     static uint8_t last_page = 0xFFu, last_layer, last_dlg, last_pop, last_pal = 0xFFu, last_hold = BTN_COUNT, last_mfx;
     uint8_t dlg = (uint8_t)(sm->dialog != UIDLG_NONE), moved = (uint8_t)(sm->page != last_page);
     uint8_t mfx = pu_mfx_view(sm);                   /* (AMP's MFX group: another layout, everything again) */
-    uint8_t pop = sm->browse ? 1u : sm->rowpop ? 2u : ui_sm_keyboard_visible(sm) ? 3u : sm->vmpop_ms ? 4u : 0u;   /* the
-                                                     * popup up: the preset list, the parameter list, SAVE's name
-                                                     * keyboard, the VOICING */
+    uint8_t pop = sm->browse ? 1u : sm->vbpop_ms ? 5u : sm->rowpop ? 2u : ui_sm_keyboard_visible(sm) ? 3u :
+                  sm->vmpop_ms ? 4u : 0u;            /* the popup up: the preset list, the VOICES (over the parameter
+                                                     * list: the next detent brings the list back), the parameter list,
+                                                     * SAVE's name keyboard, the VOICING */
     sq_pal = pu_page_pal(sm);                        /* a change redraws everything (page_draw, seq_draw: pal_drawn) */
     uint8_t held = (uint8_t)(sm->hold == BTN_HOME || sm->hold == BTN_SAVE);
     if (!held && last_hold != BTN_COUNT)
@@ -3669,6 +3711,8 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
             pu_draw_rowpop(sm, force);
         else if (pop == 3u)
             pu_draw_namekb(sm, force);
+        else if (pop == 5u)
+            pu_draw_vbpop(sm, force);
         else
             pu_draw_vmpop(sm, force);
         if (held)

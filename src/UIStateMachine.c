@@ -1505,6 +1505,7 @@ static void enter_page(UIStateMachine *sm, uint8_t page)
     sm->rowpop = 0u;                 /* .. and so does the parameter list */
     sm->kb_ms = 0u;                  /* .. and SAVE's keyboard */
     sm->vmpop_ms = 0u;               /* .. and the VOICING popup */
+    sm->vbpop_ms = 0u;               /* .. and the VOICES popup */
     sm->knob_touched = 0u;
     sm->s.current_param_focus = page < UIPAGE_COUNT && ui_cur_page(sm)->ctx == UICTX_SYNTH ?
                                 sm->page_focus[page] : (uint8_t)0u;
@@ -2780,8 +2781,38 @@ void ui_sm_load_done(UIStateMachine *sm, uint8_t ok)
     ui_sm_enforce(sm);               /* a performance brings its mode, a patch its architecture */
 }
 
+/* THE VOICES POPUP's watch (2026-11-20), every tick: the voices each layer may sound now (perf_voice_limits, as the
+ * pool reckons them); a change since the last look brings the popup up, unless a load moved the performance slot or a
+ * patch link (or one is pending): then the new counts are taken silently */
+static void voice_budget_watch(UIStateMachine *sm, uint16_t ms)
+{
+    uint8_t n[NLAYER], l, chg = 0u;
+    const uint8_t key[3] = {sm->perf_slot, sm->perf->layer_patch[0], sm->perf->layer_patch[1]};
+    if (sm->vbpop_ms)
+        sm->vbpop_ms = ms >= sm->vbpop_ms ? (uint16_t)0u : (uint16_t)(sm->vbpop_ms - ms);
+    perf_voice_limits(sm->perf, sm->engine[0], sm->engine[1], n);
+    if (!sm->vb_seen || sm->load_pending || key[0] != sm->vb_key[0] || key[1] != sm->vb_key[1] ||
+        key[2] != sm->vb_key[2]) {
+        for (l = 0u; l < 3u; l++) sm->vb_key[l] = key[l];
+        for (l = 0u; l < NLAYER; l++) sm->vb_n[l] = n[l];
+        sm->vb_seen = 1u;
+        return;
+    }
+    for (l = 0u; l < NLAYER; l++)
+        chg |= (uint8_t)(n[l] != sm->vb_n[l]);
+    if (!chg)
+        return;
+    for (l = 0u; l < NLAYER; l++) {
+        sm->vb_from[l] = sm->vbpop_ms ? sm->vb_from[l] : sm->vb_n[l];   /* (still up: from where it started) */
+        sm->vb_to[l] = n[l];
+        sm->vb_n[l] = n[l];
+    }
+    sm->vbpop_ms = UI_VBPOP_MS;
+}
+
 void ui_sm_tick(UIStateMachine *sm, uint16_t ms)
 {
+    voice_budget_watch(sm, ms);
     if (sm->rec_msg)
         sm->rec_msg_ms = ms >= sm->rec_msg_ms ? (uint16_t)0u : (uint16_t)(sm->rec_msg_ms - ms);
     if (sm->rec_msg && !sm->rec_msg_ms)
@@ -3009,6 +3040,7 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         sm->rowpop = 0u;             /* .. and the parameter list */
     sm->kb_ms = 0u;                  /* .. and SAVE's name keyboard (only knobs 3 / 4 keep it up; SAVE then stores) */
     sm->vmpop_ms = 0u;               /* .. and the VOICING popup */
+    sm->vbpop_ms = 0u;               /* .. and the VOICES popup (the next control's edit may bring it back) */
     if (sm->dialog == UIDLG_WRITING)                 /* nothing interrupts a flash write */
         return;
     if (type == UIEV_TRANSPORT) {                    /* REC: 7.2 on the SEQ page, 8.1 on the ARP page, else the loop */

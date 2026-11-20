@@ -31,6 +31,19 @@
 #ifndef TAPE_MULAW
 #define TAPE_MULAW 1
 #endif
+/* TAPE_ROUND, TAPE_EMPH (2026-11-19, the user: the delay added "a bottom layer of noise" under low sounds): a cell is
+ * rounded to the nearer mu-law step (it was rounded toward zero everywhere, an error that followed the signal's sign: a
+ * buzz under a bass, 0..200 Hz noise -32 -> -54 dB under a dark bass, host measure), toward zero only in the bottom
+ * segment, so a dying loop still reaches silence. And an emphasis pair round the cells: the record side tilts up
+ * (x - 0.5 x[-1]), each head tilts back (y + 0.5 y[-1]), exactly inverse, so the echo's tone is unchanged and the cells'
+ * noise is tilted down where a bass leaves the spectrum empty (4..11 kHz -43 -> -49 dB; under bright sounds the low end
+ * about as before). TAPE_EMPH 1 on, 0 none; the tilt is 0.5 exactly, so a shift (bit-identical to the Q15 multiply). */
+#ifndef TAPE_ROUND
+#define TAPE_ROUND 1
+#endif
+#ifndef TAPE_EMPH
+#define TAPE_EMPH 1
+#endif
 /* TAPE_HALF 1 (2026-11-14): the tape runs at half the sample rate, as the affordable 80s delays did (~10 kHz wide, every
  * repeat through the decimator and the interpolator again: darker each pass), and never slows: no slowed tape, none of
  * its filters, no aliasing at any DELAY TIME. A delay longer than the tape holds stops at its end. */
@@ -90,6 +103,10 @@ static inline uint8_t mulaw_enc(int32_t x)
     while (seg < 7u && b >= (0x100u << seg)) seg++;
     uint32_t code = seg << 4 | ((b >> (seg + 3u)) & 15u);
     if (code && (uint32_t)mulaw_tab[code] > m) code--;   /* (toward zero: never louder than the input) */
+#if TAPE_ROUND
+    if (seg && (code & 0x7Fu) < 0x7Fu && 2u * m > (uint32_t)mulaw_tab[code] + (uint32_t)mulaw_tab[code + 1u])
+        code++;                                          /* the nearer step (but in the bottom segment: toward zero) */
+#endif
     return (uint8_t)(sign | code);
 }
 #define TAPE_RD(i) ((int32_t)mulaw_tab[tape_mem.u8[(i) & TAPE_MASK]])
@@ -131,6 +148,10 @@ typedef struct {
     uint8_t hph;                          /* TAPE_HALF: 1 when the next input completes a step's pair */
     uint32_t wow_ph2, flutter_ph2;        /* the second head's wow and flutter (WOW_INC2) */
     int32_t mt[2][2];                     /* the wow + flutter pull of each head, at the last 8-sample step (MOD_EVERY): [head][tape / BBD] */
+    int32_t em_w, em_r[2];                /* TAPE_EMPH: the record side's last input, each head's last output */
+    uint32_t brk_z;                       /* TAPE_BREAK: its random stream */
+    int32_t brk_g, brk_tgt, brk_left;     /* the record level now and its target (Q15), the dropout's steps left */
+    int32_t brk_snag;                     /* the heads' jolt, Q16 cells */
 } TapeState;
 
 static TapeState tp;
@@ -204,6 +225,7 @@ void fx_init(void)
     memset(sfx_rev_ap, 0, sizeof sfx_rev_ap);
     memset(comb_lp, 0, sizeof comb_lp);
     memset(&tp, 0, sizeof tp);
+    tp.brk_g = tp.brk_tgt = 32767;                        /* TAPE_BREAK: the record level whole */
     tp.gap_q16 = tp.gap_tgt_q16 = 64 << 16;
     tp.speed_q24 = tp.speed_tgt_q24 = 1 << 24;
     tp.last_len = 64u;
@@ -1042,8 +1064,21 @@ static void tape_degrade(uint32_t d, int32_t *wow, int32_t *flutter, uint32_t *f
     if (d > 127u) d = 127u;
     *wow = (int32_t)(d * 32u / 36u);                      /* 0 .. 112 */
     *flutter = (int32_t)(d * d * 10u / 1296u);            /* 0 .. 124 */
-    *filter = d;
+    /* 2026-11-19 (user: past the default it should not just go dark): the playback filtering as before up to 36
+     * (~5.6 kHz), then only gently further, to ~3 kHz at 127 (was ~450 Hz); the wear above that is the tape breaking
+     * up (TAPE_BREAK) */
+    *filter = d <= 36u ? d : 36u + (d - 36u) * 21u / 91u;
 }
+
+/* TAPE_BREAK (2026-11-19): a worn tape breaks up, past DEGRADE 64 and more as it rises: oxide dropouts and head snags,
+ * at random. A dropout is written onto the tape (the record level dips to 15..70 % for 10..60 ms, eased in and out
+ * over ~2 ms), so every repeat carries the holes of the passes before it and the echoes crumble as they circulate; a
+ * snag jolts the heads by up to +-24 cells, settling over ~50 ms (a short lurch in pitch). At 127 about 1.5 dropouts
+ * and 0.7 snags a second; below 65 none, and nothing else changes (its own random stream). */
+#ifndef TAPE_BREAK
+#define TAPE_BREAK 1
+#endif
+static inline uint32_t brk_rand(uint32_t *z) { *z = *z * 1664525u + 1013904223u; return *z; }
 
 /* The slowed tape's anti-aliasing (2026-11-03, user: PING PONG "sounds very digital ... a bitcrushed sound ... in the
  * high end when tone is neutral ... definitely aliasing"). PING PONG runs the tape as for a delay twice as long, so
@@ -1414,6 +1449,10 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
     int32_t m1 = tp.hm[0], d1 = tp.hm[1], m2 = tp.hm[2], d2 = tp.hm[3];
     uint8_t ph = tp.hph;
     tp.speed_q24 = 1 << 24;                                /* (the full-rate tape's, should the type change back) */
+#if TAPE_BREAK
+    const int32_t brk_k = p->delay_degrade > 64u ? (int32_t)(p->delay_degrade > 127u ? 127u : p->delay_degrade) - 64 : 0;
+    const uint32_t brk_drop = (uint32_t)(brk_k * brk_k) * 74u, brk_snagp = (uint32_t)(brk_k * brk_k) * 34u;
+#endif
 
     for (uint32_t s = 0; s < n; s++) {
         int32_t x = in[s];
@@ -1439,10 +1478,35 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
             tp.mt[0][0] = nt;
         }
         m1 += d1;
+#if TAPE_BREAK
+        if (brk_k || tp.brk_snag || tp.brk_g != 32767) {
+            if (brk_k) {
+                uint32_t z = brk_rand(&tp.brk_z);
+                if (z < brk_drop && tp.brk_left <= 0) {          /* a dropout: its depth and length */
+                    uint32_t y = brk_rand(&tp.brk_z);
+                    tp.brk_tgt = 4915 + (int32_t)((y >> 16) % 18022u);         /* 15 .. 70 % */
+                    tp.brk_left = 220 + (int32_t)((y & 0xFFFFu) % 1100u);      /* 10 .. 60 ms */
+                } else if (z - brk_drop < brk_snagp) {           /* a snag */
+                    int32_t y = (int32_t)(brk_rand(&tp.brk_z) >> 16) - 32768;
+                    tp.brk_snag += y * 48 * brk_k / 63;          /* (+-24 cells at 127) */
+                }
+            }
+            if (tp.brk_left > 0 && --tp.brk_left == 0) tp.brk_tgt = 32767;
+            if (!brk_k) { tp.brk_tgt = 32767; tp.brk_left = 0; }
+            tp.brk_g += (tp.brk_tgt - tp.brk_g + (tp.brk_tgt > tp.brk_g ? 31 : -31)) >> 5;   /* ~1.5 ms ease */
+            tp.brk_snag -= tp.brk_snag >> 10;                    /* settles over ~50 ms */
+            if (tp.brk_snag > -64 && tp.brk_snag < 64) tp.brk_snag = 0;
+        }
+        uint32_t r = wpos - (uint32_t)gap - (uint32_t)(m1 >> 8) - (uint32_t)tp.brk_snag;
+#else
         uint32_t r = wpos - (uint32_t)gap - (uint32_t)(m1 >> 8);
+#endif
         uint32_t i = r >> 16;
         int32_t a = TAPE_RD(i), b = TAPE_RD(i + 1u);
         int32_t play = a + (((b - a) * (int32_t)((r >> 1) & 0x7FFFu)) >> 15);
+#if TAPE_EMPH
+        play = tp.em_r[0] = play + (tp.em_r[0] >> 1);
+#endif
         loss_lp += sfx_mulq15(play - loss_lp, loss_c);
         hp_lp += sfx_mulq15(loss_lp - hp_lp, hp_c);
         int32_t o = loss_lp - hp_lp, ol = o;
@@ -1458,9 +1522,15 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
             }
             m2 += d2;
             uint32_t r2 = wpos - ((uint32_t)gap >> 1) - (uint32_t)(m2 >> 8);
+#if TAPE_BREAK
+            r2 -= (uint32_t)tp.brk_snag;
+#endif
             uint32_t i2 = r2 >> 16;
             int32_t a2 = TAPE_RD(i2), b2 = TAPE_RD(i2 + 1u);
             int32_t play2 = a2 + (((b2 - a2) * (int32_t)((r2 >> 1) & 0x7FFFu)) >> 15);
+#if TAPE_EMPH
+            play2 = tp.em_r[1] = play2 + (tp.em_r[1] >> 1);
+#endif
             loss2 += sfx_mulq15(play2 - loss2, loss_c);
             hp2 += sfx_mulq15(loss2 - hp2, hp_c);
             ol = loss2 - hp2;
@@ -1481,7 +1551,20 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
         int32_t rec = tape_sat(xin + sfx_mulq15(fbs, fb.lo) + sfx_mulq15(fbs, fb.hi) + sfx_mulq15(fbs, fb.hi2) + hiss);
         aa_lp += sfx_mulq15(rec - aa_lp, 24575);           /* (the full-speed tape's record low-pass, 0.75) */
         wpos += 1u << 16;
+#if TAPE_EMPH
+        {
+#if TAPE_BREAK
+            int32_t e0 = tp.brk_g == 32767 ? aa_lp : (int32_t)(((int64_t)aa_lp * tp.brk_g) >> 15);   /* the dropout */
+#else
+            int32_t e0 = aa_lp;
+#endif
+            int32_t e = e0 - (tp.em_w >> 1);
+            tp.em_w = e0;
+            TAPE_WR(wpos >> 16, clamp16(e));
+        }
+#else
         TAPE_WR(wpos >> 16, clamp16(aa_lp));
+#endif
         step++;
         l0 = l1; l1 = ol;                                  /* the interpolator's step: a quarter of the newest */
         r0 = r1; r1 = o;

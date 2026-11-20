@@ -800,6 +800,46 @@ int main(void)
     ui_sm_set_hold(&sm, BTN_COUNT);
     CHECK(sm.hold == BTN_COUNT, "the hold strip: gone");
     }
+    {   /* THE VOICES POPUP (2026-11-20): an edit that changes the voice budget shows it; a load does not; any control
+         * puts it away; it goes by itself after UI_VBPOP_MS */
+        uint8_t n0[NLAYER], n1[NLAYER];
+        press(BTN_HOME);
+        sm.perf->perf_mode = PERF_SINGL_SYNTH;
+        sm.perf->reverb_type = REVTYPE_TOMB;
+        sm.perf->mix[2] = sm.perf->mix[3] = 0u;
+        sm.engine[0]->arch = VARCH_STACK;
+        sm.engine[0]->mfx.type = MFX_OFF;
+        ui_sm_tick(&sm, 10);
+        press(BTN_HOME);                              /* (any control: a clean start) */
+        ui_sm_tick(&sm, 10);
+        CHECK(sm.vbpop_ms == 0u, "no VOICES popup while nothing changes");
+        perf_voice_limits(sm.perf, sm.engine[0], sm.engine[1], n0);
+        sm.engine[0]->mfx.type = MFX_ENS_PHASER;      /* an edit that costs voices */
+        sm.perf->reverb_type = REVTYPE_CELESTIAL;
+        sm.perf->mix[2] = 40u;
+        perf_voice_limits(sm.perf, sm.engine[0], sm.engine[1], n1);
+        ui_sm_tick(&sm, 10);
+        CHECK(n1[0] < n0[0] && sm.vbpop_ms > 0u && sm.vb_from[0] == n0[0] && sm.vb_to[0] == n1[0],
+              "an edit that costs voices shows them: %u -> %u (popup %u, %u -> %u)", n0[0], n1[0], sm.vbpop_ms,
+              sm.vb_from[0], sm.vb_to[0]);
+        press(BTN_HOME);
+        CHECK(sm.vbpop_ms == 0u, ".. any control puts it away");
+        sm.engine[0]->mfx.type = MFX_OFF;
+        ui_sm_tick(&sm, 10);
+        CHECK(sm.vbpop_ms > 0u && sm.vb_to[0] > n1[0], ".. and giving them back shows that too");
+        ui_sm_tick(&sm, UI_VBPOP_MS);
+        CHECK(sm.vbpop_ms == 0u, ".. it goes after UI_VBPOP_MS");
+        sm.perf->layer_patch[0] = (uint8_t)(sm.perf->layer_patch[0] + 1u);   /* a load: another patch on layer 1 */
+        sm.engine[0]->mfx.type = MFX_METAL;
+        ui_sm_tick(&sm, 10);
+        CHECK(sm.vbpop_ms == 0u, "a load changes the voices silently");
+        sm.perf->mix[2] = 0u;
+        sm.perf->reverb_type = REVTYPE_TOMB;
+        sm.engine[0]->mfx.type = MFX_OFF;
+        sm.engine[0]->arch = VARCH_DUAL_OSC;
+        sm.perf->layer_patch[0] = (uint8_t)(sm.perf->layer_patch[0] - 1u);
+        ui_sm_tick(&sm, 10);
+    }
 
     printf(fails ? "\n%d FAILED\n" : "\nall UI checks passed\n", fails);
     return fails != 0;

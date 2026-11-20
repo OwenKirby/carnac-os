@@ -95,6 +95,19 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_NV(n) ((uint32_t)(n) << 20)   /* K_HELD (2026-11-18, the price rows): exactly n voices (1..8) whatever the patch costs
                                       * (voice_allocator.h pool_force); bits 20..23, so never with F_MFX (its type reads 16..23) */
 #define F_NV_OF(f) (((f) >> 20) & 15u)
+/* the cost rows (2026-11-20, -D PT_COST_ONLY: what the voice price did not count): mod routes, noise, the MIX page's
+ * cross-feeds and LOOP TONE's wear. F_RT8 / F_RT16: 8 / 16 routes of a pad's kind (LFOs, envelopes, the wheel, keyboard
+ * and velocity into SCAN, CUTOFF, MIX, PAN, PITCH) in place of the one LFO1 > CUTOFF. Bits 28..30 only without F_MFX2
+ * (its layer 2 type reads them) */
+#define F_RT8 64u
+#define F_RT16 128u
+#define F_XFONLY (1u << 28)          /* the cross-feeds high (110, 110), LOOP TONE at its middle */
+#define F_WEARONLY (1u << 29)        /* LOOP TONE dark (24: the wear on), no cross-feed */
+#define F_NOISE (1u << 30)           /* NOISE LEVEL 60, white (without F_HEAVY) */
+/* (PT_COST_ONLY, the effects' price, 2026-11-20): the reverb type t (REVTYPE_*) in bits 16..19 as t + 1, PING PONG in bit
+ * 31; only without F_MFX / F_MFX2 (whose types read those bits) and without F_FX_* */
+#define F_RVT(t) ((uint32_t)((t) + 1u) << 16)
+#define F_PPON (1u << 31)
 #define F_MFXEQ (1u << 25)           /* BRONZE AGE with its EQ off noon (DIST 120, the scooped render's: every band run) */
 #define PT_RESTRIKE_MS 250u          /* K_RS: shorter than the longer attacks, so voices are nearly always attacking */
 #define PT_CHORD_MS 1000u            /* K_LOOPCH: a half bar at 120 BPM; with RELEASE 110 three chords ring at once */
@@ -120,6 +133,30 @@ static const PtScen SCEN[] = {
     PT_PRICE("STACK", VARCH_STACK),
     PT_PRICE("BIN", VARCH_BINAURAL),
     PT_PRICE("FULL", VARCH_FULL),
+#elif defined(PT_COST_ONLY)          /* (-D PT_COST_ONLY, 2026-11-20: the costs the price did not count; slopes from
+                                      * 2/4/6/8 voices, the MIX page's against the same row without it) */
+    {"IDLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
+#define PT_PR4(nm, a, flt, fl)     {nm " 2", K_HELD, a, flt, (fl) | F_NV(2), UIPAGE_HOME1}, {nm " 4", K_HELD, a, flt, (fl) | F_NV(4), UIPAGE_HOME1},     {nm " 6", K_HELD, a, flt, (fl) | F_NV(6), UIPAGE_HOME1}, {nm " 8", K_HELD, a, flt, (fl) | F_NV(8), UIPAGE_HOME1}
+    PT_PR4("C DOSC R1", VARCH_DUAL_OSC, FLT_MULTI, 0),
+    PT_PR4("C DOSC R8", VARCH_DUAL_OSC, FLT_MULTI, F_RT8),
+    PT_PR4("C DOSC R16", VARCH_DUAL_OSC, FLT_MULTI, F_RT16),
+    PT_PR4("C SPRD0 R1", VARCH_SINGLE, FLT_MULTI, 0),
+    PT_PR4("C SPRD0 R16", VARCH_SINGLE, FLT_MULTI, F_RT16),
+    PT_PR4("C SPRD0 NOISE", VARCH_SINGLE, FLT_MULTI, F_NOISE),
+#define PT_FXR(nm, t, pp, nv) {"C FX " nm, K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_RVT(t) | (pp) | F_NV(nv), UIPAGE_HOME1}
+    PT_FXR("TOMB 4", REVTYPE_TOMB, 0, 4), PT_FXR("TOMB PP 4", REVTYPE_TOMB, F_PPON, 4),
+    PT_FXR("SPRING 4", REVTYPE_SPRING, 0, 4), PT_FXR("MOD 4", REVTYPE_MOD, 0, 4), PT_FXR("CEL 4", REVTYPE_CELESTIAL, 0, 4),
+    PT_FXR("DOLMEN 4", REVTYPE_DOLMEN, 0, 4), PT_FXR("TUM 4", REVTYPE_TUMULUS, 0, 4),
+    PT_FXR("CEL PP 4", REVTYPE_CELESTIAL, F_PPON, 4),
+    PT_FXR("TOMB 8", REVTYPE_TOMB, 0, 8), PT_FXR("CEL PP 8", REVTYPE_CELESTIAL, F_PPON, 8),
+    {"C DOSC TUM 4", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_NV(4), UIPAGE_HOME1},
+    {"C DOSC TUM 4 XF", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_XFONLY | F_NV(4), UIPAGE_HOME1},
+    {"C DOSC TUM 4 WEAR", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_WEARONLY | F_NV(4), UIPAGE_HOME1},
+    {"C DOSC TUM 4 MIX", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_MIX | F_NV(4), UIPAGE_HOME1},
+    {"C DOSC TUM 8", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_NV(8), UIPAGE_HOME1},
+    {"C DOSC TUM 8 XF", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_XFONLY | F_NV(8), UIPAGE_HOME1},
+    {"C DOSC TUM 8 WEAR", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_WEARONLY | F_NV(8), UIPAGE_HOME1},
+    {"C DOSC TUM 8 MIX", K_HELD, VARCH_DUAL_OSC, FLT_MULTI, F_FX_TUM | F_MIX | F_NV(8), UIPAGE_HOME1},
 #elif !defined(PT_FACT_ONLY)          /* (-D PT_FACT_ONLY: the K_FACT rows alone, a two-minute run) */
     {"IDLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
     {"SINGLE 1V", K_HELD, VARCH_SINGLE, FLT_MULTI, F_ONE, UIPAGE_HOME1},
@@ -322,6 +359,19 @@ static const PtScen SCEN[] = {
     {"FACT 5 PLAY", K_FACT, 5, 0, 0, UIPAGE_HOME1},
     {"FACT 6 PLAY", K_FACT, 6, 0, 0, UIPAGE_HOME1},
     {"FACT 7 PLAY", K_FACT, 7, 0, 0, UIPAGE_HOME1},
+    /* (2026-11-19: every performance of THE OLD KNOWLEDGE, 20) */
+    {"FACT 8 PLAY", K_FACT, 8, 0, 0, UIPAGE_HOME1},
+    {"FACT 9 PLAY", K_FACT, 9, 0, 0, UIPAGE_HOME1},
+    {"FACT 10 PLAY", K_FACT, 10, 0, 0, UIPAGE_HOME1},
+    {"FACT 11 PLAY", K_FACT, 11, 0, 0, UIPAGE_HOME1},
+    {"FACT 12 PLAY", K_FACT, 12, 0, 0, UIPAGE_HOME1},
+    {"FACT 13 PLAY", K_FACT, 13, 0, 0, UIPAGE_HOME1},
+    {"FACT 14 PLAY", K_FACT, 14, 0, 0, UIPAGE_HOME1},
+    {"FACT 15 PLAY", K_FACT, 15, 0, 0, UIPAGE_HOME1},
+    {"FACT 16 PLAY", K_FACT, 16, 0, 0, UIPAGE_HOME1},
+    {"FACT 17 PLAY", K_FACT, 17, 0, 0, UIPAGE_HOME1},
+    {"FACT 18 PLAY", K_FACT, 18, 0, 0, UIPAGE_HOME1},
+    {"FACT 19 PLAY", K_FACT, 19, 0, 0, UIPAGE_HOME1},
     {"FACT 0 KEYS", K_FACT, 0, PTF_NO_TRANSPORT, 0, UIPAGE_HOME1},
     {"FACT 0 SEQ+ARP", K_FACT, 0, PTF_NO_CHORDS, 0, UIPAGE_HOME1},
     {"FACT 0 IDLE", K_FACT, 0, PTF_NO_TRANSPORT | PTF_NO_CHORDS, 0, UIPAGE_HOME1},
@@ -442,6 +492,26 @@ static void patch(EngineState *e, const PtScen *s)
         e->env[0].release = e->env[1].release = 110;
     if (s->flags & F_HP)
         e->filter[0].morph = e->filter[1].morph = 110;
+    if (s->flags & (F_RT8 | F_RT16)) {               /* (PT_COST_ONLY: a pad's routes) */
+        static const ModRoute RT[16] = {
+            {MSRC_LFO1, MSRC_NONE, MDST_OSC1_SCAN, 64 + 24, 127}, {MSRC_MODWHEEL, MSRC_NONE, MDST_OSC1_SCAN, 64 + 30, 127},
+            {MSRC_MODWHEEL, MSRC_NONE, MDST_F1_CUTOFF, 64 + 30, 127}, {MSRC_ENV3, MSRC_NONE, MDST_F1_CUTOFF, 64 + 30, 127},
+            {MSRC_ENV2, MSRC_NONE, MDST_OSC_MIX, 64 + 22, 127}, {MSRC_LFO3, MSRC_NONE, MDST_PAN, 64 + 24, 127},
+            {MSRC_LFO3, MSRC_NONE, MDST_OSC2_SCAN, 64 + 14, 127}, {MSRC_LFO2, MSRC_MODWHEEL, MDST_PITCH, 64 + 3, 127},
+            {MSRC_VELOCITY, MSRC_NONE, MDST_F1_CUTOFF, 64 + 16, 127}, {MSRC_RANDOM, MSRC_NONE, MDST_OSC2_PITCH, 64 + 2, 127},
+            {MSRC_KEYBOARD, MSRC_NONE, MDST_PAN, 64 + 10, 127}, {MSRC_ENV3, MSRC_NONE, MDST_LFO1_DEPTH, 64 + 40, 127},
+            {MSRC_LFO2, MSRC_NONE, MDST_F1_RES, 64 + 10, 127}, {MSRC_ENV2, MSRC_NONE, MDST_XMOD, 64 + 10, 127},
+            {MSRC_LFO1, MSRC_NONE, MDST_OSC2_SCAN, 64 + 12, 127}, {MSRC_KEYBOARD, MSRC_NONE, MDST_OSC_MIX, 64 + 8, 127}};
+        int nr = (s->flags & F_RT16) ? 16 : 8;
+        for (int i = 0; i < NROUTE; i++)
+            e->route[i] = i < nr ? RT[i] : (ModRoute)ROUTE_FREE;
+        e->lfo[1].rate = 82; e->lfo[2].shape = 106; e->lfo[2].rate = 40;
+        e->env[2].attack = 90; e->env[2].sustain = 80;
+    }
+    if ((s->flags & F_NOISE) && !(s->flags & F_MFX2)) {
+        e->oscmix.noise_level = 60;
+        e->oscmix.noise_colour = NOISE_WHITE;
+    }
     if (s->flags & F_HEAVY) {
         e->oscmix.xmod_type = XMOD_RING;
         e->oscmix.noise_level = 100;
@@ -629,6 +699,10 @@ static void setup(const PtScen *s)
     } else if (s->flags & F_MIX) {
         static const uint8_t LIVE[FX_L_COUNT] = {40u, 24u, 110u, 110u};
         for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = LIVE[i];
+    } else if ((s->flags & (F_XFONLY | F_WEARONLY)) && !(s->flags & F_MFX2)) {
+        const uint8_t xf = (s->flags & F_XFONLY) ? 110u : 0u;
+        const uint8_t LIVE[FX_L_COUNT] = {64u, (s->flags & F_WEARONLY) ? 24u : 64u, xf, xf};
+        for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = LIVE[i];
     } else {
         static const uint8_t LIVE[FX_L_COUNT] = {64u, 64u, 0u, 0u};
         for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = LIVE[i];
@@ -640,6 +714,16 @@ static void setup(const PtScen *s)
         perf_state.delay_pingpong = 1;
         perf_state.delay_degrade = 90;
     }
+#if defined(PT_COST_ONLY)
+    if ((s->flags & (0xFu << 16)) && !(s->flags & (F_MFX | F_MFX2 | F_FX_ANY))) {   /* (the effects' price rows) */
+        perf_state.reverb_type = (uint8_t)(((s->flags >> 16) & 0xFu) - 1u);
+        perf_state.reverb_decay = 110;
+        perf_state.delay_pingpong = (uint8_t)((s->flags & F_PPON) ? 1u : 0u);
+        perf_state.delay_degrade = 36;
+        engine_state[0].amp.delay_send = 50;
+        engine_state[0].amp.reverb_send = 60;
+    }
+#endif
     pool_force = (uint8_t)(s->kind == K_HELD ? F_NV_OF(s->flags) : 0u);
     synth_restart();
     ld.over = 0;

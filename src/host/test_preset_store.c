@@ -250,11 +250,8 @@ static void test_tunings(void)
 static void test_factory(void)
 {
     static const struct { uint8_t g; const char *name; } G[] = {
-        {FG_TRAD_MAJ, "Trad_Maj"}, {FG_TRAD_MIN_1, "Trad_Min_1"}, {FG_TRAD_MIN_2, "Trad_Min_2"}, {FG_OCT, "Oct_Stack"},
-        {FG_4TH, "4th_Stack"}, {FG_5TH, "5th_Stack"}, {FG_MIN, "Utility_Min"}, {FG_M7, "Utility_M7"},
-        {FG_MIN7, "Utility_m7"}, {FG_MIN9, "Utility_m9"}, {FG_POP_INV, "Pop_Inversions"}, {FG_CINE_1, "Cinematic_1"},
-        {FG_CINE_2, "Cinematic_2"}, {FG_CINE_3, "Cinematic_3"}, {FG_CINE_5, "Cinematic_5"}, {FG_CINE_6, "Cinematic_6"},
-        {FG_CLASSICAL_1, "Classical_1"}, {FG_MODERN_1, "Modern_1"}};
+        {FG_5TH, "5th_Stack"}, {FG_MIN, "Utility_Min"}, {FG_MIN7, "Utility_m7"}, {FG_MAJ9, "Utility_M9"},
+        {FG_MIN9, "Utility_m9"}, {FG_CINE_2, "Cinematic_2"}, {FG_CINE_5, "Cinematic_5"}, {FG_CINE_6, "Cinematic_6"}};
     uint32_t s, l, i, arp_led = 0;
     for (i = 0; i < sizeof G / sizeof G[0]; i++)
         CHECK(strcmp(arp_genre_names[G[i].g], G[i].name) == 0, "genre %u is %s, not %s", G[i].g,
@@ -281,6 +278,15 @@ static void test_factory(void)
             for (k = 0; k < NROUTE; k++)
                 CHECK(e->route[k].src < MSRC_COUNT && e->route[k].via < MSRC_COUNT && e->route[k].dest < MDST_COUNT,
                       "patch %u route %u", s, k);
+            {   /* the user's rule (2026-11-19): the MOD WHEEL always does something, through the mod matrix */
+                uint32_t wheel = 0;
+                for (k = 0; k < NROUTE; k++)
+                    wheel += (e->route[k].src == MSRC_MODWHEEL || (e->route[k].via == MSRC_MODWHEEL && e->route[k].via_depth)) &&
+                             e->route[k].src != MSRC_NONE && e->route[k].dest != MDST_NONE && e->route[k].amount != BIPOLAR_CENTER;
+                CHECK(wheel > 0u, "patch %u (%s): nothing for the MOD WHEEL", s, FV_TAB[s].name);
+            }
+            CHECK(varch_voice_cap(e) >= 6u, "patch %u (%s): %u voices alone, not 6 or more (the realistic price, 2026-11-20)", s,
+                  FV_TAB[s].name, varch_voice_cap(e));
         }
         {   /* stored and loaded (v12, every byte at its width): it comes back exactly, so no value is wider than its
              * field (flash_record.h ENG_W) */
@@ -306,8 +312,19 @@ static void test_factory(void)
         CHECK(fa->maq ? memcmp(&w.arp, &syn_arp_bank[s], sizeof w.arp) == 0 && w.perf.arp_link == s
                       : w.arp.steps[0].chord_root == ARP_CHORD_EMPTY && w.perf.arp_link == 127u,
               "performance %u: its arp pattern (ARP-led %u)", s, fa->maq);
-        CHECK((FS_TAB[s].prescale == 0u) == (fa->maq != 0u), "slot %u: an ARP-led performance has an arp bass", s);
-        CHECK(w.perf.int_tempo + MIDI_CLOCK_BPM_BASE == fa->bpm && fa->bpm >= 60u && fa->bpm <= 130u, "slot %u tempo", s);
+        CHECK(!(fa->maq && FP_TAB[s].pmode == PERF_DUAL_SYNTH) || FP_TAB[s].apart,
+              "slot %u: an ARP-led DUAL performance keeps its layers' channels apart", s);
+        CHECK(w.perf.int_tempo + MIDI_CLOCK_BPM_BASE == FP_TAB[s].bpm && FP_TAB[s].bpm >= 60u && FP_TAB[s].bpm <= 130u,
+              "slot %u tempo", s);
+        CHECK(PERF_TUNING(&w.perf) < TUNING_COUNT && PERF_TUNING_ROOT(&w.perf) < 12u && !DELAY_SYNC(&w.perf), "slot %u tuning", s);
+        {   /* the voices each layer gets (printed: the hero's keys must stay polyphonic) */
+            uint8_t vn[NLAYER];                      /* (as the pool fits them: perf_voice_limits) */
+            perf_voice_limits(&w.perf, &w.engine[0], &w.engine[1], vn);
+            uint8_t v1 = vn[0], v2 = vn[1];
+            printf("  perf %2u %-16s %s L1 %u voices, L2 %u\n", s, FP_TAB[s].name, fa->maq ? "ARP" : "SEQ", v1, v2);
+            if (s == 0u)
+                CHECK(v1 >= 5u && !vmode_one_voice(w.perf.voice_mode[0]), "the power-on performance's keys: %u voices", v1);
+        }
         arp_led += fa->maq;
         whole_perf_pack(&w, rec);
         whole_perf_unpack(rec, &back);
@@ -319,15 +336,15 @@ static void test_factory(void)
             const SequencerLane *ln = &syn_seq_bank[s][l];
             CHECK(ln->event_type < SEQEV_COUNT && ln->target_mask <= seq_target_max(ln->event_type) &&
                   ln->prescale >= SEQ_PRESCALE_MIN && ln->prescale <= SEQ_PRESCALE_MAX &&
-                  ln->playback_mode < SEQ_MODE_COUNT && ln->scale < SEQSCALE_COUNT && ln->loop_end == SEQ_NSTEP - 1u,
-                  "sequence %u lane %u out of range", s, l);
-            CHECK((l == 0u) == (ln->event_type == SEQEV_NOTE), "sequence %u lane %u: NOTE only on lane 1", s, l);
+                  ln->playback_mode < SEQ_MODE_COUNT && ln->scale < SEQSCALE_COUNT && ln->loop_end < SEQ_NSTEP &&
+                  ln->loop_start <= ln->loop_end, "sequence %u lane %u out of range", s, l);
+            CHECK((l == 0u) <= (ln->event_type == SEQEV_NOTE), "sequence %u lane %u: lane 1 plays notes", s, l);
             for (i = 0; i < SEQ_NSTEP; i++) {
                 const SequencerStep *st = &ln->steps[i];
                 uint8_t n = st->note_buffer[0];
                 uint16_t mask = seq_lane_scale_mask(ln, syn_arp_bank[s].current_genre_bank);
                 CHECK(st->value <= VAL_MAX && (n <= VAL_MAX || n == SEQ_NOTE_TIE), "sequence %u lane %u step %u", s, l, i);
-                if (l == 0u && n != SEQ_NOTE_TIE && !(st->flags & SEQ_FLAG_MUTE))
+                if (ln->event_type == SEQEV_NOTE && n != SEQ_NOTE_TIE && !(st->flags & SEQ_FLAG_MUTE))
                     CHECK(seq_scale_snap(n, mask) == n, "sequence %u step %u: note %u not in its scale", s, i, n);
             }
         }

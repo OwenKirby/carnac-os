@@ -593,6 +593,17 @@ int main(int argc, char **argv)
             if (sm.vmpop_ms) { printf("FAIL: the VOICING popup did not time out\n"); fails = 1; }
             perf_state.voice_mode[0] = keep;
         }
+        {                                            /* the VOICES popup (2026-11-20): SINGL 8 -> 6, DUAL both layers */
+            sm.vbpop_ms = UI_VBPOP_MS; sm.vb_from[0] = 8u; sm.vb_to[0] = 6u; sm.vb_from[1] = sm.vb_to[1] = 0u;
+            shot(dir, "vb_singl");
+            perf_state.perf_mode = PERF_DUAL_SYNTH;
+            ui_sm_enforce(&sm);
+            sm.vbpop_ms = UI_VBPOP_MS; sm.vb_from[0] = 4u; sm.vb_to[0] = 3u; sm.vb_from[1] = 4u; sm.vb_to[1] = 3u;
+            shot(dir, "vb_dual");
+            sm.vbpop_ms = 0u;
+            perf_state.perf_mode = PERF_SINGL_SYNTH;
+            ui_sm_enforce(&sm);
+        }
         perf_state.perf_mode = PERF_DUAL_SYNTH;
         engine_state[0] = e0; engine_state[1] = e1; seq_lanes[0] = s0; seq_lanes[1] = s1; seq_lanes[2] = s2; arp_state = a0;
         ui_sm_enforce(&sm);
