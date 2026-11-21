@@ -4729,7 +4729,7 @@ window.CARNAC_PARAMS = {
   "FLT_NAMES": [
    "SH-2",
    "MULTI",
-   "MS-20",
+   "MS-10",
    "FORMANT"
   ],
   "KC_NAMES": [

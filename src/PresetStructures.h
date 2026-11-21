@@ -57,7 +57,7 @@ enum {                                                                      /* s
     SUBWAVE_CURRENT,                 /* OSC1's live bank and morph frame, at the sub's own octave-down rate */
     SUBWAVE_COUNT
 };
-enum { FLT_SH2, FLT_MULTI, FLT_MS20, FLT_FORMANT, FLT_COUNT };  /* filter circuit flavour, in the FLAVOUR knob's
+enum { FLT_SH2, FLT_MULTI, FLT_MS10, FLT_FORMANT, FLT_COUNT };  /* filter circuit flavour, in the FLAVOUR knob's
         * order (dsp/filter.h). SH-2: the Roland OTA cascade, its morph LP24 .. BP .. HP24. MULTI: the zero-delay 4-pole
         * ladder multimode, its morph the mode LP24 .. LP18 .. LP12 .. LP6 .. BP .. HP12 .. HP24 .. NOTCH (slot 1 was the
         * LADDER until 2026-10-15: its slopes are MULTI's first four modes). MS-20: the Korg 35, its morph LP .. BP .. HP.

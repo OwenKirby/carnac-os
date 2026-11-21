@@ -64,7 +64,7 @@ def row_line(label):
 
 
 check(page["OSCMIX"]["rows"][5]["label"] == "NOISE LEVEL", "OSCMIX row 5 = NOISE LEVEL (CC 115)")
-check(page["FILTER1"]["rows"][1]["label"] == "FLAVOUR" and P["lists"]["FLT_NAMES"] == ["SH-2", "MULTI", "MS-20", "FORMANT"],
+check(page["FILTER1"]["rows"][1]["label"] == "FLAVOUR" and P["lists"]["FLT_NAMES"] == ["SH-2", "MULTI", "MS-10", "FORMANT"],
       "FILTER FLAVOUR row and its names")
 fine = page["OSC2"]["rows"][2]
 mx = int(re.search(r"#define OSC_FINE_MAX (\d+)", ps).group(1))

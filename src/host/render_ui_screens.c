@@ -265,7 +265,7 @@ int main(int argc, char **argv)
     /* FILTER: a resonant bandpass-ish SVF, a ladder; FILTER MIXER in each architecture */
     e->arch = VARCH_DUAL_FILTER;
     e->filter[0].cutoff = 70; e->filter[0].resonance = 90; e->filter[0].morph = 100;
-    e->filter[1].cutoff = 50; e->filter[1].resonance = 40; e->filter[1].flavour = FLT_MS20;
+    e->filter[1].cutoff = 50; e->filter[1].resonance = 40; e->filter[1].flavour = FLT_MS10;
     ui_sm_enforce(&sm);
     go(UIPAGE_FILTER1);
     shot(dir, "filter1");
@@ -277,7 +277,7 @@ int main(int argc, char **argv)
     shot(dir, "filter1_frm0");
     e->filter[0].flavour = FLT_MULTI; e->filter[0].morph = 0;
     shot(dir, "filter1_lad0");
-    e->filter[0].flavour = FLT_MS20; e->filter[0].morph = 0; e->filter[0].drive = 110; e->filter[0].resonance = 110;
+    e->filter[0].flavour = FLT_MS10; e->filter[0].morph = 0; e->filter[0].drive = 110; e->filter[0].resonance = 110;
     shot(dir, "filter1_ms20");
     e->filter[0].flavour = FLT_SH2; e->filter[0].morph = 100; e->filter[0].resonance = 90;
     go(UIPAGE_FILTER2);

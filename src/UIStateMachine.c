@@ -95,7 +95,7 @@ static const char *const MSRC_NAMES[] = {
     "lfo1", "lfo2", "lfo3",
 };
 PS_STATIC_ASSERT(sizeof(MSRC_NAMES) / sizeof(MSRC_NAMES[0]) == MSRC_COUNT, "one name per MSRC_*");
-static const char *const FLT_NAMES[] = {"SH-2", "MULTI", "MS-20", "FORMANT"};
+static const char *const FLT_NAMES[] = {"SH-2", "MULTI", "MS-10", "FORMANT"};
 static const char *const XMOD_NAMES[] = {"FM", "AM", "RING", "PM"};
 /* SUB WAVE (2026-11-11): one 6-step setting over SUB OCTAVE and the wave, step = wave * 2 + octave */
 static const char *const SUBWAVE6_NAMES[] = {"SINE -1", "SINE -2", "SQR -1", "SQR -2", "CURR -1", "CURR -2"};
@@ -3271,7 +3271,7 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     }
     info->label = k->label;
     if ((page == UIPAGE_FILTER1 || page == UIPAGE_FILTER2) && knob == 0u) {
-        /* the type morph is each circuit's own (dsp/filter.h): the SH-2's and MS-20's LP .. BP .. HP, the multimode's
+        /* the type morph is each circuit's own (dsp/filter.h): the SH-2's and MS-10's LP .. BP .. HP, the multimode's
          * mode, the formant's band spread */
         static const char *const MORPH_LABEL[FLT_COUNT] = {"LP-BP-HP", "MODE", "LP-BP-HP", "SPREAD"};
         uint8_t fl = sm->engine[layer]->filter[page - UIPAGE_FILTER1].flavour;

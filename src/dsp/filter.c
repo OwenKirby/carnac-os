@@ -117,15 +117,54 @@ if(snap){c[i]=n[i];d[i]=0.f;}
 else d[i]=(n[i]-c[i])*r;
 }
 }
-/* The feedback's diode pair: clipping at 4/3 full scale, as loud as the driven input it shares the loop's clipper
- * with, so past the loop's edge the resonance is a tone of its own that fights the input: it pulls into step with the
- * note and breaks loose again, the MS-20's warbly growl (measured: 20 .. 70 % of the energy off the note's harmonics
- * at a hot input, the resonance's own tone at a soft one). Clipped lower (G = 3, tried) the input always won and the
- * resonance only followed the note. A small bias mismatches the pair (asymmetric clipping, the even harmonics of
- * real diodes), its offset taken back at rest. k holds fb * G / 2 (filter_core_prepare). */
-#define MS20_DIODE_G 1.f
-#define MS20_DIODE_B 1000.f
-#define MS20_DIODE_SB (MS20_DIODE_B-MS20_DIODE_B*MS20_DIODE_B*MS20_DIODE_B*(1.f/(3.f*32768.f*32768.f)))
+/* MS-10 (the Korg35 Sallen-Key, after T. Stinchcombe's study, docs/Korg Filter): the diode pair sits in the FORWARD
+ * path, across the 58x amplifier the output is taken from, so a loud signal drops the loop's gain itself: the
+ * resonance gives way, the cutoff sags and every frequency distorts, and a quiet one (a ramp's zero crossing) rings.
+ * The diode amp: y = K (tanh(v) + v / 58), v = V3 / K, K the knee (Q15 units): gain 1 small, then the 1/58 slope.
+ * The ringing is lopsided, as the chip's (the signal pulls on its transistors): cutoff and feedback lean with the
+ * output's sign, higher on the negative half (simulated 1.7 vs 2 kHz). Resonance: its own law, the pot's linear
+ * k from 0 to KMAX, just past the loop's edge (2 1/3 with the second section loading the first; the real one's
+ * 58 / 26.5 x a JFET's ~1.1 = 2.4), so it rings more and more and only sings near the top. KMAX is that top as a
+ * share of the edge; ms10_edge gives the edge where this sampled loop really has it (measured 2026-11-21 by
+ * bisecting self-oscillation at each 8th cutoff step: 2.296 low down, the tanh's 1/58 leak taking the rest of 2 1/3;
+ * it climbs as the one-poles lose loop gain at high cutoffs), so the knob means the same at every cutoff. It is held
+ * from cutoff 120 (6.2) up: the top 7 steps (above ~9.8 kHz) fade instead of needing a feedback of 10. */
+#ifndef MS10_KMAX
+#define MS10_KMAX 1.067f
+#endif
+static const float ms10_edge_lut[16]={
+2.2962f,2.2962f,2.2985f,2.3031f,2.3103f,2.3211f,2.3370f,2.3613f,2.3982f,2.4557f,2.5465f,2.6942f,2.9445f,3.3927f,4.2720f,6.2456f};
+/* The sampled loop rings flat of the knob, more so as the cutoff rises (2.1 kHz at knob 95's 2.7). Its cutoff is
+ * moved up by this many knob steps (Q8), so self-oscillation lands on the knob's pitch (measured 2026-11-21, every
+ * 8th step); the two one-poles cannot ring above ~4.7 kHz, so from 112 the map just runs on to the top. */
+static const int16_t ms10_warp_lut[17]={0,0,26,44,59,77,120,179,269,407,632,996,1626,2895,1920,1792,0};
+static int32_t ms10_warp(int32_t cutoff_q8){
+if(cutoff_q8<0)cutoff_q8=0;
+if(cutoff_q8>(127<<8))cutoff_q8=127<<8;
+int32_t p=cutoff_q8>>3,i=p>>8,w;               /* 8 knob steps a table step */
+w=i>=16?0:ms10_warp_lut[i]+(((ms10_warp_lut[i+1]-ms10_warp_lut[i])*(p&255))>>8);
+cutoff_q8+=w;
+return cutoff_q8>(127<<8)?127<<8:cutoff_q8;
+}
+static float ms10_edge(int32_t cutoff_q8){
+int32_t p=cutoff_q8>>3,i=p>>8;                /* 8 knob steps a table step */
+if(i>=15)return ms10_edge_lut[15];
+if(p<0)return ms10_edge_lut[0];
+return ms10_edge_lut[i]+(ms10_edge_lut[i+1]-ms10_edge_lut[i])*(float)(p&255)*(1.f/256.f);
+}
+#ifndef MS10_KNEE
+#define MS10_KNEE 32768.f
+#endif
+#ifndef MS10_LEAK
+#define MS10_LEAK (1.f/58.f)
+#endif
+#ifndef MS10_GASYM
+#define MS10_GASYM 0.08f
+#endif
+#ifndef MS10_KASYM
+#define MS10_KASYM 0.05f
+#endif
+
 /* SH-2: the level the input mixer and the OTAs see at DRIVE 0 (clean), DRIVE's span above it (7 octaves: the top
  * drives as hard as MULTI's), the share of the feedback that boosts the input (before the mixer's clip), the
  * resonance's ceiling (the ringing peaks just under the output knee at the loop's edge, k 4) and the driven ringing's
@@ -182,7 +221,7 @@ const int same=0;
 #define FILTER_LP(k) ((k)->lp)
 const int same=k->ck_ok&&k->ck_res==res_q8&&k->ck_morph==morph_q8&&k->ck_drive==drive;
 if(same&&k->ck_cut==cutoff_q8){
-ramp_to(k->c,k->dc,k->cn,flavor==FLT_MULTI?2:flavor==FLT_MS20?1:3,shift,snap);
+ramp_to(k->c,k->dc,k->cn,flavor==FLT_MULTI||flavor==FLT_MS10?2:3,shift,snap);
 if(flavor==FLT_FORMANT)ramp_to(k->e,k->de,k->cn+3,3,shift,snap);
 return;
 }
@@ -210,21 +249,28 @@ n[0]=G;n[1]=1.f/(1.f+k->k*G2*G2);
 ramp_to(k->c,k->dc,n,2,shift,snap);
 return;
 }
-case FLT_MS20:{
-/* the positive feedback; DRIVE drives the input 1x .. 24x into the clipper, made up by drive^-1/16: dirtier as it
- * turns, never quieter (filter.h). The morph crossfades its outputs: LP s1, BP 2 (s0 - s1) (unity at the cutoff),
- * HP u - 2 s0 + s1, as taps on u, s0, s1. */
+case FLT_MS10:{
+/* MS-10: DRIVE drives the input 1x .. 24x into the circuit (the diode amp distorts it), made up by drive^-1/16
+ * (filter.h). The morph moves where the input goes in, as the Korg35's modes do: into R1 (LP), into C1's foot
+ * beside the feedback (BP) or into C2's foot (HP, the real one's 6 dB/oct with its resonant bump): taps 0..2, the
+ * drive folded in. The BP is made up: unity at its peak at resonance 0 (1 / 2 1/3 bare), 1.7x toward the edge
+ * (level with the old MS-20's BP there). */
 if(!same){
-float wl,wb,wh;
-k->ck_fb=feedback_q8(FLT_MS20,res_q8);
+float wl,wb,wh,r;
+r=(float)res_q8*(1.f/(115.f*256.f));
+k->ck_a=MS10_KMAX*r;                         /* the resonance pot: linear, as VR13 sets k2 (x the edge, below) */
 k->drive=(float)filter_ms20_drive_q8(drive)*(1.f/256.f);
 k->makeup=(float)filter_ms20_makeup_q8(drive)*(1.f/256.f);
 lbh_weights(morph_q8,&wl,&wb,&wh);
-k->tap[0]=wh*k->makeup;k->tap[1]=(2.f*wb-2.f*wh)*k->makeup;k->tap[2]=(wl-2.f*wb+wh)*k->makeup;
+k->tap[0]=wl*k->drive;k->tap[1]=wb*(1.f+(4.f/3.f)*(1.f-r))*k->drive;k->tap[2]=wh*k->drive;
 }
-k->k=(float)k->ck_fb*(MS20_DIODE_G*0.5f/4096.f)*(1.f-0.25f*filter_res_taper(cutoff_q8));
-n[0]=(float)lut_coeff(onepole_g44_lut,cutoff_q8)*(1.f/32768.f);
-ramp_to(k->c,k->dc,n,1,shift,snap);
+{
+int32_t cw=ms10_warp(cutoff_q8);
+float g=(float)lut_coeff(onepole_g44_lut,cw)*(1.f/32768.f);
+k->k=k->ck_a*ms10_edge(cw);
+n[0]=g;n[1]=g*(4.f/3.f)/(1.f+g*(1.f/3.f));   /* C1's node runs at 4/3 the rate (R1 || R2): 1 - (1 - g)^(4/3), near */
+}
+ramp_to(k->c,k->dc,n,2,shift,snap);
 return;
 }
 case FLT_FORMANT:{
@@ -340,21 +386,24 @@ v=(y2-s2)*G;y3=v+s2;k->s[2]=y3+v;
 v=(y3-s3)*G;y4=v+s3;k->s[3]=y4+v;
 return k->tap[0]*u+k->tap[1]*y1+k->tap[2]*y2+k->tap[3]*y3+k->tap[4]*y4;
 }
-/* MS-20: u = clip(drive x + diode(fb (s1 - s2))) into two one-poles: the driven input and the resonance clip
- * together, so drive chokes the scream into a fat, dirty tone (the MS-20's own trade) as well as distorting; the
- * output the morph's mix of the lowpass s2, the band and the highpass u - 2 s1 + s2 (taps), its level made up after
- * the drive (the clipping stays: that is the growl). With G = 1 / (1 + s) a
- * stage, the loop gives 1 / (s^2 + (2 - fb) s + 1): the resonance peaks as fb nears 2, the diodes holding it. */
-static float run_ms20(SvfCore *k,float x){
-float g=k->c[0];
-k->c[0]+=k->dc[0];
-float s0=k->s[0],s1=k->s[1];
-float fb=(sat_f(k->k*(s0-s1)+MS20_DIODE_B)-MS20_DIODE_SB)*(2.f/MS20_DIODE_G);   /* the diodes clip the feedback */
-float u=2.f*sat_f(0.5f*(x*k->drive+fb));     /* the driven input and the resonance clip together: drive chokes it */
-s0+=g*(u-s0);
-s1+=g*(s0-s1);
-k->s[0]=s0;k->s[1]=s1;
-return k->tap[0]*u+k->tap[1]*s0+k->tap[2]*s1;
+/* MS-10, one sample. State a = C1's voltage (V2 less what drives its foot), b = C2's (V3 less the HP input).
+ * V3 = b + hp x; the diode amp's output y (the filter's output) feeds C1's foot through the resonance, k y, beside the
+ * BP input; V2 = a + k y + bp x. C1's node relaxes toward (3 lp x + V3) / 4 (R1 = R2 / 3) at 4/3 the rate, C2's
+ * toward V2. Linear: 1 / (s^2 + (2 1/3 - k) s + 1). The rates and the feedback lean with t, the output's sign. */
+#define MS10_STEP(xin,a,b,g,ga,kk,pl,pb,ph,yo) do{\
+float v3_=(b)+(ph)*(xin),v_=v3_*(1.f/MS10_KNEE),t_=tanh_f(v_);\
+yo=MS10_KNEE*(t_+v_*MS10_LEAK);\
+float l_=1.f-MS10_GASYM*t_,f_=(kk)*(1.f-MS10_KASYM*t_)*(yo)+(pb)*(xin);\
+(a)+=(ga)*l_*(((pl)*(xin)*3.f+v3_)*0.25f-(a)-f_);\
+(b)+=(g)*l_*((a)+f_-v3_);\
+}while(0)
+static float run_ms10(SvfCore *k,float x){
+float g=k->c[0],ga=k->c[1],y;
+k->c[0]+=k->dc[0];k->c[1]+=k->dc[1];
+float a=k->s[0],b=k->s[1];
+MS10_STEP(x,a,b,g,ga,k->k,k->tap[0],k->tap[1],k->tap[2],y);
+k->s[0]=a;k->s[1]=b;
+return y*k->makeup;
 }
 /* SH-2: an OTA stage, y = s + g ota(in - y). The OTA's input is taken from the linear solve (in - y =
  * (in - s)(1 - G)), so small signals run exactly as MULTI's linear stages; big ones slew (the OTA's current limit) */
@@ -379,7 +428,7 @@ static float core_run(SvfCore *k,float x){
 float y;
 switch(k->flavour){
 case FLT_MULTI:y=run_ladder(k,x);break;
-case FLT_MS20:y=run_ms20(k,x);break;
+case FLT_MS10:y=run_ms10(k,x);break;
 case FLT_FORMANT:y=run_formant(k,x);break;
 default:y=run_ota(k,x);break;   /* FLT_SH2 */
 }
@@ -458,19 +507,16 @@ y[i]=soft_limit(p4*y4);
 }
 k->c[0]=G;k->c[1]=inv;k->s[0]=s0;k->s[1]=s1;k->s[2]=s2;k->s[3]=s3;
 }
-static void block_ms20(SvfCore *k,const float *x,float *y,int n){
-float G=k->c[0],dG=k->dc[0],s0=k->s[0],s1=k->s[1],kk=k->k,dr=k->drive;
+static void block_ms10(SvfCore *k,const float *x,float *y,int n){
+float G=k->c[0],dG=k->dc[0],GA=k->c[1],dGA=k->dc[1],a=k->s[0],b=k->s[1],kk=k->k,mk=k->makeup;
 float p0=k->tap[0],p1=k->tap[1],p2=k->tap[2];
 for(int i=0;i<n;i++){
-float g=G;
-G+=dG;
-float fb=(sat_f(kk*(s0-s1)+MS20_DIODE_B)-MS20_DIODE_SB)*(2.f/MS20_DIODE_G);
-float u=2.f*sat_f(0.5f*(x[i]*dr+fb));
-s0+=g*(u-s0);
-s1+=g*(s0-s1);
-y[i]=soft_limit(p0*u+p1*s0+p2*s1);
+float g=G,ga=GA,yo;
+G+=dG;GA+=dGA;
+MS10_STEP(x[i],a,b,g,ga,kk,p0,p1,p2,yo);
+y[i]=soft_limit(yo*mk);
 }
-k->c[0]=G;k->s[0]=s0;k->s[1]=s1;
+k->c[0]=G;k->c[1]=GA;k->s[0]=a;k->s[1]=b;
 }
 /* SH-2: run_ota line for line, its state and coefficients in locals over the block */
 static void block_ota(SvfCore *k,const float *x,float *y,int n){
@@ -515,7 +561,7 @@ k->c[0]=G;k->c[1]=inv;k->c[2]=g;k->s[0]=s0;k->s[1]=s1;k->s[2]=s2;k->s[3]=s3;
 void filter_core_render_block(SvfCore *k,const float *x,float *y,int n){
 switch(k->flavour){
 case FLT_MULTI:if(FILTER_LP(k))block_ladder_lp(k,x,y,n);else block_ladder(k,x,y,n);break;
-case FLT_MS20:block_ms20(k,x,y,n);break;
+case FLT_MS10:block_ms10(k,x,y,n);break;
 case FLT_FORMANT:block_formant(k,x,y,n);break;
 default:if(FILTER_LP(k))block_ota_lp(k,x,y,n);else block_ota(k,x,y,n);break;   /* FLT_SH2 */
 }

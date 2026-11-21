@@ -1175,7 +1175,7 @@ static void pu_lbh(int32_t m, int32_t *wl, int32_t *wb, int32_t *wh)
 
 /* one filter page's response at kq8, as filter.c's circuits give it (dsp/filter.h), DRIVE aside (it holds the level):
  * the SH-2's 4-pole loop tapped by its morph (LP24 y4, BP 4 (y2 - 2 y3 + y4), HP24 (1 - H)^4), MULTI's by its mode,
- * the MS-20's Sallen-Key 2-pole (1 / (s^2 + (2 - fb) s + 1)) at its morph's mix of LP, BP and HP, FORMANT's two bands,
+ * the MS-10's Korg35 Sallen-Key (1 / (s^2 + (2 1/3 - k) s + 1)) at its morph's mix of LP, BP and HP, FORMANT's two bands,
  * spread apart */
 static int32_t pu_filter_l2(const FilterParams *f, int32_t kq8, int32_t c)
 {
@@ -1187,10 +1187,10 @@ static int32_t pu_filter_l2(const FilterParams *f, int32_t kq8, int32_t c)
         fb = filter_feedback_q12(FLT_MULTI, res);
         filter_multi_taps(m, tap);
         return pu_ladder(kq8, c, tap, fb, 256 + ((fb * 64) >> 12));
-    case FLT_MS20:
-        fb = 8192 - filter_feedback_q12(FLT_MS20, res);
-        pu_lbh(m, &wl, &wb, &wh);
-        return pu_svf(kq8, c, fb < 64 ? 64 : fb, wl, wb, wh);
+    case FLT_MS10:                                   /* damping 2 1/3 - k, k 0 .. 2.45 on the knob (filter.c) */
+        fb = 9557 - (10035 * res) / 115;
+        pu_lbh(m, &wl, &wb, &wh);                    /* BP made up as filter.c's; HP the 6 dB one, s^2 + 2 s */
+        return pu_svf(kq8, c, fb < 64 ? 64 : fb, wl, (wb * (805 - 4 * res)) / 345 + 2 * wh, wh);
     case FLT_FORMANT:
         return pu_logadd(pu_svf(kq8, c, damp, 0, 64, 0), pu_svf(kq8, c + filter_formant_gap(m), damp, 0, 64, 0)) - 2 * 256;
     default: {                                       /* SH-2 */
@@ -1235,7 +1235,7 @@ static int32_t pu_cut_x(int32_t c) { return PV_X0 + (c * (PV_W - 1)) / 127; }
 
 static void pu_viz_filter(const UIStateMachine *sm, uint8_t i)
 {
-    static const char *const FLV[FLT_COUNT] = {"SH-2", "MULTI", "MS-20", "FORMANT"};
+    static const char *const FLV[FLT_COUNT] = {"SH-2", "MULTI", "MS-10", "FORMANT"};
     const EngineState *e = sm->engine[sm->s.active_synth_layer];
     const FilterParams *f = &e->filter[i];
     int32_t x, c = f->cutoff > VAL_MAX ? (int32_t)VAL_MAX : f->cutoff;
@@ -1258,7 +1258,7 @@ static void pu_viz_filter(const UIStateMachine *sm, uint8_t i)
             *e++ = '.';
             pu_cat(pu_num(e, t % 10, 0u, 1u), " OCT");
             break;
-        default:                                     /* SH-2, MS-20: the output nearest the morph */
+        default:                                     /* SH-2, MS-10: the output nearest the morph */
             pu_cat(b, m < 32u ? "LP" : m < 96u ? "BP" : "HP");
             break;
         }

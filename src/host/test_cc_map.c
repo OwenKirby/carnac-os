@@ -189,8 +189,8 @@ int main(void)
 
     /* NRPN: a panel control by its place, the value exact; routes; RPN 0 / 1 */
     setup(PERF_SINGL_SYNTH, 0, 1, VARCH_DUAL_OSC);
-    nrpn(0, UIPAGE_FILTER1, 4 + 1, FLT_MS20);       /* FILTER1's FLAVOUR row: exact, no CC of its own */
-    CHECK(engine_state[0].filter[0].flavour == FLT_MS20, "NRPN FILTER1 FLAVOUR: %u", engine_state[0].filter[0].flavour);
+    nrpn(0, UIPAGE_FILTER1, 4 + 1, FLT_MS10);       /* FILTER1's FLAVOUR row: exact, no CC of its own */
+    CHECK(engine_state[0].filter[0].flavour == FLT_MS10, "NRPN FILTER1 FLAVOUR: %u", engine_state[0].filter[0].flavour);
     nrpn(0, UIPAGE_FILTER1, 4 + 1, 100);            /* (past the list: its last) */
     CHECK(engine_state[0].filter[0].flavour == FLT_COUNT - 1, "NRPN FLAVOUR held to the list");
     nrpn(0, UIPAGE_AMP, 4, DRIVE_TUBE);
