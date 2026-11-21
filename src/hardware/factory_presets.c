@@ -163,7 +163,7 @@ static const uint8_t FV_BELTANE[] = {
 static const uint8_t FV_AUROCHS[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_VCO, F_SAW, 0), V_OSC(1, W_VCO, F_SAW, 0), V_(osc[1].fine, 71 /* +7 c */),
-    V_FLT(0, MS20, 10, 0, 54, 30, 28), V_KT(0, 64),
+    V_FLT(0, MS10, 10, 0, 54, 30, 28), V_KT(0, 64),
     V_ENV(0, 36, 80, 70, 70), V_ENV(1, 44, 72, 70, 70),
     V_VIB(84, 70),
     V_RT(0, ENV2, MODWHEEL, F1_CUTOFF, 30), V_RT(1, VELOCITY, NONE, F1_CUTOFF, 20), V_RT(2, LFO2, NONE, PITCH, 3),
@@ -191,7 +191,7 @@ static const uint8_t FV_AMBER[] = {
 static const uint8_t FV_OGHAM[] = {
     V_(arch, VARCH_SPREAD),
     V_OSC(0, W_VCO, F_SAWSQ, 0), V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SQUARE),
-    V_FLT(0, MS20, 20, 0, 70, 70, 20), V_KT(0, 64),
+    V_FLT(0, MS10, 20, 0, 70, 70, 20), V_KT(0, 64),
     V_ENV(0, 10, 80, 90, 60), V_ENV(1, 0, 70, 60, 60),
     V_VIB(84, 60),
     V_RTV(0, LFO2, MODWHEEL, PITCH, 4, 64), V_RT(1, MODWHEEL, NONE, F1_CUTOFF, 26),
@@ -215,7 +215,7 @@ static const uint8_t FV_DOLMEN[] = {
 static const uint8_t FV_SKYFIRE[] = {
     V_(arch, VARCH_FULL),
     V_OSC(0, W_VCO, F_SAW, 0), V_OSC(1, W_VCO, F_SAW, 0), V_(osc[1].sync, 1), V_(oscmix.balance, 100),
-    V_FLT(0, MS20, 40, 0, 88, 40, 16), V_KT(0, 64), V_FLT(1, MULTI, 20, M_BP, 90, 60, 10), V_KT(1, 64),
+    V_FLT(0, MS10, 40, 0, 88, 40, 16), V_KT(0, 64), V_FLT(1, MULTI, 20, M_BP, 90, 60, 10), V_KT(1, 64),
     V_(fltmix.routing, 127), V_(fltmix.balance, 50),
     V_ENV(0, 0, 90, 110, 50), V_ENV(1, 0, 76, 60, 50), V_ENV(2, 0, 76, 30, 60),
     V_VIB(86, 70),
@@ -229,7 +229,7 @@ static const uint8_t FV_SKYFIRE[] = {
 static const uint8_t FV_SKARA[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_VCO, F_SQUARE, 0), V_OSC(1, W_VCO, F_SQUARE, 1), V_(osc[1].fine, 66 /* +2 c */),
-    V_FLT(0, MS20, 0, 0, 76, 20, 0), V_KT(0, 64),
+    V_FLT(0, MS10, 0, 0, 76, 20, 0), V_KT(0, 64),
     V_ENV(0, 6, 80, 76, 40),
     V_LFO(2, L_SINE, 50),
     V_RT(0, LFO3, NONE, PAN, 20), V_RT(1, MODWHEEL, NONE, LFO3_SPEED, 40), V_RT(2, LFO3, NONE, F1_CUTOFF, 8),
@@ -298,7 +298,7 @@ static const uint8_t FV_FLUTE[] = {
 static const uint8_t FV_TUMULUS[] = {
     V_(arch, VARCH_BINAURAL),
     V_OSC(0, W_VCO, F_SAWSQ, -1),
-    V_FLT(0, MS20, 10, 0, 54, 44, 0), V_KT(0, 40),
+    V_FLT(0, MS10, 10, 0, 54, 44, 0), V_KT(0, 40),
     V_(fltmix.bin_cutoff_offset, FP_BIP(10)),
     V_ENV(0, 90, 100, 80, 100),
     V_LFO(2, L_SLEW, 30),
@@ -350,7 +350,7 @@ static const uint8_t FV_STAB[] = {
 static const uint8_t FV_MONOLITH[] = {
     V_(arch, VARCH_SPREAD),
     V_OSC(0, W_VCO, F_TRI, -1), V_(oscmix.sub_level, 60),
-    V_FLT(0, MS20, 50, 0, 50, 20, 16), V_KT(0, 40),
+    V_FLT(0, MS10, 50, 0, 50, 20, 16), V_KT(0, 40),
     V_ENV(0, 0, 64, 40, 36), V_ENV(1, 0, 50, 0, 30),
     V_RT(0, MODWHEEL, NONE, F1_CUTOFF, 30), V_RT(1, MODWHEEL, NONE, OSC1_SCAN, 9),
     V_AMP(20, TUBE, 10, 6), V_(analog, 20),
@@ -413,7 +413,7 @@ static const uint8_t FV_DUBBARROW[] = {
 static const uint8_t FV_SKANK[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_VCO, F_SAW, 0), V_OSC(1, W_VCO, F_SQUARE, 1),
-    V_FLT(0, MS20, 40, 50, 84, 50, 24), V_KT(0, 64),
+    V_FLT(0, MS10, 40, 50, 84, 50, 24), V_KT(0, 64),
     V_ENV(0, 0, 58, 0, 50), V_ENV(1, 0, 50, 0, 40),
     V_RT(0, MODWHEEL, NONE, F1_MORPH, 40),
     V_MFX(BBD_ECHO, 99, 35, 40, 45, 40, MFX_QE_DUCK, 40),
@@ -437,7 +437,7 @@ static const uint8_t FV_SIREN[] = {
 static const uint8_t FV_REED[] = {
     V_(arch, VARCH_DUAL_OSC),
     V_OSC(0, W_VCO, F_SQUARE, 0), V_OSC(1, W_VCO, F_P35, 0), V_(osc[1].fine, 67 /* +3 c */),
-    V_FLT(0, MS20, 10, 30, 86, 20, 6), V_KT(0, 64),
+    V_FLT(0, MS10, 10, 30, 86, 20, 6), V_KT(0, 64),
     V_ENV(0, 20, 80, 76, 50), V_ENV(1, 10, 70, 80, 50),
     V_VIB(86, 60),
     V_RTV(0, LFO2, MODWHEEL, PITCH, 4, 64), V_RT(1, MODWHEEL, NONE, F1_CUTOFF, 24),

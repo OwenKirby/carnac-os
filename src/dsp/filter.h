@@ -9,18 +9,19 @@
  *            saturating input stage, its output mixed from the loop's input and the four stages (the Oberheim Xpander's
  *            trick), so one resonant circuit gives LP24, LP18, LP12, LP6, BP, HP12, HP24 and NOTCH; the morph walks
  *            through them, crossfading neighbours (it replaced the LADDER, whose slopes are its first four modes)
- *   MS-20    the Korg 35 / Sallen-Key 2-pole: two one-poles, the band between them fed back (positive) through a
- *            diode clipper, so the resonance screams but stays bounded; the morph LP -> BP -> HP (its outputs,
- *            crossfaded; LOW and HIGH were two flavours until 2026-10-21)
+ *   MS-10    the Korg35 Sallen-Key 2-pole of the MS-10 / early MS-20 (2026-11-21, replacing the OTA-era MS-20):
+ *            the diode pair in the forward path, so a loud signal takes the resonance away and quiet ones ring; a
+ *            linear resonance law that sings only near the top; the morph moves the input LP -> BP -> HP (6 dB)
  *   FORMANT  two resonant SVF bandpasses in parallel, the second above the cutoff; the morph spreads them apart
  * DRIVE (every flavour, 0..127): the level into the circuit. SH-2: into the input mixer's clip and the OTAs, its makeup
- * holding the level; MULTI: into the ladder's input pair; MS-20: 1x .. 24x into the diode clipper (what its morph did
- * before); FORMANT: an input clip like the SH-2's, off at 0.
+ * holding the level; MULTI: into the ladder's input pair; MS-10: 1x .. 24x into the circuit (its diode amp);
+ * FORMANT: an input clip like the SH-2's, off at 0.
  * 2026-10-15: single-precision float (the FM1's FPU: a multiply 7 cycles against 10 for int32, 15 for the int64 MACs
  * the fixed-point cores needed; docs/fm1-measure-checklist.md). Signals stay in Q15 units (full scale 32768.0f), so
  * the int samples convert in and out without a scale. SH-2, FORMANT and MULTI are zero-delay-feedback (TPT)
  * circuits: one pass a sample at 44.1 kHz, stable and in tune up to 14 kHz, where the fixed-point Chamberlin SVF
- * and ladder needed two passes (2x oversampling). The MS-20 keeps its one-pass explicit loop (its tuned growl). */
+ * and ladder needed two passes (2x oversampling). The MS-10 runs one explicit pass (its loop has no delay-free path),
+ * its cutoff and resonance corrected by measured tables (filter.c). */
 typedef struct {
 float s1,s2;            // FORMANT: the first band's states (TPT ic1eq, ic2eq)
 float t1,t2;            // FORMANT: the second band's states
