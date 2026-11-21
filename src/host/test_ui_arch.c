@@ -822,8 +822,11 @@ int main(void)
         CHECK(n1[0] < n0[0] && sm.vbpop_ms > 0u && sm.vb_from[0] == n0[0] && sm.vb_to[0] == n1[0],
               "an edit that costs voices shows them: %u -> %u (popup %u, %u -> %u)", n0[0], n1[0], sm.vbpop_ms,
               sm.vb_from[0], sm.vb_to[0]);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, 1);
+        ui_sm_handle(&sm, UIEV_SELECT_ENC, -1);
+        CHECK(sm.vbpop_ms > 0u, ".. the encoders leave the strip up (it sits under the rows), as the knobs do");
         press(BTN_HOME);
-        CHECK(sm.vbpop_ms == 0u, ".. any control puts it away");
+        CHECK(sm.vbpop_ms == 0u, ".. a button puts it away");
         sm.engine[0]->mfx.type = MFX_OFF;
         ui_sm_tick(&sm, 10);
         CHECK(sm.vbpop_ms > 0u && sm.vb_to[0] > n1[0], ".. and giving them back shows that too");

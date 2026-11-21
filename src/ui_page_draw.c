@@ -3384,6 +3384,13 @@ __attribute__((noinline)) static void page_draw(UIStateMachine *sm, uint32_t for
                              NAME_LEN);
     }
     h = sq_mix(h, (uint32_t)ui_sm_layer_voices(sm, 0u) | (uint32_t)ui_sm_layer_voices(sm, 1u) << 8);
+    if (sm->vbpop_ms) {                              /* the VOICES strip has the band (ui_screen_draw draws it); */
+        pu_sig[PUR_VIZ] = pu_sig[PUR_GLYPH] = pu_sig[PUR_TRACK] = 0u;   /* .. its going draws it all again */
+        if (dlg && pu_dirty(PUR_DLG, sq_mix(base, (uint32_t)sm->dialog | (uint32_t)sm->dialog_choice << 8 |
+                                                        (uint32_t)sm->save_action << 16 | (uint32_t)sm->save_slot << 24), force))
+            pu_draw_dialog(sm);
+        return;
+    }
     h = pu_viz_live(sm, h);
     viz_drawn = pu_dirty(PUR_VIZ, h, force);
     if (viz_drawn)
@@ -3639,9 +3646,52 @@ static void pu_draw_vmpop(const UIStateMachine *sm, uint32_t force)
 
 /* THE VOICES POPUP (2026-11-20): an edit changed the voice budget (UIStateMachine.h vbpop_ms). The layer it shows is
  * the one under the panel's focus if its voices changed, else the other; the title says which in DUAL / SPLIT; WAS and
- * the count it had small, the voices now large, eight stones below lit for them; the other layer's change, if any, a
- * line under */
+ * the count it had small, the voices now large, the pool's stones lit for them; the other layer's change, if any, a
+ * line beside the title.
+ * 2026-11-21 (the user: "only take up the bottom third, so it doesn't hide our parameter info while we change the
+ * knobs"): a strip over the visualizer's band (y PU_VB_Y .. 239), under the knobs and the rows. page_draw leaves the
+ * band to it while it is up; over a full-screen popup (the parameter list, SAVE's keyboard, the VOICING) it is drawn
+ * again whenever that popup redraws. SEQ / ARP / REC draw their own lower half live: there it is the whole screen
+ * (pu_draw_vbpop_full) */
+#define PU_VB_Y (PU_MENU_Y + PU_MENU_H)  /* 161: the menu's last row ends here */
+#define PU_VB_H (240 - PU_VB_Y)
+
 static void pu_draw_vbpop(const UIStateMachine *sm, uint32_t force)
+{
+    uint8_t one = (uint8_t)(sm->perf->perf_mode == PERF_SINGL_SYNTH), f = sm->s.active_synth_layer < NLAYER ?
+                  sm->s.active_synth_layer : 0u, l, o, i;
+    char t[16], w[12], v[6], x[16], *p;
+    l = one ? 0u : (sm->vb_from[f] != sm->vb_to[f] ? f : (uint8_t)(f ^ 1u));
+    o = (uint8_t)(l ^ 1u);
+    if (!pu_dirty(PUR_VBPOP, sq_mix(sq_mix(2166136261u, sq_pal), (uint32_t)sm->vb_from[0] | (uint32_t)sm->vb_to[0] << 4 |
+                  (uint32_t)sm->vb_from[1] << 8 | (uint32_t)sm->vb_to[1] << 12 | (uint32_t)l << 16 | 1u << 20), force))
+        return;
+    pu_cat(t, one ? "VOICES" : l ? "L2 VOICES" : "L1 VOICES");
+    p = pu_cat(w, "WAS ");
+    pu_num(p, sm->vb_from[l], 0u, 1u);
+    pu_num(v, sm->vb_to[l], 0u, 1u);
+    x[0] = '\0';
+    if (!one && sm->vb_from[o] != sm->vb_to[o]) {
+        p = pu_cat(x, o ? "L2 " : "L1 ");
+        p = pu_num(p, sm->vb_from[o], 0u, 1u);
+        p = pu_cat(p, " > ");
+        pu_num(p, sm->vb_to[o], 0u, 1u);
+    }
+    cv_begin(240, PU_VB_H, SQC(BG));
+    pu_tablet(4, PU_VB_Y + 1, 232, PU_VB_H - 2, 63u, PU_VB_Y);
+    pu_rune_n(26, PU_VB_Y + 9, t, SQC(MID), 1, 15, PU_VB_Y);          /* the title, top left */
+    if (x[0])                                                           /* the other layer, top right */
+        pu_rune_n(214 - PU_RUNE_N_W(pu_strlen(x), 1), PU_VB_Y + 9, x, SQC(MID), 1, 15, PU_VB_Y);
+    pu_rune_n(26, PU_VB_Y + 22, v, SQC(THEME), 4, 2, PU_VB_Y);          /* the voices now, large */
+    pu_rune_n(26, PU_VB_Y + 62, w, SQC(DIM), 1, 11, PU_VB_Y);           /* WAS n, under it */
+    for (i = 0u; i < VOICE_POOL; i++)                /* the pool, a stone a voice: lit for this layer's */
+        sq_stone(84 + (int32_t)i * 17, PU_VB_Y + 70 - PU_VB_Y, 11, 46, 46, i < sm->vb_to[l] ? SQC(THEME) : SQC(DIM),
+                 i * 7u + 5u, i < sm->vb_to[l] ? 0u : 1u, 0u);   /* (the rest of the pool: outlines) */
+    cv_blit(0, PU_VB_Y);
+}
+
+/* the whole-screen VOICES (SEQ / ARP / REC, whose lower half is live) */
+static void pu_draw_vbpop_full(const UIStateMachine *sm, uint32_t force)
 {
     uint8_t one = (uint8_t)(sm->perf->perf_mode == PERF_SINGL_SYNTH), f = sm->s.active_synth_layer < NLAYER ?
                   sm->s.active_synth_layer : 0u, l, o, i;
@@ -3681,21 +3731,25 @@ static void pu_draw_vbpop(const UIStateMachine *sm, uint32_t force)
 static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint32_t force)
 {
     static uint8_t last_page = 0xFFu, last_layer, last_dlg, last_pop, last_pal = 0xFFu, last_hold = BTN_COUNT, last_mfx;
+    static uint8_t last_vbs;
     uint8_t dlg = (uint8_t)(sm->dialog != UIDLG_NONE), moved = (uint8_t)(sm->page != last_page);
     uint8_t mfx = pu_mfx_view(sm);                   /* (AMP's MFX group: another layout, everything again) */
-    uint8_t pop = sm->browse ? 1u : sm->vbpop_ms ? 5u : sm->rowpop ? 2u : ui_sm_keyboard_visible(sm) ? 3u :
-                  sm->vmpop_ms ? 4u : 0u;            /* the popup up: the preset list, the VOICES (over the parameter
-                                                     * list: the next detent brings the list back), the parameter list,
-                                                     * SAVE's name keyboard, the VOICING */
+    uint8_t live_low = (uint8_t)(sm->page == UIPAGE_REC || sm->page == UIPAGE_SEQ || sm->page == UIPAGE_ARP);
+    uint8_t vbs = (uint8_t)(sm->vbpop_ms && !sm->browse && !live_low);   /* the VOICES strip, bottom third */
+    uint8_t pop = sm->browse ? 1u : sm->vbpop_ms && live_low ? 5u : sm->rowpop ? 2u : ui_sm_keyboard_visible(sm) ? 3u :
+                  sm->vmpop_ms ? 4u : 0u;            /* the popup up: the preset list, the VOICES on SEQ / ARP / REC
+                                                     * (whole screen), the parameter list, SAVE's name keyboard, the
+                                                     * VOICING; elsewhere the VOICES is a strip over the bottom third */
     sq_pal = pu_page_pal(sm);                        /* a change redraws everything (page_draw, seq_draw: pal_drawn) */
     uint8_t held = (uint8_t)(sm->hold == BTN_HOME || sm->hold == BTN_SAVE);
     if (!held && last_hold != BTN_COUNT)
         force = 1u;                                  /* the hold strip gone: the page under it again */
     last_hold = held ? sm->hold : (uint8_t)BTN_COUNT;
     if (moved || sm->s.active_synth_layer != last_layer || dlg != last_dlg || pop != last_pop || sq_pal != last_pal ||
-        mfx != last_mfx) {
+        mfx != last_mfx || vbs != last_vbs) {
         if (moved)
             pu_top = 0;
+        last_vbs = vbs;                              /* (the strip going: the visualizer under it again) */
         last_mfx = mfx;
         last_pal = sq_pal;
         last_page = sm->page;
@@ -3705,6 +3759,7 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
         force = 1u;                                  /* (the list closing: everything under it again) */
     }
     if (pop) {                                       /* a popup: the whole screen, nothing else drawn under it */
+        uint32_t under = pu_sig[PUR_ROWPOP] ^ pu_sig[PUR_NAMEKB] ^ pu_sig[PUR_VMPOP];
         if (pop == 1u)
             pu_draw_browse(sm, force);
         else if (pop == 2u)
@@ -3712,9 +3767,11 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
         else if (pop == 3u)
             pu_draw_namekb(sm, force);
         else if (pop == 5u)
-            pu_draw_vbpop(sm, force);
+            pu_draw_vbpop_full(sm, force);
         else
             pu_draw_vmpop(sm, force);
+        if (vbs)                                     /* the VOICES strip over it, again whenever it redrew */
+            pu_draw_vbpop(sm, force || under != (pu_sig[PUR_ROWPOP] ^ pu_sig[PUR_NAMEKB] ^ pu_sig[PUR_VMPOP]));
         if (held)
             pu_draw_hold(sm);
         return;
@@ -3727,6 +3784,8 @@ static void ui_screen_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a
         arp_draw(sm, q, a, force);
     else
         page_draw(sm, force);
+    if (vbs)
+        pu_draw_vbpop(sm, force);                    /* over the visualizer's band (page_draw left it alone) */
     sq_draw_moon(force);                             /* the battery, top right on every page */
     if (held)
         pu_draw_hold(sm);

@@ -3040,7 +3040,9 @@ void ui_sm_handle(UIStateMachine *sm, uint8_t type, int8_t arg)
         sm->rowpop = 0u;             /* .. and the parameter list */
     sm->kb_ms = 0u;                  /* .. and SAVE's name keyboard (only knobs 3 / 4 keep it up; SAVE then stores) */
     sm->vmpop_ms = 0u;               /* .. and the VOICING popup */
-    sm->vbpop_ms = 0u;               /* .. and the VOICES popup (the next control's edit may bring it back) */
+    if (type != UIEV_SELECT_ENC && type != UIEV_ALGO_ENC)
+        sm->vbpop_ms = 0u;           /* .. and the VOICES strip (2026-11-21: it sits under the rows, so the encoders
+                                      * leave it up, as the knobs do; it times out) */
     if (sm->dialog == UIDLG_WRITING)                 /* nothing interrupts a flash write */
         return;
     if (type == UIEV_TRANSPORT) {                    /* REC: 7.2 on the SEQ page, 8.1 on the ARP page, else the loop */

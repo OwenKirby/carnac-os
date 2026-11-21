@@ -600,6 +600,13 @@ int main(int argc, char **argv)
             ui_sm_enforce(&sm);
             sm.vbpop_ms = UI_VBPOP_MS; sm.vb_from[0] = 4u; sm.vb_to[0] = 3u; sm.vb_from[1] = 4u; sm.vb_to[1] = 3u;
             shot(dir, "vb_dual");
+            go(UIPAGE_FILTER1);                      /* the strip under a sound page's knobs and rows */
+            sm.vbpop_ms = UI_VBPOP_MS;
+            shot(dir, "vb_filter");
+            go(UIPAGE_ENV1);
+            sm.vbpop_ms = UI_VBPOP_MS; sm.vb_from[0] = 4u; sm.vb_to[0] = 3u; sm.vb_from[1] = 4u; sm.vb_to[1] = 4u;
+            shot(dir, "vb_env");
+            go(UIPAGE_PERF);
             sm.vbpop_ms = 0u;
             perf_state.perf_mode = PERF_SINGL_SYNTH;
             ui_sm_enforce(&sm);
