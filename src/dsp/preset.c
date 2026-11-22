@@ -58,6 +58,9 @@ void engine_defaults(EngineState *e)
     e->oscmix.bin_scan_offset = BIPOLAR_CENTER;
     e->oscmix.noise_col_mod_amt = BIPOLAR_CENTER;
     e->noise_harmonic = 0;               /* the resonance on the note itself */
+    e->noise_cluster = 0;                /* one band */
+    e->noise_tint = 0;                   /* white */
+    e->noise_inharm = 0;                 /* harmonic overtones */
 
     for (unsigned i = 0; i < NFILTER; i++) {
         e->filter[i].cutoff = 110;       /* open */

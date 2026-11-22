@@ -173,13 +173,13 @@ int main(int argc, char **argv)
 
     /* 1 the list */
     uint32_t nw = pcm_wave_count();
-    CHECK(nw == 14, "the store holds the 14 waves (%u)", (unsigned)nw);
+    CHECK(nw == 17, "the store holds the 17 waves (%u)", (unsigned)nw);   /* the LA bank (2026-11-21): + HARP BEAKER BOWED */
     CHECK(wave_list_count() == NUM_BANKS + nw, "list: %u = banks + waves", (unsigned)wave_list_count());
     for (uint32_t p = 0; p < wave_list_count(); p++)
         CHECK(wave_list_pos(wave_list_code(p)) == p, "list position %u round-trips", (unsigned)p);
     CHECK(wave_list_code(NUM_BANKS) == WAVE_PCM_FIRST, "PCM waves after the banks");
     CHECK(!strcmp(wave_name(WAVE_PCM_FIRST, nb), "CHOIR") &&
-          !strcmp(wave_name((uint8_t)(WAVE_PCM_FIRST + nw - 1u), nb), "WOOD BLOCK"),
+          !strcmp(wave_name((uint8_t)(WAVE_PCM_FIRST + nw - 1u), nb), "BOWED"),
           "names: %s .. %s", wave_name(WAVE_PCM_FIRST, nb), wave_name((uint8_t)(WAVE_PCM_FIRST + nw - 1u), nb));
     CHECK(wave_kind(5) == 0 && wave_kind(WAVE_ATK_FIRST) == -1 && wave_kind((uint8_t)(WAVE_PCM_FIRST + nw)) == -1,
           "kinds: a bank, no attack-waves, past the waves");

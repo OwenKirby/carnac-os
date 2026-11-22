@@ -80,7 +80,8 @@ static void factory_name(uint8_t *dst, const char *s)
 /* the waves (dsp/pcm_osc.h): banks 0..8 (bank 0 the VCO), the PCM store's waves from 64 */
 enum { W_VCO, W_LEY, W_MOONSTONE, W_STARS, W_HALO, W_TOMB, W_AURORA, W_FROST, W_DUST };
 enum { W_CHOIR = 64, W_SPIRITVOX, W_PANFLUTE, W_HORNS, W_STRENS, W_HOARFROST, W_SINGSTONE, W_LORE, W_BELL,
-       W_ROCKGONG, W_RAINSTICK, W_MENHIR, W_LOGDRUM, W_WOODBLOCK };   /* the rebuilt PCM bank (2026-11-06) */
+       W_ROCKGONG, W_RAINSTICK, W_MENHIR, W_LOGDRUM, W_WOODBLOCK,   /* the rebuilt PCM bank (2026-11-06) */
+       W_HARP, W_BEAKER, W_BOWED };                                /* the LA bank (2026-11-21) */
 /* the VCO's shapes by SCAN (as Foundations' frames): the SH-2's VCO-1 */
 enum { F_TRI = 0, F_SAW = 18, F_SQUARE = 36, F_P35 = 54, F_P20 = 73, F_P10 = 91, F_PMIN = 109, F_SAWSQ = 127 };
 enum { L_SINE = 0, L_TRI = 21, L_SAW = 43, L_SQUARE = 64, L_STEP = 85, L_SLEW = 106 };
@@ -114,7 +115,7 @@ static const uint8_t FV_LUNAR[] = {
  * settling to the hum; higher notes further right. The bells LUNAR STANDSTILL arpeggiates. WHEEL: the bell turns
  * clangorous (SCAN toward the high FM index). */
 static const uint8_t FV_MOONGLASS[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_MOONSTONE, 30, 1),
     V_FLT(0, MULTI, 0, M_LP12, 96, 20, 20), V_KT(0, 64),
     V_ENV(0, 0, 78, 0, 76), V_ENV(1, 0, 62, 0, 60), V_ENV(2, 0, 66, 0, 60),
@@ -146,7 +147,7 @@ static const uint8_t FV_HEARTH[] = {
  * low-pass, the string ensemble's three swinging brigades (ENSEMBLE). WHEEL: brighter, and the ensemble swings
  * deeper. */
 static const uint8_t FV_BELTANE[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_SAW, 0), V_(oscmix.spread, 50),
     V_FLT(0, MULTI, 0, M_LP12, 84, 10, 0), V_KT(0, 50),
     V_ENV(0, 66, 90, 120, 80),
@@ -189,7 +190,7 @@ static const uint8_t FV_AMBER[] = {
  * driven, resonant MS-20, a slow glide, a vibrato that waits (half its depth without the wheel). WHEEL: the cutoff
  * opens and the vibrato reaches its full depth. */
 static const uint8_t FV_OGHAM[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_SAWSQ, 0), V_(oscmix.sub_level, 40), V_(oscmix.sub_waveform, SUBWAVE_SQUARE),
     V_FLT(0, MS10, 20, 0, 70, 70, 20), V_KT(0, 64),
     V_ENV(0, 10, 80, 90, 60), V_ENV(1, 0, 70, 60, 60),
@@ -201,7 +202,7 @@ static const uint8_t FV_OGHAM[] = {
 /* ---- 7 DOLMEN BASS: the capstone's weight. A VCO SAW an octave down over a sine sub through a driven SH-2 with a
  * bite of ENV2; tied notes slide. WHEEL: the filter opens. */
 static const uint8_t FV_DOLMEN[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_SAW, -1), V_(oscmix.sub_level, 70),
     V_FLT(0, SH2, 40, 0, 44, 50, 20), V_KT(0, 40),
     V_ENV(0, 0, 76, 100, 40), V_ENV(1, 0, 60, 10, 40),
@@ -243,7 +244,7 @@ static const uint8_t FV_SKARA[] = {
  * works, a sine sub, a resonant SH-2 plucked by a short ENV2. WHEEL: the cutoff opens (the sequences ride it with a
  * lane). */
 static const uint8_t FV_ORRERY[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_P20, 0), V_(oscmix.sub_level, 40),
     V_FLT(0, SH2, 50, 0, 50, 80, 22), V_KT(0, 50),
     V_ENV(0, 0, 64, 30, 44), V_ENV(1, 0, 54, 0, 40),
@@ -256,7 +257,7 @@ static const uint8_t FV_ORRERY[] = {
  * each pluck lighting more of them (ENV3 > SCAN), a resonant MULTI low-pass, higher notes further right. WHEEL: the
  * whole sky comes out (SCAN) and the filter opens. */
 static const uint8_t FV_CALSEQ[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_STARS, 40, 0),
     V_FLT(0, MULTI, 0, M_LP24, 76, 50, 26), V_KT(0, 64),
     V_ENV(0, 0, 72, 0, 60), V_ENV(1, 0, 56, 0, 50), V_ENV(2, 0, 56, 0, 50),
@@ -268,7 +269,7 @@ static const uint8_t FV_CALSEQ[] = {
 /* ---- 12 SKY DISC CHOIR: the tape-replay choir of the 70s, for the sky disc found at Nebra. The PCM CHOIR, one
  * playhead as the tapes had (SPREAD 0: cheaper under chords, PERF TEST 2026-11-19), LFO1 drifting the vowel, a slow wow on the pitch (LFO2) as the tapes stretch. WHEEL: ooh opens to aah. */
 static const uint8_t FV_SKYDISC[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_CHOIR, 20, 0),
     V_FLT(0, MULTI, 0, M_LP12, 88, 10, 0), V_KT(0, 50),
     V_ENV(0, 70, 100, 116, 92),
@@ -284,7 +285,7 @@ static const uint8_t FV_SKYDISC[] = {
 static const uint8_t FV_FLUTE[] = {
     V_(arch, VARCH_SPREAD),
     V_OSC(0, W_PANFLUTE, 30, 0),
-    V_(oscmix.noise_level, 10), V_(oscmix.noise_colour, NOISE_BAND),
+    V_(oscmix.balance, 10), V_(oscmix.noise_colour, WHISTLE_BAND), V_(noise_tint, 127),   /* the band on brown, as before */
     V_FLT(0, MULTI, 0, M_LP12, 100, 10, 0), V_KT(0, 64),
     V_ENV(0, 40, 90, 110, 70),
     V_VIB(84, 70),
@@ -325,7 +326,7 @@ static const uint8_t FV_LONGMEG[] = {
  * snapping ENV2; the velocity (the sequence's accents) digs deeper; OVERDRIVE; tied notes slide. WHEEL: the cutoff
  * opens and the SH-2 is driven harder. */
 static const uint8_t FV_ACID[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_SAW, -1), V_(oscmix.sub_level, 20), V_(oscmix.sub_waveform, SUBWAVE_SQUARE),
     V_FLT(0, SH2, 70, 0, 36, 104, 32), V_KT(0, 50),
     V_ENV(0, 0, 70, 90, 30), V_ENV(1, 0, 56, 0, 40),
@@ -348,7 +349,7 @@ static const uint8_t FV_STAB[] = {
 /* ---- 18 MONOLITH BASS: the techno bass, deep as the stone goes into the ground. A VCO TRIANGLE an octave down over a
  * sine sub, a driven MS-20, a short pluck. WHEEL: the filter opens and the triangle leans to a saw (growl). */
 static const uint8_t FV_MONOLITH[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_TRI, -1), V_(oscmix.sub_level, 60),
     V_FLT(0, MS10, 50, 0, 50, 20, 16), V_KT(0, 40),
     V_ENV(0, 0, 64, 40, 36), V_ENV(1, 0, 50, 0, 30),
@@ -359,7 +360,7 @@ static const uint8_t FV_MONOLITH[] = {
 /* ---- 19 CAIRN KICK: a stone dropped into the chamber. A VCO TRIANGLE two octaves down, its pitch falling two octaves
  * in a blink (ENV3), a driven SH-2, TUBE. WHEEL: a harder beater (the filter opens). */
 static const uint8_t FV_KICK[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_TRI, -2), V_FLT(0, SH2, 80, 0, 60, 10, 0), V_ENV(0, 0, 60, 0, 50), V_ENV(2, 0, 36, 0, 36),
     V_AMP(42, TUBE, 6, 6),
     V_RT(0, ENV3, NONE, OSC1_PITCH, 45), V_RT(1, MODWHEEL, NONE, F1_CUTOFF, 30),
@@ -370,7 +371,7 @@ static const uint8_t FV_KICK[] = {
 static const uint8_t FV_HAT[] = {
     V_(arch, VARCH_SPREAD),
     V_OSC(0, W_VCO, F_SQUARE, 3),
-    V_(oscmix.noise_level, 110), V_(oscmix.noise_colour, NOISE_WHITE),
+    V_(oscmix.balance, 110), V_(oscmix.noise_colour, NOISE_WHITE),
     V_FLT(0, MULTI, 0, M_HP24, 112, 30, 0),
     V_ENV(0, 0, 42, 0, 38),
     V_RT(0, MODWHEEL, NONE, NOISE_COLOUR, 16), V_RT(1, VELOCITY, NONE, F1_CUTOFF, 10),
@@ -381,7 +382,7 @@ static const uint8_t FV_HAT[] = {
  * folded until it cracks) plucked through a resonant MULTI, LFO1 slowly working the cutoff. WHEEL: the ice cracks
  * (SCAN) and the filter opens a little (the TRISKELE sequence rides it with a lane looping against the notes). */
 static const uint8_t FV_TRISKELE[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_FROST, 20, 0),
     V_FLT(0, MULTI, 0, M_LP24, 70, 60, 24), V_KT(0, 64),
     V_ENV(0, 0, 58, 0, 50), V_ENV(1, 0, 50, 0, 40),
@@ -397,7 +398,7 @@ static const uint8_t FV_TRISKELE[] = {
  * tied steps slide. WHEEL: a clock-synced eighth-note wobble on the cutoff (LFO2 VIA WHEEL), and a little more
  * cutoff under it. */
 static const uint8_t FV_DUBBARROW[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_SAW, -1),
     V_(oscmix.sub_level, 70),
     V_FLT(0, SH2, 30, 0, 46, 40, 15), V_KT(0, 40),
@@ -423,7 +424,7 @@ static const uint8_t FV_SKANK[] = {
 /* ---- 24 SPIRIT SIREN: the dub siren. A VCO SQUARE through an SH-2; hold a note and push the WHEEL: LFO2 sweeps the
  * pitch up and down (LFO2 VIA WHEEL), wider and wider. Made for the delay. */
 static const uint8_t FV_SIREN[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_SQUARE, 0), V_FLT(0, SH2, 30, 0, 90, 50, 0), V_KT(0, 64),
     V_ENV(0, 0, 90, 127, 70),
     V_LFO(1, L_TRI, 60),
@@ -447,7 +448,7 @@ static const uint8_t FV_REED[] = {
 /* ---- 26 SPIRIT ZAP: the dub laser, a spirit passing. A VCO SQUARE an octave up, its pitch falling two and a half
  * octaves (ENV3), through an SH-2 ringing on its resonance; mostly delay. WHEEL: low-pass -> band-pass. */
 static const uint8_t FV_ZAP[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_VCO, F_SQUARE, 1), V_FLT(0, SH2, 40, 0, 96, 110, 50), V_KT(0, 64),
     V_ENV(0, 0, 60, 0, 56), V_ENV(1, 0, 50, 0, 50), V_ENV(2, 0, 50, 0, 50),
     V_AMP(20, SOFT, 80, 50),
@@ -460,7 +461,7 @@ static const uint8_t FV_ZAP[] = {
  * phaser of many notches), the ripples tightening over the note (ENV3 > SCAN) and drifting on LFO1, each voice
  * wandering in the stereo field (LFO3), the 90s CHORUS. WHEEL: the curtains ripple faster (SCAN) and spread wider. */
 static const uint8_t FV_AURORA[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_AURORA, 30, 0), V_(oscmix.spread, 50),
     V_FLT(0, MULTI, 0, M_LP12, 92, 20, 0), V_KT(0, 50),
     V_ENV(0, 76, 100, 116, 96), V_ENV(2, 96, 110, 60, 96),
@@ -509,7 +510,7 @@ static const uint8_t FV_BRODGAR[] = {
  * WIND HARP of six strings tuned to D minor ringing in sympathy. WHEEL: the harp blooms (MIX) and the chamber opens
  * further. */
 static const uint8_t FV_PASSAGE[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_TOMB, 10, 0), V_(oscmix.spread, 30),
     V_FLT(0, MULTI, 0, M_LP12, 100, 10, 0), V_KT(0, 50),
     V_ENV(0, 70, 100, 116, 96), V_ENV(2, 100, 110, 90, 96),
@@ -524,7 +525,7 @@ static const uint8_t FV_PASSAGE[] = {
  * and RINGING STONES: six struck stones tuned in fifths on D answering it. WHEEL: the scrape turns to the singing
  * tone (SCAN) and the stones ring louder (MIX). */
 static const uint8_t FV_SINGING[] = {
-    V_(arch, VARCH_SPREAD),
+    V_(arch, VARCH_SPREAD), V_(oscmix.balance, 0),
     V_OSC(0, W_SINGSTONE, 30, 0),
     V_FLT(0, MULTI, 0, M_LP12, 100, 10, 0), V_KT(0, 50),
     V_ENV(0, 10, 96, 60, 96),

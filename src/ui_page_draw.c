@@ -924,7 +924,7 @@ static void pu_viz_noise(const UIStateMachine *sm)
 {
     uint8_t layer = sm->s.active_synth_layer;
     const EngineState *e = sm->engine[layer];
-    int32_t c = e->oscmix.noise_colour, lv = e->oscmix.noise_level, v = pu_voice(layer), x, y, k, near;
+    int32_t c = noise_morph_of(e), lv = noise_amount_of(e), v = pu_voice(layer), x, y, k, near;
     int32_t res = c > 32 ? (c - 32) * 256 / 95 : 0;            /* the resonance, 0..256 */
     int32_t coarse = c < 16 ? 1 : 2, drift = (int32_t)(pn_t / 2u), amp = 13 * 256, spread;
     uint32_t dens = (uint32_t)(lv + 20) * (uint32_t)(256 - res / 2) / 148u;   /* the fog: level, thinned by the song */
@@ -991,7 +991,7 @@ static void pu_viz_stack(const UIStateMachine *sm)
     const EngineState *e = sm->engine[sm->s.active_synth_layer];
     const OscMixerParams *m = &e->oscmix;
     int32_t voice, morph1 = pu_osc_morph(sm, 0, &voice), morph2 = pu_osc_morph(sm, 1, &voice);
-    int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2, amt = m->xmod_amt, depth = amt * 258, col = m->noise_colour;
+    int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2, amt = m->xmod_amt, depth = amt * 258, col = noise_morph_of(e);
     int32_t oct = (osc_coarse_semis(e->osc[1].coarse) - osc_coarse_semis(e->osc[0].coarse)) / 12;   /* (whole octaves) */
     int32_t x, pa = 4096, pb = 4096, brown = 0, blend = e->fltmix.balance, ha, hb, gap, y;
     uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;
@@ -1064,7 +1064,7 @@ static void pu_viz_oscmix(const UIStateMachine *sm)
     const OscMixerParams *m = &e->oscmix;
     uint8_t arch = varch_of(e), spread = (uint8_t)(arch == VARCH_SPREAD && m->spread);
     int32_t voice, morph1 = pu_osc_morph(sm, 0, &voice), morph2 = pu_osc_morph(sm, 1, &voice);
-    int32_t w1 = 127, w2 = 0, ws = m->sub_level, wn = m->noise_level, x, brown = 0, col = m->noise_colour;
+    int32_t w1 = 127, w2 = 0, ws = m->sub_level, wn = m->noise_level, x, brown = 0, col = noise_morph_of(e);
     int32_t bc = col < (int32_t)NOISE_BROWN ? col * 2 : 127, wh = col > (int32_t)NOISE_BROWN ? (col - 64) * 2 : 0;
     int32_t ncyc = m->sub_octave == SUBOCT_DOWN2 ? 4 : 2;
     uint8_t wave1 = e->osc[0].wavebank, wave2 = e->osc[1].wavebank;

@@ -112,6 +112,8 @@ static void base_patch(EngineState *e, uint8_t arch)
     e->env[0].attack = 0; e->env[0].sustain = 79; e->env[0].release = 20;   /* (79: the level 100 held before the */
     e->env[1].attack = 0; e->env[1].sustain = 79; e->env[1].release = 20;   /* SUSTAIN law, 2026-11-12) */
     e->oscmix.spread = 60;
+    if (arch == VARCH_SINGLE || arch == VARCH_SPREAD)
+        e->oscmix.balance = 0;               /* OSC/NOISE at OSC only: these patches had no noise (2026-11-21) */
     e->oscmix.xmod_amt = 20;
     e->osc[1].wavebank = 3;
     /* LFO1 on the filter cutoff so BINAURAL's phase offset has something to shift (a route since 2026-11-11) */
@@ -562,8 +564,7 @@ int main(void)
         base_patch(&engine_state[0], VARCH_SINGLE);
         engine_state[0].filter[0].mod_amt = 0;
         engine_state[0].filter[0].cutoff = 127;
-        engine_state[0].oscmix.balance = 0;
-        engine_state[0].oscmix.noise_level = 127;
+        engine_state[0].oscmix.balance = 127;   /* SINGLE: OSC/NOISE at noise only (2026-11-21) */
         engine_state[0].oscmix.noise_colour = col;
         engine_state[0].osc[0].scan = 0;
         synth_midi_3(0x90, 60, 100);
@@ -577,8 +578,9 @@ int main(void)
      * noise alone (the render with it minus the same render without) at AIR has all but nothing between the harmonics
      * (1.5 x the note) and more than BROWN at the note; HARMONIC at its third stop moves the band to 3 x the note */
     {
+        /* (SINGLE and SPREAD are not here: their noise is OSC/NOISE's noise side, so noise on and off also moves OSC1) */
         static const struct { uint8_t arch, bank; const char *name; } wa[] = {
-            {VARCH_SINGLE, 0, "SINGLE"}, {VARCH_SPREAD, 0, "SPREAD"}, {VARCH_DUAL_OSC, 0, "DUAL OSC VCO"},
+            {VARCH_DUAL_OSC, 0, "DUAL OSC VCO"},
             {VARCH_DUAL_OSC, 3, "DUAL OSC bank"}, {VARCH_DUAL_FILTER, 0, "DUAL FILTER"},
             {VARCH_STACK, 0, "STACK"}, {VARCH_BINAURAL, 0, "BINAURAL"}, {VARCH_FULL, 3, "FULL bank"}};
         static int32_t cap[2][16384];
@@ -647,7 +649,7 @@ int main(void)
         engine_state[0].filter[0].flavour = FLT_SH2;
         engine_state[0].filter[0].morph = 127;
         engine_state[0].filter[0].cutoff = 0;
-        engine_state[0].oscmix.noise_level = 127;
+        engine_state[0].oscmix.balance = 127;    /* SINGLE: noise only (2026-11-21) */
         engine_state[0].oscmix.noise_colour = NOISE_WHITE;
         engine_state[0].route[0] = (ModRoute){MSRC_MODWHEEL, MSRC_NONE, MDST_NOISE_COLOUR, 127, VAL_MAX};
         synth_midi_3(0xB0, 1, 0);

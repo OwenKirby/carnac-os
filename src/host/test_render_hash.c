@@ -77,7 +77,10 @@ static void patch(EngineState *e, uint8_t arch, int noise, int slots)
     e->filter[0].cutoff = 70; e->filter[1].cutoff = 90;
     e->lfo[0].rate = 70; e->lfo[1].rate = 90; e->lfo[2].rate = 40;
     e->amp.delay_send = 50; e->amp.reverb_send = 60;
-    if (noise) { e->oscmix.noise_level = 100; e->oscmix.noise_colour = (uint8_t)(noise * 40); }
+    if (noise) {   /* the old COLOUR 40 / 80 (brown -> ring, the band): since the split (2026-11-21) WHISTLE 11 / 64 on a brown
+                    * COLOUR, the same samples: the goldens must not move */
+        e->oscmix.noise_level = 100; e->oscmix.noise_colour = noise == 1 ? 11u : 64u; e->noise_tint = 127;
+    }
     if (slots) {
         /* (2026-11-11, the mod matrix: the slots' chain became three routes, as perf_test.c's) */
         e->route[0] = (ModRoute){MSRC_LFO2, MSRC_LFO3, MDST_F1_CUTOFF, BIPOLAR_CENTER + 40};

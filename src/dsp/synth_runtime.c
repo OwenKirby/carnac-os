@@ -1471,12 +1471,14 @@ static void noise_pass_fill(uint32_t frames)
     for (int v = 0; v < POLYPHONY_VOICES; v++) {
         const SynthVoiceNode *s = &poly_bank[v];
         if (voice_is_free(s)) continue;
-        const OscMixerParams *m = &engine_state[s->layer < NLAYER ? s->layer : 0u].oscmix;
-        if (m->noise_level == 0 && m->noise_mod_amt == BIPOLAR_CENTER && s->mix.noise_gain_q15 <= 0) continue;
-        int col_mod = m->noise_col_mod_amt != BIPOLAR_CENTER, c = m->noise_colour;
-        uint8_t w = (uint8_t)(1u | ((c > 0 && c < (int)NOISE_BROWN) || col_mod ? 2u : 0u) |
-                              ((c > (int)NOISE_PINK && c < (int)NOISE_BAND) || col_mod ? 4u : 0u) |
-                              seg_wants[s->mix.noise_seg & 7u]);
+        const EngineState *es = &engine_state[s->layer < NLAYER ? s->layer : 0u];
+        const OscMixerParams *m = &es->oscmix;
+        if (noise_amount_of(es) == 0 && m->noise_mod_amt == BIPOLAR_CENTER && s->mix.noise_gain_q15 <= 0) continue;
+        /* (2026-11-21) COLOUR's noise is read with or without a whistle (white always; pink past 0, brown past 64) */
+        int col_mod = m->noise_col_mod_amt != BIPOLAR_CENTER;
+        int tint = engine_state[s->layer < NLAYER ? s->layer : 0u].noise_tint;
+        uint8_t w = (uint8_t)(1u | (tint > 0 || col_mod ? 2u : 0u) | (tint > 64 || col_mod ? 4u : 0u) |
+                              (s->mix.noise_seg < 2u ? seg_wants[s->mix.noise_seg & 7u] : 0u));
         want[0] |= w;
         if (s->arch == VARCH_BINAURAL) want[1] |= w;
     }

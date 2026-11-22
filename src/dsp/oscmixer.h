@@ -21,8 +21,11 @@ typedef struct {
     int sub_shift;     /* octaves below OSC1: 1 (-1 oct) or 2 (-2 octaves) */
     int sub_waveform;  /* SUBWAVE_*: sine (bank 0 frame 0), square, or OSC1's current bank and morph frame */
     int noise_level;   /* 0..127 noise generator level */
-    int noise_colour;  /* 0..127 colour: white 0, pink 16, brown 32, then the resonance to 127 (NOISE_*) */
+    int noise_colour;  /* 0..127 WHISTLE: none 0, ring 32, band 64, AIR 127 (WHISTLE_*; was the colour morph) */
+    int noise_tint;    /* 0..127 COLOUR: white 0, pink 64, brown 127 (the noise WHISTLE rings) */
+    int noise_inharm;  /* 0..127 INHARM: CLUSTER's overtones harmonic 0, stretched 64, metal 127 */
     int noise_harmonic;   /* 0..127 HARMONIC: the whistle on overtone 1..8 of OSC1, stops on each (NOISE page) */
+    int noise_cluster;    /* 0..127 CLUSTER: the band rings on 4 bands, spreading to metal-noise ratios (NOISE page) */
 } OscillatorMixer;
 
 /* The noise generator, shared (2026-10-25): one per ear for the whole synth, as on the Juno or the Prophet, not one per
@@ -67,15 +70,26 @@ typedef struct {
     uint8_t noise_seg;                      /* colour segment: 0 white -> pink, 1 pink -> brown, 2 brown -> brown
                                              * ringing the sine, 3 -> the voice's band ringing it, 4 the band narrowing */
     uint16_t noise_t_q8;                    /* .. and the position in it, 0..256 */
+    uint8_t tint_seg;                       /* COLOUR's noise under a whistle: 0 white -> pink, 1 pink -> brown */
+    uint16_t tint_t_q8;                     /* .. and the position in it, 0..256 */
+    uint8_t cl_inh;                         /* INHARM now, 0..127 */
     /* the resonance (2026-11-06), the voice's own: */
     uint32_t wh_phase, wh_step;             /* the sine's phase, and its step: HARMONIC x OSC1's (osc_mixer_whistle_step) */
     float wh_ratio;                         /* HARMONIC as a ratio 1..8, gliding ~20 ms to where the knob sets it */
-    float nz_a[2], nz_b[2];                 /* the band, each ear: its two one-poles, run at the control tick */
-    int32_t nz_cur[2], nz_d[2];             /* .. its value x16 now, and its step a sample toward the tick's new value */
+    float nz_a[3], nz_b[3];                 /* the band, each ear (+ [2]: CLUSTER's second band noise): two one-poles, at the tick */
+    int32_t nz_cur[3], nz_d[3];             /* .. its value x16 now, and its step a sample toward the tick's new value */
     float nz_g, nz_gain;                    /* .. the poles' coefficient, and the gain that holds its level as it narrows */
     uint32_t nz_seed;                       /* .. its white noise (seeded by voice, osc_mixer_voice_init) */
     int16_t nz_col;                         /* the COLOUR nz_g / nz_gain are for, + 1 (0: none yet) */
     uint8_t long_tick;                      /* 1: this tick is 2 x SYNTH_CTRL_PERIOD (SYNTH_CTRL_ADAPT): the band steps twice */
+    /* CLUSTER (2026-11-21): the whistle's next three overtones join it, each its own phase (a fractional ratio on one
+     * phase would click at the wrap); 0 cl_amt: off, the one-band paths exactly as before */
+    uint8_t cl_amt;                         /* CLUSTER now, 0..127 (0 also when the colour is not a narrow band) */
+    uint8_t cl_for;                         /* the CLUSTER cl_g / cl_norm are for (0: none yet) */
+    uint32_t cl_ph[3], cl_st[3];            /* the three overtones' phases and steps (osc_mixer_whistle_step) */
+    int32_t cl_g[3], cl_norm;               /* their levels and the gain that holds the sum at one whistle's power, Q15 */
+    float cl_r[3], cl_rk;                   /* their ratios to the whistle, for HARMONIC's ratio cl_rk and cl_rkey */
+    uint16_t cl_rkey;                       /* (CLUSTER | INHARM << 7) + 1 the ratios are for (0: none yet) */
 } OscMixVoice;
 
 /* a voice's own noise and whistle at start-up, seeded by its index (deterministic, whichever core renders it) */
@@ -110,7 +124,14 @@ int32_t osc_mixer_extras(OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *su
  * The noise reads the whistle's phase without moving it: osc_mixer_whistle_advance moves it once for both ears. */
 int32_t osc_mixer_sub(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase);
 int32_t osc_mixer_noise(OscMixVoice *mv, int ear, int at);
-static inline void osc_mixer_whistle_advance(OscMixVoice *mv, int n) { mv->wh_phase += mv->wh_step * (uint32_t)n; }
+static inline void osc_mixer_whistle_advance(OscMixVoice *mv, int n) {
+    mv->wh_phase += mv->wh_step * (uint32_t)n;
+    if (mv->cl_amt) {                       /* CLUSTER's bands walk on beside the whistle */
+        mv->cl_ph[0] += mv->cl_st[0] * (uint32_t)n;
+        mv->cl_ph[1] += mv->cl_st[1] * (uint32_t)n;
+        mv->cl_ph[2] += mv->cl_st[2] * (uint32_t)n;
+    }
+}
 /* Blocks: n samples of the sub (osc_mixer_sub >> 1) / the noise (osc_mixer_noise >> 1) added into acc, the same values
  * in the same order; osc_mixer_extras_block is both (the sum osc_mixer_extras gives) and moves the whistle on. */
 void osc_mixer_sub_block(const OscMixVoice *mv, const WavetableOsc *osc1, uint32_t *sub_phase, int32_t *acc, int n);

@@ -127,7 +127,7 @@ The PCM waves and the FOUNDATIONS bank live in flash beside the firmware; a few 
 
 | Architecture | Knob 1 | Knob 2 | Knob 3 | Knob 4 |
 | --- | --- | --- | --- | --- |
-| SINGLE | SPREAD | NOISE | SUB LEVEL | SPREAD MOD |
+| SINGLE | OSC/NOISE | SPREAD | SUB WAVE | SUB LEVEL |
 | DUAL OSC | OSC MIX | CROSS-MOD | SUB LEVEL | NOISE |
 | DUAL FILT | not used | not used | SUB LEVEL | NOISE |
 | DUAL SPRD | OSC MIX | SPREAD | SUB LEVEL | NOISE |
@@ -409,6 +409,7 @@ Newest first. Features marked *in source* are written but not yet installed on t
 
 | Date | Change |
 | --- | --- |
+| 2026-11-22 | *In source, not yet installed:* in SINGLE (the ARCH list's first entry, SPREAD underneath), the OSCMIX's knob 1 is OSC/NOISE, a bipolar balance like OSC MIX in DUAL OSC: left is the oscillator alone, centre both, right the noise alone. The noise level knob is gone from that architecture, so the noise is set by OSC/NOISE, and the NOISE LEVEL CC (115) moves it. Knobs 2 to 4 are SPREAD, SUB WAVE and SUB LEVEL. Patches with SINGLE at OSC/NOISE 0 sound as before; SINGLE patches that had noise now have their noise on the balance. |
 | 2026-10-29 | Carnac OS 0.9.6 released: 0.9.5 plus the wave check at power-on (the row below). Patches, performances and settings carry over unchanged (installed). |
 | 2026-10-29 | The FM-1 checks its waves at power-on. If the PCM waves or FOUNDATIONS are missing (the firmware was installed without them, for example the .fwsc alone with another tool), the start-up screen shows the field with no standing stones and WAVES MISSING for 3 seconds; if they come from another version, WAVES OUT OF DATE. The web installer, or pcm_store_upload.py sync, fixes it. Nothing else changes (installed). |
 | 2026-10-27 | New power-on performance CAIRN SPIRIT in slot 0: press PLAY and the arp plays CAIRN SPIRIT pad chords (A minor add9, F major 9, C add9, G sus4) while the sequencer pulses a CROM PULSE bass line under them that follows each chord. Its arp pattern is no longer empty. SAMHAIN and the other factory performances move down one slot (SAMHAIN is now 1, WILL O WISP 8), and so do their sequences and arp patterns. A performance, sequence or arp you saved yourself stays in its slot (installed). |

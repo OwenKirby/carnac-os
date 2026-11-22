@@ -320,11 +320,12 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
             q->ksplit = W1 - xf;
         }
         q->wk = q->pk ? (int32_t)(((int64_t)k_level * q->ksplit) >> 15) : 0;
-        q->tail_a = q->tail_b = W1;         /* the tails: each loop decays on as its attack did */
+        q->tail_a = q->tail_b = W1 << 15;   /* the tails, Q30: each loop decays on as its attack did (Q15 truncation
+                                             * turned the decay linear below ~-28 dB: the ring stopped dead) */
         q->tmul_a = hand_wave && tail_a > 0.f && !q->hold ?
-            (int32_t)(W1 * amp_exp2f(-tail_a * (float)SYNTH_CTRL_PERIOD * (3.3219281f / (20.f * 44100.f)))) : 0;
+            (int32_t)((float)(1 << 30) * amp_exp2f(-tail_a * (float)SYNTH_CTRL_PERIOD * (3.3219281f / (20.f * 44100.f)))) : 0;
         q->tmul_b = hand_wave && tail_b > 0.f && !q->hold ?
-            (int32_t)(W1 * amp_exp2f(-tail_b * (float)SYNTH_CTRL_PERIOD * (3.3219281f / (20.f * 44100.f)))) : 0;
+            (int32_t)((float)(1 << 30) * amp_exp2f(-tail_b * (float)SYNTH_CTRL_PERIOD * (3.3219281f / (20.f * 44100.f)))) : 0;
     } else if (q->pk == dkb && dkb && q->hand) {
         k_rate = kb_rate; k_root = kb_root; k_len = kb_len;
     } else if (q->pk && q->pk != dk) {
@@ -376,11 +377,11 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
         tb = q->pb && !ta ? W1 : 0;
     } else if (q->tmul_a || q->tmul_b) {    /* HANDOFF's tails: each loop goes on decaying as its attack did */
         for (int s = 0; s <= (int)q->long_tick; s++) {
-            if (q->tmul_a) q->tail_a = (int32_t)(((int64_t)q->tail_a * q->tmul_a) >> 15);
-            if (q->tmul_b) q->tail_b = (int32_t)(((int64_t)q->tail_b * q->tmul_b) >> 15);
+            if (q->tmul_a) q->tail_a = (int32_t)(((int64_t)q->tail_a * q->tmul_a) >> 30);
+            if (q->tmul_b) q->tail_b = (int32_t)(((int64_t)q->tail_b * q->tmul_b) >> 30);
         }
-        ta = (int32_t)(((int64_t)ta * q->tail_a) >> 15);
-        tb = (int32_t)(((int64_t)tb * q->tail_b) >> 15);
+        ta = (int32_t)(((int64_t)ta * (q->tail_a >> 15)) >> 15);
+        tb = (int32_t)(((int64_t)tb * (q->tail_b >> 15)) >> 15);
     }
     if (new_wave) {                         /* a new wave: its weights at once (it starts from silence anyway) */
         q->wa = ta;

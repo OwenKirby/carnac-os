@@ -21,13 +21,16 @@ nrpn   2   1  OSCMIX     1  K2
 nrpn   2   2  OSCMIX     2  K3
 nrpn   2   3  OSCMIX     3  K4
 nrpn   2   4  OSCMIX     4  XMOD TYPE
-nrpn   2   5  OSCMIX     5  NOISE COLOUR
-nrpn   2   6  OSCMIX     6  COL MOD
+nrpn   2   5  OSCMIX     5  WHISTLE
+nrpn   2   6  OSCMIX     6  WHISTLE MOD
 nrpn   2   7  OSCMIX     7  HARMONIC
 nrpn   2   8  OSCMIX     8  LEVEL MOD
 nrpn   2   9  OSCMIX     9  NOISE LEVEL
 nrpn   2  10  OSCMIX    10  R SCAN OFFSET
 nrpn   2  11  OSCMIX    11  SUB WAVE
+nrpn   2  12  OSCMIX    12  CLUSTER
+nrpn   2  13  OSCMIX    13  COLOUR
+nrpn   2  14  OSCMIX    14  INHARM
 nrpn   3   0  FILTER1    0  K1
 nrpn   3   1  FILTER1    1  K2
 nrpn   3   2  FILTER1    2  K3
@@ -277,7 +280,7 @@ cc   112   0  FLTMIX     1  K2
 cc   113   0  FLTMIX     2  K3
 cc   114   0  FLTMIX     3  K4
 cc   115   0  OSCMIX     9  NOISE LEVEL
-cc   116   0  OSCMIX     5  NOISE COLOUR
+cc   116   0  OSCMIX     5  WHISTLE
 cc   117   0  OSCMIX     7  HARMONIC
-cc   118   0  OSCMIX     6  COL MOD
+cc   118   0  OSCMIX     6  WHISTLE MOD
 cc   119   0  OSCMIX     8  LEVEL MOD

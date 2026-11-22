@@ -152,7 +152,7 @@ typedef union {
     ArpState arp;                    /* ARP_SEQ: the live arp pattern */
     WholePerformance whole;          /* WHOLE_PERF: the performance and everything it plays */
 } UiClipboard;
-PS_STATIC_ASSERT(sizeof(UiClipboard) == 1054u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD), then 24 (MOD SENDS), then 8 (MOD4), then 16 (the mod matrix), then -28 (the pickers out, 16 routes), then 8 (the LFO1 page's amounts), then 48 (16 arp steps) */
+PS_STATIC_ASSERT(sizeof(UiClipboard) == 1058u, "the clipboard's RAM (spec 6.2.3)");   /* 911: two patches grew 9 bytes (STRIKE), then 2 (BEND MOD), then 2 (DRIVE), then 1 (ANALOG), then 2 (FILTER KEY TRACK), then 9 (VEL > LEVEL, DEPTH MOD), then 24 (MOD SENDS), then 8 (MOD4), then 16 (the mod matrix), then -28 (the pickers out, 16 routes), then 8 (the LFO1 page's amounts), then 48 (16 arp steps), then 4 (noise COLOUR + INHARM, 2026-11-21) */
 /* spec 1: the name characters; MasterPerformancePreset.name holds indices into it (0 = space) */
 #define UI_CHAR_MAP " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_/"
 /* 5.1: the play controllers. LAYER's knobs (2026-10-17): VELOCITY, MOD WHEEL, CC1, (2026-10-21) PORTA TIME, not CC2;

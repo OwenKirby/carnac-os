@@ -84,6 +84,7 @@ static void patch(uint8_t scan)
     engine_defaults(e);
     e->arch = VARCH_SPREAD;
     e->oscmix.spread = 0;
+    e->oscmix.balance = 0;                   /* OSC/NOISE at OSC only (2026-11-21): no noise, as before */
     e->osc[0].wavebank = WAVE_PCM_FIRST;   /* area 0's first wave: ours */
     e->osc[0].scan = scan;
     e->filter[0].cutoff = 127; e->filter[0].resonance = 0; e->filter[0].mod_amt = 0;
