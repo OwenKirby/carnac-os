@@ -98,7 +98,7 @@ int main(void)
               ENG_W[offsetof(EngineState, route[NROUTE - 1u].via)] == EW_SRC && ENG_W[offsetof(EngineState, arch)] == 4u &&
               ENG_W[offsetof(EngineState, name)] == 6u && ENG_W[offsetof(EngineState, analog)] == EW_V &&
               ENG_W[offsetof(EngineState, lfo_depth_amt)] == EW_V && ENG_W[offsetof(EngineState, mfx.type)] == 5u &&
-              ENG_W[offsetof(EngineState, reserved) + ENGINE_RESERVED - 1u] == 8u &&
+              ENG_W[offsetof(EngineState, noise_cluster)] == 8u &&
               ENG_W[offsetof(EngineState, route[0].dest)] == 6u && ENG_W[sizeof e - 1u] == EW_V, "ENGINE: ENG_W out of step");
         {                                               /* a SINGLE patch loads as SPREAD at SPREAD 0 (2026-10-26) */
             memset(&e, 0, sizeof e);

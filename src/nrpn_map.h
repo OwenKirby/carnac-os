@@ -16,7 +16,7 @@
     /* OSCMIX */
     N(2, 0, OSCMIX, 0), N(2, 1, OSCMIX, 1), N(2, 2, OSCMIX, 2), N(2, 3, OSCMIX, 3), N(2, 4, OSCMIX, 4),
     N(2, 5, OSCMIX, 5), N(2, 6, OSCMIX, 6), N(2, 7, OSCMIX, 7), N(2, 8, OSCMIX, 8), N(2, 9, OSCMIX, 9),
-    N(2, 10, OSCMIX, 10), N(2, 11, OSCMIX, 11),
+    N(2, 10, OSCMIX, 10), N(2, 11, OSCMIX, 11), N(2, 12, OSCMIX, 12), N(2, 13, OSCMIX, 13), N(2, 14, OSCMIX, 14),   /* 12 CLUSTER, 13 COLOUR, 14 INHARM (2026-11-21) */
     /* FILTER1 */
     N(3, 0, FILTER1, 0), N(3, 1, FILTER1, 1), N(3, 2, FILTER1, 2), N(3, 3, FILTER1, 3), N(3, 4, FILTER1, 4),
     N(3, 5, FILTER1, 5), N(3, 6, FILTER1, 6),

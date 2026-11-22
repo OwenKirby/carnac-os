@@ -356,9 +356,12 @@ static void refresh_osc_mixer(int l) {
     x->sub_level = m->sub_level;
     x->sub_shift = 1 + clampi(m->sub_octave, 0, 1);                 /* SUBOCT_DOWN1 / DOWN2 */
     x->sub_waveform = clampi(m->sub_waveform, 0, SUBWAVE_COUNT - 1);
-    x->noise_level = m->noise_level;
+    x->noise_level = noise_amount_of(&engine_state[l]);             /* SPREAD: the balance's noise side */
     x->noise_colour = clampi(m->noise_colour, 0, 127);
     x->noise_harmonic = clampi(engine_state[l].noise_harmonic, 0, 127);
+    x->noise_cluster = clampi(engine_state[l].noise_cluster, 0, 127);
+    x->noise_tint = clampi(engine_state[l].noise_tint, 0, 127);
+    x->noise_inharm = clampi(engine_state[l].noise_inharm, 0, 127);
 }
 
 /* Knob smoothing (2026-10-21). The knobs are encoders a step at a time, and a cutoff step is 89 cents: turned slowly,
@@ -938,6 +941,11 @@ static void render_single(SynthVoiceNode *v, float *mix, int n) {
     SPROF_START();
     osc_render_block(&v->osc1, o, n);
     SPROF_LAP(SPROF_OSC);
+    {                                        /* SPREAD: OSC1 at the balance's osc side (SINGLE's 32768 leaves it as it is) */
+        int32_t g1 = v->mix.osc1_gain_q15;
+        for (int i = 0; i < n; i++)
+            o[i] = (o[i] * g1) >> 15;
+    }
     osc_mixer_extras_block(&v->mix, &v->osc1, &v->sub_phase, v->noise_at, o, n);
     SPROF_LAP(SPROF_EXTRAS);
     q15_to_float(o, x, n);

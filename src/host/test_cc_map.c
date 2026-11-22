@@ -153,8 +153,11 @@ int main(void)
         cc(0, 118, 104);
         cc(0, 119, 105);
         const OscMixerParams *m = &engine_state[0].oscmix;
-        CHECK(m->noise_level == 101 && m->noise_colour == 102 && engine_state[0].noise_harmonic == 103 &&
-              m->noise_col_mod_amt == 104 && m->noise_mod_amt == 105, "arch %u: the noise's CC 115..119", a);
+        /* one-oscillator archs (2026-11-22): CC 115 is OSC/NOISE, the balance, and the noise level has no control */
+        int single = a == VARCH_SINGLE || a == VARCH_SPREAD;
+        CHECK((single ? m->balance == 101 && m->noise_level == 0 : m->noise_level == 101) && m->noise_colour == 102 &&
+              engine_state[0].noise_harmonic == 103 && m->noise_col_mod_amt == 104 && m->noise_mod_amt == 105,
+              "arch %u: the noise's CC 115..119", a);
     }
     setup(PERF_SINGL_SYNTH, 0, 1, VARCH_DUAL_OSC);
     cc(0, 95, 127);

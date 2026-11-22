@@ -104,6 +104,11 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_XFONLY (1u << 28)          /* the cross-feeds high (110, 110), LOOP TONE at its middle */
 #define F_WEARONLY (1u << 29)        /* LOOP TONE dark (24: the wear on), no cross-feed */
 #define F_NOISE (1u << 30)           /* NOISE LEVEL 60, white (without F_HEAVY) */
+/* (PT_NOISE_ONLY, 2026-11-22: the noise features' price rows; bits 16..19 only there) */
+#define F_CL (1u << 16)              /* CLUSTER 127 */
+#define F_INH (1u << 17)             /* INHARM 127 (metal) */
+#define F_WBAND (1u << 18)           /* WHISTLE band (tint brown) */
+#define F_WAIR (1u << 19)            /* WHISTLE air (tint brown) */
 /* (PT_COST_ONLY, the effects' price, 2026-11-20): the reverb type t (REVTYPE_*) in bits 16..19 as t + 1, PING PONG in bit
  * 31; only without F_MFX / F_MFX2 (whose types read those bits) and without F_FX_* */
 #define F_RVT(t) ((uint32_t)((t) + 1u) << 16)
@@ -136,6 +141,15 @@ static const PtScen SCEN[] = {
     PT_PRICE("STACK", VARCH_STACK),
     PT_PRICE("BIN", VARCH_BINAURAL),
     PT_PRICE("FULL", VARCH_FULL),
+#elif defined(PT_NOISE_ONLY)         /* (-D PT_NOISE_ONLY, 2026-11-22: the noise features only, 2/4/6/8 voices each: NONE is the
+                                      * reference; BAND / AIR with and without CLUSTER, and CLUSTER with INHARM; slopes from
+                                      * the voice counts, the deltas from the same row without the feature) */
+    {"IDLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
+#define PT_PR4(nm, a, flt, fl)     {nm " 2", K_HELD, a, flt, (fl) | F_NV(2), UIPAGE_HOME1}, {nm " 4", K_HELD, a, flt, (fl) | F_NV(4), UIPAGE_HOME1},     {nm " 6", K_HELD, a, flt, (fl) | F_NV(6), UIPAGE_HOME1}, {nm " 8", K_HELD, a, flt, (fl) | F_NV(8), UIPAGE_HOME1}
+#define PT_NZ(nm, a)     PT_PR4("N " nm " NONE", a, FLT_MULTI, 0), PT_PR4("N " nm " BAND", a, FLT_MULTI, F_WBAND), PT_PR4("N " nm " BAND CL", a, FLT_MULTI, F_WBAND | F_CL), PT_PR4("N " nm " BAND CL INH", a, FLT_MULTI, F_WBAND | F_CL | F_INH), PT_PR4("N " nm " AIR", a, FLT_MULTI, F_WAIR), PT_PR4("N " nm " AIR CL", a, FLT_MULTI, F_WAIR | F_CL)
+    PT_NZ("SPRD0", VARCH_SINGLE),
+    PT_NZ("SPRD", VARCH_SPREAD),
+    PT_NZ("STACK", VARCH_STACK),
 #elif defined(PT_COST_ONLY)          /* (-D PT_COST_ONLY, 2026-11-20: the costs the price did not count; slopes from
                                       * 2/4/6/8 voices, the MIX page's against the same row without it) */
     {"IDLE", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
@@ -525,11 +539,20 @@ static void patch(EngineState *e, const PtScen *s)
         e->oscmix.noise_level = 60;
         e->oscmix.noise_colour = NOISE_WHITE;
     }
+#if defined(PT_NOISE_ONLY)          /* (the noise features' rows: NOISE LEVEL 60, the whistle, tint brown, CLUSTER, INHARM) */
+    if (s->flags & (F_WBAND | F_WAIR)) {
+        e->oscmix.noise_level = 60;
+        e->oscmix.noise_colour = (s->flags & F_WAIR) ? WHISTLE_AIR : WHISTLE_BAND;
+        e->noise_tint = 127;
+        e->noise_cluster = (s->flags & F_CL) ? 127 : 0;
+        e->noise_inharm = (s->flags & F_INH) ? 127 : 0;
+    }
+#endif
     if (s->flags & F_HEAVY) {
         e->oscmix.xmod_type = XMOD_RING;
         e->oscmix.noise_level = 100;
-        e->oscmix.noise_colour = s->flags & F_AIR ? NOISE_AIR : 10;   /* 10: white -> pink, as 40 was before the
-                                                                      * resonance (2026-11-06), bit for bit */
+        e->oscmix.noise_colour = s->flags & F_AIR ? WHISTLE_AIR : 0;   /* COLOUR 40 = the old morph's 10 (white -> pink), */
+        e->noise_tint = s->flags & F_AIR ? 0 : 40;                     /* no whistle (the split, 2026-11-21) */
         e->osc[1].wavebank = 3;
         e->filter[0].cutoff = 70;
         e->filter[1].cutoff = 90;

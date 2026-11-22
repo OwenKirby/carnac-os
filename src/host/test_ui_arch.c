@@ -121,7 +121,7 @@ int main(void)
     press(BTN_FX); CHECK(sm.page == UIPAGE_OSC1, "FX 4 wraps to OSC1 (it went to FILTER1 after STRIKE left): %u", sm.page);
     press(BTN_FX); press(BTN_FX); CHECK(sm.page == UIPAGE_OSCMIX, "FX 3 again");
     dump("OSCMIX STACK"); knobs(UIPAGE_OSCMIX, "OSCMIX STACK");
-    CHECK(find_row("XMOD TYPE") < 0 && find_row("COL MOD") >= 0 && find_row("LEVEL MOD") >= 0 &&
+    CHECK(find_row("XMOD TYPE") < 0 && find_row("WHISTLE MOD") >= 0 && find_row("LEVEL MOD") >= 0 && find_row("COLOUR") >= 0 &&
           find_row("SUB WAVE") >= 0, "STACK OSCMIX rows (XMOD TYPE is knob 1; the mods' sources fixed, 2026-11-11)");
     {
         UiKnobInfo i;
@@ -154,14 +154,14 @@ int main(void)
     press(BTN_FX); press(BTN_FX);                     /* 2026-11-06: one oscillator, so OSC2's place is NOISE */
     CHECK(sm.page == UIPAGE_OSC2 && ui_sm_noise_page(&sm, sm.page, 0), "FX 2 under SINGLE: the NOISE page: %u", sm.page);
     dump("NOISE SINGLE"); knobs(UIPAGE_OSC2, "NOISE SINGLE");
-    CHECK(ui_sm_row_count(&sm) == 0u, "NOISE: no rows, all on the knobs (2026-11-11): %u", ui_sm_row_count(&sm));
+    CHECK(ui_sm_row_count(&sm) == 3u, "NOISE: rows COLOUR, WHISTLE MOD, LEVEL MOD (2026-11-21): %u", ui_sm_row_count(&sm));
     {
         UiKnobInfo i;
-        CHECK(ui_sm_knob(&sm, UIPAGE_OSC2, 0, 0, &i) == &engine_state[0].oscmix.noise_colour && strcmp(i.label, "COLOUR") == 0 &&
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSC2, 0, 0, &i) == &engine_state[0].oscmix.noise_colour && strcmp(i.label, "WHISTLE") == 0 &&
               ui_sm_knob(&sm, UIPAGE_OSC2, 0, 1, &i) == &engine_state[0].noise_harmonic && strcmp(i.label, "HARMONIC") == 0 &&
-              ui_sm_knob(&sm, UIPAGE_OSC2, 0, 2, &i) == &engine_state[0].oscmix.noise_col_mod_amt && strcmp(i.label, "COL MOD") == 0 &&
-              ui_sm_knob(&sm, UIPAGE_OSC2, 0, 3, &i) == &engine_state[0].oscmix.noise_mod_amt && strcmp(i.label, "LEVEL MOD") == 0,
-              "NOISE knobs (2026-11-11: the level on the OSCMIXER)");
+              ui_sm_knob(&sm, UIPAGE_OSC2, 0, 2, &i) == &engine_state[0].noise_cluster && strcmp(i.label, "CLUSTER") == 0 &&
+              ui_sm_knob(&sm, UIPAGE_OSC2, 0, 3, &i) == &engine_state[0].noise_inharm && strcmp(i.label, "INHARM") == 0,
+              "NOISE knobs (2026-11-21: the whistle's four; COLOUR and the ENV3 amounts are rows)");
     }
     press(BTN_FX);
     CHECK(sm.page == UIPAGE_OSCMIX, "FX 3 under SINGLE: OSCMIX: %u", sm.page);
@@ -178,21 +178,22 @@ int main(void)
         uint8_t *p;
         engine_state[0].oscmix.sub_octave = SUBOCT_DOWN2;
         engine_state[0].oscmix.sub_waveform = SUBWAVE_SQUARE;
-        p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i);
-        t = ui_sm_knob_text(&sm, UIPAGE_OSCMIX, 0, 1);
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i) == &engine_state[0].oscmix.balance &&
+              strcmp(i.label, "OSC/NOISE") == 0 && i.kind == UIKNOB_BIP, "SINGLE knob 1 = OSC/NOISE, bipolar (2026-11-21)");
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == NULL && i.kind == UIKNOB_NONE, "SINGLE knob 2 = nothing");
+        p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i);
+        t = ui_sm_knob_text(&sm, UIPAGE_OSCMIX, 0, 2);
         CHECK(p == &sm.sub6_knob && *p == 3u && i.kind == UIKNOB_LIST && i.n_enum == 6u && strcmp(i.label, "SUB WAVE") == 0 &&
-              t != NULL && strcmp(t, "SQR -2") == 0, "SINGLE knob 2 = SUB WAVE, both bytes (%s)", t ? t : "NULL");
+              t != NULL && strcmp(t, "SQR -2") == 0, "SINGLE knob 3 = SUB WAVE, both bytes (%s)", t ? t : "NULL");
         *p = 4u;                                     /* a turn, as synth_panel's knob_turn writes it */
-        ui_sm_knob_written(&sm, UIPAGE_OSCMIX, 1u);
+        ui_sm_knob_written(&sm, UIPAGE_OSCMIX, 2u);
         CHECK(engine_state[0].oscmix.sub_octave == SUBOCT_DOWN1 && engine_state[0].oscmix.sub_waveform == SUBWAVE_CURRENT,
               "SUB WAVE step 4 = CURRENT -1 OCT: %u %u", engine_state[0].oscmix.sub_octave,
               engine_state[0].oscmix.sub_waveform);
         engine_state[0].oscmix.sub_waveform = SUBWAVE_SINE;
-        CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i) == &engine_state[0].oscmix.noise_level &&
-              strcmp(i.label, "NOISE LEVEL") == 0, "SINGLE knob 4 = NOISE LEVEL");
-        p = ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i);
-        CHECK(p == &engine_state[0].oscmix.sub_level && strcmp(i.label, "SUB LEVEL") == 0, "SINGLE knob 3 = SUB LEVEL");
-        CHECK(ui_sm_knob_text(&sm, UIPAGE_OSCMIX, 0, 2) == NULL, "a plain knob has no list text");
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i) == &engine_state[0].oscmix.sub_level &&
+              strcmp(i.label, "SUB LEVEL") == 0, "SINGLE knob 4 = SUB LEVEL");
+        CHECK(ui_sm_knob_text(&sm, UIPAGE_OSCMIX, 0, 3) == NULL, "a plain knob has no list text");
         p = ui_sm_knob(&sm, UIPAGE_FLTMIX, 0, 0, &i);
         CHECK(p == NULL, "hidden page knob has no byte");
     }
@@ -245,10 +246,10 @@ int main(void)
     dump("OSCMIX SPREAD"); knobs(UIPAGE_OSCMIX, "OSCMIX SPREAD");
     {
         UiKnobInfo i;
-        CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i) == &engine_state[0].oscmix.spread &&
-              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == &sm.sub6_knob &&
-              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i) == &engine_state[0].oscmix.sub_level &&
-              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i) == &engine_state[0].oscmix.noise_level, "SPREAD knobs");
+        CHECK(ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 0, &i) == &engine_state[0].oscmix.balance &&   /* OSC/NOISE (2026-11-21) */
+              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 1, &i) == &engine_state[0].oscmix.spread &&
+              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 2, &i) == &sm.sub6_knob &&
+              ui_sm_knob(&sm, UIPAGE_OSCMIX, 0, 3, &i) == &engine_state[0].oscmix.sub_level, "SPREAD knobs");
         CHECK(ui_sm_row_count(&sm) == 0u, "SPREAD OSCMIX: all on the knobs (its mod a route, 2026-11-11)");
     }
 

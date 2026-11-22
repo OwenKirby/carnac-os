@@ -126,12 +126,13 @@ PS_STATIC_ASSERT(EW_BYTES(EW_OSC) == sizeof(OscParams) && EW_BYTES(EW_OSCMIX) ==
 PS_STATIC_ASSERT(MSRC_COUNT <= 32u && XMOD_COUNT <= 8u && SUBOCT_COUNT <= 4u && SUBWAVE_COUNT <= 8u &&
                  FLT_COUNT <= 8u && DRIVE_COUNT <= 8u && MFX_COUNT <= 32u &&
                  VARCH_COUNT <= 16u && CHAR_MAP_LEN <= 64u && NOSC == 2u && NFILTER == 2u && NENV == 3u && NLFO == 3u &&
-                 ENGINE_RESERVED == 1u && NROUTE == 16u && MDST_COUNT <= 64u, "every list fits its width; the repeats below");
+                 ENGINE_RESERVED == 0u && NROUTE == 16u && MDST_COUNT <= 64u, "every list fits its width; the repeats below");
 static const uint8_t ENG_W[] = {
     EW_OSC, EW_OSC, EW_OSCMIX, EW_FILTER, EW_FILTER, EW_FLTMIX, EW_X3(EW_ENV), EW_X3(EW_LFO), EW_AMP,
     4u /* arch, VARCH_* */, EW_NAME, EW_V /* ANALOG */, EW_V, EW_V /* KEY TRACK */, EW_X3(EW_V) /* VEL > LEVEL */,
-    EW_X3(EW_V) /* WHEEL > DEPTH */, EW_X4(EW_V) /* LFO1's PITCH, FILTER, OSC1 / OSC2 AMT */, EW_MFX, 8u /* noise HARMONIC */, 8u /* reserved */,
-    EW_X4(EW_X4(EW_ROUTE)) /* the mod matrix (2026-11-11, v14) */
+    EW_X3(EW_V) /* WHEEL > DEPTH */, EW_X4(EW_V) /* LFO1's PITCH, FILTER, OSC1 / OSC2 AMT */, EW_MFX, 8u /* noise HARMONIC */, 8u /* noise CLUSTER (the reserved byte: 8 bits kept, nothing moved) */,
+    EW_X4(EW_X4(EW_ROUTE)) /* the mod matrix (2026-11-11, v14) */,
+    EW_V /* noise COLOUR */, EW_V /* noise INHARM */   /* (2026-11-21, at the end: older patches read 0) */
 };
 PS_STATIC_ASSERT(sizeof ENG_W == sizeof(EngineState), "ENG_W: one width per EngineState byte, in order");
 

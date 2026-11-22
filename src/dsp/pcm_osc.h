@@ -43,7 +43,8 @@ typedef struct {
     uint8_t idle;                   /* 1: the voice was silent (pcm_idle) since it last rendered */
     uint8_t hold;                   /* 1: this note's amp envelope sustains: the ring holds (no tail), set at a note */
     uint8_t long_tick;              /* 1: this tick is 2 x SYNTH_CTRL_PERIOD (SYNTH_CTRL_ADAPT): the tails step twice */
-    int32_t tail_a, tail_b, tmul_a, tmul_b; /* HANDOFF: each loop's gain after the attacks, Q15, its factor a tick (0: none) */
+    int32_t tail_a, tail_b, tmul_a, tmul_b; /* HANDOFF: each loop's gain after the attacks, Q30, its factor a tick, Q30
+                                             * (0: none); Q15 lost the ring below ~-28 dB (2026-11-21) */
     const uint8_t *pk2;             /* HANDOFF, SCAN between A and B at the note: B's attack beside A's (pk) */
     uint32_t pos_k2, step_k2, end_k2;
     int32_t wk2, ksplit;            /* B's attack weight (still); A's share of the attack level, Q15 (W1: one attack) */

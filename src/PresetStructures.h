@@ -73,6 +73,13 @@ PS_STATIC_ASSERT(FLT_MULTI == 1, "filter_feedback_q12 (dsp/filter.h) tests flavo
 #define NOISE_RING 56u
 #define NOISE_BAND 80u
 #define NOISE_AIR 127u
+/* the split (2026-11-21): COLOUR (EngineState.noise_tint) is the plain noise, white 0 .. pink 64 .. brown 127; WHISTLE
+ * (oscmix.noise_colour, the old byte) rings it on the harmonic, evenly: none 0, ring 32, the voice's band 64, AIR 127.
+ * Inside, a WHISTLE w > 0 plays as the old morph's 32 + w x 95 / 127 (NOISE_RING .. NOISE_AIR above), on COLOUR's noise */
+#define WHISTLE_RING 32u
+#define WHISTLE_BAND 64u
+#define WHISTLE_AIR 127u
+#define NOISE_MORPH_OF_WHISTLE(w) ((int)NOISE_BROWN + ((int)(w) * 95 + 63) / 127)
 enum {                               /* voice architecture, per patch: the signal path every voice runs (4.0) */
     VARCH_SINGLE,                    /* OSC1 -> FILTER1. Not offered since 2026-10-26: loads as SPREAD at SPREAD 0, the same path
                                       * (varch_single_to_spread) */
@@ -345,16 +352,16 @@ typedef struct {                     /* OSC1 / OSC2 */
 } OscParams;
 
 typedef struct {                     /* OSCMIXER; which knob a field sits on depends on the architecture (2.2) */
-    uint8_t balance;                 /* knob 1 DUAL OSC, (bip) OSC1 .. OSC2 */
+    uint8_t balance;                 /* knob 1 DUAL OSC, (bip) OSC1 .. OSC2; SPREAD (2026-11-21), (bip) OSC .. NOISE */
     uint8_t xmod_amt;                /* knob 2 DUAL OSC / STACK */
     uint8_t sub_level;               /* knob 3, every architecture */
-    uint8_t spread;                  /* knob 1 SPREAD only */
+    uint8_t spread;                  /* knob 2 SPREAD only */
     uint8_t xmod_type;               /* XMOD_*, knob 1 STACK */
     uint8_t sub_octave;              /* SUBOCT_* (with sub_waveform: SUB WAVE's 6 steps, the next byte) */
     uint8_t sub_waveform;            /* SUBWAVE_* */
-    uint8_t noise_level;             /* NOISE LEVEL, every architecture */
+    uint8_t noise_level;             /* NOISE LEVEL, every architecture but SPREAD (its noise is the balance: noise_amount_of) */
     /* noise generator (4.1) */
-    uint8_t noise_colour;            /* morph: WHITE 0 .. PINK 16 .. BROWN 32 .. the resonance .. AIR 127 (NOISE_*) */
+    uint8_t noise_colour;            /* WHISTLE (2026-11-21, was the COLOUR morph): none 0, ring 32, band 64, AIR 127 (WHISTLE_*) */
     uint8_t noise_mod_amt;           /* (bip) LEVEL MOD: ENV3 > NOISE LEVEL */
     /* BINAURAL: how the right ear's oscillator differs from the left's */
     uint8_t bin_mod_phase;           /* knob 1: LFO phase offset of the right ear's pitch / scan mod, 0..127 = 0..357 deg */
@@ -459,7 +466,7 @@ typedef struct {
 } ModRoute;
 #define ROUTE_FREE {MSRC_NONE, MSRC_NONE, MDST_NONE, BIPOLAR_CENTER, VAL_MAX}   /* a free route, as a new one starts */
 
-#define ENGINE_RESERVED 1u           /* spare patch bytes (v11): stored, 0 until a later feature takes one (so 0 must
+#define ENGINE_RESERVED 0u           /* spare patch bytes (v11): none left (CLUSTER took the last, 2026-11-21); were stored, 0 until a later feature took one (so 0 must
                                       * mean that feature's off / default) */
 
 /* one layer's patch: what PATCH_PRESET saves and LAYER n PATCH MEM LINK loads */
@@ -490,10 +497,20 @@ typedef struct {
     MfxParams mfx;                   /* the layer's MFX (dsp/mfx.c plays engine_state[layer].mfx) */
     /* 2026-11-06: three of the four reserved bytes (nothing moved; 0 is each one's old behaviour) */
     uint8_t noise_harmonic;          /* HARMONIC 0..127: the noise resonance on overtone 1..8 of OSC1, a stop on each */
-    uint8_t reserved[ENGINE_RESERVED];
+    uint8_t noise_cluster;           /* CLUSTER 0..127 (2026-11-21, the last reserved byte): the whistle's next three overtones join it
+                                      * (fading in to ~45), then drift apart up to ~20 cents (beating air); 0 = one whistle (off) */
     ModRoute route[NROUTE];          /* the mod matrix (2026-11-11, v14) */
+    /* 2026-11-21, at the end (the zero rule: 0 = as before): */
+    uint8_t noise_tint;              /* COLOUR 0..127: the plain noise, white 0 .. pink 64 .. brown 127 (WHISTLE rings it) */
+    uint8_t noise_inharm;            /* INHARM 0..127: CLUSTER's overtones, harmonic 0 .. stretched (a bell) 64 .. metal 127 */
 } EngineState;
-PS_STATIC_ASSERT(sizeof(EngineState) == 233u, "EngineState layout");
+PS_STATIC_ASSERT(sizeof(EngineState) == 235u, "EngineState layout");
+/* COLOUR + WHISTLE as the old one-knob morph (white 0 .. brown 32 .. AIR 127), for the pictures drawn from it */
+static inline int32_t noise_morph_of(const EngineState *e)
+{
+    int32_t w = e->oscmix.noise_colour, t = e->noise_tint;
+    return w ? NOISE_MORPH_OF_WHISTLE(w) : (t < 64 ? t / 4 : (int32_t)NOISE_PINK + (t - 64) / 4);
+}
 PS_STATIC_ASSERT(MDST_COUNT <= 64u, "a route's DEST in 6 bits, a voice's mask in two words");
 #define ENV1_VEL_LEVEL_V9 111u       /* ENV1 VEL > LEVEL that plays as v9's fixed curve did (-18 dB at velocity 1) */
 /* In flash a patch is ENGINE_STORED_SIZE bytes (dsp/flash_record.h engine_store_pack): 184 is the most that keeps 22
@@ -523,6 +540,14 @@ static inline void varch_single_to_spread(EngineState *e)
         e->arch = VARCH_DUAL_OSC;
         e->oscmix.spread = 0;
     }
+}
+
+/* the noise amount, 0..127: NOISE LEVEL, or in SPREAD (2026-11-21) the OSC/NOISE balance's noise side (balance 0 = osc only,
+ * 127 = noise only; OSC1's gain is 127 - balance) */
+static inline uint8_t noise_amount_of(const EngineState *e)
+{
+    uint8_t a = varch_of(e);
+    return a == VARCH_SPREAD || a == VARCH_SINGLE ? e->oscmix.balance : e->oscmix.noise_level;
 }
 
 /* the pages an architecture uses; the UI hides the rest (OSC1, OSCMIXER and FILTER1 always show) */
@@ -590,7 +615,13 @@ static inline uint8_t varch_voice_cost(const EngineState *e)
         r = (uint8_t)(r + (e->route[i].src != MSRC_NONE && e->route[i].dest != MDST_NONE &&
                            e->route[i].amount != BIPOLAR_CENTER));
     uint8_t rt = r > 1u ? (uint8_t)(((r - 1u) * 2u + 4u) / 9u) : 0u;
-    return (uint8_t)(c + 2u * sh2 + (a == VARCH_SPREAD || a == VARCH_SINGLE ? 2u : 1u) * pcm + rt);   /* (2026-11-18: PCM on
+    /* THE NOISE (measured 2026-11-22 on the FM1, PT_NOISE_ONLY rows: 2/4/6/8 voices on SINGLE, SPREAD, STACK; the slope x2 =
+     * points a voice on its core, 0.95 a tenth). A noise source on costs ~0.6..1.1 tenths a voice (its band or air); CLUSTER
+     * on top of a band or the air ~1.4..1.9 more (its three extra bands, rounded up to 2); INHARM costs nothing. Before this,
+     * noise and CLUSTER were free (CLUSTER a tenth, estimated). */
+    uint8_t nz = (uint8_t)(noise_amount_of(e) > 0u);
+    uint8_t cl = (uint8_t)(e->noise_cluster && nz && e->oscmix.noise_colour >= WHISTLE_BAND ? 2u : 0u);
+    return (uint8_t)(c + 2u * sh2 + (a == VARCH_SPREAD || a == VARCH_SINGLE ? 2u : 1u) * pcm + rt + nz + cl);   /* (2026-11-18: PCM on
                                     * SPREAD reads four playheads, 1.6..2.0 a voice; elsewhere 0.5..1.0 an oscillator) */
 }
 
@@ -841,7 +872,7 @@ typedef struct {
     SequencerLane seq[SEQ_NLANE];
     ArpState arp;
 } WholePerformance;
-PS_STATIC_ASSERT(sizeof(WholePerformance) == 1054u,"WholePerformance: no padding (every member is bytes)");
+PS_STATIC_ASSERT(sizeof(WholePerformance) == 1058u,"WholePerformance: no padding (every member is bytes)");
 
 /* ------------------------------------------------ UI state machine --- */
 /* runtime registers, never written to flash: a context shift must not touch the clock (6.3) */

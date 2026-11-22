@@ -222,18 +222,27 @@ static const UiRow OSC_ROWS[] = {                   /* OSC2 */
 #define HOFS(m) ((uint8_t)(offsetof(EngineState, m) - offsetof(EngineState, oscmix)))
 static const UiRow OSCMIX_ROWS[] = {
     {"XMOD TYPE", OFS(OscMixerParams, xmod_type), 0, XMOD_COUNT - 1, RK_BYTE, 0, XMOD_NAMES, A(DUAL_OSC) | A(FULL)},
-    {"NOISE COLOUR", OFS(OscMixerParams, noise_colour), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},
-    {"COL MOD", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
+    {"WHISTLE", OFS(OscMixerParams, noise_colour), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},   /* (was NOISE COLOUR) */
+    {"WHISTLE MOD", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
     {"HARMONIC", HOFS(noise_harmonic), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},
     {"LEVEL MOD", OFS(OscMixerParams, noise_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_OSC2},
     {"NOISE LEVEL", OFS(OscMixerParams, noise_level), 0, VAL_MAX, RK_BYTE, 0, NULL, A(BINAURAL)},
     {"R SCAN OFFSET", OFS(OscMixerParams, bin_scan_offset), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A(BINAURAL)},
     {"SUB WAVE", OFS(OscMixerParams, sub_octave), 0, SUBWAVE6_COUNT - 1, RK_SUBWAVE, 0, SUBWAVE6_NAMES,
      A_OSC2},
+    {"CLUSTER", HOFS(noise_cluster), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},   /* (2026-11-21, last: NRPN 2/12) */
+    {"COLOUR", HOFS(noise_tint), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},       /* (2026-11-21: NRPN 2/13) */
+    {"INHARM", HOFS(noise_inharm), 0, VAL_MAX, RK_BYTE, 0, NULL, A_OSC2},     /* (2026-11-21: NRPN 2/14) */
 };
 /* NOISE (2026-11-06): with one oscillator, in OSC2's place; it shapes the noise, the OSCMIXER sets its level
- * (2026-11-11). Everything on the knobs: COLOUR, HARMONIC, COL MOD and LEVEL MOD (ENV3's, 2026-11-11). No rows; its
- * block is the OSCMIXER's (NOISE_PAGE_DEF). */
+ * (2026-11-11). Since 2026-11-21 (the user: two colours) the knobs are the whistle you play: WHISTLE, HARMONIC, CLUSTER
+ * (the next overtones join, then drift apart), INHARM (harmonic -> a bell -> metal); the rows COLOUR (white -> brown)
+ * and the ENV3 amounts. Its block is the OSCMIXER's. */
+static const UiRow NOISE_ROWS[] = {
+    {"COLOUR", HOFS(noise_tint), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
+    {"WHISTLE MOD", OFS(OscMixerParams, noise_col_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+    {"LEVEL MOD", OFS(OscMixerParams, noise_mod_amt), 0, VAL_MAX, RK_BYTE, RF_BIPOLAR, NULL, A_ALL},
+};
 /* FILTER1 / FILTER2 (4.2): DRIVE first (2026-10-21), then the circuit and KEY TRACK (knob 4 ENV2 > CUTOFF, the
  * morph's mod a route, 2026-11-11). KEY TRACK lives at the patch's end (EngineState.filter_key_track), so each
  * filter page has its own table: the row's offset counts from that filter's block. */
@@ -563,7 +572,7 @@ PS_STATIC_ASSERT(UIPAGE_OSC1 + 3 == UIPAGE_FILTER1 && UIPAGE_FILTER1 + 3 == UIPA
                  UIPAGE_ENV1 + 3 == UIPAGE_LFO1 && UIPAGE_LFO1 + 3 == UIPAGE_MOD && UIPAGE_MOD + 2 == UIPAGE_EFFECTS &&
                  UIPAGE_EFFECTS + 2 == UIPAGE_HOME1, "SECTION_COUNT: a section's presses stay inside its own pages");
 /* the NOISE page: OSC2's place with one oscillator, the OSCMIXER's block */
-static const UiPage NOISE_PAGE_DEF = SYNTH(OSCMIX_ROWS, 0, oscmix, 0, OscMixerParams);   /* (no rows) */
+static const UiPage NOISE_PAGE_DEF = SYNTH(NOISE_ROWS, NROWS(NOISE_ROWS), oscmix, 0, OscMixerParams);
 
 /* -------------------------------------------------------- knob table --- */
 /* 2.2: the four knobs of each page. offset is in the page's data block (as the rows' offsets are), except HOME's
@@ -588,17 +597,17 @@ static const UiKnob OSC_KNOBS[4] = {
     KOSC(scan, "WAVE SCAN", UIKNOB_RAW), KOSC(coarse, "TUNE", UIKNOB_TUNE),
     KOSC(lfo2_pitch, "LFO2>PITCH", UIKNOB_RAW), KOSC(env2_pitch, "ENV2>PITCH", UIKNOB_BIP),
 };
-/* OSCMIXER by architecture (2026-11-11, user layout). With one oscillator: knob 2 SUB WAVE, 3 SUB LEVEL, 4 NOISE
- * (SPREAD's spread on knob 1, its mod a row); BINAURAL keeps the right ear's knobs 1 / 2, SUB WAVE on 4, the noise a
- * row. STACK: the cross-mod type and amount, sub, noise. The others: knob 3 the sub, knob 4 the noise; knobs 1 / 2
+/* OSCMIXER by architecture (2026-11-11, user layout). With one oscillator (SPREAD, 2026-11-21): knob 1 OSC/NOISE, a
+ * bipolar balance as OSC MIX is (noise replaces NOISE LEVEL there), 2 SPREAD, 3 SUB WAVE, 4 SUB LEVEL; BINAURAL keeps the
+ * right ear's knobs 1 / 2, SUB WAVE on 4, the noise a row. STACK: the cross-mod type and amount, sub, noise. The others: knob 3 the sub, knob 4 the noise; knobs 1 / 2
  * need OSC2; with no OSC2 they are greyed. */
 #define KSUB6 {"SUB WAVE", OFS(OscMixerParams, sub_octave), UIKNOB_LIST, SUBWAVE6_COUNT, SUBWAVE6_NAMES}   /* sub6_knob */
 static const UiKnob OSCMIX_KNOBS[VARCH_COUNT][4] = {
-    {KNONE, KSUB6, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)}, /* SINGLE */
+    {KMIX(balance, "OSC/NOISE", UIKNOB_BIP), KNONE, KSUB6, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW)},            /* SINGLE */
     {KMIX(balance, "OSC MIX", UIKNOB_BIP), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},                  /* DUAL OSC */
-    {KMIX(spread, "SPREAD", UIKNOB_RAW), KSUB6,
-     KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},                  /* SPREAD */
+    {KMIX(balance, "OSC/NOISE", UIKNOB_BIP), KMIX(spread, "SPREAD", UIKNOB_RAW),
+     KSUB6, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW)},                                                       /* SPREAD (2026-11-21) */
     {KNONE, KSUB6, KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},
                                                                                                                 /* DUAL FILTER */
     {KMIXL(xmod_type, "XMOD TYPE", XMOD_NAMES, XMOD_COUNT), KMIX(xmod_amt, "CROSS-MOD", UIKNOB_RAW),
@@ -611,8 +620,8 @@ static const UiKnob OSCMIX_KNOBS[VARCH_COUNT][4] = {
      KMIX(sub_level, "SUB LEVEL", UIKNOB_RAW), KMIX(noise_level, "NOISE LEVEL", UIKNOB_RAW)},                  /* DUAL SPREAD */
 };
 static const UiKnob NOISE_KNOBS[4] = {     /* the NOISE page (2026-11-06; the level went to the OSCMIXER 2026-11-11) */
-    KMIX(noise_colour, "COLOUR", UIKNOB_RAW), UIK("HARMONIC", HOFS(noise_harmonic), UIKNOB_RAW),
-    KMIX(noise_col_mod_amt, "COL MOD", UIKNOB_BIP), KMIX(noise_mod_amt, "LEVEL MOD", UIKNOB_BIP),
+    KMIX(noise_colour, "WHISTLE", UIKNOB_RAW), UIK("HARMONIC", HOFS(noise_harmonic), UIKNOB_RAW),
+    UIK("CLUSTER", HOFS(noise_cluster), UIKNOB_RAW), UIK("INHARM", HOFS(noise_inharm), UIKNOB_RAW),
 };
 static const UiKnob FILTER_KNOBS[4] = {
     KFLT(morph, "TYPE MORPH", UIKNOB_RAW), KFLT(cutoff, "CUTOFF", UIKNOB_RAW),
@@ -3823,13 +3832,28 @@ static void par_wrote(UIStateMachine *sm, uint16_t i);
 static uint16_t par_index_at(uint8_t page, uint8_t item, uint8_t layer);
 PS_STATIC_ASSERT(sizeof AMP_ROWS / sizeof AMP_ROWS[0] + 4u <= 16u, "AMP's rows below the MFX's NRPN places");
 
-/* one controller on one layer (a performance page: the performance's) */
-static void cc_one(UIStateMachine *sm, const UiCc *c, uint8_t layer, uint16_t v, uint8_t exact)
+/* NOISE LEVEL's CC (115, its NRPN 2:9) on a one-oscillator arch is OSC/NOISE, the balance: knob 1 (2026-11-22).
+ * Returns c, or alt holding the redirected controller. */
+static const UiCc *cc_redirect(const UIStateMachine *sm, const UiCc *c, uint8_t layer, UiCc *alt)
 {
+    uint8_t a = varch_of(sm->engine[layer]);
+    if (c->page == UIPAGE_OSCMIX && c->item == CCI_ROW + 5u && (a == VARCH_SPREAD || a == VARCH_SINGLE)) {
+        *alt = *c;
+        alt->item = 0u;
+        return alt;
+    }
+    return c;
+}
+
+/* one controller on one layer (a performance page: the performance's) */
+static void cc_one(UIStateMachine *sm, const UiCc *c0, uint8_t layer, uint16_t v, uint8_t exact)
+{
+    UiCc alt;
+    const UiCc *c = cc_redirect(sm, c0, layer, &alt);
     uint8_t page = c->page == UIPAGE_HOME1 ? (uint8_t)(UIPAGE_HOME1 + layer) : c->page, m = CC_MSB(v, exact);
     if (page_def(sm, page, layer) != &UI_PAGES[page] || !ui_sm_page_visible(sm, page, layer))
         return;                                      /* (OSC2's place is the NOISE page: nothing of OSC2's to move) */
-    par_wrote(sm, par_index_at(c->page, c->item, layer));   /* (CC OUT: not echoed) */
+    par_wrote(sm, par_index_at(c0->page, c0->item, layer));   /* (CC OUT: not echoed; the NRPN's own place) */
     if (page == UIPAGE_AMP && c->item >= CCI_MFX) {  /* the MFX's knobs by position, its type, its rows (AMP's: past
                                                       * AMP's own rows; on every other page 16.. are rows) */
         MfxParams *mf = ui_sm_mfx(sm, layer);
@@ -4045,8 +4069,10 @@ static void par_row(UIStateMachine *sm, uint8_t page, uint8_t layer, const UiRow
 
 /* the control at c on a layer as cc_one moves it: 1 and its values, 0: not there now (the page hidden, the MFX type's
  * row another type's, a knob with nothing) */
-static uint8_t par_read(UIStateMachine *sm, const UiCc *c, uint8_t layer, uint8_t *v, uint8_t *ccv)
+static uint8_t par_read(UIStateMachine *sm, const UiCc *c0, uint8_t layer, uint8_t *v, uint8_t *ccv)
 {
+    UiCc alt;
+    const UiCc *c = cc_redirect(sm, c0, layer, &alt);
     uint8_t page = c->page == UIPAGE_HOME1 ? (uint8_t)(UIPAGE_HOME1 + layer) : c->page;
     if (page_def(sm, page, layer) != &UI_PAGES[page] || !ui_sm_page_visible(sm, page, layer))
         return 0u;
