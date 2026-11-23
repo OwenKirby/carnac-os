@@ -2188,9 +2188,8 @@ const char *ui_sm_fine_text(uint8_t v, char *buf)
  * 3/32 a dotted sixteenth ... 3/4 a dotted half), else the delay in milliseconds (fx_delay_len) */
 const char *ui_sm_dtime_text(uint8_t v, char *buf)
 {
-    static const char DIV[12][6] = {"1/16T", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4", "1/2T", "1/4.", "1/2", "1/2."};
     if (DELAY_SYNC(&perf_state)) {
-        const char *d = DIV[fx_sync_div(v, DELAY_STEREO(&perf_state))];
+        const char *d = fx_sync_name(fx_sync_div(v, DELAY_STEREO(&perf_state)));
         uint8_t i = 0u;
         while (d[i]) { buf[i] = d[i]; i++; }
         if (fx_sync_capped(v, DELAY_STEREO(&perf_state))) buf[i++] = '*';   /* (longer than the line: below 80 BPM) */

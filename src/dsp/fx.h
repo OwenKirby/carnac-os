@@ -12,6 +12,7 @@ void fx_init(void);
  * unsynced the delay in samples */
 uint8_t fx_sync_div(uint8_t v, int stereo);   /* the division the knob plays (an index into the fixed list), the same at any tempo */
 uint8_t fx_sync_count(int stereo);            /* how many divisions the mode offers */
+const char *fx_sync_name(uint8_t div);        /* its name: "1/16T" .. "1/4" */
 int fx_sync_capped(uint8_t v, int stereo);    /* 1 when the division is longer than the line at this tempo (below SYNC_FLOOR_BPM) */
 uint32_t fx_delay_free_len(uint8_t v);
 uint32_t fx_delay_free_len_m(uint8_t v, int stereo);
