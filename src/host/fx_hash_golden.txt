@@ -1,36 +1,36 @@
-reverb 1 pingpong 0  8d951997
-reverb 1 pingpong 1  919eca16
-reverb 1 hot         18d8ee3f
-reverb 1 bbd         919eca16
-reverb 1 hp 0       e1b37773
-reverb 1 hp 1       5f43272e
-reverb 2 pingpong 0  a7d6db72
-reverb 2 pingpong 1  320af3cb
-reverb 2 hot         fe98193b
-reverb 2 bbd         320af3cb
-reverb 2 hp 0       71a107a8
-reverb 2 hp 1       81992409
-reverb 3 pingpong 0  9407a589
-reverb 3 pingpong 1  bc6ac528
-reverb 3 hot         e4070e20
-reverb 3 bbd         bc6ac528
-reverb 3 hp 0       905036b3
-reverb 3 hp 1       9817a102
-reverb 4 pingpong 0  9fb7fda7
-reverb 4 pingpong 1  8e2c0bfc
-reverb 4 hot         7d7c79b7
-reverb 4 bbd         8e2c0bfc
-reverb 4 hp 0       7983d389
-reverb 4 hp 1       e674fc3e
-reverb 5 pingpong 0  1fbb80f0
-reverb 5 pingpong 1  c27a5d71
-reverb 5 hot         d1336202
-reverb 5 bbd         c27a5d71
-reverb 5 hp 0       f96ce772
-reverb 5 hp 1       449a471d
-reverb 0 pingpong 0  9d5f5adf
-reverb 0 pingpong 1  2c012cf8
-reverb 0 hot         5bd0c0b2
-reverb 0 bbd         2c012cf8
-reverb 0 hp 0       9010ecd5
-reverb 0 hp 1       7893a30a
+reverb 1 pingpong 0  a15f3b03
+reverb 1 pingpong 1  4f5d8ebe
+reverb 1 hot         84ebd433
+reverb 1 bbd         4f5d8ebe
+reverb 1 hp 0       e0a17b87
+reverb 1 hp 1       5cde54d2
+reverb 2 pingpong 0  7b0464de
+reverb 2 pingpong 1  fe43a41f
+reverb 2 hot         e59cd889
+reverb 2 bbd         fe43a41f
+reverb 2 hp 0       9b2ecb1e
+reverb 2 hp 1       e08fc91f
+reverb 3 pingpong 0  cc1acc43
+reverb 3 pingpong 1  0a4b8d2a
+reverb 3 hot         99299850
+reverb 3 bbd         0a4b8d2a
+reverb 3 hp 0       d1ba7453
+reverb 3 hp 1       fbd0e47e
+reverb 4 pingpong 0  340731d7
+reverb 4 pingpong 1  681a2e3c
+reverb 4 hot         d8707b2f
+reverb 4 bbd         681a2e3c
+reverb 4 hp 0       27cb0103
+reverb 4 hp 1       a9112804
+reverb 5 pingpong 0  79931806
+reverb 5 pingpong 1  372944f5
+reverb 5 hot         04dbc2e6
+reverb 5 bbd         372944f5
+reverb 5 hp 0       311ab8a6
+reverb 5 hp 1       63f770b5
+reverb 0 pingpong 0  193f209b
+reverb 0 pingpong 1  39818a6a
+reverb 0 hot         0c11abd6
+reverb 0 bbd         39818a6a
+reverb 0 hp 0       976a77cf
+reverb 0 hp 1       d5200540

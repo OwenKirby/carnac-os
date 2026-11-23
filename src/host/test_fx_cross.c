@@ -86,7 +86,9 @@ int main(void)
         run(t, 80, 90, 127, 127, 12.0, 0.0, W2, 2, hot, &pk);
         printf("%-9s both at 127: %6.1f dBFS at 16 s, %6.1f at 20 s; hot send %6.1f, peak %.0f", TN[t], db[0], db[1],
                hot[1], pk);
-        if (db[0] < XF_LO || db[0] > XF_HI || fabs(db[1] - db[0]) > 2.0 || fabs(hot[1] - db[1]) > 2.0 || !(pk < 70000.0)) {
+        /* (2026-11-23: the 12-bit tape cells let a 127 bloom fall ~4.6 dB in four seconds, where the 8-bit cells held it
+         * within 2 dB; the user accepted the faster decay, so the hold tolerance is 6 dB) */
+        if (db[0] < XF_LO || db[0] > XF_HI || fabs(db[1] - db[0]) > 6.0 || fabs(hot[1] - db[1]) > 6.0 || !(pk < 70000.0)) {
             printf("  << not a held bloom in %.0f .. %.0f dBFS", XF_LO, XF_HI);
             fails++;
         }
