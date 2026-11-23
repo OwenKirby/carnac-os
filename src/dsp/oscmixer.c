@@ -165,12 +165,16 @@ void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t f
         mv->nz_col = (int16_t)key;
     }
     for (int e = 0; e < (mv->cl_amt ? 3 : 2); e++) {   /* each ear one step (+ CLUSTER's second band), a line to it over the tick */
+        /* ear 1 rings a band only for BINAURAL (nz_ears 2): elsewhere its seed still steps, so the others draw the same */
+        int used = e != 1 || mv->nz_ears > 1u;
         for (int s = 0; s <= (int)mv->long_tick; s++) {
             mv->nz_seed = mv->nz_seed * 1664525u + 1013904223u;
+            if (!used) continue;
             float w = (float)(int16_t)(mv->nz_seed >> 16);
             mv->nz_a[e] += mv->nz_g * (w - mv->nz_a[e]);
             mv->nz_b[e] += mv->nz_g * (mv->nz_a[e] - mv->nz_b[e]);
         }
+        if (!used) continue;
         float y = mv->nz_b[e] * mv->nz_gain;
         int32_t next = (int32_t)(y > 32767.f ? 32767.f : y < -32767.f ? -32767.f : y) * 16;
         mv->nz_d[e] = (next - mv->nz_cur[e]) >> (SYNTH_CTRL_SHIFT + mv->long_tick);   /* (over a tick) */
