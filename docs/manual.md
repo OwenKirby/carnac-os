@@ -225,7 +225,7 @@ There is one reverb and one delay, shared by both layers. Each layer feeds them 
 
 **EFFECTS knobs:** DELAY TIME, DELAY FDBK, REVERB TIME, REVERB DAMP. Unsynced, DELAY TIME runs from about 1.5 ms to 1.0 s in steps of about 8 ms.
 
-**EFFECTS rows:** DELAY TYPE, DELAY SYNC, DEGRADE, PING PONG, DELAY HP, then REVERB TYPE, REVERB PREDELAY: the delay's rows first, then the reverb's.
+**EFFECTS rows:** DELAY SYNC, DEGRADE, PING PONG, then REVERB TYPE, REVERB PREDELAY: the delay's rows first, then the reverb's. The delay is always a tape echo (there is no delay type to choose), and DELAY HP is on the MIX page.
 
 | Reverb type | Character |
 | --- | --- |
@@ -236,16 +236,13 @@ There is one reverb and one delay, shared by both layers. Each layer feeds them 
 | DOLMEN | A small stone chamber, like a cave |
 | TUMULUS | A cavern, named for the Tumulus Saint-Michel at Carnac |
 
-| Delay type | Character |
-| --- | --- |
-| TAPE | Tape echo that wobbles, saturates and wears |
-| BBD | Bucket-brigade echo, dark and warm, with a breath of noise that follows the echo. Clean at every DELAY TIME (no bitcrushed grit at long times) |
+The delay is a tape echo that wobbles, saturates and wears. The bucket-brigade (BBD) delay was removed, so there is no delay type to choose.
 
-- **DEGRADE** is one control for wow, flutter and filtering. It drives both the tape and the BBD delay.
+- **DEGRADE** is one control for wow, flutter and filtering. It drives the tape delay.
 - **PING PONG** bounces the echoes between left and right.
-- **DELAY HP** puts a gentle high-pass filter in the delay's feedback loop, for a dub-style delay. The first echo keeps its bass, and each repeat after it loses a little more, so high FEEDBACK settings thin out instead of piling up low end. 0 is off (the delay as before); from 1 to 127 the cutoff sweeps from about 30 Hz to about 1 kHz, so the top of the range strips the repeats down to the mids. It works on both TAPE and BBD, and the delay still self-oscillates past FEEDBACK 100 (with BBD at DELAY HP 127, only at FEEDBACK 127).
+- **DELAY HP** puts a gentle high-pass filter in the delay's feedback loop, for a dub-style delay. The first echo keeps its bass, and each repeat after it loses a little more, so high FEEDBACK settings thin out instead of piling up low end. 0 is off (the delay as before); from 1 to 127 the cutoff sweeps from about 30 Hz to about 1 kHz, so the top of the range strips the repeats down to the mids. It works on the tape delay, and the delay still self-oscillates past FEEDBACK 100.
 - **DELAY SYNC** locks the delay time to the tempo: DELAY TIME then steps from 1/24 (fully left) through 1/16, 1/12, 1/8, 1/6, 1/4 and 1/3 to 1/2 (fully right), short to long as when unsynced.
-- **Self-oscillation.** With FEEDBACK above 100, both delays build up on themselves, in a musical way. At the top of the range they run away to a dark, filtered howl, so turn it up slowly.
+- **Self-oscillation.** With FEEDBACK above 100, the delay builds up on itself, in a musical way. At the top of the range they run away to a dark, filtered howl, so turn it up slowly.
 
 > Very loud sends are limited before they reach the reverb and delay, so playing several voices into a hot reverb should not buzz. If you hear digital buzz or a high whine after a note ends, report it with the reverb type and the patch.
 
@@ -409,6 +406,7 @@ Newest first. Features marked *in source* are written but not yet installed on t
 
 | Date | Change |
 | --- | --- |
+| 2026-11-22 | BBD delay removed (installed): the delay is the tape echo only, so DELAY TYPE is gone from EFFECTS and DEGRADE drives the tape delay alone. Saved performances with a BBD delay play the tape echo. DELAY HP moved from EFFECTS to MIX. The 2026-10-26 row below describes the BBD, which is no longer in the FM-1. |
 | 2026-11-22 | *In source, not yet installed:* in SINGLE (the ARCH list's first entry, SPREAD underneath), the OSCMIX's knob 1 is OSC/NOISE, a bipolar balance like OSC MIX in DUAL OSC: left is the oscillator alone, centre both, right the noise alone. The noise level knob is gone from that architecture, so the noise is set by OSC/NOISE, and the NOISE LEVEL CC (115) moves it. Knobs 2 to 4 are SPREAD, SUB WAVE and SUB LEVEL. Patches with SINGLE at OSC/NOISE 0 sound as before; SINGLE patches that had noise now have their noise on the balance. |
 | 2026-10-29 | Carnac OS 0.9.6 released: 0.9.5 plus the wave check at power-on (the row below). Patches, performances and settings carry over unchanged (installed). |
 | 2026-10-29 | The FM-1 checks its waves at power-on. If the PCM waves or FOUNDATIONS are missing (the firmware was installed without them, for example the .fwsc alone with another tool), the start-up screen shows the field with no standing stones and WAVES MISSING for 3 seconds; if they come from another version, WAVES OUT OF DATE. The web installer, or pcm_store_upload.py sync, fixes it. Nothing else changes (installed). |
