@@ -69,10 +69,12 @@
 
 static const uint16_t SFX_REV_COMB[4] = {1116, 1188, 1277, 1356};
 static const uint16_t SFX_REV_AP[2] = {556, 441};
-/* sync divisions, shortest to longest like unsynced DELAY TIME, as pulses (96 to the whole note, fx_pulse_q8): straight,
- * triplet and dotted (x 3/2): 1/24 (1/16T), 1/16, 1/12 (1/8T), 3/32 (1/16.), 1/8, 1/6 (1/4T), 3/16 (1/8.), 1/4, 1/3 (1/2T),
- * 3/8 (1/4.), 1/2, 3/4 (1/2.) */
-static const uint8_t DELAY_SYNC_PULSES[12] = {4, 6, 8, 9, 12, 16, 18, 24, 32, 36, 48, 72};
+/* sync divisions, shortest first (2026-11-24: down to 1/64T): each is NUM / DEN of the whole note, and its name. A whole
+ * note is 96 pulses (fx_pulse_q8), so the length is exact in samples at any tempo. */
+static const uint8_t DELAY_SYNC_NUM[13] = {1, 1, 1, 1, 1, 3, 1, 1, 3, 1, 1, 3, 1};
+static const uint8_t DELAY_SYNC_DEN[13] = {96, 64, 48, 32, 24, 64, 16, 12, 32, 8, 6, 16, 4};
+static const char *const DELAY_SYNC_NAME[13] = {"1/64T", "1/64", "1/32T", "1/32", "1/16T", "1/32.", "1/16", "1/8T",
+                                                "1/16.", "1/8", "1/4T", "1/8.", "1/4"};
 
 static struct {
     uint8_t b[TAPE_BYTES];                                /* 12-bit cells: pairs in three bytes (even cell, odd cell) */
@@ -277,16 +279,17 @@ uint32_t fx_pulse_q8 = 235200u;                   /* 918.75 frames: 120 BPM */
 #define DELAY_SYNC_LEN_MAX (2u * (TAPE_LEN - 64u))    /* the longest mono sync delay (~1.0 s) */
 /* The sync divisions are fixed (2026-11-23, the user: the division must not change with the tempo): the knob plays the
  * first N of the list, shortest first, at any tempo. N is what fits the line at SYNC_FLOOR_BPM: a quarter note at 80 BPM
- * is 0.75 s (mono's line, 1.0 s), a triplet quarter 0.5 s (stereo's line). Below the floor a division can be longer than
+ * is 0.75 s (mono's line, 1.0 s), a triplet quarter 0.5 s (stereo's line). The list starts at 1/64T. Below the floor a division can be longer than
  * its line: it then plays the line's length and its label carries a * (fx_sync_capped). */
 #define SYNC_FLOOR_BPM 80u
-#define SYNC_COUNT_MONO 8u                            /* 1/16T .. 1/4 */
-#define SYNC_COUNT_STEREO 6u                          /* 1/16T .. 1/4T */
+#define SYNC_COUNT_MONO 13u                           /* 1/64T .. 1/4 */
+#define SYNC_COUNT_STEREO 11u                         /* 1/64T .. 1/4T */
 /* Synced (2026-11-03, user: "tempo fix is necessary"; until then the divisions were of a fixed 120 BPM bar): the
  * division at the tempo. Past the 1.0 s the tape is made for (a half note under 120 BPM) it halves, so the echo
  * stays on the grid an octave of time shorter. A MIDI clock's tempo wobbles a little pulse to pulse: a change under
  * ~0.4 % keeps the length it had (delay_targets), so a steady clock gives a steady echo, not a warble. */
-static inline uint32_t sync_len(uint8_t div) { return (fx_pulse_q8 >> 4) * DELAY_SYNC_PULSES[div] >> 4; }
+static inline uint32_t sync_len(uint8_t div) { return ((fx_pulse_q8 * 96u) >> 8) * DELAY_SYNC_NUM[div] / DELAY_SYNC_DEN[div]; }
+const char *fx_sync_name(uint8_t div) { return DELAY_SYNC_NAME[div < 13u ? div : 0u]; }
 uint8_t fx_sync_count(int stereo) { return stereo ? SYNC_COUNT_STEREO : SYNC_COUNT_MONO; }
 uint8_t fx_sync_div(uint8_t v, int stereo)
 {
