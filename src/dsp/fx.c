@@ -20,16 +20,12 @@
  * path saturates softly; playback loses top end (head loss) and low end (a high-pass), both set by TAPE DEGRADE,
  * so each repeat is darker and thinner. TAPE DEGRADE drives all three (tape_degrade); its default 36 gives the old
  * fixed character (32, 10, 36). PING PONG adds a second play head (tape_delay_block). */
-/* THE TAPE'S MEMORY (2026-11-14). TAPE_BYTES of it (was 32 KB: 0.37 s at the full rate, so PING PONG, which runs the
- * tape as for twice the echo, slowed past ~0.19 s, and the slowed tape's anti-aliasing filters cost more than the
- * reverb on the FM1). TAPE_MULAW 1 stores a cell in 8 bits, companded (mu-law, as the early samplers and delays
- * squeezed theirs): twice the time in the same memory, a level-following grain each pass adds to. 0: 16-bit cells.
- * (The BBD that shared it was removed 2026-11-14: the user, MFX covers its colours.) */
+/* THE TAPE'S MEMORY (2026-11-14, 2026-11-23). TAPE_BYTES of it: 12-bit cells, 1.5 bytes each, so 16384 cells in 24 KB =
+ * 0.74 s at the half rate (22.05 kHz cells). The 8-bit mu-law cells of 2026-11-14 gave the bass buzz (a 55 Hz sine's 5th
+ * and 7th harmonics +13 dB against -25 dB at 16 bits) and the hiss (the 1..2 kHz band +15 dB against -17): the cell's
+ * resolution, not a filter, was the floor. (The BBD that shared it was removed 2026-11-14.) */
 #ifndef TAPE_BYTES
-#define TAPE_BYTES 32768u
-#endif
-#ifndef TAPE_MULAW
-#define TAPE_MULAW 1
+#define TAPE_BYTES 33300u                 /* 22200 cells: two stereo lines of 11100 (0.5 s with the wow margin) */
 #endif
 /* TAPE_ROUND, TAPE_EMPH (2026-11-19, the user: the delay added "a bottom layer of noise" under low sounds): a cell is
  * rounded to the nearer mu-law step (it was rounded toward zero everywhere, an error that followed the signal's sign: a
@@ -50,11 +46,8 @@
 #ifndef TAPE_HALF
 #define TAPE_HALF 1                       /* (the user's pick, 2026-11-14: E, 32 KB: 1.49 s, PING PONG to 0.74 s a side) */
 #endif
-#if TAPE_MULAW
-#define TAPE_LEN TAPE_BYTES               /* (cells: a power of 2) */
-#else
-#define TAPE_LEN (TAPE_BYTES / 2u)
-#endif
+#define TAPE_LEN 16384u                    /* mono: 16384 cells, 0.74 s (2026-11-23: stereo's lines are not powers of 2) */
+#define ST_LEN 11100u                      /* stereo: each line, cells (the right line starts at ST_LEN) */
 #define TAPE_MASK (TAPE_LEN - 1u)
 #define TAPE_GAP_MAX (TAPE_LEN - 64u)     /* room for the wow + flutter excursion (< 56 cells) and the neighbour */
 /* gap / speed slew: tau = 1024 samples, about 23 ms, settled in ~0.1 s (2026-10-26: was 93 ms, ~0.5 s to settle, so
@@ -81,41 +74,53 @@ static const uint16_t SFX_REV_AP[2] = {556, 441};
  * 3/8 (1/4.), 1/2, 3/4 (1/2.) */
 static const uint8_t DELAY_SYNC_PULSES[12] = {4, 6, 8, 9, 12, 16, 18, 24, 32, 36, 48, 72};
 
-static union {
-    int16_t s16[TAPE_BYTES / 2u];                         /* 16-bit cells (TAPE_MULAW 0) */
-    uint8_t u8[TAPE_BYTES];                               /* mu-law cells (TAPE_MULAW) */
+static struct {
+    uint8_t b[TAPE_BYTES];                                /* 12-bit cells: pairs in three bytes (even cell, odd cell) */
 } tape_mem SYNTH_POOL;
-#if TAPE_MULAW
-/* mu-law (G.711's segments on the 16-bit range): sign, 3-bit segment, 4-bit step; ~38 dB under the signal, 8 LSB
- * steps near silence. Encoded toward zero (a decaying loop reaches silence, no limit cycle); decoded by a table. */
-static int16_t mulaw_tab[256] SYNTH_POOL;
-static void mulaw_init(void)
+/* The 12-bit cell (2026-11-23): sign (bit 11), a 4-bit exponent (bits 7..10), a 7-bit mantissa. Exponent 0 is linear
+ * (0..127, one step each); exponent e >= 1 is (128 + m) << (e - 1), so each octave has 128 steps and the step doubles
+ * with the level, as a compander's does. Values past 32640 clip; the encoder rounds to the nearest step. */
+static inline int32_t tape12_val(uint32_t c)
 {
-    for (int c = 0; c < 256; c++) {
-        int seg = (c >> 4) & 7, mant = c & 15, m = (((mant << 3) + 0x84) << seg) - 0x84;
-        mulaw_tab[c] = (int16_t)(c & 0x80 ? -m : m);
+    int32_t e = (int32_t)((c >> 7) & 15u), m = (int32_t)(c & 127u);
+    int32_t mag = e == 0 ? m : ((128 | m) << (e - 1));
+    return (c & 0x800u) ? -mag : mag;
+}
+static inline uint32_t tape12_enc(int32_t x)
+{
+    uint32_t sign = x < 0 ? 0x800u : 0u;
+    int32_t mag = x < 0 ? -x : x;
+    if (mag > 32640) mag = 32640;
+    if (mag < 128) return sign | (uint32_t)mag;
+    int32_t e = 1;
+    while (e < 8 && mag >= (256 << (e - 1))) e++;
+    int32_t sh = e - 1, m = (mag + ((1 << sh) >> 1)) >> sh;   /* the rounded mantissa, 128 .. 256 */
+    if (m >= 256) {                                           /* rounded into the next octave */
+        if (e < 8) { e++; m = 128; } else m = 255;
+    }
+    return sign | ((uint32_t)e << 7) | (uint32_t)(m & 127);
+}
+static inline int32_t tape12_rd(uint32_t i)
+{
+    const uint8_t *b = &tape_mem.b[(i >> 1) * 3u];
+    uint32_t c = (i & 1u) ? ((uint32_t)(b[1] >> 4) | ((uint32_t)b[2] << 4))
+                          : ((uint32_t)b[0] | ((uint32_t)(b[1] & 15u) << 8));
+    return tape12_val(c);
+}
+static inline void tape12_wr(uint32_t i, int32_t v)
+{
+    uint8_t *b = &tape_mem.b[(i >> 1) * 3u];
+    uint32_t c = tape12_enc(v);
+    if (i & 1u) {
+        b[1] = (uint8_t)((b[1] & 0x0Fu) | ((c & 15u) << 4));
+        b[2] = (uint8_t)(c >> 4);
+    } else {
+        b[0] = (uint8_t)c;
+        b[1] = (uint8_t)((b[1] & 0xF0u) | (c >> 8));
     }
 }
-static inline uint8_t mulaw_enc(int32_t x)
-{
-    uint32_t sign = x < 0 ? 0x80u : 0u, m = (uint32_t)(x < 0 ? -x : x), b, seg = 0;
-    if (m > 32635u) m = 32635u;
-    b = m + 0x84u;
-    while (seg < 7u && b >= (0x100u << seg)) seg++;
-    uint32_t code = seg << 4 | ((b >> (seg + 3u)) & 15u);
-    if (code && (uint32_t)mulaw_tab[code] > m) code--;   /* (toward zero: never louder than the input) */
-#if TAPE_ROUND
-    if (seg && (code & 0x7Fu) < 0x7Fu && 2u * m > (uint32_t)mulaw_tab[code] + (uint32_t)mulaw_tab[code + 1u])
-        code++;                                          /* the nearer step (but in the bottom segment: toward zero) */
-#endif
-    return (uint8_t)(sign | code);
-}
-#define TAPE_RD(i) ((int32_t)mulaw_tab[tape_mem.u8[(i) & TAPE_MASK]])
-#define TAPE_WR(i, v) (tape_mem.u8[(i) & TAPE_MASK] = mulaw_enc(v))
-#else
-#define TAPE_RD(i) ((int32_t)tape_mem.s16[(i) & TAPE_MASK])
-#define TAPE_WR(i, v) (tape_mem.s16[(i) & TAPE_MASK] = (int16_t)(v))
-#endif
+#define TAPE_RD(i) tape12_rd(tbase + (i))
+#define TAPE_WR(i, v) tape12_wr(tbase + (i), (v))
 /* Core 1's memory (2026-10-16): what core 1 writes (the reverb's back below, through fx_reverb_job) sits on cache
  * lines of its own, 64 bytes, as X0X keeps its mailbox (fm1_cpu1.h: each core's writes on lines of their own). A
  * precaution, added while hunting the "digital buzz with reverb" (which turned out to be a miscompiled clear of the mix
@@ -157,7 +162,13 @@ typedef struct {
     float tw_tgt, tw_v, tw_d, tw_dc;      /* TAPE_WEAR: the drift's target, its two smoothing stages (Q16 cells), the DC */
 } TapeState;
 
-static TapeState tp;
+static TapeState tpl[2];                 /* the lines: one (mono), or two (stereo: left, then right) */
+static TapeState *tcur = &tpl[0];        /* the line being run (tp is its state) */
+#define tp (*tcur)
+static uint32_t tbase = 0u, tlen = TAPE_LEN;     /* the line's cells: the first, the count (its wrap) */
+static uint32_t tgapmax = TAPE_GAP_MAX;          /* the line's longest delay, in cells */
+static uint32_t tlen_q8 = 256u;                  /* the line's length, Q8 of the mode's (stereo's right line: 3/4) */
+static int tpp = 0;                              /* PING PONG inside the line (stereo runs its cross-feed instead) */
 static struct FX_LINE {                               /* core 1: the ROOM network's state, the back's read head */
     uint32_t comb_i[4], ap_i[2];
     int32_t comb_lp[4];
@@ -221,21 +232,23 @@ void fx_init(void)
 {
     xf_init();
     memset(&tape_mem, 0, sizeof tape_mem);
-#if TAPE_MULAW
-    mulaw_init();
-#endif
     memset(sfx_rev_comb, 0, sizeof sfx_rev_comb);
     memset(sfx_rev_ap, 0, sizeof sfx_rev_ap);
     memset(comb_lp, 0, sizeof comb_lp);
-    memset(&tp, 0, sizeof tp);
-    tp.brk_g = tp.brk_tgt = 32767;                        /* TAPE_BREAK: the record level whole */
-    tp.tw_z = 0x2545F491u;                                /* TAPE_WEAR: its own random stream */
-    tp.gap_q16 = tp.gap_tgt_q16 = 64 << 16;
-    tp.speed_q24 = tp.speed_tgt_q24 = 1 << 24;
-    tp.last_len = 64u;
-    tp.seed_rng = 0x6C8E9CF5u;
-    tp.wow_ph2 = 0x6A000000u;                          /* (the second head starts out of step with the first) */
-    tp.flutter_ph2 = 0x35000000u;
+    memset(tpl, 0, sizeof tpl);
+    for (int k = 0; k < 2; k++) {
+        tcur = &tpl[k];
+        tp.brk_g = tp.brk_tgt = 32767;                        /* TAPE_BREAK: the record level whole */
+        tp.tw_z = 0x2545F491u;                                /* TAPE_WEAR: its own random stream */
+        tp.gap_q16 = tp.gap_tgt_q16 = 64 << 16;
+        tp.speed_q24 = tp.speed_tgt_q24 = 1 << 24;
+        tp.last_len = 64u;
+        tp.seed_rng = 0x6C8E9CF5u;
+        tp.wow_ph2 = 0x6A000000u;                          /* (the second head starts out of step with the first) */
+        tp.flutter_ph2 = 0x35000000u;
+    }
+    tcur = &tpl[0];
+    tbase = 0u; tlen = TAPE_LEN; tgapmax = TAPE_GAP_MAX; tlen_q8 = 256u; tpp = 0;
     memset(comb_i, 0, sizeof comb_i);
     memset(ap_i, 0, sizeof ap_i);
     memset(rv_ring, 0, sizeof rv_ring);
@@ -253,26 +266,48 @@ void fx_init(void)
 #endif
 }
 
-/* Delay time in samples, always at least 64 and at most 44133 (1.0 s; 2026-10-26, user: "reduce the maximum delay
- * time so that the range is more useful on the knob": was 64 + 512 a step, 1.47 s, ~11.6 ms a step, now ~7.9 ms;
- * the factory bank's times were rescaled to keep them). Sync picks a division of the 120 BPM grid. */
-#define DELAY_TIME_STEP 347u
+/* Delay time in samples, always at least 64 and at most 32576 (0.74 s; 2026-11-23: was 1.0 s at a step of 347; the knob
+ * now has 256 a step, ~5.8 ms, and the factory bank's times were rescaled to keep them). Sync picks a division of the
+ * 120 BPM grid, halved until it fits. */
+#define DELAY_TIME_STEP 256u
 uint32_t fx_pulse_q8 = 235200u;                   /* 918.75 frames: 120 BPM */
-#define DELAY_LEN_MAX (64u + 127u * DELAY_TIME_STEP)  /* 1.0 s, DELAY TIME's top */
+#define DELAY_LEN_MAX (64u + 127u * DELAY_TIME_STEP)  /* 0.74 s, DELAY TIME's top: mono (2026-11-23) */
+#define DELAY_TIME_STEP_ST 173u                       /* stereo: each line 11100 cells, the knob's top ~0.4996 s */
+#define DELAY_LEN_ST (2u * (ST_LEN - 64u))            /* the longest stereo delay: the line less its wow margin (22072) */
 /* Synced (2026-11-03, user: "tempo fix is necessary"; until then the divisions were of a fixed 120 BPM bar): the
  * division at the tempo. Past the 1.0 s the tape is made for (a half note under 120 BPM) it halves, so the echo
  * stays on the grid an octave of time shorter. A MIDI clock's tempo wobbles a little pulse to pulse: a change under
  * ~0.4 % keeps the length it had (delay_targets), so a steady clock gives a steady echo, not a warble. */
+/* The synced divisions that fit the mode's longest delay at the tempo (2026-11-23, the user: the labels must always be the
+ * lengths): a division too long for the line is not offered, so the knob's steps are the ones that fit, and the label reads
+ * the same list. Divisions shortest first; the knob spreads over the list. */
+static inline uint32_t sync_len(uint8_t div) { return (fx_pulse_q8 >> 4) * DELAY_SYNC_PULSES[div] >> 4; }
+static inline int sync_fits(uint8_t div, int stereo) { return sync_len(div) <= (stereo ? DELAY_LEN_ST : DELAY_LEN_MAX); }
+uint8_t fx_sync_count(int stereo)
+{
+    uint8_t n = 0;
+    for (uint8_t d = 0; d < 12; d++) n = (uint8_t)(n + sync_fits(d, stereo));
+    return n;
+}
+uint8_t fx_sync_div(uint8_t v, int stereo)
+{
+    uint8_t n = fx_sync_count(stereo), k = (uint8_t)(((uint32_t)v * n) >> 7);
+    if (n == 0u) return 0u;                                 /* (no division fits: the shortest, halved below) */
+    for (uint8_t d = 0; d < 12; d++)
+        if (sync_fits(d, stereo)) { if (k == 0u) return d; k--; }
+    return 0u;
+}
 static uint32_t delay_len(const MasterPerformancePreset *p)
 {
     if (!DELAY_SYNC(p))
-        return fx_delay_free_len(p->delay_time);
-    uint32_t len = (fx_pulse_q8 >> 4) * DELAY_SYNC_PULSES[fx_delay_sync_idx(p->delay_time)] >> 4;
-    while (len > DELAY_LEN_MAX)
+        return fx_delay_free_len_m(p->delay_time, DELAY_STEREO(p));
+    uint32_t len = sync_len(fx_sync_div(p->delay_time, DELAY_STEREO(p)));
+    while (len > (DELAY_STEREO(p) ? DELAY_LEN_ST : DELAY_LEN_MAX))
         len >>= 1;
     return len < 64u ? 64u : len;
 }
 uint32_t fx_delay_free_len(uint8_t v) { return 64u + (uint32_t)v * DELAY_TIME_STEP; }
+uint32_t fx_delay_free_len_m(uint8_t v, int stereo) { return 64u + (uint32_t)v * (stereo ? DELAY_TIME_STEP_ST : DELAY_TIME_STEP); }
 
 /* Parabolic sine from a phase accumulator, Q15: 4x(1 - |x|) with x the phase in [-1, 1). */
 static int32_t para_sine(uint32_t ph)
@@ -1210,7 +1245,7 @@ static void tape_bq_flush(float *z, int n)                 /* (no denormals; sil
  * division. */
 static void delay_targets(const MasterPerformancePreset *p, int pp)
 {
-    uint32_t len = delay_len(p) << pp, gap_max = TAPE_GAP_MAX;
+    uint32_t len = ((delay_len(p) * tlen_q8) >> 8) << pp, gap_max = tgapmax;
     if (DELAY_SYNC(p) && len - tp.last_len + (tp.last_len >> 8) <= (tp.last_len >> 7))
         len = tp.last_len;                                 /* (a clock's wobble, within ~0.4 %: as it was) */
     if (len != tp.last_len) {
@@ -1290,7 +1325,7 @@ static DelayFb delay_fb(uint32_t knob, uint32_t degrade, uint32_t hp, uint8_t to
 static void tape_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r,
                              uint32_t n)
 {
-    const int pp = DELAY_PINGPONG(p) != 0u;
+    const int pp = tpp;
     delay_targets(p, pp);
     int32_t wow, flutter;
     uint32_t filter;
@@ -1459,13 +1494,23 @@ static inline int32_t half_c(int32_t c) { return 2 * c - (int32_t)(((int64_t)c *
  * step itself is tape_delay_block's at full speed: heads read linearly, wow and flutter (their depth halved: a cell is
  * two samples now), head loss and high-pass, the feedback's filters, the record saturation; each one-pole moved to the
  * half rate (half_c), so the tone and the decay times stay. */
+/* a head's position, Q16 cells, w less back (either sign), wrapped into the line [0, lq) (2026-11-23: the lines are
+ * counts of cells, not powers of two, so the wrap is explicit) */
+static inline uint32_t tape_pos(uint32_t w, int32_t back, uint32_t lq)
+{
+    int32_t d = (int32_t)w - back;
+    while (d < 0) d += (int32_t)lq;
+    while (d >= (int32_t)lq) d -= (int32_t)lq;
+    return (uint32_t)d;
+}
 static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r,
                                   uint32_t n)
 {
-    const int pp = DELAY_PINGPONG(p) != 0u;
+    const int pp = tpp;
+    const uint32_t lq = tlen << 16;
     delay_targets(p, pp);                               /* (its length; the speed it sets is not used here) */
     uint32_t cells = (tp.last_len + 1u) >> 1;
-    if (cells > TAPE_GAP_MAX) cells = TAPE_GAP_MAX;
+    if (cells > tgapmax) cells = tgapmax;
     const int32_t gap_tgt = (int32_t)(cells << 16);
     int32_t wow, flutter;
     uint32_t filter;
@@ -1564,16 +1609,16 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
             tp.brk_snag -= tp.brk_snag >> 10;                    /* settles over ~50 ms */
             if (tp.brk_snag > -64 && tp.brk_snag < 64) tp.brk_snag = 0;
         }
-        uint32_t r = wpos - (uint32_t)gap - (uint32_t)(m1 >> 8) - (uint32_t)tp.brk_snag;
+        uint32_t r = tape_pos(wpos, (int32_t)gap + (m1 >> 8) + tp.brk_snag, lq);
 #else
-        uint32_t r = wpos - (uint32_t)gap - (uint32_t)(m1 >> 8);
+        uint32_t r = tape_pos(wpos, (int32_t)gap + (m1 >> 8), lq);
 #endif
 #if TAPE_WEAR
         tw_pos += tw_step;
-        r -= (uint32_t)tw_pos;                             /* the drift */
+        r = tape_pos(r, tw_pos, lq);                       /* the drift */
 #endif
-        uint32_t i = r >> 16;
-        int32_t a = TAPE_RD(i), b = TAPE_RD(i + 1u);
+        uint32_t i = r >> 16, i1 = i + 1u < tlen ? i + 1u : 0u;
+        int32_t a = TAPE_RD(i), b = TAPE_RD(i1);
         int32_t play = a + (((b - a) * (int32_t)((r >> 1) & 0x7FFFu)) >> 15);
 #if TAPE_EMPH
         play = tp.em_r[0] = play + (tp.em_r[0] >> 1);
@@ -1592,15 +1637,15 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
                 tp.mt[1][0] = nt;
             }
             m2 += d2;
-            uint32_t r2 = wpos - ((uint32_t)gap >> 1) - (uint32_t)(m2 >> 8);
+            uint32_t r2 = tape_pos(wpos, (int32_t)(gap >> 1) + (m2 >> 8), lq);
 #if TAPE_BREAK
-            r2 -= (uint32_t)tp.brk_snag;
+            r2 = tape_pos(r2, tp.brk_snag, lq);
 #endif
 #if TAPE_WEAR
-            r2 -= (uint32_t)(tw_pos >> 1);
+            r2 = tape_pos(r2, tw_pos >> 1, lq);
 #endif
-            uint32_t i2 = r2 >> 16;
-            int32_t a2 = TAPE_RD(i2), b2 = TAPE_RD(i2 + 1u);
+            uint32_t i2 = r2 >> 16, i21 = i2 + 1u < tlen ? i2 + 1u : 0u;
+            int32_t a2 = TAPE_RD(i2), b2 = TAPE_RD(i21);
             int32_t play2 = a2 + (((b2 - a2) * (int32_t)((r2 >> 1) & 0x7FFFu)) >> 15);
 #if TAPE_EMPH
             play2 = tp.em_r[1] = play2 + (tp.em_r[1] >> 1);
@@ -1637,6 +1682,7 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
         int32_t rec = tape_sat(xin + sfx_mulq15(fbs, fb.lo) + sfx_mulq15(fbs, fb.hi) + sfx_mulq15(fbs, fb.hi2) + hiss);
         aa_lp += sfx_mulq15(rec - aa_lp, 24575);           /* (the full-speed tape's record low-pass, 0.75) */
         wpos += 1u << 16;
+        if (wpos >= lq) wpos -= lq;
 #if TAPE_EMPH
         {
 #if TAPE_BREAK
@@ -1926,9 +1972,28 @@ void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t
     if (n == 0u) return;
     send_limit(&dl_lim_env, in, din, n);
 #if TAPE_HALF
+    if (!DELAY_STEREO(p)) {                          /* mono: one line of 16384 cells (0.74 s), both ears alike */
+        tcur = &tpl[0]; tbase = 0u; tlen = TAPE_LEN; tgapmax = TAPE_GAP_MAX; tlen_q8 = 256u;
+        tpp = DELAY_PINGPONG(p) != 0u;
         tape_delay_block_half(p, din, out_l, out_r, n);
+    } else {                                         /* stereo: two lines of 8192 cells, the right at 3/4 of the left */
+        static int32_t xl[FX_BLOCK_MAX], xr[FX_BLOCK_MAX];   /* last block's outputs: the PING PONG cross-feed */
+        static int32_t sl[FX_BLOCK_MAX], sr[FX_BLOCK_MAX];
+        int pp = DELAY_PINGPONG(p) != 0u;
+        int32_t g = (int32_t)(p->delay_feedback > 100u ? 100u : p->delay_feedback) * 250;   /* the feedback, Q15 */
+        int32_t il[FX_BLOCK_MAX], ir[FX_BLOCK_MAX];
+        for (uint32_t k = 0; k < n; k++) {
+            il[k] = din[k] + (pp ? (int32_t)(((int64_t)xr[k] * g) >> 15) : 0);
+            ir[k] = din[k] + (pp ? (int32_t)(((int64_t)xl[k] * g) >> 15) : 0);
+        }
+        tcur = &tpl[0]; tbase = 0u; tlen = ST_LEN; tgapmax = ST_LEN - 64u; tlen_q8 = 256u; tpp = 0;
+        tape_delay_block_half(p, il, out_l, sl, n);
+        tcur = &tpl[1]; tbase = ST_LEN; tlen = ST_LEN; tgapmax = ST_LEN - 64u; tlen_q8 = 192u; tpp = 0;
+        tape_delay_block_half(p, ir, sr, out_r, n);
+        for (uint32_t k = 0; k < n; k++) { xl[k] = out_l[k]; xr[k] = out_r[k]; }
+    }
 #else
-        tape_delay_block(p, din, out_l, out_r, n);
+    tape_delay_block(p, din, out_l, out_r, n);
 #endif
 }
 

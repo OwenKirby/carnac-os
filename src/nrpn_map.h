@@ -55,7 +55,7 @@
     N(13, 31, AMP, 31), N(13, 32, AMP, 32), N(13, 33, AMP, 33),
     /* EFFECTS */
     N(14, 0, EFFECTS, 0), N(14, 1, EFFECTS, 1), N(14, 2, EFFECTS, 2), N(14, 3, EFFECTS, 3), N(14, 4, EFFECTS, 4),
-    N(14, 5, EFFECTS, 5), N(14, 6, EFFECTS, 6), N(14, 7, EFFECTS, 7),
+    N(14, 5, EFFECTS, 5), N(14, 6, EFFECTS, 6), N(14, 7, EFFECTS, 8), N(14, 8, EFFECTS, 7),
     /* MIX */
     N(15, 0, MIX, 0), N(15, 1, MIX, 1), N(15, 2, MIX, 2), N(15, 3, MIX, 3), N(15, 4, MIX, 4),
     N(15, 5, MIX, 5), N(15, 6, MIX, 6), N(15, 7, MIX, 7), N(15, 8, MIX, 8),

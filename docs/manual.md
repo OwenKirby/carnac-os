@@ -223,9 +223,9 @@ The drive works on each voice, so a chord's notes do not distort each other.
 
 There is one reverb and one delay, shared by both layers. Each layer feeds them through its own sends on the AMP page (DELAY SEND and REVERB SEND). The effects settings are on the EFFECTS page (GLO button) and belong to the performance.
 
-**EFFECTS knobs:** DELAY TIME, DELAY FDBK, REVERB TIME, REVERB DAMP. Unsynced, DELAY TIME runs from about 1.5 ms to 1.0 s in steps of about 8 ms.
+**EFFECTS knobs:** DELAY TIME, DELAY FDBK, REVERB TIME, REVERB DAMP. Unsynced, DELAY TIME runs from about 1.5 ms to the mode's longest delay (see DELAY MODE below) in small steps: 0.74 s in mono, 0.5 s in stereo.
 
-**EFFECTS rows:** DELAY SYNC, DEGRADE, PING PONG, then REVERB TYPE, REVERB PREDELAY: the delay's rows first, then the reverb's. The delay is always a tape echo (there is no delay type to choose), and DELAY HP is on the MIX page.
+**EFFECTS rows:** DELAY SYNC, DEGRADE, PING PONG, DELAY MODE, then REVERB TYPE: the delay's rows first, then the reverb's. The delay is always a tape echo (there is no delay type to choose), and DELAY HP is on the MIX page.
 
 | Reverb type | Character |
 | --- | --- |
@@ -236,12 +236,14 @@ There is one reverb and one delay, shared by both layers. Each layer feeds them 
 | DOLMEN | A small stone chamber, like a cave |
 | TUMULUS | A cavern, named for the Tumulus Saint-Michel at Carnac |
 
-The delay is a tape echo that wobbles, saturates and wears. The bucket-brigade (BBD) delay was removed, so there is no delay type to choose.
+The delay is a tape echo that wobbles, saturates and wears. Its cells are 12-bit, so a bass note stays clean: the 8-bit cells of the last version added a buzz under low sounds, and a hiss that made the synth sound cheap. The bucket-brigade (BBD) delay was removed, so there is no delay type to choose.
+
+- **DELAY MODE** is MONO or STEREO. MONO is one echo line, up to 0.74 s, both ears alike. STEREO is two lines, up to 0.5 s each: the right line is three quarters of the left, so the two sides echo at different times. PING PONG in STEREO sends each side's echoes into the other, so they bounce.
 
 - **DEGRADE** is one control for wow, flutter and filtering. It drives the tape delay.
 - **PING PONG** bounces the echoes between left and right.
 - **DELAY HP** puts a gentle high-pass filter in the delay's feedback loop, for a dub-style delay. The first echo keeps its bass, and each repeat after it loses a little more, so high FEEDBACK settings thin out instead of piling up low end. 0 is off (the delay as before); from 1 to 127 the cutoff sweeps from about 30 Hz to about 1 kHz, so the top of the range strips the repeats down to the mids. It works on the tape delay, and the delay still self-oscillates past FEEDBACK 100.
-- **DELAY SYNC** locks the delay time to the tempo: DELAY TIME then steps from 1/24 (fully left) through 1/16, 1/12, 1/8, 1/6, 1/4 and 1/3 to 1/2 (fully right), short to long as when unsynced.
+- **DELAY SYNC** locks the delay time to the tempo. DELAY TIME then steps through the divisions, straight, triplet and dotted (1/16T, 1/16, 1/8T, 1/16., 1/8, 1/4T, 1/8., 1/4, 1/2T, 1/4., 1/2, 1/2.), shortest first. Only the divisions whose length fits the mode's longest delay at the current tempo are offered, so the name on the display is always the length you hear. At 120 BPM, MONO goes up to 1/2T and STEREO up to 1/4.
 - **Self-oscillation.** With FEEDBACK above 100, the delay builds up on itself, in a musical way. At the top of the range they run away to a dark, filtered howl, so turn it up slowly.
 
 > Very loud sends are limited before they reach the reverb and delay, so playing several voices into a hot reverb should not buzz. If you hear digital buzz or a high whine after a note ends, report it with the reverb type and the patch.
@@ -406,6 +408,7 @@ Newest first. Features marked *in source* are written but not yet installed on t
 
 | Date | Change |
 | --- | --- |
+| 2026-11-23 | Delay rebuilt: 12-bit cells (the 8-bit cells put a buzz under low sounds and a hiss under everything; a 55 Hz sine's 5th and 7th harmonics now sit near -20 dB, were +13 dB). DELAY MODE: MONO (0.74 s) or STEREO (two 0.5 s lines, the right at three quarters of the left; PING PONG crosses them). DELAY SYNC offers only the divisions that fit, so the label is the length; dotted divisions added. DELAY TIME's unsynced range is the mode's. Installed.
 | 2026-11-22 | BBD delay removed (installed): the delay is the tape echo only, so DELAY TYPE is gone from EFFECTS and DEGRADE drives the tape delay alone. Saved performances with a BBD delay play the tape echo. DELAY HP moved from EFFECTS to MIX. The 2026-10-26 row below describes the BBD, which is no longer in the FM-1. |
 | 2026-11-22 | *In source, not yet installed:* in SINGLE (the ARCH list's first entry, SPREAD underneath), the OSCMIX's knob 1 is OSC/NOISE, a bipolar balance like OSC MIX in DUAL OSC: left is the oscillator alone, centre both, right the noise alone. The noise level knob is gone from that architecture, so the noise is set by OSC/NOISE, and the NOISE LEVEL CC (115) moves it. Knobs 2 to 4 are SPREAD, SUB WAVE and SUB LEVEL. Patches with SINGLE at OSC/NOISE 0 sound as before; SINGLE patches that had noise now have their noise on the balance. |
 | 2026-10-29 | Carnac OS 0.9.6 released: 0.9.5 plus the wave check at power-on (the row below). Patches, performances and settings carry over unchanged (installed). |

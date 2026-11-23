@@ -1069,7 +1069,7 @@ static int factory_perf(uint32_t s, WholePerformance *w)
         p->midi_ch[1] = p->midi_ch[0];                    /* the keys play both layers at once, whichever is selected */
     p->split_note = 60u;                                  /* SPLIT: layer 1 below C4, layer 2 from C4 */
     p->reverb_type = fp->rtype; p->reverb_decay = fp->rdec; p->reverb_damp = fp->rdmp;
-    d = (uint32_t)fp->d16 * 1906u / fp->bpm;              /* sixteenths at the tempo, in DELAY TIME's steps (fx.c) */
+    d = (uint32_t)fp->d16 * 661500u / (256u * fp->bpm);   /* sixteenths at the tempo, in DELAY TIME's steps (fx.c: 256 samples) */
     p->delay_time = (uint8_t)(d > VAL_MAX ? VAL_MAX : d);
     p->delay_feedback = fp->dfb; p->delay_pingpong = fp->ping;
     p->delay_degrade = fp->degrade;

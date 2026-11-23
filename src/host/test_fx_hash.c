@@ -31,7 +31,7 @@ int main(int argc, char **argv)
             memset(&p, 0, sizeof p);
             p.reverb_type = (uint8_t)types[k];
             p.reverb_decay = 100; p.reverb_damp = 50;
-            p.delay_time = 59;   /* ~0.47 s (the slowed tape, before the half-rate one) */ p.delay_feedback = 80; p.delay_degrade = (uint8_t)(pp ? 110 : 36);
+            p.delay_time = 80;   /* ~0.47 s (2026-11-23: the step is 256 samples now; was 59 at 347) */ p.delay_feedback = 80; p.delay_degrade = (uint8_t)(pp ? 110 : 36);
             p.delay_pingpong = (uint8_t)((pp & 1) | (pp == 4 ? 127 << 1 : pp == 5 ? 64 << 1 : 0));
             if (hp) p.delay_feedback = (uint8_t)(pp == 4 ? 112 : 116);
             fx_init();

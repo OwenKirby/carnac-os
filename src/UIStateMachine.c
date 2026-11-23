@@ -156,6 +156,7 @@ static const char *const ARPRATE_NAMES[] = {"1/2", "1/4", "1/4T", "1/8", "1/8T",
                                             "1/64", "1/64T", "1/128"};
 PS_STATIC_ASSERT(sizeof(ARPRATE_NAMES) / sizeof(ARPRATE_NAMES[0]) == ARPRATE_COUNT, "one name per ARPRATE_*");
 static const char *const BOOL_NAMES[] = {"OFF", "ON"};
+static const char *const DMODE_NAMES[] = {"MONO", "STEREO"};
 /* 4.5 function_list, as the knob shows it */
 /* 6.2.1 SAVE knobs: TARGET (UISAVE_*), the name position 1..16, and each UI_CHAR_MAP entry as a knob shows it */
 static const char *const SAVE_TARGET_NAMES[] = {"ARP", "SEQ", "PATCH", "PERF"};
@@ -391,6 +392,7 @@ static const UiRow EFFECTS_ROWS[] = {
     {"DELAY SYNC", PERF(delay_sync), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},
     {"DEGRADE", PERF(delay_degrade), 0, VAL_MAX, RK_BYTE, 0, NULL, A_ALL},
     {"PING PONG", PERF(delay_pingpong), 0, 1, RK_BIT0, 0, BOOL_NAMES, A_ALL},   /* (DELAY HP: MIX's LOOP TONE) */
+    {"DELAY MODE", PERF(delay_type), 0, 1, RK_BIT0, 0, DMODE_NAMES, A_ALL},   /* (2026-11-23: mono or stereo) */
     {"REV TYPE", PERF(reverb_type), 0, REVTYPE_COUNT - 1, RK_BYTE, 0, REVTYPE_NAMES, A_ALL},
 };
 /* MIX (2026-11-02, dsp/fx.h fx_live): the performance's live mix, its rows its knobs (as ZONES). BALANCE in DUAL /
@@ -2182,19 +2184,19 @@ const char *ui_sm_fine_text(uint8_t v, char *buf)
 }
 
 /* DELAY TIME as text (2026-11-03, user: "draw the timing divisions beneath the DLY TIME knob"): under DELAY SYNC
- * the division it plays (fx_delay_sync_idx: 1/24 the sixteenth triplet, 1/12 the eighth triplet, 1/6 the quarter's triplet,
+ * the division it plays (fx_sync_div: 1/24 the sixteenth triplet, 1/12 the eighth triplet, 1/6 the quarter's triplet,
  * 3/32 a dotted sixteenth ... 3/4 a dotted half), else the delay in milliseconds (fx_delay_len) */
 const char *ui_sm_dtime_text(uint8_t v, char *buf)
 {
     static const char DIV[12][6] = {"1/16T", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4", "1/2T", "1/4.", "1/2", "1/2."};
     if (DELAY_SYNC(&perf_state)) {
-        const char *d = DIV[fx_delay_sync_idx(v)];
+        const char *d = DIV[fx_sync_div(v, DELAY_STEREO(&perf_state))];
         uint8_t i = 0u;
         while (d[i]) { buf[i] = d[i]; i++; }
         buf[i] = '\0';
         return buf;
     }
-    uint32_t ms = (fx_delay_free_len(v) * 10u + 220u) / 441u, d = 1000u;
+    uint32_t ms = (fx_delay_free_len_m(v, DELAY_STEREO(&perf_state)) * 10u + 220u) / 441u, d = 1000u;
     uint8_t i = 0u;
     while (d > 1u && ms < d)
         d /= 10u;
@@ -3759,7 +3761,7 @@ static const UiCc CC_MAP[] = {
     {85, UIPAGE_AMP, CCI_MFX}, {86, UIPAGE_AMP, CCI_MFX + 1}, {87, UIPAGE_AMP, CCI_MFX + 2},
     {88, UIPAGE_AMP, CCI_MFX + 3}, {89, UIPAGE_AMP, CCI_MFX_TYPE}, {90, UIPAGE_AMP, R(0)},   /* .. DRIVE MODEL */
     {91, UIPAGE_AMP, 3}, {92, UIPAGE_AMP, 1}, {94, UIPAGE_AMP, 2},   /* REVERB SEND, TREMOLO, DELAY SEND (GS) */
-    {95, UIPAGE_EFFECTS, R(3)},                                 /* REVERB TYPE */
+    {95, UIPAGE_EFFECTS, R(4)},                                 /* REVERB TYPE (row 4: DELAY MODE is row 3, 2026-11-23) */
     {102, UIPAGE_FILTER1, 3}, {103, UIPAGE_FILTER1, R(0)}, {104, UIPAGE_FILTER1, R(2)},
     {105, UIPAGE_FILTER2, 0}, {106, UIPAGE_FILTER2, 1}, {107, UIPAGE_FILTER2, 2}, {108, UIPAGE_FILTER2, 3},
     {109, UIPAGE_FILTER2, R(0)}, {110, UIPAGE_FILTER2, R(2)},

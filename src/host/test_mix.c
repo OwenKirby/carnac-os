@@ -82,7 +82,7 @@ static void tone_bands(uint8_t t, double *tr1, double *ba1, double *tr3, double 
     static MasterPerformancePreset p;
     static double out[SR * 2 + 128];                 /* (the last 128-frame block runs past SR * 2) */
     memset(&p, 0, sizeof p);
-    p.delay_time = 59; p.delay_feedback = 90;
+    p.delay_time = 80; p.delay_feedback = 90;
     if (t > 64u) p.delay_pingpong = (uint8_t)(((t - 64u) * 127u / 63u) << 1);   /* (as fx_tone_sync writes it) */
     fx_live[FX_L_TONE] = t;
     fx_init();
