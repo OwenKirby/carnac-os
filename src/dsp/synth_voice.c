@@ -714,6 +714,7 @@ void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
         uint8_t lt = (uint8_t)(voice->ctrl_shift != SYNTH_CTRL_SHIFT);
         voice->mix.long_tick = voice->osc1.pcm.long_tick = voice->osc2.pcm.long_tick = voice->analog.long_tick = lt;
     }
+    voice->mix.nz_ears = arch == VARCH_BINAURAL ? 2u : 1u;   /* (the right ear's band: BINAURAL only) */
     osc_mixer_prepare(&voice->mix, &osc_mixer[voice->layer], freq1_q16, freq2_q16,
                       (int)balance_off, (int)xmod_off, (int)noise_off, (int)colour_off, (int)harm_off_q8);
     osc_prepare(&voice->osc1, freq1_q16, (int)spread);

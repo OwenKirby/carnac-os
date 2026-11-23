@@ -84,6 +84,7 @@ typedef struct {
     uint8_t long_tick;                      /* 1: this tick is 2 x SYNTH_CTRL_PERIOD (SYNTH_CTRL_ADAPT): the band steps twice */
     /* CLUSTER (2026-11-21): the whistle's next three overtones join it, each its own phase (a fractional ratio on one
      * phase would click at the wrap); 0 cl_amt: off, the one-band paths exactly as before */
+    uint8_t nz_ears;                        /* 2 for BINAURAL (its right ear rings its own band), else 1: the band's ear 1 is not run */
     uint8_t cl_amt;                         /* CLUSTER now, 0..127 (0 also when the colour is not a narrow band) */
     uint8_t cl_for;                         /* the CLUSTER cl_g / cl_norm are for (0: none yet) */
     uint32_t cl_ph[3], cl_st[3];            /* the three overtones' phases and steps (osc_mixer_whistle_step) */
