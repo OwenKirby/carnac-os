@@ -2182,11 +2182,11 @@ const char *ui_sm_fine_text(uint8_t v, char *buf)
 }
 
 /* DELAY TIME as text (2026-11-03, user: "draw the timing divisions beneath the DLY TIME knob"): under DELAY SYNC
- * the division it plays (fx_delay_sync_den: 1/24 is the sixteenth triplet, 1/12 the eighth's, 1/6 the quarter's,
- * 1/3 the half's), else the delay in milliseconds (fx_delay_len) */
+ * the division it plays (fx_delay_sync_idx: 1/24 the sixteenth triplet, 1/12 the eighth triplet, 1/6 the quarter's triplet,
+ * 3/32 a dotted sixteenth ... 3/4 a dotted half), else the delay in milliseconds (fx_delay_len) */
 const char *ui_sm_dtime_text(uint8_t v, char *buf)
 {
-    static const char DIV[8][6] = {"1/16T", "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2T", "1/2"};
+    static const char DIV[12][6] = {"1/16T", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4", "1/2T", "1/4.", "1/2", "1/2."};
     if (DELAY_SYNC(&perf_state)) {
         const char *d = DIV[fx_delay_sync_idx(v)];
         uint8_t i = 0u;

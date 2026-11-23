@@ -8,9 +8,9 @@
  * wet signal, added to the dry mix. Since 2026-11-02 each may feed the other too (fx_cross, below; both up, a loop). */
 
 void fx_init(void);
-/* DELAY TIME's knob (also the UI's text, ui_sm_dtime_text): under DELAY SYNC the division's index, 0 (1/24) .. 7 (1/2);
+/* DELAY TIME's knob (also the UI's text, ui_sm_dtime_text): under DELAY SYNC the division's index, 0 (1/24) .. 11 (3/4, a dotted half);
  * unsynced the delay in samples */
-static inline uint8_t fx_delay_sync_idx(uint8_t v) { return (uint8_t)(((uint32_t)v * 8u) >> 7); }
+static inline uint8_t fx_delay_sync_idx(uint8_t v) { return (uint8_t)(((uint32_t)v * 12u) >> 7); }
 uint32_t fx_delay_free_len(uint8_t v);
 /* DELAY SYNC's tempo: frames per 24 PPQN pulse, Q8 (midi_clock_period_q8; the runtime sets it each pass). 120 BPM
  * until then (and in the host tests that run the effects alone) */
