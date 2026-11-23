@@ -76,9 +76,10 @@
 
 static const uint16_t SFX_REV_COMB[4] = {1116, 1188, 1277, 1356};
 static const uint16_t SFX_REV_AP[2] = {556, 441};
-/* sync divisions of the whole note (96 pulses at the tempo, fx_pulse_q8), shortest to longest like unsynced DELAY
- * TIME: 1/24, 1/16, 1/12, 1/8, 1/6, 1/4, 1/3, 1/2 */
-static const uint16_t DELAY_SYNC_DEN[8] = {24, 16, 12, 8, 6, 4, 3, 2};
+/* sync divisions, shortest to longest like unsynced DELAY TIME, as pulses (96 to the whole note, fx_pulse_q8): straight,
+ * triplet and dotted (x 3/2): 1/24 (1/16T), 1/16, 1/12 (1/8T), 3/32 (1/16.), 1/8, 1/6 (1/4T), 3/16 (1/8.), 1/4, 1/3 (1/2T),
+ * 3/8 (1/4.), 1/2, 3/4 (1/2.) */
+static const uint8_t DELAY_SYNC_PULSES[12] = {4, 6, 8, 9, 12, 16, 18, 24, 32, 36, 48, 72};
 
 static union {
     int16_t s16[TAPE_BYTES / 2u];                         /* 16-bit cells (TAPE_MULAW 0) */
@@ -266,7 +267,7 @@ static uint32_t delay_len(const MasterPerformancePreset *p)
 {
     if (!DELAY_SYNC(p))
         return fx_delay_free_len(p->delay_time);
-    uint32_t len = (fx_pulse_q8 >> 4) * 96u / DELAY_SYNC_DEN[fx_delay_sync_idx(p->delay_time)] >> 4;
+    uint32_t len = (fx_pulse_q8 >> 4) * DELAY_SYNC_PULSES[fx_delay_sync_idx(p->delay_time)] >> 4;
     while (len > DELAY_LEN_MAX)
         len >>= 1;
     return len < 64u ? 64u : len;
