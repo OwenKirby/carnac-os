@@ -142,7 +142,8 @@ nrpn  14   3  EFFECTS    3  K4
 nrpn  14   4  EFFECTS    4  DELAY SYNC
 nrpn  14   5  EFFECTS    5  DEGRADE
 nrpn  14   6  EFFECTS    6  PING PONG
-nrpn  14   7  EFFECTS    7  REV TYPE
+nrpn  14   7  EFFECTS    8  REV TYPE
+nrpn  14   8  EFFECTS    7  DELAY MODE
 nrpn  15   0  MIX        0  K1
 nrpn  15   1  MIX        1  K2
 nrpn  15   2  MIX        2  K3
@@ -265,7 +266,7 @@ cc    90   0  AMP        4  DRV MODEL
 cc    91   0  AMP        3  K4
 cc    92   0  AMP        1  K2
 cc    94   0  AMP        2  K3
-cc    95   0  EFFECTS    7  REV TYPE
+cc    95   0  EFFECTS    8  REV TYPE
 cc   102   0  FILTER1    3  K4
 cc   103   0  FILTER1    4  DRIVE
 cc   104   0  FILTER1    6  KEY TRACK

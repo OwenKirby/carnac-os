@@ -38,7 +38,7 @@ static void run(int type, int fbk, int time, int a, int b, double g, double off,
     static MasterPerformancePreset p;
     memset(&p, 0, sizeof p);
     p.reverb_type = (uint8_t)type; p.reverb_decay = (uint8_t)time; p.reverb_damp = 40;
-    p.delay_time = 59; p.delay_feedback = (uint8_t)fbk; p.delay_degrade = 36;
+    p.delay_time = 80; p.delay_feedback = (uint8_t)fbk; p.delay_degrade = 36;
     fx_live[FX_L_TONE] = (uint8_t)g_tone;            /* (its thinner half DELAY HP's bits, as fx_tone_sync sets them) */
     p.delay_pingpong = (uint8_t)(g_pp | (g_tone > 64 ? ((g_tone - 64) * 127 / 63) << 1 : 0));
     fx_cross[FX_X_DLY_REV] = (uint8_t)a;

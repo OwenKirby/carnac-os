@@ -10,8 +10,10 @@
 void fx_init(void);
 /* DELAY TIME's knob (also the UI's text, ui_sm_dtime_text): under DELAY SYNC the division's index, 0 (1/24) .. 11 (3/4, a dotted half);
  * unsynced the delay in samples */
-static inline uint8_t fx_delay_sync_idx(uint8_t v) { return (uint8_t)(((uint32_t)v * 12u) >> 7); }
+uint8_t fx_sync_div(uint8_t v, int stereo);   /* the division (0 1/24 .. 11 3/4) the knob plays, of those that fit the line */
+uint8_t fx_sync_count(int stereo);            /* how many divisions fit the line at this tempo */
 uint32_t fx_delay_free_len(uint8_t v);
+uint32_t fx_delay_free_len_m(uint8_t v, int stereo);
 /* DELAY SYNC's tempo: frames per 24 PPQN pulse, Q8 (midi_clock_period_q8; the runtime sets it each pass). 120 BPM
  * until then (and in the host tests that run the effects alone) */
 extern uint32_t fx_pulse_q8;

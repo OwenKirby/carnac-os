@@ -848,6 +848,8 @@ static inline void perf_voice_limits(const MasterPerformancePreset *p, const Eng
 #define DELAY_SYNC(p) ((uint8_t)((p)->delay_sync & 1u))
 #define PERF_TUNING(p) ((uint8_t)((p)->delay_sync >> 1))
 #define PERF_TUNING_ROOT(p) ((uint8_t)((p)->delay_type >> 1))
+/* DELAY MODE (2026-11-23): bit 0 of delay_type: 0 mono (one line, 0.74 s), 1 stereo (two lines, 0.37 s, the right at 3/4) */
+#define DELAY_STEREO(p) ((uint8_t)((p)->delay_type & 1u))
 /* the built-in tunings first, the ones nearest Carnac's drones and stone-age sound at the top (user, 2026-10-29) */
 enum {
     TUNING_EQUAL,                    /* equal temperament: none */
