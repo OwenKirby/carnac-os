@@ -2193,6 +2193,7 @@ const char *ui_sm_dtime_text(uint8_t v, char *buf)
         const char *d = DIV[fx_sync_div(v, DELAY_STEREO(&perf_state))];
         uint8_t i = 0u;
         while (d[i]) { buf[i] = d[i]; i++; }
+        if (fx_sync_capped(v, DELAY_STEREO(&perf_state))) buf[i++] = '*';   /* (longer than the line: below 80 BPM) */
         buf[i] = '\0';
         return buf;
     }

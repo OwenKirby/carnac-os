@@ -46,7 +46,7 @@
 #ifndef TAPE_HALF
 #define TAPE_HALF 1                       /* (the user's pick, 2026-11-14: E, 32 KB: 1.49 s, PING PONG to 0.74 s a side) */
 #endif
-#define TAPE_LEN 16384u                    /* mono: 16384 cells, 0.74 s (2026-11-23: stereo's lines are not powers of 2) */
+#define TAPE_LEN 22200u                    /* mono: 22200 cells, 1.0 s (2026-11-23: the sync floor's quarter note fits) */
 #define ST_LEN 11100u                      /* stereo: each line, cells (the right line starts at ST_LEN) */
 #define TAPE_MASK (TAPE_LEN - 1u)
 #define TAPE_GAP_MAX (TAPE_LEN - 64u)     /* room for the wow + flutter excursion (< 56 cells) and the neighbour */
@@ -274,36 +274,35 @@ uint32_t fx_pulse_q8 = 235200u;                   /* 918.75 frames: 120 BPM */
 #define DELAY_LEN_MAX (64u + 127u * DELAY_TIME_STEP)  /* 0.74 s, DELAY TIME's top: mono (2026-11-23) */
 #define DELAY_TIME_STEP_ST 173u                       /* stereo: each line 11100 cells, the knob's top ~0.4996 s */
 #define DELAY_LEN_ST (2u * (ST_LEN - 64u))            /* the longest stereo delay: the line less its wow margin (22072) */
+#define DELAY_SYNC_LEN_MAX (2u * (TAPE_LEN - 64u))    /* the longest mono sync delay (~1.0 s) */
+/* The sync divisions are fixed (2026-11-23, the user: the division must not change with the tempo): the knob plays the
+ * first N of the list, shortest first, at any tempo. N is what fits the line at SYNC_FLOOR_BPM: a quarter note at 80 BPM
+ * is 0.75 s (mono's line, 1.0 s), a triplet quarter 0.5 s (stereo's line). Below the floor a division can be longer than
+ * its line: it then plays the line's length and its label carries a * (fx_sync_capped). */
+#define SYNC_FLOOR_BPM 80u
+#define SYNC_COUNT_MONO 8u                            /* 1/16T .. 1/4 */
+#define SYNC_COUNT_STEREO 6u                          /* 1/16T .. 1/4T */
 /* Synced (2026-11-03, user: "tempo fix is necessary"; until then the divisions were of a fixed 120 BPM bar): the
  * division at the tempo. Past the 1.0 s the tape is made for (a half note under 120 BPM) it halves, so the echo
  * stays on the grid an octave of time shorter. A MIDI clock's tempo wobbles a little pulse to pulse: a change under
  * ~0.4 % keeps the length it had (delay_targets), so a steady clock gives a steady echo, not a warble. */
-/* The synced divisions that fit the mode's longest delay at the tempo (2026-11-23, the user: the labels must always be the
- * lengths): a division too long for the line is not offered, so the knob's steps are the ones that fit, and the label reads
- * the same list. Divisions shortest first; the knob spreads over the list. */
 static inline uint32_t sync_len(uint8_t div) { return (fx_pulse_q8 >> 4) * DELAY_SYNC_PULSES[div] >> 4; }
-static inline int sync_fits(uint8_t div, int stereo) { return sync_len(div) <= (stereo ? DELAY_LEN_ST : DELAY_LEN_MAX); }
-uint8_t fx_sync_count(int stereo)
-{
-    uint8_t n = 0;
-    for (uint8_t d = 0; d < 12; d++) n = (uint8_t)(n + sync_fits(d, stereo));
-    return n;
-}
+uint8_t fx_sync_count(int stereo) { return stereo ? SYNC_COUNT_STEREO : SYNC_COUNT_MONO; }
 uint8_t fx_sync_div(uint8_t v, int stereo)
 {
-    uint8_t n = fx_sync_count(stereo), k = (uint8_t)(((uint32_t)v * n) >> 7);
-    if (n == 0u) return 0u;                                 /* (no division fits: the shortest, halved below) */
-    for (uint8_t d = 0; d < 12; d++)
-        if (sync_fits(d, stereo)) { if (k == 0u) return d; k--; }
-    return 0u;
+    return (uint8_t)(((uint32_t)v * fx_sync_count(stereo)) >> 7);   /* the list's index: the same at any tempo */
+}
+int fx_sync_capped(uint8_t v, int stereo)
+{
+    return sync_len(fx_sync_div(v, stereo)) > (stereo ? DELAY_LEN_ST : DELAY_SYNC_LEN_MAX);
 }
 static uint32_t delay_len(const MasterPerformancePreset *p)
 {
     if (!DELAY_SYNC(p))
         return fx_delay_free_len_m(p->delay_time, DELAY_STEREO(p));
     uint32_t len = sync_len(fx_sync_div(p->delay_time, DELAY_STEREO(p)));
-    while (len > (DELAY_STEREO(p) ? DELAY_LEN_ST : DELAY_LEN_MAX))
-        len >>= 1;
+    const uint32_t cap = DELAY_STEREO(p) ? DELAY_LEN_ST : DELAY_SYNC_LEN_MAX;
+    if (len > cap) len = cap;                                      /* (below the tempo floor: the line's length) */
     return len < 64u ? 64u : len;
 }
 uint32_t fx_delay_free_len(uint8_t v) { return 64u + (uint32_t)v * DELAY_TIME_STEP; }
