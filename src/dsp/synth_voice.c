@@ -162,6 +162,49 @@ static __attribute__((noinline)) uint32_t route_mask(const EngineState *e, uint3
     return m & ~1u;
 }
 PS_STATIC_ASSERT(MDST_COUNT <= 64u && MDST_PAN >= 32u && MDST_AMP_LEVEL < 32u, "the route mask's two words");
+
+/* Each destination's routes, a layer's list in route order (2026-11-24): the send helpers below walked all NROUTE
+ * slots at every routed destination, ~8 core cycles a load, ~10 destinations a voice tick on a factory patch (its
+ * routes for the MOD WHEEL at least): c.OSC measured 15..23 of a sample's 544 ticks a voice on the FM1 against ~4 on
+ * a plain one. Now each walks only the routes that go there. Built with route_mask (once a pass, and on a patch's
+ * load), a counting sort: idx[start[d] .. start[d + 1]) are the routes of d whose SOURCE is set, in route order; PITCH's
+ * in both oscillators' lists (send_cents). The helpers still test each route's DEST and SOURCE as before, so the
+ * sums are the same, term for term and in the same order (render goldens, every factory performance's render and a
+ * random-route fuzz: bit for bit). FM1 profile, same rows: CTRL 3..9 % less on the factory performances (FACT 11
+ * 163 -> 149, 19 218 -> 199 ticks), ~2..4 ticks a voice; the rest of c.OSC is the tick's code refetched from XIP. */
+typedef struct {
+    uint8_t start[MDST_COUNT + 1u];
+    uint8_t idx[2u * NROUTE];                       /* (PITCH's routes counted twice) */
+} RouteLists;
+static RouteLists route_lists[NLAYER];
+
+static __attribute__((noinline)) void route_lists_build(const EngineState *e, RouteLists *L) {
+    uint8_t n[MDST_COUNT + 1u];
+    for (unsigned d = 0; d <= MDST_COUNT; d++) n[d] = 0u;
+    for (unsigned i = 0; i < NROUTE; i++) {
+        const ModRoute *r = &e->route[i];
+        if (r->src == MSRC_NONE || r->dest >= MDST_COUNT) continue;
+        if (r->dest == MDST_PITCH) { n[MDST_OSC1_PITCH]++; n[MDST_OSC2_PITCH]++; }
+        else n[r->dest]++;
+    }
+    unsigned s = 0;
+    for (unsigned d = 0; d < MDST_COUNT; d++) {     /* (n becomes each list's next free place) */
+        unsigned k = n[d];
+        L->start[d] = (uint8_t)s;
+        n[d] = (uint8_t)s;
+        s += k;
+    }
+    L->start[MDST_COUNT] = (uint8_t)s;
+    for (unsigned i = 0; i < NROUTE; i++) {
+        const ModRoute *r = &e->route[i];
+        if (r->src == MSRC_NONE || r->dest >= MDST_COUNT) continue;
+        if (r->dest == MDST_PITCH) { L->idx[n[MDST_OSC1_PITCH]++] = (uint8_t)i; L->idx[n[MDST_OSC2_PITCH]++] = (uint8_t)i; }
+        else L->idx[n[r->dest]++] = (uint8_t)i;
+    }
+}
+/* c's layer's lists: the routes of d are route[L->idx[k]] for k from L->start[d] up to L->start[d + 1] */
+#define RL_OF(c) (&route_lists[(c)->layer & 1])
+PS_STATIC_ASSERT(NLAYER == 2u && 2u * NROUTE <= 255u, "the route lists: two layers, byte indices");
 /* The route helpers stay out of line and out of the hot path (2026-11-03, as the sends were): inlined at each
  * destination they grew voice_control_tick by 1.2 KB of code a patch without routes never runs, and as the tick and the
  * voice's render take turns in the FM1's I-cache, BINAURAL measured +8..10 PERF TEST points for it. */
@@ -187,8 +230,9 @@ static int32_t route_out(const SourceCtx *c, const ModRoute *r) {
  * (-64..+63), 2 for a 0..127 one (the route's -64..+63 doubled, either sign) */
 static SEND_COLD int32_t send_sum_any(const SourceCtx *c, unsigned d, int32_t scale) {
     int32_t s = 0;
-    for (unsigned i = 0; i < NROUTE; i++) {
-        const ModRoute *r = &c->eng->route[i];
+    const RouteLists *L = RL_OF(c);
+    for (unsigned k = L->start[d], end = L->start[d + 1u]; k < end; k++) {
+        const ModRoute *r = &c->eng->route[L->idx[k]];
         if (r->dest == d && r->src != MSRC_NONE)
             s += route_out(c, r) * (bip(r->amount) * scale);
     }
@@ -199,8 +243,9 @@ static SEND_COLD int32_t send_sum_any(const SourceCtx *c, unsigned d, int32_t sc
  * the signal over) */
 static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
     int32_t cents = 0;
-    for (unsigned i = 0; i < NROUTE; i++) {
-        const ModRoute *r = &c->eng->route[i];
+    const RouteLists *L = RL_OF(c);
+    for (unsigned k = L->start[d], end = L->start[d + 1u]; k < end; k++) {
+        const ModRoute *r = &c->eng->route[L->idx[k]];
         if ((r->dest == d || r->dest == MDST_PITCH) && r->src != MSRC_NONE) {   /* (d: OSC1 / OSC2 PITCH) */
             int a = bip(r->amount) * 2, sg = a < 0 ? -1 : 1;
             cents += sg * pitch_mod_cents(route_out(c, r), (uint8_t)clampi(a * sg, 0, 127));
@@ -213,8 +258,9 @@ static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
  * size squared, its sign kept, so a small route is a fine one and a full one sweeps the whole range */
 static SEND_COLD int32_t send_cut_any(const SourceCtx *c, unsigned d) {
     int32_t s = 0;
-    for (unsigned i = 0; i < NROUTE; i++) {
-        const ModRoute *r = &c->eng->route[i];
+    const RouteLists *L = RL_OF(c);
+    for (unsigned k = L->start[d], end = L->start[d + 1u]; k < end; k++) {
+        const ModRoute *r = &c->eng->route[L->idx[k]];
         if (r->dest == d && r->src != MSRC_NONE) {
             int a = bip(r->amount) * 2, t = ctrl_cut_env_depth[a < 0 ? (a < -127 ? 127 : -a) : a];
             s += (route_out(c, r) * (a < 0 ? -t : t)) >> 4;
@@ -233,8 +279,9 @@ static SEND_COLD int32_t send_cut_any(const SourceCtx *c, unsigned d) {
  * it; a negative route the signal turned over), multiplied together */
 static SEND_COLD int32_t send_gain(const SourceCtx *c, unsigned dest) {
     int32_t g = -1;                                 /* (none yet: the first is taken as it is, no rounding) */
-    for (unsigned i = 0; i < NROUTE; i++) {
-        const ModRoute *r = &c->eng->route[i];
+    const RouteLists *L = RL_OF(c);
+    for (unsigned k = L->start[dest], end = L->start[dest + 1u]; k < end; k++) {
+        const ModRoute *r = &c->eng->route[L->idx[k]];
         if (r->dest == dest && r->src != MSRC_NONE) {
             int a = bip(r->amount) * 2;
             int32_t d = (int32_t)clampi(a < 0 ? -a : a, 0, 127) * 258, l = route_out(c, r);
@@ -418,6 +465,7 @@ void synth_voice_begin_tick(uint32_t frame) {
         tuning_root_now = PERF_TUNING_ROOT(&perf_state);
         for (unsigned l = 0; l < NLAYER; l++) {
             layer_sends[l] = route_mask(&engine_state[l], &layer_sends_hi[l]);
+            route_lists_build(&engine_state[l], &route_lists[l]);
             refresh_osc_mixer(l);
         }
     }
