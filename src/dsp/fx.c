@@ -623,10 +623,10 @@ static inline __attribute__((always_inline)) int32_t mr_ap_swept(uint32_t p, uin
  * hottest sends (6-8 driven voices at full send, decay 110): the guard now rests except TUMULUS ~19 % on the worst.
  * 12 dB lower kept even that at rest, but quiet tails lost ~2 dB to the int16 lines' rounding (6 dB: <= 0.7 dB). */
 #ifndef MR_IN_GAIN
-#define MR_IN_GAIN 8192
+#define MR_IN_GAIN 16384                             /* (2026-11-24: +6 dB, the tank's headroom: its int16 rounding was the hiss) */
 #endif
 #ifndef MR_OUT_SH
-#define MR_OUT_SH 12
+#define MR_OUT_SH 13                                 /* (x 2 with MR_IN_GAIN: the same output level) */
 #endif
 #define MR_SZ(b, size) ((((b) * (size)) >> 8) ? (((b) * (size)) >> 8) : 1u)   /* a delay at size (Q8), at least 1 */
 /* the input diffusers' allpass, on their ring (v = x + g dl, out = dl - g v) */
@@ -1886,7 +1886,8 @@ void fx_reverb_back(const MasterPerformancePreset *p, int32_t *x, int32_t *r, ui
     int32_t l0 = comb_lp[0], l1 = comb_lp[1], l2 = comb_lp[2], l3 = comb_lp[3];
 
     for (uint32_t s = 0; s < n; s++) {
-        int32_t in = mr_mulq15(x[s], 2580);                    /* 1/8 at -4 dB, as the Felucca ROOM */
+        int32_t in = mr_mulq15(x[s], 2580 * 2);                /* 1/8 at -4 dB, as the Felucca ROOM, x4 (2026-11-24: the
+                                                                * int16 lines' rounding was the hiss: 6 dB more inside) */
         int32_t a = 0, o;
 #define SFX_COMB(c, i, lp, len)                                                     \
         o = c[i];                                                                   \
@@ -1913,8 +1914,8 @@ void fx_reverb_back(const MasterPerformancePreset *p, int32_t *x, int32_t *r, ui
         SFX_AP(a0, j0, 556u)
         SFX_AP(a1, j1, 441u)
 #undef SFX_AP
-        x[s] = a * 2;
-        r[s] = a * 2;
+        x[s] = a;                                           /* x2 (as before) over the x2 in: unity */
+        r[s] = a;
     }
     comb_i[0] = i0; comb_i[1] = i1; comb_i[2] = i2; comb_i[3] = i3;
     ap_i[0] = j0; ap_i[1] = j1;
