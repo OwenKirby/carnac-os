@@ -64,6 +64,7 @@ build seq_idle $DSP src/host/test_seq_idle.c && build seq_idle_ref -DSYNTH_SEQ_N
 build clk_skip_ref -DSYNTH_CLK_NO_SKIP $DSP src/host/test_seq_idle.c     && "$OUT/clk_skip_ref.exe" >"$OUT/clk_skip_ref.txt"     && run clk_skip sh -c "'$OUT/seq_idle.exe' | diff - '$OUT/clk_skip_ref.txt' && echo 'clock quiet-frame skip: bit-exact'"
 build drive_tables src/host/gen_drive_tables.c && run drive_tables sh -c "'$OUT/drive_tables.exe' | diff - src/dsp/drive_tables.h && echo 'drive_tables.h matches its generator'"
 build fx_hash src/dsp/fx.c src/dsp/preset.c src/host/test_fx_hash.c && run fx_hash "$OUT/fx_hash.exe"
+build delay_stereo src/dsp/fx.c src/dsp/preset.c src/host/test_delay_stereo.c && run delay_stereo "$OUT/delay_stereo.exe"
 build spring_dub src/dsp/fx.c src/dsp/preset.c src/host/test_spring_dub.c && run spring_dub "$OUT/spring_dub.exe"
 build fx_cross src/dsp/fx.c src/dsp/preset.c src/host/test_fx_cross.c && run fx_cross "$OUT/fx_cross.exe"
 build mix $DSP src/host/wt_areas_host.c src/host/test_mix.c && run mix "$OUT/mix.exe"

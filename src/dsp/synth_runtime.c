@@ -1335,6 +1335,7 @@ static void core1_job(uint32_t arg)
 
 /* the effects' buffers for one pass, and core 1's job on them: the reverb's back (fx_reverb_back: the tank) */
 static int32_t fx_dly[RENDER_PASS_FRAMES], fx_dly_l[RENDER_PASS_FRAMES], fx_dly_r[RENDER_PASS_FRAMES];
+static int32_t fx_in_l[RENDER_PASS_FRAMES], fx_in_r[RENDER_PASS_FRAMES];   /* the stereo sends into the delay (DELAY MODE STEREO) */
 static int32_t fx_rev_in[RENDER_PASS_FRAMES];
 /* each layer's dry sum (each row on cache lines of its own: layer 2's MFX may run on core 1, mfx_job) */
 static float layer_l[NLAYER][RENDER_PASS_FRAMES] __attribute__((aligned(64)));
@@ -1685,8 +1686,13 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
         to_dly[l] = (float)(sd * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
         to_rev[l] = (float)(sr * 258) * (0.5f / (float)MIX_HEADROOM_Q15);
     }
+    const int stereo_dly = DELAY_STEREO(&perf_state);
     for (uint32_t frame = 0; frame < frames; ++frame) {
         float m1 = layer_l[0][frame] + layer_r[0][frame], m2 = layer_l[1][frame] + layer_r[1][frame];
+        if (stereo_dly) {                          /* each side's own signal, at twice the mono send: a centred note keeps its level */
+            fx_in_l[frame] = mix_q15(2.f * (layer_l[0][frame] * to_dly[0] + layer_l[1][frame] * to_dly[1]));
+            fx_in_r[frame] = mix_q15(2.f * (layer_r[0][frame] * to_dly[0] + layer_r[1][frame] * to_dly[1]));
+        }
         fx_dly[frame] = mix_q15(m1 * to_dly[0] + m2 * to_dly[1]);   /* unclipped: each effect limits its send */
         fx_rev_in[frame] = mix_q15(m1 * to_rev[0] + m2 * to_rev[1]);
         if (lvl_on && (fx_rev_in[frame] < 0 ? -fx_rev_in[frame] : fx_rev_in[frame]) > lvl_peak[3])
@@ -1697,11 +1703,13 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
     fx_tone_sync(&perf_state);                         /* LOOP TONE's thinner half is DELAY HP (fx.h) */
     fx_pulse_q8 = midi_clock_period_q8();              /* DELAY SYNC follows the tempo, internal or MIDI */
     fx_cross_begin(frames);                            /* (both ways' settings, before core 1 starts: fx.h) */
-    fx_cross_to_dly(fx_dly, frames);                   /* REV > DLY: the reverb's last pass (fx.h, 2026-11-02) */
+    if (stereo_dly) fx_cross_to_dly(fx_in_l, fx_in_r, frames);   /* REV > DLY: the reverb's last pass (fx.h, 2026-11-02) */
+    else fx_cross_to_dly(fx_dly, 0, frames);
     /* (2026-11-14: the delay alone on core 1 paid while the slowed tape cost more than the reverb's front and tank;
      * with the half-rate tape it is cheap at every DELAY TIME, and this way round balances the cores again) */
     int on2 = !fx_one_core && core2_run && core2_run(fx_reverb_job, 0u);
-    fx_delay_block(&perf_state, fx_dly, fx_dly_l, fx_dly_r, frames);
+    if (stereo_dly) fx_delay_block(&perf_state, fx_in_l, fx_in_r, fx_dly_l, fx_dly_r, frames);
+    else fx_delay_block(&perf_state, fx_dly, 0, fx_dly_l, fx_dly_r, frames);
     fx_cross_to_rev(fx_dly_l, fx_dly_r, fx_rev_in, frames);   /* DLY > REV: this pass's echoes */
     PF_LAP(SPROF_F_DLY);
     fx_reverb_front(&perf_state, fx_rev_in, frames);   /* (for the back's next pass: it reads a pass behind) */

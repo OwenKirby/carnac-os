@@ -93,7 +93,7 @@ static void tone_bands(uint8_t t, double *tr1, double *ba1, double *tr3, double 
             seed = seed * 1103515245u + 12345u;
             d[i] = s + i < SR / 50 ? (int16_t)(seed >> 16) / 2 : 0;           /* 20 ms of noise */
         }
-        fx_delay_block(&p, d, r, w, 128);
+        fx_delay_block(&p, d, NULL, r, w, 128);
         for (int i = 0; i < 128; i++) out[s + i] = r[i];
     }
     *tr1 = band(out, SR * 2, 3000, 0.3, 0.7); *ba1 = band(out, SR * 2, 80, 0.3, 0.7);

@@ -209,7 +209,7 @@ typedef struct {
 } __attribute__((aligned(64))) MfxState;     /* each layer's on cache lines of its own: layer 2's may run on core 1
                                                * (synth_runtime.c, as fx.c FX_LINE) */
 
-static MfxState mfx_st[2];
+static MfxState mfx_st[2] SYNTH_POOL;     /* (.pool: 9.6 KB of .bss back, 2026-11-24) */
 
 /* tan(x) for the sweep's prewarp, x <= ~0.25 (3.4 kHz): within 0.01 % */
 static inline float mfx_tan_small(float x)

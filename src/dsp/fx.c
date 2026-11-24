@@ -208,7 +208,7 @@ static uint32_t rv_side_n;                         /* its length; 0: none this p
  * / envelope. Float: a divide only while it limits (8 cycles on the FM1, the integer one 24). */
 #define SEND_LIM_CEIL 32767.f
 #define SEND_LIM_REL 0.99977f                              /* per sample: tau 0.1 s at 44.1 kHz */
-static float rv_lim_env = SEND_LIM_CEIL, dl_lim_env = SEND_LIM_CEIL;
+static float rv_lim_env = SEND_LIM_CEIL, dl_lim_env = SEND_LIM_CEIL, dl_lim_env_r = SEND_LIM_CEIL;
 
 /* in (any int32 level) -> out (Q15), limited; *envp the limiter's envelope */
 static void send_limit(float *envp, const int32_t *in, int32_t *out, uint32_t n)
@@ -256,7 +256,7 @@ void fx_init(void)
     memset(rv_ring, 0, sizeof rv_ring);
     memset(rv_sring, 0, sizeof rv_sring);
     rv_side_n = 0;
-    rv_lim_env = dl_lim_env = SEND_LIM_CEIL;
+    rv_lim_env = dl_lim_env = dl_lim_env_r = SEND_LIM_CEIL;
     rv_w = 0;
     rv_r = RV_RING - FX_REV_LAG;                       /* the back reads the lag behind the front */
     tank_init();
@@ -1967,14 +1967,20 @@ __attribute__((noinline, used)) void fx_layout_pad(void)
 void (*volatile fx_layout_pad_ref)(void) = fx_layout_pad;   /* (keeps it through --gc-sections) */
 #endif
 
-void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r, uint32_t n)
+void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in_l, const int32_t *in_r, int32_t *out_l,
+                    int32_t *out_r, uint32_t n)
 {
+    /* in_l is the mono send (in_r NULL), or the left channel of a stereo send (2026-11-24: each side feeds its own line) */
+    int32_t dl[FX_BLOCK_MAX], dr[FX_BLOCK_MAX];
     int32_t din[FX_BLOCK_MAX];
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     if (n == 0u) return;
-    send_limit(&dl_lim_env, in, din, n);
+    send_limit(&dl_lim_env, in_l, dl, n);
+    if (in_r) send_limit(&dl_lim_env_r, in_r, dr, n);
+    else memcpy(dr, dl, n * sizeof dl[0]);
+    memcpy(din, dl, n * sizeof din[0]);
 #if TAPE_HALF
-    if (!DELAY_STEREO(p)) {                          /* mono: one line of 16384 cells (0.74 s), both ears alike */
+    if (!DELAY_STEREO(p)) {                          /* mono: one line of 22200 cells (1.0 s), both ears alike */
         tcur = &tpl[0]; tbase = 0u; tlen = TAPE_LEN; tgapmax = TAPE_GAP_MAX; tlen_q8 = 256u;
         tpp = DELAY_PINGPONG(p) != 0u;
         tape_delay_block_half(p, din, out_l, out_r, n);
@@ -1985,8 +1991,8 @@ void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t
         int32_t g = (int32_t)(p->delay_feedback > 100u ? 100u : p->delay_feedback) * 250;   /* the feedback, Q15 */
         int32_t il[FX_BLOCK_MAX], ir[FX_BLOCK_MAX];
         for (uint32_t k = 0; k < n; k++) {
-            il[k] = din[k] + (pp ? (int32_t)(((int64_t)xr[k] * g) >> 15) : 0);
-            ir[k] = din[k] + (pp ? (int32_t)(((int64_t)xl[k] * g) >> 15) : 0);
+            il[k] = dl[k] + (pp ? (int32_t)(((int64_t)xr[k] * g) >> 15) : 0);
+            ir[k] = dr[k] + (pp ? (int32_t)(((int64_t)xl[k] * g) >> 15) : 0);
         }
         tcur = &tpl[0]; tbase = 0u; tlen = ST_LEN; tgapmax = ST_LEN - 64u; tlen_q8 = 256u; tpp = 0;
         tape_delay_block_half(p, il, out_l, sl, n);
@@ -2007,8 +2013,8 @@ void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in,
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     memcpy(din, delay_in, n * sizeof din[0]);
     fx_cross_begin(n);
-    fx_cross_to_dly(din, n);
-    fx_delay_block(p, din, dl, dr, n);
+    fx_cross_to_dly(din, 0, n);
+    fx_delay_block(p, din, 0, dl, dr, n);
     fx_cross_to_rev(dl, dr, reverb_io, n);
     fx_reverb_block(p, reverb_io, wet_r, n);
     fx_cross_rev_job(reverb_io, wet_r, n);
@@ -2341,11 +2347,12 @@ void fx_tone_sync(MasterPerformancePreset *p)
     last_hp = hp;
 }
 
-void fx_cross_to_dly(int32_t *delay_in, uint32_t n)
+void fx_cross_to_dly(int32_t *delay_in, int32_t *delay_in_r, uint32_t n)
 {
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     uint32_t m = xf_c1.npend < n ? xf_c1.npend : n;       /* (core 1's, from the reverb's last pass) */
     for (uint32_t s = 0; s < m; s++) delay_in[s] += xf_c1.pend[s];
+    if (delay_in_r) for (uint32_t s = 0; s < m; s++) delay_in_r[s] += xf_c1.pend[s];   /* (stereo: both sides) */
     xf_c1.npend = 0u;
 }
 
