@@ -1,5 +1,6 @@
 
 #include "envelopes.h"
+#include "dsp_cold.h"
 #include "dsp_clamp.h"
 #include "midi_clock.h"
 #include "env_sustain.h"
@@ -160,7 +161,7 @@ static int stage_hit(ADSR *env, uint32_t state, uint32_t idx, uint32_t boost_q7,
     return 0;
 }
 
-int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, uint16_t release_boost_q15,
+SYNTH_FAST int32_t adsr_advance(ADSR *env, const EnvParams *p, int time_mod, int atk_mod, uint16_t release_boost_q15,
                      uint8_t shift, uint32_t frame) {
     int attack_i = clampi(p->attack + time_mod + atk_mod, 0, 127);
     int decay_i = clampi(p->decay + time_mod, 0, 127);

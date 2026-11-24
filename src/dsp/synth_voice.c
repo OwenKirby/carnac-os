@@ -1,5 +1,6 @@
 
 #include "synth_prof.h"
+#include "dsp_cold.h"
 #include <stddef.h>
 #include "dsp_clamp.h"
 #include <stdint.h>
@@ -101,7 +102,7 @@ static int32_t lfo_offset_q15(const LfoRuntimeState *state, uint8_t shape, uint3
 }
 
 /* The one resolver for the mod_source_list (spec 4.x). */
-static int32_t resolve_source_any(const SourceCtx *c, int src, int depth) {
+static SYNTH_FAST int32_t resolve_source_any(const SourceCtx *c, int src, int depth) {
     SynthVoiceNode *v = c->voice;
     const VoiceInput *in = c->in;
 
@@ -217,7 +218,7 @@ static uint32_t layer_sends_hi[NLAYER];             /* bit (MDST_* - 32): PAN, G
 int16_t synth_fx_send_mod[NLAYER][2];
 
 /* a route's signal, Q15: SOURCE times VIA (NONE: 1) at VIA DEPTH: 0 the VIA ignored, 127 SOURCE x VIA */
-static int32_t route_out(const SourceCtx *c, const ModRoute *r) {
+static SYNTH_FAST int32_t route_out(const SourceCtx *c, const ModRoute *r) {
     int32_t s = resolve_source(c, r->src, 0);
     if (r->via != MSRC_NONE && r->via_depth) {
         int32_t d = r->via_depth >= VAL_MAX ? 32768 : (int32_t)r->via_depth * 258;   /* (127: exactly SOURCE x VIA) */
@@ -228,7 +229,7 @@ static int32_t route_out(const SourceCtx *c, const ModRoute *r) {
 
 /* the routes to d, summed, in the units of its own source times its own amount: scale 1 for a bipolar amount
  * (-64..+63), 2 for a 0..127 one (the route's -64..+63 doubled, either sign) */
-static SEND_COLD int32_t send_sum_any(const SourceCtx *c, unsigned d, int32_t scale) {
+static SYNTH_FAST SEND_COLD int32_t send_sum_any(const SourceCtx *c, unsigned d, int32_t scale) {
     int32_t s = 0;
     const RouteLists *L = RL_OF(c);
     for (unsigned k = L->start[d], end = L->start[d + 1u]; k < end; k++) {
@@ -241,7 +242,7 @@ static SEND_COLD int32_t send_sum_any(const SourceCtx *c, unsigned d, int32_t sc
 
 /* the pitch routes to d, in cents: each through the PITCH MOD AMOUNT curve at twice the route (a negative route turns
  * the signal over) */
-static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
+static SYNTH_FAST SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
     int32_t cents = 0;
     const RouteLists *L = RL_OF(c);
     for (unsigned k = L->start[d], end = L->start[d + 1u]; k < end; k++) {
@@ -256,7 +257,7 @@ static SEND_COLD int32_t send_cents_any(const SourceCtx *c, unsigned d) {
 
 /* the cutoff routes to d (2026-11-12), as send_sum's scale 2 but through ENV > CUTOFF's square taper: the route's
  * size squared, its sign kept, so a small route is a fine one and a full one sweeps the whole range */
-static SEND_COLD int32_t send_cut_any(const SourceCtx *c, unsigned d) {
+static SYNTH_FAST SEND_COLD int32_t send_cut_any(const SourceCtx *c, unsigned d) {
     int32_t s = 0;
     const RouteLists *L = RL_OF(c);
     for (unsigned k = L->start[d], end = L->start[d + 1u]; k < end; k++) {
@@ -277,7 +278,7 @@ static SEND_COLD int32_t send_cut_any(const SourceCtx *c, unsigned d) {
 
 /* AMP LEVEL's and the LFO DEPTHs' routes: each a gain as TREMOLO's (amount 0 full level, full the signal alone sets
  * it; a negative route the signal turned over), multiplied together */
-static SEND_COLD int32_t send_gain(const SourceCtx *c, unsigned dest) {
+static SYNTH_FAST SEND_COLD int32_t send_gain(const SourceCtx *c, unsigned dest) {
     int32_t g = -1;                                 /* (none yet: the first is taken as it is, no rounding) */
     const RouteLists *L = RL_OF(c);
     for (unsigned k = L->start[dest], end = L->start[dest + 1u]; k < end; k++) {
@@ -317,7 +318,7 @@ static __attribute__((noinline)) void mfx_mod_follow(unsigned l, uint32_t hi) {
 
 /* ------------------------------------------------------------------ LFOs --- */
 
-void update_poly_lfo_engines(SynthVoiceNode *voice, const VoiceInput *in) {
+SYNTH_FAST void update_poly_lfo_engines(SynthVoiceNode *voice, const VoiceInput *in) {
     const EngineState *e = &engine_state[voice->layer];
     SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1], layer_sends_hi[voice->layer & 1]};
     for (int i = 0; i < 2; i++) {
@@ -357,7 +358,7 @@ static int32_t lfo_depth_q15(const SourceCtx *c, uint8_t src, uint8_t amt) {
 
 /* a voice's VEL > LEVEL and WHEEL > DEPTH gains for the tick, before anything reads its envelopes or LFOs; an LFO
  * DEPTH route scales its depth further */
-static void voice_mod_gains(SynthVoiceNode *voice, const SourceCtx *c) {
+static SYNTH_FAST void voice_mod_gains(SynthVoiceNode *voice, const SourceCtx *c) {
     static const uint8_t DEPTH[3] = {MDST_LFO1_DEPTH, MDST_LFO2_DEPTH, MDST_LFO3_DEPTH};
     const EngineState *e = c->eng;
     for (int i = 0; i < 3; i++)
@@ -549,7 +550,7 @@ static int cutoff_q8(const SourceCtx *c, int fi, int32_t mod_q8) {   /* FILTER f
  * and routes, as a Q8 cutoff offset. Kept in Q8 so the filter interpolates between the table steps and a modulated
  * cutoff does not zipper. The depths are tapered (2026-11-12, ctrl_tables.h): ENV and the routes squared to the whole
  * range, LFO1 an S-curve to 3.6 octaves */
-static int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f, int fi) {
+static SYNTH_FAST int32_t filter_mod_q8(const SourceCtx *c, const FilterParams *f, int fi) {
     int32_t m = f->mod_amt ? (resolve_source(c, MSRC_ENV2, 0) * ctrl_cut_env_depth[f->mod_amt & 127u]) >> 4 : 0;
     if (c->eng->lfo1_filter)
         m += (resolve_source(c, MSRC_LFO1, 0) * ctrl_cut_lfo_depth[c->eng->lfo1_filter & 127u]) >> 4;
@@ -581,7 +582,7 @@ static int drive_plus(const SourceCtx *c, const FilterParams *f, int fi) {
 
 /* One core from a FILTER page, its morph modulated through c (the BINAURAL right ear passes its phase-offset context),
  * res_off ANALOG's resonance offset. */
-static void filter_prepare_one(SvfCore *k, const SourceCtx *c, const FilterParams *f, int fi, int cut_q8, int res_off,
+static SYNTH_FAST void filter_prepare_one(SvfCore *k, const SourceCtx *c, const FilterParams *f, int fi, int cut_q8, int res_off,
                                int snap) {
     filter_core_prepare(k, cut_q8, res_plus(c, fi, res_off), filter_morph(c, f, fi), drive_plus(c, f, fi), f->flavour,
                         c->voice->ctrl_shift, snap);
@@ -609,7 +610,7 @@ static int32_t env_pitch_cents(const SourceCtx *c, uint8_t amt) {
 }
 
 /* an oscillator's LFO pitch: LFO1's PITCH AMT at the oscillator's share (the LFO1 page) and its own LFO2 > PITCH */
-static int32_t lfo_pitch_cents(const SourceCtx *c, const OscParams *o, int oi) {
+static SYNTH_FAST int32_t lfo_pitch_cents(const SourceCtx *c, const OscParams *o, int oi) {
     const EngineState *e = c->eng;
     int32_t cents = 0, a1 = ((int32_t)e->lfo1_pitch * e->lfo1_osc_amt[oi] + 63) / 127;
     if (a1) cents += pitch_mod_cents(resolve_source(c, MSRC_LFO1, 0), (uint8_t)a1);
@@ -625,7 +626,7 @@ static void mix_gains(float *g, int32_t l_q15, int32_t r_q15, float dry) {
 }
 
 volatile uint8_t synth_ctrl_guard;
-uint8_t voice_tick_shift(SynthVoiceNode *voice) {
+SYNTH_FAST uint8_t voice_tick_shift(SynthVoiceNode *voice) {
 #if SYNTH_CTRL_ADAPT
     voice->ctrl_shift = (uint8_t)(SYNTH_CTRL_SHIFT + !(voice->snap || voice->choke || (voice->ctrl_fast && !synth_ctrl_guard)));
 #else
@@ -634,7 +635,7 @@ uint8_t voice_tick_shift(SynthVoiceNode *voice) {
     return voice->ctrl_shift;
 }
 
-void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
+SYNTH_FAST void voice_control_tick(SynthVoiceNode *voice, const VoiceInput *in) {
     const EngineState *e = &engine_state[voice->layer];
     SourceCtx c = {e, voice->layer, voice, in, 0, layer_sends[voice->layer & 1], layer_sends_hi[voice->layer & 1]};
     uint8_t arch = voice->arch;
@@ -1137,7 +1138,7 @@ void voice_render_block(SynthVoiceNode *voice, float *mix, int n) {
 }
 
 /* Portamento: moves the glide offset toward its target by one control tick's worth of per-sample steps. */
-void voice_glide_advance(SynthVoiceNode *v) {
+SYNTH_FAST void voice_glide_advance(SynthVoiceNode *v) {
     int32_t step = v->glide_step_q16 << v->ctrl_shift;
     if (v->glide_mod != 0 && v->glide_q16 != 0) {   /* GLIDE's MOD SENDS: the step as PORTA TIME + the send would set it */
         int32_t pt = perf_state.porta_time[v->layer < NLAYER ? v->layer : 0u], pm = clampi(pt + v->glide_mod, 0, 127);

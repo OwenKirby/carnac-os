@@ -2066,7 +2066,9 @@ static TAPE_PASS_FN void tape_pass_hp(const TapeRun *R, const int32_t *in, int32
 { tape_half_passes(R, in, out_l, out_r, n, TV_PP | TV_HP | TV_WEAR); }
 static TAPE_PASS_FN void tape_pass_dark(const TapeRun *R, const int32_t *in, int32_t *out_l, int32_t *out_r, uint32_t n)
 { tape_half_passes(R, in, out_l, out_r, n, TV_PP | TV_LP | TV_WEAR); }
-static TAPE_PASS_FN void tape_pass_all(const TapeRun *R, const int32_t *in, int32_t *out_l, int32_t *out_r, uint32_t n)
+/* (the break-up's and the runaway's: rare, so in the flash, leaving RAM to the voices' control tick: SYNTH_FAST) */
+static __attribute__((noinline)) void tape_pass_all(const TapeRun *R, const int32_t *in, int32_t *out_l, int32_t *out_r,
+                                                     uint32_t n)
 { tape_half_passes(R, in, out_l, out_r, n, TV_ALL); }
 static TapePassFn const volatile tape_pass_fn[4] = {tape_pass_plain, tape_pass_hp, tape_pass_dark, tape_pass_all};
 static int tape_all(const int32_t *a, uint32_t n, int32_t v)

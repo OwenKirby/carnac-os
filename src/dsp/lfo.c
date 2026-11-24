@@ -29,7 +29,7 @@ static uint8_t lfo_division(const LfoParams *cfg, int32_t speed_mod_q15) {
 
 /* Free-running step, used when the LFO is not clock synced or no clock is running. A synced LFO with no clock
  * falls back to the fixed Hz grid, so it keeps running. */
-uint32_t calculate_lfo_step_increment_fixed(const LfoParams *cfg, int32_t speed_mod_q15) {
+SYNTH_FAST uint32_t calculate_lfo_step_increment_fixed(const LfoParams *cfg, int32_t speed_mod_q15) {
     int32_t final_rate = lfo_final_rate(cfg, speed_mod_q15);
 
     if (cfg->clock_sync == 0) {
@@ -77,7 +77,7 @@ void lfo_phrase_reset(const LfoParams *cfg, LfoRuntimeState *state) {
     state->fade_counter = 0;
 }
 
-void lfo_advance(const LfoParams *cfg, LfoRuntimeState *state, int32_t speed_mod_q15, int key_held, uint8_t shift,
+SYNTH_FAST void lfo_advance(const LfoParams *cfg, LfoRuntimeState *state, int32_t speed_mod_q15, int key_held, uint8_t shift,
                  uint32_t frame) {
     if (cfg->delay > LFO_REL_DELAY && key_held) {
         state->phase_accumulator = (uint32_t)cfg->phase << 25;    /* REL: wait at the phase start for the release */
@@ -191,7 +191,7 @@ static const uint16_t lfo_morph_w[128] = {
 enum { LFO_SHAPE_STEP = 4, LFO_SHAPE_SLEW = 5 };
 
 /* triangle (1), saw (2) or square (3) at phase ph, as gen_lfo_wavetable.py tri / saw / sqr */
-static int32_t lfo_straight_at(uint32_t shape, uint32_t ph) {
+static SYNTH_FAST int32_t lfo_straight_at(uint32_t shape, uint32_t ph) {
     if (shape == 1u) return ph < 0x80000000u ? -32768 + (int32_t)(ph >> 15) : 32767 - (int32_t)((ph - 0x80000000u) >> 15);
     if (shape == 2u) return 32767 - (int32_t)(ph >> 16);
     return ph < 0x80000000u ? 32767 : -32768;
@@ -212,7 +212,7 @@ SYNTH_COLD void lfo_tables_init(void) {
 
 /* one shape of the ring at this phase. The table shapes read one step and interpolate within it with the 15
  * phase bits below the step; the random shapes read the values drawn at the last wrap. */
-static int32_t lfo_shape_at(const LfoRuntimeState *state, uint32_t shape, uint32_t phase) {
+static SYNTH_FAST int32_t lfo_shape_at(const LfoRuntimeState *state, uint32_t shape, uint32_t phase) {
     if (shape < LFO_SHAPE_STEP) {
         const int16_t *s = shape ? lfo_straight[shape - 1u][phase >> 24] : lfo_sine[phase >> 24];
         return s[0] + ((s[1] * (int32_t)((phase >> 9) & 0x7FFFu)) >> 15);
@@ -222,7 +222,7 @@ static int32_t lfo_shape_at(const LfoRuntimeState *state, uint32_t shape, uint32
     return ((state->current_random * (32768 - norm_q15)) + (state->next_random * norm_q15)) >> 15;
 }
 
-int16_t compute_morphed_lfo_fixed(LfoRuntimeState *state, int raw_morph) {
+SYNTH_FAST int16_t compute_morphed_lfo_fixed(LfoRuntimeState *state, int raw_morph) {
     uint32_t phase = state->phase_accumulator;
 
     /* Stepped and slewed random values are redrawn once per cycle, when the phase wraps, whatever the shape,
@@ -246,7 +246,7 @@ int16_t compute_morphed_lfo_fixed(LfoRuntimeState *state, int raw_morph) {
     return (int16_t)(a + (((b - a) * w) >> 15));
 }
 
-int16_t lfo_peek_fixed(const LfoRuntimeState *state, int raw_morph, uint32_t phase_offset) {
+SYNTH_FAST int16_t lfo_peek_fixed(const LfoRuntimeState *state, int raw_morph, uint32_t phase_offset) {
     /* The table shapes read at the shifted phase. The random shapes keep the values the playhead drew this cycle,
      * so the stepped shape holds the same value in both ears and the slewed one glides along the shifted phase. */
     uint32_t phase = state->phase_accumulator + phase_offset;

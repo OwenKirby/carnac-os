@@ -167,7 +167,7 @@ static void pitch_scales(PcmOsc *q, uint32_t freq_q16)
     }
 }
 
-void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
+SYNTH_FAST void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
 {
     /* the same wave, pitch and SCAN as last tick, the loops alone sounding then and now (no attack, no HANDOFF tails,
      * no note): everything below would come out as it is, so only the weights are re-aimed (2026-11-12: this function
@@ -396,7 +396,7 @@ void pcm_prepare(PcmOsc *q, uint32_t freq_q16, int morph_q12)
     q->c_gen = gen;
 }
 
-void pcm_spread(PcmOsc *q, const uint32_t *ratio_q28, int32_t xfade_q15)
+SYNTH_FAST void pcm_spread(PcmOsc *q, const uint32_t *ratio_q28, int32_t xfade_q15)
 {
     /* pcm_prepare took its cache (the steps are last tick's) and the row and crossfade are last tick's too */
     if (q->c_hit && ratio_q28 && ratio_q28 == q->c_ratio && xfade_q15 > 0 && xfade_q15 == q->sxf)

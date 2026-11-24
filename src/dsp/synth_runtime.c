@@ -1192,6 +1192,10 @@ static uint32_t voices_done;           /* frames [0, voices_done) of the pass ha
  * a block at a time, from one of its control ticks to the next (voice_render_block); the bookkeeping is the one the
  * frame-by-frame loop did (a voice its tick frees counts its one silent frame, then stops), so the voice ages, and
  * with them the allocator's choices, are unchanged. */
+#if defined(SYNTH_PROF) && defined(PT_WARM)               /* (scratch: each stage run twice, the second warm) */
+static SynthVoiceNode pt_snap;
+static MixBus pt_bus __attribute__((aligned(64)));
+#endif
 static void render_voice_run(MixBus *bus, uint32_t set, uint32_t from, uint32_t to)
 {
     SPROF_DECL;
@@ -1209,6 +1213,10 @@ static void render_voice_run(MixBus *bus, uint32_t set, uint32_t from, uint32_t 
                 in.detune_cents = voice->detune_cents;
                 in.pan += voice->unison_pan;           /* UNISON stereo spread; the voice clamps the sum to 0..127 */
                 in.frame = pass_base + f;              /* the clock-synced LFOs and retriggers ask about this frame */
+#if defined(SYNTH_PROF) && defined(PT_WARM)
+                pt_snap = *voice;
+                SPROF_START();
+#endif
                 voice_tick_shift(voice);               /* the tick's length (SYNTH_CTRL_ADAPT) */
 #if defined(SYNTH_TICK_COUNT)                      /* (host studies only: the ticks a pass, fast and all) */
                 synth_tick_count[0]++;
@@ -1218,15 +1226,37 @@ static void render_voice_run(MixBus *bus, uint32_t set, uint32_t from, uint32_t 
                 voice_control_tick(voice, &in);
                 voice->ctrl_left = (uint8_t)(1u << voice->ctrl_shift);
                 SPROF_LAP(SPROF_CTRL);
+#if defined(SYNTH_PROF) && defined(PT_WARM)
+                *voice = pt_snap;                      /* (again from the same state: the same result, warm) */
+                SPROF_START();
+                voice_tick_shift(voice);
+                voice_glide_advance(voice);
+                voice_control_tick(voice, &in);
+                voice->ctrl_left = (uint8_t)(1u << voice->ctrl_shift);
+                SPROF_LAP(SPROF_MT_PRE);
+#endif
             }
             uint32_t n = to - f;
             if (n > voice->ctrl_left) n = voice->ctrl_left;
             if (n > SYNTH_CTRL_PERIOD) n = SYNTH_CTRL_PERIOD;   /* (a long tick renders in blocks) */
             if (voice_is_free(voice)) n = 1u;      /* its tick ended it: the one frame the per-sample loop counted */
+#if defined(SYNTH_PROF) && defined(PT_WARM)
+            pt_snap = *voice;                          /* (cold into a scratch bus, then warm from the same state) */
+            SPROF_START();
+            voice->noise_at = (uint8_t)f;
+            voice_render_block(voice, pt_bus.mix[f], (int)n);
+            SPROF_LAP(SPROF_VOICE);
+            *voice = pt_snap;
+            SPROF_START();
+            voice->noise_at = (uint8_t)f;
+            voice_render_block(voice, bus->mix[f], (int)n);
+            SPROF_LAP(SPROF_MT_UP);
+#else
             SPROF_START();
             voice->noise_at = (uint8_t)f;
             voice_render_block(voice, bus->mix[f], (int)n);   /* routed, mix gain and sends included (tick gains) */
             SPROF_LAP(SPROF_VOICE);
+#endif
             voice->ctrl_left = (uint8_t)(voice->ctrl_left - n);
             voice->age_counter += n;
             f += n;
@@ -1717,6 +1747,13 @@ static void render_pass(int32_t *out, uint32_t frames, int first, int last)
     if (!on2 || core2_wait())
         fx_reverb_job(0u);
     PF_LAP(SPROF_F_RVB);
+#if defined(SYNTH_PROF) && defined(PT_WARM)               /* (scratch: the reverb's back and front again, warm; both
+                                                            * rings' heads move on twice a pass, together) */
+    fx_reverb_job(0u);
+    PF_LAP(SPROF_MT_CLIP);
+    fx_reverb_front(&perf_state, fx_rev_in, frames);
+    PF_LAP(SPROF_MT_DOWN);
+#endif
 
     for (uint32_t frame = 0; lvl_on && frame < frames; ++frame) {   /* the meters (synth_levels): before the wet sum */
         int32_t r = fx_rev_l[frame] < 0 ? -fx_rev_l[frame] : fx_rev_l[frame];

@@ -1,4 +1,5 @@
 #include "oscmixer.h"
+#include "dsp_cold.h"
 #include "dsp_clamp.h"
 #include "wavetables.h"
 #include "PresetStructures.h"
@@ -76,7 +77,7 @@ void noise_shared_init(void) {
     }
 }
 
-void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t freq1_q16, uint32_t freq2_q16,
+SYNTH_FAST void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t freq1_q16, uint32_t freq2_q16,
                        int balance_offset, int xmod_offset, int noise_offset, int colour_offset, int harm_offset_q8) {
     /* 1. Balance: 0 = OSC1 only, 127 = OSC2 only. Gains in Q15. */
     int balance = clamp_int(mixer->osc_balance + balance_offset, 0, 127);
@@ -181,7 +182,7 @@ void osc_mixer_prepare(OscMixVoice *mv, const OscillatorMixer *mixer, uint32_t f
     }
 }
 
-float osc_mixer_harm_ratio(float h) {
+SYNTH_FAST float osc_mixer_harm_ratio(float h) {
     h = h < 0.f ? 0.f : h > 127.f ? 127.f : h;
     float x = h * (7.f / 127.f), f;
     int i = (int)x;
@@ -197,7 +198,7 @@ static const float CL_DET[3] = {13.f, -17.f, 21.f};
 static const float CL_METAL[3] = {1.17f, 1.26f, 1.48f};
 static const float CL_STR[3] = {0.035f, 0.099f, 0.182f};    /* 0.035 (j + 1)^1.5 */
 
-void osc_mixer_whistle_step(OscMixVoice *mv, uint32_t osc1_step) {
+SYNTH_FAST void osc_mixer_whistle_step(OscMixVoice *mv, uint32_t osc1_step) {
     float s = (float)osc1_step * mv->wh_ratio;
     mv->wh_step = s > 1879048192.f ? 1879048192u : (uint32_t)s;   /* (under ~19 kHz: past it the sine would alias) */
     if (mv->cl_amt) {                       /* the whistle's next overtones: (k + j) / k of it, k = HARMONIC's ratio */

@@ -19,7 +19,7 @@ void osc_init(WavetableOsc *osc) {
     osc_prepare(osc, 0, 0);
 }
 
-void osc_select_wave(WavetableOsc *osc, uint8_t code) {
+SYNTH_FAST void osc_select_wave(WavetableOsc *osc, uint8_t code) {
     int kind = wave_kind(code);
     if (kind == 1 || kind == 2) {
         osc->pcm.code = code;
@@ -42,7 +42,7 @@ static const uint32_t WT_LEVEL_TOP_TABLE_Q16[WT_LEVELS - 1] = {
     WT_LEVEL_TOP_Q16(3), WT_LEVEL_TOP_Q16(4), WT_LEVEL_TOP_Q16(5),
 };
 
-uint8_t wt_level_for_freq(uint32_t frequency_q16) {
+SYNTH_FAST uint8_t wt_level_for_freq(uint32_t frequency_q16) {
     for (uint8_t level = 0; level < WT_LEVELS - 1; level++)
         if (frequency_q16 <= WT_LEVEL_TOP_TABLE_Q16[level]) return level;
     return WT_LEVELS - 1;
@@ -605,7 +605,7 @@ static void osc_read_level(WavetableOsc *osc, int h, uint8_t level) {
     osc->rd_shift[h] = WT_LEVEL_SHIFT[level];
 }
 
-void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread) {
+SYNTH_FAST void osc_prepare(WavetableOsc *osc, uint32_t frequency_q16, int raw_spread) {
     if (osc->pcm.on) {                              /* a PCM wave; the phase still turns, for the sub */
         osc->center_step = phase_step(frequency_q16);
         osc->xfade_q15 = 0;
@@ -827,7 +827,7 @@ static const uint32_t mtof_q16_table[128] = {
     548668578, 581294109, 615859655, 652480576, 691279090, 732384684, 775934544, 822074013
 };
 
-uint32_t mtof_q16(int note_number) {
+SYNTH_FAST uint32_t mtof_q16(int note_number) {
     if (note_number < 0)   note_number = 0;
     if (note_number > 127) note_number = 127;
     return mtof_q16_table[note_number];

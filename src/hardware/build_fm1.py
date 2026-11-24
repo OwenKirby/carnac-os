@@ -156,6 +156,29 @@ def dsp_ram_ld(b):
     return out
 
 
+def fast_ram_ld(b, kib):
+    """X0X's app.ld with .c1_text (the code marked SYNTH_FAST or put in .c1_text: the voice control tick, the delay's
+    loops) moved from RAMTEXT to a FAST region of kib KiB at the top of the pool, as dsp_ram_ld does for the whole DSP:
+    up there a call reaches the XIP flash and the flash reaches it, so the marked code calls and is called as any
+    other; the start-up copies .c1_text there and the PC guard's RAM window spans 0x01C00000.._c1_end (2026-11-24)."""
+    ld = (b.FW / "app.ld").read_text()
+    pool = 0x54000 - kib * 1024
+    subs = [("_rt_start = .; KEEP(*(.ram_text*)) . = ALIGN(4); }",
+             "_rt_start = .; KEEP(*(.ram_text*)) . = ALIGN(4); _rt_text_end = .; }"),
+            ("KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .; } > RAMTEXT AT > XIP",
+             "KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .; } > FAST AT > XIP"),
+            ("POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = 0x54000",
+             f"POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = {pool:#x}\n"
+             f"    FAST   (rwx) : ORIGIN = {0x01C20000 + pool:#010x}, LENGTH = {kib * 1024:#x}")]
+    for old, new in subs:
+        if ld.count(old) != 1:
+            raise SystemExit(f"build_fm1 --fast-ram: X0X's app.ld changed, no '{old}'")
+        ld = ld.replace(old, new)
+    out = b.OUT / "synth" / "app_fast_ram.ld"
+    out.write_text(ld)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--x0x", type=Path, default=Path.home() / "x0x-firmware", help="X0X checkout (LF line endings)")
@@ -165,6 +188,10 @@ def main():
                     help="the profile build: the render times its stages (-DSYNTH_PROF, src/dsp/synth_prof.h)")
     ap.add_argument("--dsp-ram", action="store_true",
                     help="run the DSP's code from RAM instead of the flash (XIP) through the I-cache (dsp_ram_ld)")
+    ap.add_argument("--fast-ram", type=int, metavar="KIB", default=32,
+                    help="run the code marked SYNTH_FAST (dsp_cold.h) and .c1_text from a KIB KiB region at the top of "
+                         "the pool instead of the XIP flash / RAMTEXT (fast_ram_ld; 2026-11-24: on by default, 32: the "
+                         "voice control tick ran 20..40 %% faster); 0: off")
     ap.add_argument("--dsp-align", type=int, metavar="N", default=4,
                     help="align each DSP function to N bytes, a power of 2 (synth_dsp.c only; 0: the compiler's 2). "
                          "4 (2026-10-26): the DSP runs from the XIP flash through the I-cache, and with 2-byte "
@@ -208,6 +235,8 @@ def main():
         if a.prof:
             flags += ["-DSYNTH_PROF", '-DSYNTH_VERSION="PROF"']
         flags += [f"-D{d}" for d in a.define]
+        if a.fast_ram:
+            flags.append("-DSYNTH_FAST_RAM")
         o2 = [f if f != "-Os" else "-O2" for f in flags]
         if a.dsp_align:                                 # (JieLi's clang 4 ignores -falign-functions: LLVM's own switch)
             o2 += ["-mllvm", f"-align-all-functions={a.dsp_align.bit_length() - 1}"]
@@ -238,6 +267,9 @@ def main():
                 args = [x for x in args if not (isinstance(x, Path) and x.suffix == ".o")]
                 if a.dsp_ram:
                     args = [dsp_ram_ld(b) if isinstance(x, Path) and x.name == "app.ld" else x for x in args]
+                elif a.fast_ram:
+                    args = [fast_ram_ld(b, a.fast_ram) if isinstance(x, Path) and x.name == "app.ld" else x
+                            for x in args]
                 i = args.index("-o")
                 args = [*args[:i], *objs, *args[i:]]
             return real_tc(tool, *args)

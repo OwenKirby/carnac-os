@@ -17,7 +17,7 @@ static const int8_t TUNING_TABLE[TUNING_USER1 - 1][12] = {
     {0, -10, -8, -6, -10, -2, -12, -4, -8, -12, -4, -8},           /* WERCKMEISTER III */
 };
 
-int32_t tuning_key_cents(uint8_t tuning, uint8_t root, uint8_t key)
+SYNTH_FAST int32_t tuning_key_cents(uint8_t tuning, uint8_t root, uint8_t key)
 {
     if (tuning >= TUNING_USER1 && tuning < TUNING_COUNT)
         return tuning_user[tuning - TUNING_USER1][key & 127u];

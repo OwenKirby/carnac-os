@@ -1,4 +1,5 @@
 #include "filter.h"
+#include "dsp_cold.h"
 #include "dsp_clamp.h"
 #include "PresetStructures.h"   /* FLT_* */
 /* The TPT prewarped cutoff g = tan(pi fc / 44100) for knob 0..127: fc runs exponentially from 20 Hz (0) to 14 kHz
@@ -197,7 +198,7 @@ return a+(((filter_feedback_q12(flavor,i+1)-a)*f)>>8);
 /* One core's settings for the tick. The coefficients ramp from where they are to the new ones over the tick (snap:
  * jump at once, on a new note). A change of flavour clears the state: one circuit's state is noise to another.
  * Resonance and morph come in Q8 knob units, as the cutoff does, so a smoothed knob moves them between its steps. */
-void filter_core_prepare(SvfCore *k,int cutoff_q8,int res_q8,int morph_q8,int drive,int flavor,uint8_t shift,int snap){
+SYNTH_FAST void filter_core_prepare(SvfCore *k,int cutoff_q8,int res_q8,int morph_q8,int drive,int flavor,uint8_t shift,int snap){
 if(res_q8>(115<<8))res_q8=115<<8;
 if(res_q8<0)res_q8=0;
 if(morph_q8<0)morph_q8=0;
