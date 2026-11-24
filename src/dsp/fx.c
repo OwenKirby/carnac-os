@@ -51,6 +51,17 @@
 /* gap / speed slew: tau = 1024 samples, about 23 ms, settled in ~0.1 s (2026-10-26: was 93 ms, ~0.5 s to settle, so
  * a note played soon after a DELAY TIME change had its first echo at an in-between length and the repeats at another) */
 #define TAPE_SLEW 10
+/* The half-rate / quarter-rate tape's DELAY TIME glide (2026-11-24, user: "it didn't apply the same time smoothing as
+ * the older versions"). The full-rate tape (to 11-14) made long delays by slowing the tape, so a turn bent the echoes
+ * like a Space Echo's (at most ~1 octave). The longer tape since moves the play head instead, and the plain slew above
+ * started it at ~40x the record speed: past 0.1 s of change the head ran backwards, a zip rather than a bend. Now the
+ * head glides critically damped (the position pole 4x the speed pole, no overshoot) with its speed held within an
+ * octave of the tape's: half speed while the delay grows, double while it shrinks. A 0.23 -> 0.52 s turn settles in
+ * ~0.6 s (the slew alone: 0.12 s), 0.05 -> 1 s in ~2 s; a note played inside that has its echoes still gliding. */
+#define TAPE_GLIDE_P 9                    /* the position pole: (target - gap) >> 9 a quarter-rate step, ~46 ms */
+#define TAPE_GLIDE_V 7                    /* the speed pole, ~12 ms */
+#define TAPE_GLIDE_UP 32768               /* at most +0.5 cell a step: the head at half speed, an octave down */
+#define TAPE_GLIDE_DN 65536               /* at most -1 cell a step: double speed, an octave up */
 #define WOW_INC 48696u                    /* 0.5 Hz phase increment at 44.1 kHz (2^32 / 44100 * f) */
 #define FLUTTER_INC 613567u               /* 6.3 Hz */
 #define WOW_INC2 55026u                   /* the second head's (PING PONG's near head, the BBD's right line, 2026-11-03):
@@ -130,6 +141,7 @@ static int16_t sfx_rev_ap[FX_PAD16(REV_AP_TOTAL)] SYNTH_POOL FX_LINE;
 typedef struct {
     uint32_t wpos_q16;                    /* record head, cells in Q16; wraps with the uint32 (65536 cells) */
     int32_t gap_q16, gap_tgt_q16;         /* head gap, cells in Q16 */
+    int32_t gap_v;                        /* TAPE_HALF: the head's glide, Q16 cells a step (TAPE_GLIDE_*) */
     int32_t speed_q24, speed_tgt_q24;     /* cells per sample in Q24, at most 1.0 */
     uint32_t last_len;                    /* the delay length the targets were computed for */
     uint32_t wow_ph, flutter_ph;
@@ -255,6 +267,9 @@ void fx_init(void)
         tp.tw_z = 0x2545F491u;                                /* TAPE_WEAR: its own random stream */
     tp.rc_i = 0xFFFFFFFFu;                                /* (no cell cached) */
         tp.gap_q16 = tp.gap_tgt_q16 = 64 << 16;
+#if TAPE_HALF
+        tp.gap_q16 = -1;                                  /* (the first block puts the head at its gap: no glide in) */
+#endif
         tp.speed_q24 = tp.speed_tgt_q24 = 1 << 24;
         tp.last_len = 64u;
         tp.seed_rng = 0x6C8E9CF5u;
@@ -1655,6 +1670,10 @@ static inline __attribute__((always_inline)) void tape_half_setup(const MasterPe
     if (cells > tgapmax) cells = tgapmax;
     const int32_t gap_tgt = (int32_t)(cells << 16);
     R->gap_tgt = gap_tgt;
+    if (tp.gap_q16 < 0) {                               /* (fx_init) */
+        tp.gap_q16 = gap_tgt;
+        tp.gap_v = 0;
+    }
     int32_t wow, flutter;
     uint32_t filter;
     tape_degrade(p->delay_degrade, &wow, &flutter, &filter);
@@ -1738,7 +1757,7 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
     uint32_t seed = tp.seed_rng, step = tp.hstep;
     uint32_t wpos = tp.wpos_q16, wow_ph = tp.wow_ph, flutter_ph = tp.flutter_ph;
     uint32_t wow_ph2 = tp.wow_ph2, flutter_ph2 = tp.flutter_ph2;
-    int32_t gap = tp.gap_q16, aa_lp = tp.aa_lp, loss_lp = tp.loss_lp, hp_lp = tp.hp_lp;
+    int32_t gap = tp.gap_q16, gap_v = tp.gap_v, aa_lp = tp.aa_lp, loss_lp = tp.loss_lp, hp_lp = tp.hp_lp;
     int32_t loss2 = tp.loss2_lp, hp2 = tp.hp2_lp;
     int32_t z0 = tp.hz[0], z1 = tp.hz[1], z2 = tp.hz[2];
     int32_t l0 = tp.ho_l[0], l1 = tp.ho_l[1], r0 = tp.ho_r[0], r1 = tp.ho_r[1];
@@ -1803,7 +1822,16 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
 
     for (uint32_t k = 0; k < ns; k++) {                    /* 2. the steps */
         const int32_t xin = xs[k];
-        gap += (gap_tgt - gap) >> (TAPE_SLEW - TD_SH);
+        if (gap != gap_tgt || gap_v) {                     /* the head's glide (TAPE_GLIDE_*) */
+            int32_t w = (gap_tgt - gap) >> (TAPE_GLIDE_P + (2u - TD_SH));
+            w = w > TAPE_GLIDE_UP ? TAPE_GLIDE_UP : w < -TAPE_GLIDE_DN ? -TAPE_GLIDE_DN : w;
+            gap_v += (w - gap_v) >> (TAPE_GLIDE_V + (2u - TD_SH));
+            gap += gap_v;
+            if (gap_v < 256 && gap_v > -256 && gap - gap_tgt < 4096 && gap_tgt - gap < 4096) {
+                gap = gap_tgt;                             /* (within 1/16 cell, all but still: there) */
+                gap_v = 0;
+            }
+        }
         wow_ph += (uint32_t)TAPE_DIV * WOW_INC;
         flutter_ph += (uint32_t)TAPE_DIV * FLUTTER_INC;
         if (!(step & (MOD_EVERY - 1u))) {
@@ -2010,6 +2038,7 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
     tp.wow_ph = wow_ph;
     tp.flutter_ph = flutter_ph;
     tp.gap_q16 = gap;
+    tp.gap_v = gap_v;
     tp.aa_lp = aa_lp;
     tp.loss_lp = loss_lp;
     tp.hp_lp = hp_lp;
@@ -2096,6 +2125,7 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
         uint32_t cells = (tp.last_len + ((1u << TD_SH) >> 1)) >> TD_SH;   /* running tape's slew would have taken them, */
         if (cells > tgapmax) cells = tgapmax;             /* not a glide on the first echoes; the line is all one value) */
         tp.gap_q16 = (int32_t)(cells << 16);
+        tp.gap_v = 0;
     }
 #endif
     DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), fx_live[FX_L_TONE]);

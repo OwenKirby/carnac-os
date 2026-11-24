@@ -1494,6 +1494,7 @@ static void arp_unpeek(UIStateMachine *sm);
 
 static void enter_page(UIStateMachine *sm, uint8_t page)
 {
+    uint8_t held;
     if (page != sm->page || page != UIPAGE_SAVE_COMMIT)
         sm->save_action = page == UIPAGE_SAVE_COMMIT ? (uint8_t)UIACT_SAVE : (uint8_t)UIACT_NO;
                                      /* the save page arms SAVE (its button flashes: one press asks to save); ACTION
@@ -1525,8 +1526,13 @@ static void enter_page(UIStateMachine *sm, uint8_t page)
     sm->arp_tie_from = CARP_POS_NONE;
     arp_unpeek(sm);
     sm->arp_rec = 0u;
-    sm->arp_chord_down = CARP_NOTE_NONE;
-    if (sm->arp_chord_key != CARP_NOTE_NONE) {
+    /* a chord key still down keeps playing under the new page (2026-11-24, user: "we want the arp to keep playing and
+     * not be interrupted when doing sound design"): its release finds it from any page (ui_sm_chord_key) */
+    held = (uint8_t)(sm->arp_chord_down != CARP_NOTE_NONE && sm->arp_chord_down == sm->arp_chord_key &&
+                     sm->arp_chord_hold);
+    if (!held)
+        sm->arp_chord_down = CARP_NOTE_NONE;
+    if (sm->arp_chord_key != CARP_NOTE_NONE && !held) {
         if (sm->arp_latch && sm->arp_chord_hold) {
             if (sm->carp != 0)
                 carp_latch_up(sm->carp, sm->arp_chord_key);   /* a latched arpeggio plays on under every page */
@@ -2456,6 +2462,10 @@ void ui_sm_chord_keys(UIStateMachine *sm, uint8_t on)
 
 uint8_t ui_sm_chord_key(UIStateMachine *sm, uint8_t note, uint8_t down, uint8_t vel)
 {
+    if (!down && note != CARP_NOTE_NONE && note == sm->arp_chord_down) {
+        arp_chord_key(sm, note, 0u, 0u);             /* the held chord key let go, on whatever page it is now */
+        return 1u;
+    }
     if (!sm->chord_keys || sm->page == UIPAGE_ARP || sm->page == UIPAGE_SEQ || sm->page == UIPAGE_REC ||
         sm->dialog != UIDLG_NONE || note > VAL_MAX)
         return 0u;

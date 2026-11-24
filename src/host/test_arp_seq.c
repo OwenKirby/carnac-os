@@ -378,6 +378,27 @@ int main(void)
         ui_sm_chord_keys(&sm, 0);
         reset();
     }
+    {   /* a held chord key plays on through page changes (2026-11-24: sound design under a running arpeggio), and its
+         * release ends it from whatever page it lands on */
+        uint32_t t0;
+        int before;
+        ui_sm_goto(&sm, UIPAGE_ARP);
+        ui_sm_arp_key(&sm, 7, 60, 1, 100);           /* C4 held, no LATCH */
+        run(QUARTER);
+        before = count(&la, 0x90);
+        t0 = now;
+        ui_sm_goto(&sm, UIPAGE_FILTER1);
+        run(QUARTER);
+        CHECK(sm.arp_chord_key == 60 && count(&la, 0x90) >= before + 3, "a held chord key plays on under FILTER 1 (%d -> %d)",
+              before, count(&la, 0x90));
+        CHECK(on_frame(before) >= t0 && near(on_frame(before) - on_frame(before - 1), CELL),
+              "not restarted: the next cell a cell after the last (%u)", on_frame(before) - on_frame(before - 1));
+        ui_sm_goto(&sm, UIPAGE_SEQ);
+        CHECK(ui_sm_chord_key(&sm, 60, 0, 0) == 1 && sm.arp_chord_key == CARP_NOTE_NONE, "let go on SEQ: it ends");
+        run(QUARTER);
+        CHECK(all_off(&la) && la.stuck == 0, "nothing left sounding");
+        reset();
+    }
     ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
     CHECK(sm.page == UIPAGE_ARP && sm.arp_view == UIARP_CHORDS, "ARP opens the CHORDS view");
     CHECK(strcmp(ui_sm_row_label(&sm, 0), "GENRE BANK") == 0 && ui_sm_row_count(&sm) == 4, "CHORDS: 4 rows, GENRE BANK first");
@@ -540,12 +561,17 @@ int main(void)
         ui_sm_handle(&sm, UIEV_BUTTON, BTN_ARP);
     }
 
-    /* ---- a chord key held while the page changes is released (no hanging chord) ---- */
+    /* ---- a chord key held while the page changes plays on (2026-11-24; was released), its release ends it ---- */
     ui_sm_arp_key(&sm, 0, FM1_LOW, 1, 100);
-    run(2);
+    run(QUARTER / 2u);
+    k = count(&la, 0x90);
     ui_sm_goto(&sm, UIPAGE_SEQ);
+    run(QUARTER * 4u);
+    CHECK(sm.arp_chord_key == FM1_LOW && count(&la, 0x90) > k, "leaving ARP with the key down: it plays on (%d -> %d)",
+          k, count(&la, 0x90));
+    CHECK(ui_sm_chord_key(&sm, FM1_LOW, 0, 0) == 1, "its release, on SEQ, is the chord key's");
     run(2);
-    CHECK(sm.arp_chord_key == CARP_NOTE_NONE && all_off(&la) && la.stuck == 0, "leaving ARP releases the chord");
+    CHECK(sm.arp_chord_key == CARP_NOTE_NONE && all_off(&la) && la.stuck == 0, "let go: no hanging chord");
 
     /* ---- transposition while playing (8.2), and TRANSPOSE MAQ through the 1-frame mask ---- */
     reset();
