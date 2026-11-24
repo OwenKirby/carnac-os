@@ -27,12 +27,15 @@
  * copied to RAM for the run and wavetable_frames pointed at the copies, then back. The same firmware, the same patches:
  * the difference against a normal run is what reading the wavetables through XIP flash costs. */
 static const uint8_t PT_WT_BANKS[2] = {0u, 3u};
+#if defined(PT_WT_COPY)                     /* (2026-11-24: 16 KB of pool, so only in builds that ask for the copy) */
 static int8_t pt_wt[2][NUM_MORPH_STEPS * WT_FRAME_SAMPLES] SYNTH_POOL;   /* (8-bit frames since 2026-11-18) */
 static const int8_t *pt_wt_saved[2][NUM_MORPH_STEPS];
+#endif
 static uint8_t pt_wt_on, pt_run_mode;      /* the copies are in use; the last run's mode */
 
 static void wt_to_ram(void)
 {
+#if defined(PT_WT_COPY)
     uint32_t b, f, i;
     for (b = 0; b < 2u; b++)
         for (f = 0; f < NUM_MORPH_STEPS; f++) {
@@ -44,10 +47,12 @@ static void wt_to_ram(void)
             *slot = dst;                                                       /* one aligned store: never torn */
         }
     pt_wt_on = 1;
+#endif
 }
 
 static void wt_to_flash(void)
 {
+#if defined(PT_WT_COPY)
     uint32_t b, f;
     if (!pt_wt_on)
         return;
@@ -55,6 +60,7 @@ static void wt_to_flash(void)
         for (f = 0; f < NUM_MORPH_STEPS; f++)
             wavetable_frames[PT_WT_BANKS[b] * NUM_MORPH_STEPS + f] = pt_wt_saved[b][f];
     pt_wt_on = 0;
+#endif
 }
 
 enum { K_IDLE, K_HELD, K_SEQ, K_RS, K_REC, K_ALL, K_LOOP, K_LOOPCH, K_FACT };   /* K_LOOP (2026-11-11): a played loop, not a torture: see loop_slot; K_LOOPCH: K_LOOP with a four-note chord on the keys (both layers) changed every PT_CHORD_MS, the tails piling up to the caps; K_RS: K_HELD's chord struck again every PT_RESTRIKE_MS; K_REC: K_SEQ with

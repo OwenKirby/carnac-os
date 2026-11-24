@@ -360,10 +360,13 @@ static int32_t tape_sat(int32_t x)
  * makes a value strictly smaller, so a tail always dies to silence. sfx_mulq15's floor biased the loops (a DC residue)
  * and rounding to nearest let a quiet tail circulate for ever at its pitch, where g x rounds back to x (measured
  * 2026-10-15: ROOM ~55 LSB, DOLMEN ~2 LSB, never decaying: the classic fixed-point limit cycle). */
+#ifndef MR_TAIL_LOSS
+#define MR_TAIL_LOSS 27853                       /* 0.85 a pass (Q15): every tank tail reaches silence (2026-11-24) */
+#endif
 static inline int32_t mr_mulq15(int32_t a, int32_t b)
 {
-    int32_t t = a * b;
-    return (t + ((t >> 31) & 32767)) >> 15;
+    int64_t t = (int64_t)a * b;                           /* (64-bit: the tank's values are 256 x the Q15, 2026-11-24) */
+    return (int32_t)((t + ((t >> 63) & 32767)) >> 15);
 }
 /* HALF RATE (2026-11-11, after S1Vave's REV_DIV 2): the tank runs at 22.05 kHz. The front takes the send's frames in
  * pairs through a [1 3 3 1] / 8 decimator (a double null at 22 kHz, -9 dB at the half rate's Nyquist) and diffuses
@@ -420,7 +423,27 @@ PS_STATIC_ASSERT(!MR_MELLOW || MR_HALF, "the mellowing is the half-rate tank's")
 #define MR_S_END (MR_S_D2R + MR_B_D2R + 1u)
 PS_STATIC_ASSERT(MR_S_END <= MR_RING, "the tank's lines fit its ring");
 
-static int16_t mr_ring[MR_RING] SYNTH_POOL FX_LINE;      /* core 1, as everything of the tank's but its front */
+/* THE TANK'S 24-BIT CELLS (2026-11-24): the tank's values run at 256 x the Q15, so every rounding in its loops is 48 dB
+ * lower against the signal. The ring holds 24-bit cells (3 bytes, little-endian, sign in the top bit). The hiss was the
+ * 16-bit rounding of the feedback: measured, 2..5 kHz floor -38 -> -49 dB with this scale (scratch, 2026-11-24). */
+#define MR_CLAMP24 8388607
+static inline int32_t clamp24(int32_t v) { return v > MR_CLAMP24 ? MR_CLAMP24 : v < -MR_CLAMP24 ? -MR_CLAMP24 : v; }
+static inline int32_t pk24_rd(const uint8_t *b, uint32_t i)
+{
+    const uint8_t *q = b + 3u * i;
+    int32_t v = (int32_t)((uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16));
+    return v & 0x800000 ? v - 0x1000000 : v;
+}
+static inline void pk24_wr(uint8_t *b, uint32_t i, int32_t v)
+{
+    uint8_t *q = b + 3u * i;
+    q[0] = (uint8_t)v;
+    q[1] = (uint8_t)(v >> 8);
+    q[2] = (uint8_t)(v >> 16);
+}
+static uint8_t mr_ring[3u * MR_RING] SYNTH_POOL FX_LINE;  /* core 1, as everything of the tank's but its front: 24-bit cells */
+static int32_t mr_dco[2];                                 /* the outputs' DC blockers' states (2026-11-24) */
+static uint32_t mr_qz[2];                                 /* the output gates' quiet counts (2026-11-24) */
 static struct FX_LINE {
     uint32_t p;                                           /* the ring's pointer */
     int32_t lp_l, lp_r;
@@ -512,6 +535,8 @@ static void tank_init(void)
     memset(mr_in_ring, 0, sizeof mr_in_ring);
     mr_in_p = 0;
     memset(mr_ring, 0, sizeof mr_ring);
+    memset(mr_dco, 0, sizeof mr_dco);
+    memset(mr_qz, 0, sizeof mr_qz);
     mr_p = 0;
     mr_lp_l = mr_lp_r = 0;
     mr_dc_l = mr_dc_r = 0;
@@ -553,18 +578,18 @@ static inline __attribute__((always_inline)) int32_t mr_shift(MrShift *st, int32
      * third of the rate) onto itself, where the loop held a faint tone forever (measured) */
     st->aa1 += mr_mulq15(x - st->aa1, MR_SH_AA);
 #if MR_MELLOW
-    mr_sh[w] = (int16_t)clamp16(st->aa1);
+    mr_sh[w] = (int16_t)clamp16(st->aa1 >> 8);
 #else
     st->aa2 += mr_mulq15(st->aa1 - st->aa2, MR_SH_AA);
-    mr_sh[w] = (int16_t)clamp16(st->aa2);
+    mr_sh[w] = (int16_t)clamp16(st->aa2 >> 8);
 #endif
-    int32_t a = mr_sh[(w - (mask - c)) & mask], b = mr_sh[(w - (mask - ((c + half) & mask))) & mask];
+    int32_t a = mr_sh[(w - (mask - c)) & mask] * 256, b = mr_sh[(w - (mask - ((c + half) & mask))) & mask] * 256;
     /* head A's triangle; head B's is its complement (B is half a window round, so ga + gb = 32768 always), and
      * a ga + b (32768 - ga) = 32768 b + (a - b) ga: one multiply, the same bits */
     int32_t ga = (int32_t)(c < half ? c : MR_SH_LEN - c) * (32768 / (int32_t)half);
     st->w = (w + 1u) & mask;
     st->c = (c + 1u) & mask;
-    int32_t y = b + (((a - b) * ga) >> 15);              /* |a - b| <= 65535, ga <= 32768: within 2^31 */
+    int32_t y = b + (int32_t)((((int64_t)a - b) * ga) >> 15);              /* |a - b| <= 65535, ga <= 32768: within 2^31 */
     /* a high-pass first: an octave up leaves DC and the lowest notes where they were, so fed back they would only
      * add to the decay and the loop would run away (measured); only what really rises goes back */
     st->hp += mr_mulq15(y - st->hp, MR_SH_HP);           /* about 200 Hz */
@@ -586,19 +611,20 @@ static inline __attribute__((always_inline)) int32_t mr_shift(MrShift *st, int32
  * at this small a coefficient a plain Q0 one would not move for differences under ~176 LSB. */
 static inline int32_t mr_dc_block(int32_t *s, int32_t x)
 {
-    /* |x << 8 - s| < 2^24: times 93 inside int32 (half rate: halved first, x 93 >> 14 = x 186 >> 15, the same corner) */
-    *s += ((((x << 8) - *s) >> (MR_DS - 1u)) * 93) >> (16u - MR_DS);
+    /* 64-bit: the tank's values are 256 x Q15 (2026-11-24), so x << 8 overflowed int32 and the DC state went wild */
+    int64_t d = ((int64_t)x << 8) - *s;
+    *s += (int32_t)(((d >> (MR_DS - 1u)) * 93) >> (16u - MR_DS));
     return x - (*s >> 8);
 }
 
 /* ring access, at the sample's pointer p: the line starting at s, d samples back; and its write */
-#define MR_RD(s, d) ((int32_t)mr_ring[(p + (s) + (d)) & MR_MASK])
-#define MR_WR(s, v) (mr_ring[(p + (s)) & MR_MASK] = (int16_t)clamp16(v))
+#define MR_RD(s, d) pk24_rd(mr_ring, (p + (s) + (d)) & MR_MASK)
+#define MR_WR(s, v) pk24_wr(mr_ring, (p + (s)) & MR_MASK, clamp24(v))
 
 /* allpass on the line at s with delay d, coefficient g (Q15, either sign): v = x + g dl, out = dl - g v (|H| = 1) */
 static inline __attribute__((always_inline)) int32_t mr_ap(uint32_t p, uint32_t s, uint32_t d, int32_t x, int32_t g)
 {
-    int32_t dl = MR_RD(s, d), v = clamp16(x + mr_mulq15(dl, g));
+    int32_t dl = MR_RD(s, d), v = clamp24(x + mr_mulq15(dl, g));
     MR_WR(s, v);
     return dl - mr_mulq15(v, g);
 }
@@ -611,8 +637,8 @@ static inline __attribute__((always_inline)) int32_t mr_ap_swept(uint32_t p, uin
     uint32_t di = (uint32_t)pos_q15 >> 15;
     int32_t fr = pos_q15 & 0x7FFF;
     int32_t a = MR_RD(s, di), b = MR_RD(s, di + 1u);
-    int32_t dl = a + (((b - a) * fr) >> 15);
-    int32_t v = clamp16(x + mr_mulq15(dl, g));
+    int32_t dl = a + (int32_t)((((int64_t)b - a) * fr) >> 15);   /* (64-bit: the tank's values are 256 x Q15) */
+    int32_t v = clamp24(x + mr_mulq15(dl, g));
     MR_WR(s, v);
     return dl - mr_mulq15(v, g);
 }
@@ -632,8 +658,8 @@ static inline __attribute__((always_inline)) int32_t mr_ap_swept(uint32_t p, uin
 /* the input diffusers' allpass, on their ring (v = x + g dl, out = dl - g v) */
 static inline __attribute__((always_inline)) int32_t mr_ap_in(uint32_t p, uint32_t s, uint32_t d, int32_t x, int32_t g)
 {
-    int32_t dl = mr_in_ring[(p + s + d) & (MR_IN_RING - 1u)], v = clamp16(x + mr_mulq15(dl, g));
-    mr_in_ring[(p + s) & (MR_IN_RING - 1u)] = (int16_t)v;
+    int32_t dl = (int32_t)mr_in_ring[(p + s + d) & (MR_IN_RING - 1u)] * 256, v = clamp24(x + mr_mulq15(dl, g));
+    mr_in_ring[(p + s) & (MR_IN_RING - 1u)] = (int16_t)clamp16(v >> 8);   /* (16 bits at 1/256: the diffusers' ring) */
     return dl - mr_mulq15(v, g);
 }
 
@@ -664,7 +690,7 @@ static inline __attribute__((always_inline)) void tank_front(int32_t *x, uint32_
             continue;
         int32_t in = mr_mulq15(dec, MR_IN_GAIN);
 #else
-        int32_t in = mr_mulq15(x[s], MR_IN_GAIN);
+        int32_t in = mr_mulq15(x[s] * 256, MR_IN_GAIN);
 #endif
         in = mr_ap_in(p, MR_S_IN1, MR_SZ(MR_B_IN1, size), in, 24576);
         in = mr_ap_in(p, MR_S_IN2, MR_SZ(MR_B_IN2, size), in, 24576);
@@ -681,6 +707,18 @@ static inline __attribute__((always_inline)) void tank_front(int32_t *x, uint32_
 #define MR_RATE_L 38956u                                  /* spin: 0.40 Hz */
 #define MR_RATE_R 53565u                                  /* 0.55 Hz */
 #define MR_OUT_GAIN 19661                                 /* 0.6, Dattorro's */
+
+/* The output's silence (2026-11-24): within 8 LSB for 2048 samples (46 ms) it reads as exact 0, so a tail ends in
+ * silence, not in the rounding limit cycle (+-1 LSB, peaks past 4) the DC blockers leave. Under -72 dBFS; it lifts the moment the output rises. */
+static inline int32_t mr_gate(uint32_t *q, int32_t v)
+{
+    if (v >= -8 && v <= 8) {
+        if (*q < 2048u) (*q)++;
+        return *q >= 2048u ? 0 : v;
+    }
+    *q = 0;
+    return v;
+}
 
 /* The tank over a block, its size a constant at each call (inlined twice: every offset folds to a constant). x: the
  * reverb send in, the left output out; r: the right output. */
@@ -719,7 +757,7 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
              * comes back slowly (tau ~0.1 s); the gain glides to the new target over the chunk */
             int32_t pk = from_l < 0 ? -from_l : from_l, pr = from_r < 0 ? -from_r : from_r;
             if (pr > pk) pk = pr;
-            if (pk > MR_DUCK_AT)
+            if (pk > MR_DUCK_AT * 256)                     /* (the lines are 256 x Q15, 2026-11-24) */
                 duck -= duck >> 4;
             else if (duck < 32767)
                 duck += ((32767 - duck) >> (9u - MR_DS)) + 1;   /* (half rate: chunks twice as long, the same tau) */
@@ -798,8 +836,8 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
 #undef MR_TAP
         /* x 0.6 x 2 (MR_IN_GAIN); |taps| <= 7 x 32768, so / 4 first: int32. Not clamped: the wet sum goes through
          * the master limiter (a clamp here clipped a loud tail: buzz) */
-        x[s] = ((yl >> 2) * MR_OUT_GAIN) >> MR_OUT_SH;
-        r[s] = ((yr >> 2) * MR_OUT_GAIN) >> MR_OUT_SH;
+        x[s] = mr_gate(&mr_qz[0], mr_dc_block(&mr_dco[0], (int32_t)((((int64_t)(yl >> 2)) * MR_OUT_GAIN) >> (MR_OUT_SH + 8))));   /* (2026-11-24: no DC out) */
+        r[s] = mr_gate(&mr_qz[1], mr_dc_block(&mr_dco[1], (int32_t)((((int64_t)(yr >> 2)) * MR_OUT_GAIN) >> (MR_OUT_SH + 8))));
         p = (p - 1u) & MR_MASK;
     }
     mr_p = p;
@@ -845,6 +883,8 @@ static void tank_reverb_block(const MasterPerformancePreset *p, int32_t *x, cons
         decay = 8000 + knob_t * 190;                      /* 0.24 .. 0.98 */
         damp = knob_d * 200;                              /* 0 .. 0.78 */
     }
+    /* the per-pass loss (2026-11-24): every pass keeps a little less than the knob's gain, so each tail reaches silence */
+    decay = mr_mulq15(decay, MR_TAIL_LOSS);
     if (MR_HALF)                                          /* the damping's pole squared: its corner at half rate */
         damp = mr_mulq15(damp, damp);
     if (type == REVTYPE_DOLMEN)
@@ -1862,7 +1902,7 @@ void fx_reverb_back(const MasterPerformancePreset *p, int32_t *x, int32_t *r, ui
     for (uint32_t s = 0; s < n; s++) {
         x[s] = rv_ring[(rv_r + s) & (RV_RING - 1u)];
         int32_t v = rv_sring[(rv_r + s) & (RV_RING - 1u)];
-        sd[s] = tank ? mr_mulq15(v, MR_IN_GAIN) : v;   /* (the tank's: at its send's level, as tank_front's) */
+        sd[s] = tank ? mr_mulq15(v * 256, MR_IN_GAIN) : v;   /* (the tank's: at its send's level, as tank_front's) */
     }
     rv_r = (rv_r + n) & (RV_RING - 1u);
     if (tank) {
