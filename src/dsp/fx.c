@@ -21,13 +21,10 @@
  * path saturates softly; playback loses top end (head loss) and low end (a high-pass), both set by TAPE DEGRADE,
  * so each repeat is darker and thinner. TAPE DEGRADE drives all three (tape_degrade); its default 36 gives the old
  * fixed character (32, 10, 36). PING PONG adds a second play head (tape_delay_block). */
-/* THE TAPE'S MEMORY (2026-11-14, 2026-11-23). TAPE_BYTES of it: 12-bit cells, 1.5 bytes each, so 16384 cells in 24 KB =
- * 0.74 s at the half rate (22.05 kHz cells). The 8-bit mu-law cells of 2026-11-14 gave the bass buzz (a 55 Hz sine's 5th
+/* THE TAPE'S MEMORY (2026-11-14, 2026-11-23, 2026-11-24). TAPE_LEN 12-bit cells (each held as its value, tape12_q),
+ * 1.0 s at the half rate (22.05 kHz cells). The 8-bit mu-law cells of 2026-11-14 gave the bass buzz (a 55 Hz sine's 5th
  * and 7th harmonics +13 dB against -25 dB at 16 bits) and the hiss (the 1..2 kHz band +15 dB against -17): the cell's
  * resolution, not a filter, was the floor. (The BBD that shared it was removed 2026-11-14.) */
-#ifndef TAPE_BYTES
-#define TAPE_BYTES 33300u                 /* 22200 cells: two stereo lines of 11100 (0.5 s with the wow margin) */
-#endif
 /* TAPE_ROUND, TAPE_EMPH (2026-11-19, the user: the delay added "a bottom layer of noise" under low sounds): a cell is
  * rounded to the nearer mu-law step (it was rounded toward zero everywhere, an error that followed the signal's sign: a
  * buzz under a bass, 0..200 Hz noise -32 -> -54 dB under a dark bass, host measure), toward zero only in the bottom
@@ -77,28 +74,19 @@ static const uint8_t DELAY_SYNC_DEN[13] = {96, 64, 48, 32, 24, 64, 16, 12, 32, 8
 static const char *const DELAY_SYNC_NAME[13] = {"1/64T", "1/64", "1/32T", "1/32", "1/16T", "1/32.", "1/16", "1/8T",
                                                 "1/16.", "1/8", "1/4T", "1/8.", "1/4"};
 
+/* The 12-bit cell (2026-11-23): sign, a 4-bit exponent, a 7-bit mantissa. Exponent 0 is linear (0..127, one step each);
+ * exponent e >= 1 is (128 + m) << (e - 1), so each octave has 128 steps and the step doubles with the level, as a
+ * compander's does. Values past 32640 clip; a write rounds to the nearest step.
+ * Each cell is held as the value its 12-bit code stands for (2026-11-24: an int16, not the code): the same values, so
+ * the same echo bit for bit, but a read is one load and a write one store. Packed two codes to three bytes, each read
+ * unpacked and decoded through a table and each write read back two bytes and merged its nibbles: the tape loop is
+ * load-bound on the FM1 (~8 cycles a load). 44.4 KB of .pool for the 33.3 KB packed and the 8 KB decode table. */
 static struct {
-    uint8_t b[TAPE_BYTES];                                /* 12-bit cells: pairs in three bytes (even cell, odd cell) */
+    int16_t c[TAPE_LEN];
 } tape_mem SYNTH_POOL;
-/* The 12-bit cell (2026-11-23): sign (bit 11), a 4-bit exponent (bits 7..10), a 7-bit mantissa. Exponent 0 is linear
- * (0..127, one step each); exponent e >= 1 is (128 + m) << (e - 1), so each octave has 128 steps and the step doubles
- * with the level, as a compander's does. Values past 32640 clip; the encoder rounds to the nearest step. */
-static int32_t tape12_val(uint32_t c)                    /* (fills tape12_dec, fx_init) */
-{
-    int32_t e = (int32_t)((c >> 7) & 15u), m = (int32_t)(c & 127u);
-    int32_t mag = e == 0 ? m : ((128 | m) << (e - 1));
-    return (c & 0x800u) ? -mag : mag;
-}
-/* The cell's codec by table (2026-11-24, the same codes and values): a read is one load from tape12_dec (every 12-bit
- * code's value, from tape12_val), a write's exponent one load from tape12_exp (1 + floor(log2(mag >> 7)), which is
- * 1 + the thresholds 256 .. 16384 mag reaches). The decode's branches and the encoder's seven compares cost the stereo
- * delay ~60 instructions a step a line (two lines: ~+4 pts on the FM1 while playing). 8 KB + 256 B of .pool. */
-static int16_t tape12_dec[4096] SYNTH_POOL;
-static uint8_t tape12_exp[256] SYNTH_POOL;
+static uint8_t tape12_exp[256] SYNTH_POOL;                /* 1 + floor(log2(q)): the exponent of mag >> 7 = q */
 static void tape12_tables(void)
 {
-    for (uint32_t c = 0; c < 4096u; c++)
-        tape12_dec[c] = (int16_t)tape12_val(c);
     tape12_exp[0] = 0;
     for (uint32_t q = 1; q < 256u; q++) {
         uint32_t e = 1, t = q;
@@ -106,38 +94,25 @@ static void tape12_tables(void)
         tape12_exp[q] = (uint8_t)e;
     }
 }
-static inline uint32_t tape12_enc(int32_t x)
+/* x rounded to the nearest 12-bit step (toward the next octave's first step when the mantissa rounds over; 32640 at
+ * the top): the value of the code the packed cells stored */
+static inline int32_t tape12_q(int32_t x)
 {
-    uint32_t sign = x < 0 ? 0x800u : 0u;
     int32_t mag = x < 0 ? -x : x;
     if (mag > 32640) mag = 32640;
-    if (mag < 128) return sign | (uint32_t)mag;
-    int32_t e = tape12_exp[mag >> 7];                         /* (mag 128 .. 32640: mag >> 7 is 1 .. 255) */
-    int32_t sh = e - 1, m = (mag + ((1 << sh) >> 1)) >> sh;   /* the rounded mantissa, 128 .. 256 */
-    if (m >= 256) {                                           /* rounded into the next octave */
-        if (e < 8) { e++; m = 128; } else m = 255;
+    if (mag >= 128) {
+        int32_t e = tape12_exp[mag >> 7];                     /* (mag 128 .. 32640: mag >> 7 is 1 .. 255) */
+        int32_t sh = e - 1, m = (mag + ((1 << sh) >> 1)) >> sh;   /* the rounded mantissa, 128 .. 256 */
+        if (m >= 256) {                                       /* rounded into the next octave */
+            if (e < 8) { m = 128; sh = e; } else m = 255;
+        }
+        mag = m << sh;
     }
-    return sign | ((uint32_t)e << 7) | (uint32_t)(m & 127);
+    return x < 0 ? -mag : mag;
 }
-static inline int32_t tape12_rd(uint32_t i)
-{
-    const uint8_t *b = &tape_mem.b[(i >> 1) * 3u];
-    uint32_t c = (i & 1u) ? ((uint32_t)(b[1] >> 4) | ((uint32_t)b[2] << 4))
-                          : ((uint32_t)b[0] | ((uint32_t)(b[1] & 15u) << 8));
-    return tape12_dec[c];
-}
-static inline void tape12_wr(uint32_t i, int32_t v)
-{
-    uint8_t *b = &tape_mem.b[(i >> 1) * 3u];
-    uint32_t c = tape12_enc(v);
-    if (i & 1u) {
-        b[1] = (uint8_t)((b[1] & 0x0Fu) | ((c & 15u) << 4));
-        b[2] = (uint8_t)(c >> 4);
-    } else {
-        b[0] = (uint8_t)c;
-        b[1] = (uint8_t)((b[1] & 0xF0u) | (c >> 8));
-    }
-}
+static inline int32_t tape12_rd(uint32_t i) { return tape_mem.c[i]; }
+static inline void tape12_wr(uint32_t i, int32_t v) { tape_mem.c[i] = (int16_t)tape12_q(v); }
+PS_STATIC_ASSERT(TAPE_LEN == 2u * ST_LEN, "the tape: the mono line, or the two stereo lines end to end");
 #define TAPE_RD(i) tape12_rd(tbase + (i))
 #define TAPE_WR(i, v) tape12_wr(tbase + (i), (v))
 /* Core 1's memory (2026-10-16): what core 1 writes (the reverb's back below, through fx_reverb_job) sits on cache
@@ -1591,14 +1566,20 @@ static inline uint32_t tape_pos(uint32_t w, int32_t back, uint32_t lq)
     while (d >= (int32_t)lq) d -= (int32_t)lq;
     return (uint32_t)d;
 }
-/* (inlined twice, tape_delay_block_half: fast 1 is the plain tape, whose loop leaves out PING PONG's near head, the
- * break-up, the wear, the runaway's low-pass and DELAY HP; the wrapper picks it only when each of them would do
- * nothing this block, so both give the same values) */
+/* The loop's parts (2026-11-24), each compiled in only where tape_delay_block_half's variant `tv` holds it: PING PONG's
+ * near head, DELAY HP, the runaway's / LOOP TONE's low-pass, LOOP TONE's wear, the break-up. The wrapper picks a
+ * variant only when every part it leaves out would do nothing this block, so all of them give the same values. */
+#define TV_PP 1u
+#define TV_HP 2u
+#define TV_LP 4u
+#define TV_WEAR 8u
+#define TV_BRK 16u
+#define TV_ALL 31u
 static inline __attribute__((always_inline)) void tape_half_run(const MasterPerformancePreset *p, const int32_t *in,
                                                                 int32_t *out_l, int32_t *out_r, uint32_t n, DelayFb fb,
-                                                                const int fast)
+                                                                const unsigned tv)
 {
-    const int pp = fast ? 0 : tpp;
+    const int pp = (tv & TV_PP) ? tpp : 0;
     const uint32_t lq = tlen << 16;
     delay_targets(p, pp);                               /* (its length; the speed it sets is not used here) */
     uint32_t cells = (tp.last_len + 1u) >> 1;
@@ -1641,7 +1622,7 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
 #if TAPE_WEAR
     const uint8_t tw_v = fx_live[FX_L_TONE];
     const float tw = tw_v < 64u ? tone_dark(tw_v) : (float)tone_hp(tw_v) * (1.f / 127.f);
-    const int tw_on = !fast && (tw > 0.f || tp.tw_d != 0.f || tp.tw_v != 0.f || tp.tw_dc != 0.f), tw_tape = tw_v < 64u;
+    const int tw_on = (tv & TV_WEAR) && (tw > 0.f || tp.tw_d != 0.f || tp.tw_v != 0.f || tp.tw_dc != 0.f), tw_tape = tw_v < 64u;
     float tw_drv = 1.f, tw_make = 32768.f, tw_asym = 0.f, tw_dc = tp.tw_dc;
     int32_t tw_fbg = 32767, tw_pos = 0, tw_step = 0;
     if (tw_on) {
@@ -1695,7 +1676,7 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
         }
         m1 += d1;
 #if TAPE_BREAK
-        if (!fast && (brk_k || brk_snag || brk_g != 32767)) {
+        if ((tv & TV_BRK) && (brk_k || brk_snag || brk_g != 32767)) {
             if (brk_k) {
                 uint32_t z = brk_rand(&brk_z);
                 if (z < brk_drop && brk_left <= 0) {             /* a dropout: its depth and length */
@@ -1713,16 +1694,19 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
             brk_snag -= brk_snag >> 10;                          /* settles over ~50 ms */
             if (brk_snag > -64 && brk_snag < 64) brk_snag = 0;
         }
-        uint32_t r = tape_pos(wpos, (int32_t)gap + (m1 >> 8) + (fast ? 0 : brk_snag), lq);
+        int32_t back = (int32_t)gap + (m1 >> 8) + ((tv & TV_BRK) ? brk_snag : 0);
 #else
-        uint32_t r = tape_pos(wpos, (int32_t)gap + (m1 >> 8), lq);
+        int32_t back = (int32_t)gap + (m1 >> 8);
 #endif
 #if TAPE_WEAR
-        if (!fast) {                                       /* (fast: no wear, tw_pos 0: r as it is) */
+        if (tv & TV_WEAR) {                                /* (without: no wear, tw_pos 0) */
             tw_pos += tw_step;
-            r = tape_pos(r, tw_pos, lq);                   /* the drift */
+            back += tw_pos;                                /* the drift */
         }
 #endif
+        /* (one wrap of the whole distance: the same cell as wrapping each part in turn, every wrap a full reduction
+         * into [0, lq) and every sum inside 32 bits) */
+        uint32_t r = tape_pos(wpos, back, lq);
         uint32_t i = r >> 16, i1 = i + 1u < tl ? i + 1u : 0u;
         /* the read cache (2026-11-24): the cell this step reads first was the last one read, unless the head moved
          * back over it; only wide delays (128 cells: wow, flutter and the snags stay behind the write head) cache */
@@ -1750,13 +1734,14 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
                 mt1 = nt;
             }
             m2 += d2;
-            uint32_t r2 = tape_pos(wpos, (int32_t)(gap >> 1) + (m2 >> 8), lq);
+            int32_t back2 = (int32_t)(gap >> 1) + (m2 >> 8);
 #if TAPE_BREAK
-            r2 = tape_pos(r2, brk_snag, lq);
+            if (tv & TV_BRK) back2 += brk_snag;
 #endif
 #if TAPE_WEAR
-            r2 = tape_pos(r2, tw_pos >> 1, lq);
+            if (tv & TV_WEAR) back2 += tw_pos >> 1;
 #endif
+            uint32_t r2 = tape_pos(wpos, back2, lq);
             uint32_t i2 = r2 >> 16, i21 = i2 + 1u < tl ? i2 + 1u : 0u;
             int32_t a2 = TAPE_RD_L(i2), b2 = TAPE_RD_L(i21);
             int32_t play2 = a2 + (((b2 - a2) * (int32_t)((r2 >> 1) & 0x7FFFu)) >> 15);
@@ -1768,7 +1753,7 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
             ol = loss2 - hp2;
         }
         int32_t fbs = o, hiss = 0;
-        if (!fast && fb.lp_on) {
+        if ((tv & TV_LP) && fb.lp_on) {
             run_lp += mr_mulq15(o - run_lp, fb.run_c);
             fbs = run_lp;
             if (fb.runaway) {
@@ -1776,12 +1761,12 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
                 hiss = (int32_t)(int16_t)(seed >> 16) >> 12;
             }
         }
-        if (!fast && fb.scoop_c != 0.f) {
+        if ((tv & TV_HP) && fb.scoop_c != 0.f) {
             scoop += ((float)fbs - scoop) * fb.scoop_c;
             fbs -= (int32_t)scoop;
         }
 #if TAPE_WEAR
-        if (!fast && tw_on) {                              /* the grunge and the breath */
+        if ((tv & TV_WEAR) && tw_on) {                     /* the grunge and the breath */
             float u = (float)fbs * tw_drv;
             if (tw_tape) {
                 float t = tw_asym * u * u;
@@ -1800,7 +1785,7 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
 #if TAPE_EMPH
         {
 #if TAPE_BREAK
-            int32_t e0 = fast || brk_g == 32767 ? aa_lp : (int32_t)(((int64_t)aa_lp * brk_g) >> 15);   /* the dropout */
+            int32_t e0 = !(tv & TV_BRK) || brk_g == 32767 ? aa_lp : (int32_t)(((int64_t)aa_lp * brk_g) >> 15);   /* the dropout */
 #else
             int32_t e0 = aa_lp;
 #endif
@@ -1858,17 +1843,23 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
                                   uint32_t n)
 {
     DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), fx_live[FX_L_TONE]);
-    int fast = !tpp && !fb.lp_on && fb.scoop_c == 0.f;
+    unsigned need = (tpp ? TV_PP : 0u) | (fb.lp_on ? TV_LP : 0u) | (fb.scoop_c != 0.f ? TV_HP : 0u);
 #if TAPE_BREAK
-    fast = fast && p->delay_degrade <= 64u && tp.brk_snag == 0 && tp.brk_g == 32767;
+    if (p->delay_degrade > 64u || tp.brk_snag != 0 || tp.brk_g != 32767) need |= TV_BRK;
 #endif
 #if TAPE_WEAR
-    fast = fast && fx_live[FX_L_TONE] == 64u && tp.tw_d == 0.f && tp.tw_v == 0.f && tp.tw_dc == 0.f;
+    if (fx_live[FX_L_TONE] != 64u || tp.tw_d != 0.f || tp.tw_v != 0.f || tp.tw_dc != 0.f) need |= TV_WEAR;
 #endif
-    if (fast)
-        tape_half_run(p, in, out_l, out_r, n, fb, 1);
+    /* (2026-11-24) the factory performances: PING PONG with DELAY HP, whose LOOP TONE above the middle wears the tape
+     * (16 of 20), or with LOOP TONE dark (the 4 dub ones); a stereo line with DELAY HP takes the first too */
+    if (need == 0u)
+        tape_half_run(p, in, out_l, out_r, n, fb, 0u);
+    else if ((need & ~(TV_PP | TV_HP | TV_WEAR)) == 0u)
+        tape_half_run(p, in, out_l, out_r, n, fb, TV_PP | TV_HP | TV_WEAR);
+    else if ((need & ~(TV_PP | TV_LP | TV_WEAR)) == 0u)
+        tape_half_run(p, in, out_l, out_r, n, fb, TV_PP | TV_LP | TV_WEAR);
     else
-        tape_half_run(p, in, out_l, out_r, n, fb, 0);
+        tape_half_run(p, in, out_l, out_r, n, fb, TV_ALL);
 }
 #endif
 

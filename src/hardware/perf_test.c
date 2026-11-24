@@ -118,6 +118,8 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 /* (PT_DELAY_ONLY, 2026-11-24: the delay's cost, mono and stereo, PING PONG off and on) */
 #define F_DST (1u << 16)             /* DELAY MODE stereo */
 #define F_DPP (1u << 17)             /* PING PONG */
+#define F_DHP (1u << 18)             /* DELAY HP 20 (every factory performance's 16..34) */
+#define F_DDUB (1u << 19)            /* LOOP TONE 44 (the dub performances': the dark low-pass and the wear) */
 /* (PT_COST_ONLY, the effects' price, 2026-11-20): the reverb type t (REVTYPE_*) in bits 16..19 as t + 1, PING PONG in bit
  * 31; only without F_MFX / F_MFX2 (whose types read those bits) and without F_FX_* */
 #define F_RVT(t) ((uint32_t)((t) + 1u) << 16)
@@ -156,6 +158,9 @@ static const PtScen SCEN[] = {
     {"D 8V MONO", K_HELD, VARCH_SINGLE, FLT_MULTI, F_NV(8), UIPAGE_HOME1},
     {"D 8V STEREO", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DST | F_NV(8), UIPAGE_HOME1},
     {"D 8V STEREO PP", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DST | F_DPP | F_NV(8), UIPAGE_HOME1},
+    {"D 8V MONO PP HP", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DPP | F_DHP | F_NV(8), UIPAGE_HOME1},
+    {"D 8V MONO DUB", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DPP | F_DHP | F_DDUB | F_NV(8), UIPAGE_HOME1},
+    {"D 8V STEREO HP", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DST | F_DHP | F_NV(8), UIPAGE_HOME1},
 #elif defined(PT_NOISE_ONLY)         /* (-D PT_NOISE_ONLY, 2026-11-22: the noise features only, 2/4/6/8 voices each: NONE is the
                                       * reference; BAND / AIR with and without CLUSTER, and CLUSTER with INHARM; slopes from
                                       * the voice counts, the deltas from the same row without the feature) */
@@ -556,7 +561,7 @@ static void patch(EngineState *e, const PtScen *s)
     }
 #if defined(PT_DELAY_ONLY)
     perf_state.delay_type = (uint8_t)((s->flags & F_DST) ? 1 : 0);
-    perf_state.delay_pingpong = (uint8_t)((s->flags & F_DPP) ? 1 : 0);
+    perf_state.delay_pingpong = (uint8_t)(((s->flags & F_DPP) ? 1 : 0) | ((s->flags & F_DHP) ? 20 << 1 : 0));
     perf_state.delay_feedback = 61; perf_state.delay_degrade = 30; perf_state.delay_time = 80; perf_state.delay_sync = 0;
     engine_state[0].amp.delay_send = 111; engine_state[0].amp.reverb_send = 0;
 #endif
@@ -764,6 +769,9 @@ static void setup(const PtScen *s)
         static const uint8_t LIVE[FX_L_COUNT] = {64u, 64u, 0u, 0u};
         for (int i = 0; i < FX_L_COUNT; i++) fx_live[i] = LIVE[i];
     }
+#if defined(PT_DELAY_ONLY)
+    if (s->flags & F_DDUB) fx_live[FX_L_TONE] = 44u;   /* (DELAY HP then follows it to 0: fx_tone_sync) */
+#endif
     if (s->flags & F_FX_ANY) {
         perf_state.reverb_type = (s->flags & F_FX_CEL) ? REVTYPE_CELESTIAL : (s->flags & F_FX_TUM) ? REVTYPE_TUMULUS
                                  : (s->flags & F_FX_SPR) ? REVTYPE_SPRING : REVTYPE_MOD;
