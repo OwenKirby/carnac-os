@@ -365,8 +365,11 @@ static int32_t tape_sat(int32_t x)
 #endif
 static inline int32_t mr_mulq15(int32_t a, int32_t b)
 {
-    int64_t t = (int64_t)a * b;                           /* (64-bit: the tank's values are 256 x the Q15, 2026-11-24) */
-    return (int32_t)((t + ((t >> 63) & 32767)) >> 15);
+    /* (64-bit: the tank's values are 256 x the Q15, 2026-11-24.) The product is negative exactly when the signs differ
+     * and neither is 0; when one is 0 the bias < 2^15 still floors to 0. So the bias comes from the operands: one
+     * multiply-add, where t >> 63 needed the product first and the compiler multiplied twice. Same values. */
+    int32_t bias = ((a ^ b) >> 31) & 32767;
+    return (int32_t)(((int64_t)a * b + bias) >> 15);
 }
 /* HALF RATE (2026-11-11, after S1Vave's REV_DIV 2): the tank runs at 22.05 kHz. The front takes the send's frames in
  * pairs through a [1 3 3 1] / 8 decimator (a double null at 22 kHz, -9 dB at the half rate's Nyquist) and diffuses
@@ -429,21 +432,28 @@ PS_STATIC_ASSERT(MR_S_END <= MR_RING, "the tank's lines fit its ring");
  * lower against the signal. The ring holds 24-bit cells (3 bytes, little-endian, sign in the top bit). The hiss was the
  * 16-bit rounding of the feedback: measured, 2..5 kHz floor -38 -> -49 dB with this scale (scratch, 2026-11-24). */
 #define MR_CLAMP24 8388607
-static inline int32_t clamp24(int32_t v) { return v > MR_CLAMP24 ? MR_CLAMP24 : v < -MR_CLAMP24 ? -MR_CLAMP24 : v; }
-static inline int32_t pk24_rd(const uint8_t *b, uint32_t i)
+/* one add and one compare on the common path (2026-11-24: the two-sided clamp cost two compares and two 6-byte
+ * constants at every write; the same values) */
+static inline int32_t clamp24(int32_t v)
 {
-    const uint8_t *q = b + 3u * i;
-    int32_t v = (int32_t)((uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16));
-    return v & 0x800000 ? v - 0x1000000 : v;
+    if (__builtin_expect((uint32_t)v + (uint32_t)MR_CLAMP24 > 2u * (uint32_t)MR_CLAMP24, 0))
+        v = v < 0 ? -MR_CLAMP24 : MR_CLAMP24;
+    return v;
 }
-static inline void pk24_wr(uint8_t *b, uint32_t i, int32_t v)
+/* A cell is split in two arrays (2026-11-24, the same 3 bytes a cell, the same values): its top 16 bits (signed) and
+ * its low 8. A read is a halfword and a byte load and a shift-add; the packed 3-byte cell was a x3, three byte loads,
+ * two inserts and a sign fix, and its write three shifted byte stores (the 24-bit tank cost the FM1 ~13 pts of floor,
+ * PERF 2026-11-23 22:04). */
+static struct FX_LINE {
+    int16_t hi[MR_RING];
+    uint8_t lo[MR_RING];
+} mr_ring SYNTH_POOL;                                     /* core 1, as everything of the tank's but its front */
+static inline int32_t r24_rd(uint32_t i) { return (int32_t)mr_ring.hi[i] * 256 + (int32_t)mr_ring.lo[i]; }
+static inline void r24_wr(uint32_t i, int32_t v)         /* v within +-MR_CLAMP24 */
 {
-    uint8_t *q = b + 3u * i;
-    q[0] = (uint8_t)v;
-    q[1] = (uint8_t)(v >> 8);
-    q[2] = (uint8_t)(v >> 16);
+    mr_ring.hi[i] = (int16_t)(v >> 8);
+    mr_ring.lo[i] = (uint8_t)v;
 }
-static uint8_t mr_ring[3u * MR_RING] SYNTH_POOL FX_LINE;  /* core 1, as everything of the tank's but its front: 24-bit cells */
 static int32_t mr_dco[2];                                 /* the outputs' DC blockers' states (2026-11-24) */
 static uint32_t mr_qz[2];                                 /* the output gates' quiet counts (2026-11-24) */
 static struct FX_LINE {
@@ -536,7 +546,7 @@ static void tank_init(void)
 {
     memset(mr_in_ring, 0, sizeof mr_in_ring);
     mr_in_p = 0;
-    memset(mr_ring, 0, sizeof mr_ring);
+    memset(&mr_ring, 0, sizeof mr_ring);
     memset(mr_dco, 0, sizeof mr_dco);
     memset(mr_qz, 0, sizeof mr_qz);
     mr_p = 0;
@@ -620,14 +630,15 @@ static inline int32_t mr_dc_block(int32_t *s, int32_t x)
 }
 
 /* ring access, at the sample's pointer p: the line starting at s, d samples back; and its write */
-#define MR_RD(s, d) pk24_rd(mr_ring, MR_WRAP(p + (s) + (d)))
-#define MR_WR(s, v) pk24_wr(mr_ring, MR_WRAP(p + (s)), clamp24(v))
+#define MR_RD(s, d) r24_rd(MR_WRAP(p + (s) + (d)))
+#define MR_WR(s, v) r24_wr(MR_WRAP(p + (s)), clamp24(v))
+#define MR_WR_C(s, v) r24_wr(MR_WRAP(p + (s)), (v))      /* v clamped already (the compiler kept both clamps) */
 
 /* allpass on the line at s with delay d, coefficient g (Q15, either sign): v = x + g dl, out = dl - g v (|H| = 1) */
 static inline __attribute__((always_inline)) int32_t mr_ap(uint32_t p, uint32_t s, uint32_t d, int32_t x, int32_t g)
 {
     int32_t dl = MR_RD(s, d), v = clamp24(x + mr_mulq15(dl, g));
-    MR_WR(s, v);
+    MR_WR_C(s, v);
     return dl - mr_mulq15(v, g);
 }
 /* the same with its delay swept: d + MR_EXC + the excursion e (-32767 .. 32767 = -MR_EXC .. +MR_EXC), read between
@@ -641,7 +652,7 @@ static inline __attribute__((always_inline)) int32_t mr_ap_swept(uint32_t p, uin
     int32_t a = MR_RD(s, di), b = MR_RD(s, di + 1u);
     int32_t dl = a + (int32_t)((((int64_t)b - a) * fr) >> 15);   /* (64-bit: the tank's values are 256 x Q15) */
     int32_t v = clamp24(x + mr_mulq15(dl, g));
-    MR_WR(s, v);
+    MR_WR_C(s, v);
     return dl - mr_mulq15(v, g);
 }
 
