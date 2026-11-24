@@ -13,7 +13,9 @@ enum { SPROF_TOTAL, SPROF_CTRL, SPROF_VOICE, SPROF_OSC, SPROF_EXTRAS, SPROF_FILT
        SPROF_CLOCK, SPROF_SEQ, SPROF_LTICK,
        SPROF_C_LFO, SPROF_C_ENV, SPROF_C_OSC, SPROF_C_FILT, SPROF_C_AMP,
        SPROF_MT_PRE, SPROF_MT_UP, SPROF_MT_CLIP, SPROF_MT_DOWN, SPROF_MT_POST, SPROF_MFXGL, SPROF_MFXPL,
-       SPROF_F_SUM, SPROF_F_MFX, SPROF_F_SEND, SPROF_F_DLY, SPROF_F_RVF, SPROF_F_RVB, SPROF_F_TAIL, SPROF_N };
+       SPROF_F_SUM, SPROF_F_MFX, SPROF_F_SEND, SPROF_F_DLY, SPROF_F_RVF, SPROF_F_RVB, SPROF_F_TAIL,
+       SPROF_D_MOD, SPROF_D_RD, SPROF_D_FLT, SPROF_D_WR, SPROF_D_STEP,   /* the tape loop's parts (fx.c, 2026-11-24) */
+       SPROF_N };
                                                          /* CLOCK: the MIDI clock a frame; SEQ: the MAQ and the ARP a
                                                           * frame; LTICK: the layer-wide control tick (LFO1, OSCMIXER,
                                                           * the voice limits) every SYNTH_CTRL_PERIOD frames. C_*: CTRL

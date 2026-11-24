@@ -3,6 +3,7 @@
 #include "hardware/mem_section.h"
 #include "amplifier.h"                           /* amp_exp2f (DELAY HP) */
 #include "dsp_cold.h"
+#include "synth_prof.h"                /* the profile build: the delay loop's parts timed (2026-11-24) */
 
 /* Delay: a mono tape echo. The reverb's ROOM network and its tuning are the Felucca firmware's
  * (firmware/src/fx.c rev_room): 4 damped combs into 2 allpasses, Freeverb-style.
@@ -94,8 +95,8 @@ static inline uint32_t tape12_enc(int32_t x)
     int32_t mag = x < 0 ? -x : x;
     if (mag > 32640) mag = 32640;
     if (mag < 128) return sign | (uint32_t)mag;
-    int32_t e = 1;
-    while (e < 8 && mag >= (256 << (e - 1))) e++;
+    /* the exponent: 1 + the thresholds 256 .. 16384 that mag reaches (2026-11-24: comparisons, not a loop; same codes) */
+    int32_t e = 1 + (mag >= 256) + (mag >= 512) + (mag >= 1024) + (mag >= 2048) + (mag >= 4096) + (mag >= 8192) + (mag >= 16384);
     int32_t sh = e - 1, m = (mag + ((1 << sh) >> 1)) >> sh;   /* the rounded mantissa, 128 .. 256 */
     if (m >= 256) {                                           /* rounded into the next octave */
         if (e < 8) { e++; m = 128; } else m = 255;
@@ -161,6 +162,7 @@ typedef struct {
     int32_t brk_g, brk_tgt, brk_left;     /* the record level now and its target (Q15), the dropout's steps left */
     int32_t brk_snag;                     /* the heads' jolt, Q16 cells */
     uint32_t tw_ph, tw_cnt, tw_z;         /* TAPE_WEAR: the breath's spin, the drift's block count, its random stream */
+    uint32_t rc_i; int32_t rc_v;          /* the read cache: the last cell decoded (the next step's first), its value (2026-11-24) */
     float tw_tgt, tw_v, tw_d, tw_dc;      /* TAPE_WEAR: the drift's target, its two smoothing stages (Q16 cells), the DC */
 } TapeState;
 
@@ -242,6 +244,7 @@ void fx_init(void)
         tcur = &tpl[k];
         tp.brk_g = tp.brk_tgt = 32767;                        /* TAPE_BREAK: the record level whole */
         tp.tw_z = 0x2545F491u;                                /* TAPE_WEAR: its own random stream */
+    tp.rc_i = 0xFFFFFFFFu;                                /* (no cell cached) */
         tp.gap_q16 = tp.gap_tgt_q16 = 64 << 16;
         tp.speed_q24 = tp.speed_tgt_q24 = 1 << 24;
         tp.last_len = 64u;
@@ -1533,6 +1536,8 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
     int32_t l0 = tp.ho_l[0], l1 = tp.ho_l[1], r0 = tp.ho_r[0], r1 = tp.ho_r[1];
     int32_t m1 = tp.hm[0], d1 = tp.hm[1], m2 = tp.hm[2], d2 = tp.hm[3];
     uint8_t ph = tp.hph;
+    uint32_t rc_i = tp.rc_i;
+    int32_t rc_v = tp.rc_v;
     tp.speed_q24 = 1 << 24;                                /* (the full-rate tape's, should the type change back) */
 #if TAPE_BREAK
     const int32_t brk_k = p->delay_degrade > 64u ? (int32_t)(p->delay_degrade > 127u ? 127u : p->delay_degrade) - 64 : 0;
@@ -1568,6 +1573,8 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
     }
 #endif
 
+    SPROF_DECL;
+    SPROF_START();
     for (uint32_t s = 0; s < n; s++) {
         int32_t x = in[s];
         if (!ph) {                                         /* the pair's first: the interpolator's late quarter */
@@ -1620,7 +1627,14 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
         r = tape_pos(r, tw_pos, lq);                       /* the drift */
 #endif
         uint32_t i = r >> 16, i1 = i + 1u < tlen ? i + 1u : 0u;
-        int32_t a = TAPE_RD(i), b = TAPE_RD(i1);
+        /* the read cache (2026-11-24): the cell this step reads first was the last one read, unless the head moved
+         * back over it; only wide delays (128 cells: wow, flutter and the snags stay behind the write head) cache */
+        const int wide = gap >= (int32_t)(128u << 16);
+        SPROF_LAP(SPROF_D_MOD);
+        int32_t a = (wide && i == rc_i) ? rc_v : TAPE_RD(i), b = TAPE_RD(i1);
+        SPROF_LAP(SPROF_D_RD);
+        rc_i = wide ? i1 : 0xFFFFFFFFu;
+        rc_v = b;
         int32_t play = a + (((b - a) * (int32_t)((r >> 1) & 0x7FFFu)) >> 15);
 #if TAPE_EMPH
         play = tp.em_r[0] = play + (tp.em_r[0] >> 1);
@@ -1681,6 +1695,7 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
             fbs = sfx_mulq15((int32_t)(u * tw_make), tw_fbg);
         }
 #endif
+        SPROF_LAP(SPROF_D_FLT);
         int32_t rec = tape_sat(xin + sfx_mulq15(fbs, fb.lo) + sfx_mulq15(fbs, fb.hi) + sfx_mulq15(fbs, fb.hi2) + hiss);
         aa_lp += sfx_mulq15(rec - aa_lp, 24575);           /* (the full-speed tape's record low-pass, 0.75) */
         wpos += 1u << 16;
@@ -1698,16 +1713,20 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
         }
 #else
         TAPE_WR(wpos >> 16, clamp16(aa_lp));
+        SPROF_LAP(SPROF_D_WR);
 #endif
         step++;
         l0 = l1; l1 = ol;                                  /* the interpolator's step: a quarter of the newest */
         r0 = r1; r1 = o;
         out_l[s] = (l1 + 3 * l0) >> 2;
+        SPROF_LAP(SPROF_D_STEP);
         out_r[s] = (r1 + 3 * r0) >> 2;
     }
     tp.hz[0] = z0; tp.hz[1] = z1; tp.hz[2] = z2;
     tp.ho_l[0] = l0; tp.ho_l[1] = l1; tp.ho_r[0] = r0; tp.ho_r[1] = r1;
     tp.hph = ph;
+    tp.rc_i = rc_i;
+    tp.rc_v = rc_v;
     tp.hstep = step;
     tp.hm[0] = m1; tp.hm[1] = d1; tp.hm[2] = m2; tp.hm[3] = d2;
     tp.wpos_q16 = wpos;
