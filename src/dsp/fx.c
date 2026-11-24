@@ -377,11 +377,15 @@ static inline int32_t mr_mulq15(int32_t a, int32_t b)
  * frame late. Every length, the sweep, the spin, the damping and the filters keep their times and corners, so the
  * space is the same; above ~8 kHz it is darker. Half the work on both cores and half the ring (32 KB of .pool back).
  * Measured on the FM1 (same layout, FX_LAYOUT_PAD): PERF TEST median +0.1, no row better than -0.8: the tank's work
- * is core 1's, hidden behind core 0's. So off by default; MR_HALF 0 is the full-rate tank, bit for bit as before. */
+ * is core 1's, hidden behind core 0's. So it stayed off then. 2026-11-24, with the 24-bit tank: ON (the user's
+ * choice), PERF mean floor -4.1 / avg -4.8 against the full-rate 24-bit tank, its rows -8..-12 floor; host: wet level
+ * within 0.1 dB, the same decay, every tail exact silence. MR_HALF 0 is the full-rate tank, as before. */
 #ifndef MR_HALF
-#define MR_HALF 0                                         /* (2026-11-11: off. On two cores it saved ~0: the tank runs on
-                                                           * core 1 beside core 0's delay and front, which set the pace.
-                                                           * On, it frees 32 KB of .pool, should that be needed) */
+#define MR_HALF 1                                         /* (2026-11-11: off, it saved ~0 then: the tank ran on core 1
+                                                           * beside core 0's delay and front, which set the pace.
+                                                           * 2026-11-24: ON, the user's choice. The 24-bit tank (a7318df)
+                                                           * is no longer hidden: it cost 13-17 pts of floor at full rate;
+                                                           * half rate halves it, and its ring fits a power of two) */
 #endif
 #define MR_DS (MR_HALF ? 2u : 1u)                         /* frames a tank sample */
 /* MR_MELLOW 1: CELESTIAL's mellowing (below; on hold 2026-11-11, the user undecided): needs MR_HALF */
@@ -424,8 +428,15 @@ PS_STATIC_ASSERT(!MR_MELLOW || MR_HALF, "the mellowing is the half-rate tank's")
 #define MR_S_END (MR_S_D2R + MR_B_D2R + 1u)
 /* the ring is exactly the lines' length (2026-11-24: it was 32768 cells, a power of two for the mask, 9 KB the lines
  * never use: the pool needed it). A read or write wraps once by a compare: every offset is below the ring's length. */
+/* Half rate (2026-11-24): the lines (~14,650 cells) fit 16384, a power of two, so an access wraps by one mask again (the
+ * compare cost ~4 instructions an access, ~32 accesses a sample), in 48 KB. */
+#if MR_HALF
+#define MR_RING 16384u
+#define MR_WRAP(i) ((i) & (MR_RING - 1u))
+#else
 #define MR_RING MR_S_END
 #define MR_WRAP(i) ((i) >= MR_RING ? (i) - MR_RING : (i))
+#endif
 PS_STATIC_ASSERT(MR_S_END <= MR_RING, "the tank's lines fit its ring");
 
 /* THE TANK'S 24-BIT CELLS (2026-11-24): the tank's values run at 256 x the Q15, so every rounding in its loops is 48 dB
@@ -693,7 +704,9 @@ static inline __attribute__((always_inline)) void tank_front(int32_t *x, uint32_
 #if MR_HALF
         int32_t v = x[s];
         x[s] = 0;
-        int32_t dec = (v + 3 * (h0 + h1) + h2 + 4) >> 3;  /* the decimator, [1 3 3 1] / 8 (a send is Q15) */
+        /* the decimator, [1 3 3 1] / 8, straight into the tank's 256 x Q15 (x 256 / 8 = x 32: no rounding; 2026-11-24,
+         * the 24-bit tank's half-rate input) */
+        int32_t dec = (v + 3 * (h0 + h1) + h2) * 32;
         h2 = h1;
         h1 = h0;
         h0 = v;
@@ -725,9 +738,9 @@ static inline __attribute__((always_inline)) void tank_front(int32_t *x, uint32_
  * silence, not in the rounding limit cycle (+-1 LSB, peaks past 4) the DC blockers leave. Under -72 dBFS; it lifts the moment the output rises. */
 static inline int32_t mr_gate(uint32_t *q, int32_t v)
 {
-    if (v >= -8 && v <= 8) {
-        if (*q < 2048u) (*q)++;
-        return *q >= 2048u ? 0 : v;
+    if (v >= -8 && v <= 8) {                              /* (2048 / MR_DS tank samples: 46 ms at either rate) */
+        if (*q < 2048u / MR_DS) (*q)++;
+        return *q >= 2048u / MR_DS ? 0 : v;
     }
     *q = 0;
     return v;
@@ -851,7 +864,7 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
          * the master limiter (a clamp here clipped a loud tail: buzz) */
         x[s] = mr_gate(&mr_qz[0], mr_dc_block(&mr_dco[0], (int32_t)((((int64_t)(yl >> 2)) * MR_OUT_GAIN) >> (MR_OUT_SH + 8))));   /* (2026-11-24: no DC out) */
         r[s] = mr_gate(&mr_qz[1], mr_dc_block(&mr_dco[1], (int32_t)((((int64_t)(yr >> 2)) * MR_OUT_GAIN) >> (MR_OUT_SH + 8))));
-        p = p ? p - 1u : MR_RING - 1u;
+        p = MR_WRAP(p + MR_RING - 1u);
     }
     mr_p = p;
     mr_lp_l = lp_l;
