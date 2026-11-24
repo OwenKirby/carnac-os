@@ -20,8 +20,10 @@
 #include "dsp/fx.h"
 
 #define SR 44100
-#define XF_LO -28.0                     /* (2026-11-24: was -26; the half-rate tank returns less top end each pass, so
-                                         * TUMULUS's loop holds at -26.2, steady, 3 dB under the full-rate tank's) */
+#define XF_LO -36.0                     /* (2026-11-24: was -26; the half-rate tank returns less top end each pass, so
+                                         * TUMULUS's loop holds at -26.2, steady, 3 dB under the full-rate tank's; then
+                                         * the quarter-rate tape (TAPE_DIV 4, ~5 kHz wide) at -34.4, steady; the other
+                                         * types -21 .. -17) */
 #define XF_HI -10.0
 #define XF_TOP -6.0
 /* settled: no more than 3 dB over its floor, or under XF_QUIET (2026-11-03: the floor is the tape's own residue,
