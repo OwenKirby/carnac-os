@@ -169,20 +169,10 @@ PS_STATIC_ASSERT(sizeof(SAVE_TARGET_NAMES) / sizeof(SAVE_TARGET_NAMES[0]) == UIS
 PS_STATIC_ASSERT(sizeof(NAME_POS_NAMES) / sizeof(NAME_POS_NAMES[0]) == NAME_LEN, "one name per name position");
 PS_STATIC_ASSERT(sizeof(CHAR_NAMES) / sizeof(CHAR_NAMES[0]) == CHAR_MAP_LEN && sizeof(UI_CHAR_MAP) == CHAR_MAP_LEN + 1u,
                  "one name per character");
-/* 2.2 ARP knobs: RATE (ARPRATE_NAMES), OCTAVE RANGE, STYLE (arp_seq.h; HOLD first, 2026-10-21), VARIATION (8.3 row and
- * column: A / B, T for the triplet B column; a HOLD step's strum, carp_hold_strum, under STYLE HOLD) */
-static const char *const ARPOCT_NAMES[] = {"1 OCT", "2 OCT", "3 OCT", "4 OCT"};
-static const char *const ARPSTYLE_NAMES[] = {"HOLD", "BLOCK", "UP", "DOWN", "UP-DN", "DN-UP", "RANDOM", "STRUM UP",
-                                             "STRUM DN"};
-static const char *const ARPVAR_NAMES[] = {       /* the J-6's style.variation: 4.nn = its style 4 (our A), 5.nn = style 5 (our B / T) */
-    "4.01", "5.01", "4.02", "5.02", "4.03", "5.03", "4.04", "5.04", "4.05", "5.05", "4.06", "5.06",
-    "4.07", "5.07", "4.08", "5.08", "4.09", "5.09", "4.10", "5.10", "4.11", "5.11", "4.12", "5.12", "ALL",
-};
-PS_STATIC_ASSERT(sizeof(ARPOCT_NAMES) / sizeof(ARPOCT_NAMES[0]) == ARP_NOCT, "one name per octave range");
-PS_STATIC_ASSERT(sizeof(ARPSTYLE_NAMES) / sizeof(ARPSTYLE_NAMES[0]) == ARPSTYLE_COUNT, "one name per ARPSTYLE_*");
-static const char *const ARPSTRUM_NAMES[] = {"NONE", "UP", "DOWN"};   /* its notes RATE apart */
-PS_STATIC_ASSERT(sizeof(ARPVAR_NAMES) / sizeof(ARPVAR_NAMES[0]) == ARP_NVAR, "one name per variation");
-PS_STATIC_ASSERT(sizeof(ARPSTRUM_NAMES) / sizeof(ARPSTRUM_NAMES[0]) == ARP_NSTRUM, "one name per strum");
+/* 2.2 ARP knobs: RATE (ARPRATE_NAMES), SPAN (2026-11-23, was OCTAVE: AUTO = the phrase's own), STYLE and VARIATION
+ * (arp_seq.c: carp_style_names, and the style's 12 phrases, carp_phrase_names[style], ui_sm_knob) */
+static const char *const ARPSPAN_NAMES[] = {"AUTO", "1 OCT", "2 OCT", "3 OCT", "4 OCT"};
+PS_STATIC_ASSERT(sizeof(ARPSPAN_NAMES) / sizeof(ARPSPAN_NAMES[0]) == ARP_NSPAN, "one name per span");
 /* 7.4 footer: EV: and MD: (MAQ-style short names), LANE as 1..4 */
 static const char *const SEQEV_NAMES[] = {
     "Note", "Dyn", "Trns", "Time", "Gate", "Rtch", "PSkp", "PMut", "MW", "AT", "CC1", "CC2", "PC", "Layr", "PAT",
@@ -704,8 +694,9 @@ static const UiKnob EFFECTS_KNOBS[4] = {
 };
 /* 2.2 ARP (chord page): the live dial values a capture copies into a step (UIStateMachine.arp_knob, by index) */
 static const UiKnob ARP_KNOBS[4] = {
-    {"RATE", 0, UIKNOB_LIST, ARPRATE_COUNT, ARPRATE_NAMES}, {"OCTAVE", 1, UIKNOB_LIST, ARP_NOCT, ARPOCT_NAMES},
-    {"STYLE", 2, UIKNOB_LIST, ARPSTYLE_COUNT, ARPSTYLE_NAMES}, {"VARIATION", 3, UIKNOB_LIST, ARP_NVAR, ARPVAR_NAMES},
+    {"RATE", 0, UIKNOB_LIST, ARPRATE_COUNT, ARPRATE_NAMES}, {"SPAN", 1, UIKNOB_LIST, ARP_NSPAN, ARPSPAN_NAMES},
+    {"STYLE", 2, UIKNOB_LIST, ARPSTYLE_COUNT, carp_style_names},
+    {"VARIATION", 3, UIKNOB_LIST, ARP_NVAR, carp_phrase_names[0]},   /* (the knob's STYLE's, ui_sm_knob) */
 };
 /* LAYER (2026-10-17): the play controllers. VELOCITY is the keys' own; MOD WHEEL goes out as CC 1; CC1 sets the
  * CUSTOMCC1 mod source directly (no CC number needed). Knob 4 (2026-10-21, was CC2): the focused layer's PORTA TIME,
@@ -2495,7 +2486,7 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
 {
     sm->knob_touched = (uint8_t)(knob + 1u);         /* EDIT jumps from it until the cursor moves */
     sm->knob_touched_page = page;
-    static const uint8_t lim[4] = {ARPRATE_COUNT - 1u, ARP_NOCT - 1u, ARPSTYLE_COUNT - 1u, ARP_NVAR - 1u};
+    static const uint8_t lim[4] = {ARPRATE_COUNT - 1u, ARP_NSPAN - 1u, ARPSTYLE_COUNT - 1u, ARP_NVAR - 1u};
     uint8_t i, v;
     uint16_t held;
     if (page == UIPAGE_SAVE_COMMIT && knob == 0u) {
@@ -2558,11 +2549,6 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         return;
     v = sm->arp_knob[knob] <= lim[knob] ? sm->arp_knob[knob] : lim[knob];
     sm->arp_knob[knob] = v;
-    if (sm->arp_knob[2] == ARPSTYLE_HOLD && sm->arp_knob[3] >= ARP_NSTRUM) {
-        sm->arp_knob[3] = ARP_NSTRUM - 1u;           /* HOLD: VARIATION is the strum, none / up / down */
-        if (knob == 3u)
-            v = sm->arp_knob[3];
-    }
     if (sm->carp != 0)
         carp_set_knobs(sm->carp, sm->arp_knob);      /* a held chord key follows the dials */
     held = 0u;
@@ -2577,11 +2563,7 @@ void ui_sm_knob_written(UIStateMachine *sm, uint8_t page, uint8_t knob)
         switch (knob) {
         case 0: s->rate = v; break;
         case 1: s->octave_range = v; break;
-        case 2:
-            s->style = v;
-            if (v == ARPSTYLE_HOLD && s->variation >= ARP_NSTRUM)
-                s->variation = sm->arp_knob[3];      /* (clamped above) */
-            break;
+        case 2: s->style = v; break;
         default: s->variation = v; break;
         }
     }
@@ -2882,7 +2864,7 @@ void ui_sm_init(UIStateMachine *sm, MasterPerformancePreset *perf, EngineState *
     sm->rec_msg_ms = 0u;
     sm->arp_knob[0] = ARP_RATE_DEFAULT;
     sm->arp_knob[1] = 0u;
-    sm->arp_knob[2] = ARPSTYLE_UP;
+    sm->arp_knob[2] = ARPSTYLE_ARP;
     sm->arp_knob[3] = 0u;
     sm->arp_held = 0u;
     sm->arp_peek = 0u;
@@ -3293,11 +3275,8 @@ uint8_t *ui_sm_knob(UIStateMachine *sm, uint8_t page, uint8_t layer, uint8_t kno
     info->kind = k->kind;
     info->n_enum = k->kind == UIKNOB_SRC ? (uint8_t)MSRC_COUNT : k->n_enum;
     info->names = k->kind == UIKNOB_SRC ? MSRC_NAMES : k->names;
-    if (page == UIPAGE_ARP && knob == 3u && sm->arp_knob[2] == ARPSTYLE_HOLD) {
-        info->label = "STRUM";                       /* HOLD: RHYTHM is the strike's strum */
-        info->names = ARPSTRUM_NAMES;
-        info->n_enum = ARP_NSTRUM;
-    }
+    if (page == UIPAGE_ARP && knob == 3u)            /* VARIATION: the STYLE's own 12 phrases */
+        info->names = carp_phrase_names[sm->arp_knob[2] < ARPSTYLE_COUNT ? sm->arp_knob[2] : 0u];
     if (k->kind == UIKNOB_NONE)
         return 0;
     if (k->kind == UIKNOB_PERF)

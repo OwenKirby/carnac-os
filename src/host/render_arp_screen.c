@@ -57,9 +57,9 @@ static void run(uint32_t frames)
 static void pattern(void)
 {
     static const uint8_t root[8] = {53, 58, 55, ARP_CHORD_EMPTY, 60, ARP_CHORD_TIE, 62, 65};
-    static const uint8_t style[8] = {ARPSTYLE_UP, ARPSTYLE_BLOCK, ARPSTYLE_HOLD, 0, ARPSTYLE_STRUM_UP, ARPSTYLE_RANDOM,
-                                     ARPSTYLE_DOWN, ARPSTYLE_STRUM_DN};
-    static const uint8_t var[8] = {1, 8, 2, 0, 3, 19, 10, 22};
+    static const uint8_t style[8] = {ARPSTYLE_ARP, ARPSTYLE_STAB, ARPSTYLE_BEAT, 0, ARPSTYLE_STRUM, ARPSTYLE_KEYS,
+                                     ARPSTYLE_BASS, ARPSTYLE_HARP};
+    static const uint8_t var[8] = {1, 3, 2, 0, 4, 0, 1, 4};
     static const uint8_t rate[8] = {ARPRATE_1_16, ARPRATE_1_32, ARPRATE_1_64, ARPRATE_1_16, ARPRATE_1_8, ARPRATE_1_16,
                                     ARPRATE_1_64, ARPRATE_1_32T};
     int i;
@@ -142,7 +142,7 @@ int main(int argc, char **argv)
         arp_draw(&sm, &q, &a, 0);
     }
     fails |= shot(dir, "trail");
-    sm.arp_knob[2] = ARPSTYLE_BLOCK;
+    sm.arp_knob[2] = ARPSTYLE_STAB;
     ui_sm_knob_written(&sm, UIPAGE_ARP, 2);
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_PLAY);        /* (PLAY again: stop) */
     run(100);
@@ -178,8 +178,8 @@ int main(int argc, char **argv)
     seq_palette_set(SQPAL_ORANGE);
     pattern();
     ui_sm_handle(&sm, UIEV_SELECT_ENC, 5);
-    sm.arp_knob[0] = ARPRATE_1_16T;                  /* the knobs: RATE 1/16T, STYLE HOLD (knob 4 then STRUM) */
-    sm.arp_knob[2] = ARPSTYLE_HOLD;
+    sm.arp_knob[0] = ARPRATE_1_16T;                  /* the knobs: RATE 1/16T, BEAT HOLD UP */
+    sm.arp_knob[2] = ARPSTYLE_BEAT;
     sm.arp_knob[3] = 1;
     ui_sm_handle(&sm, UIEV_TRANSPORT, UITR_REC);
     ui_sm_arp_latch(&sm, 1);                         /* (ARP held + a key) */

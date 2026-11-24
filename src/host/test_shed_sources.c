@@ -50,7 +50,7 @@ static void scenario(uint8_t mode, uint32_t seed)
     for (int s = 0; s < 3; s++) {
         ArpChordStep *st = &arp_state.steps[s];
         st->chord_root = (uint8_t)(55 + s * 2); st->rate = (uint8_t)(ARPRATE_1_8 + s); st->octave_range = 1;
-        st->style = (uint8_t)(ARPSTYLE_UP + s);
+        st->style = (uint8_t)(ARPSTYLE_ARP + s);
     }
     arp_state.sequence_length = 3;
     Krec *k = synth_rec();

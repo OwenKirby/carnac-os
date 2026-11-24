@@ -80,11 +80,11 @@ int main(void)
         for (int s = 0; s < 3; s++) {
             ArpChordStep *st = &arp_state.steps[s];
             st->chord_root = (uint8_t)(55 + s * 2); st->rate = (uint8_t)(ARPRATE_1_8 + s * 2); st->octave_range = 1;
-            st->style = (uint8_t)(ARPSTYLE_UP + s); st->variation = (uint8_t)(s * 3);
+            st->style = (uint8_t)(ARPSTYLE_ARP + s); st->variation = (uint8_t)(s * 3);
         }
         arp_state.sequence_length = 3;
-        arp_state.steps[2].style = ARPSTYLE_HOLD;
-        arp_state.steps[2].variation = 2;            /* (HOLD, strummed down) */
+        arp_state.steps[2].style = ARPSTYLE_BEAT;
+        arp_state.steps[2].variation = 2;            /* (HOLD DN, strummed down) */
         MaqSeq *q = synth_seq();
         CarpSeq *a = synth_arp();
 
@@ -108,7 +108,7 @@ int main(void)
         carp_audition(a, 57, 100); run(5000);
         carp_audition(a, 57, 0); run(3000);          phase("arp audition");
         carp_hold(a, 59, 90); run(20000);
-        { uint8_t k[4] = {ARPDIV_1_8, 2, ARPSTYLE_DOWN, 0}; carp_set_knobs(a, k); } run(7000);
+        { uint8_t k[4] = {ARPDIV_1_8, 2, ARPSTYLE_ARP, 1}; carp_set_knobs(a, k); } run(7000);
         carp_hold(a, 59, 0); run(6000);              phase("arp live chord");
         arp_state.transpose_maq_option = 1;
         carp_set_transpose(a, 3); run(5000);
