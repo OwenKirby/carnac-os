@@ -391,10 +391,8 @@ PS_STATIC_ASSERT(!MR_MELLOW || MR_HALF, "the mellowing is the half-rate tank's")
 #define MR_EXC (12 / (int)MR_DS)                          /* modulation excursion, samples either side (0.27 ms) */
 /* Every line lives in one ring of MR_RING samples with one pointer that falls by one a sample (Keith Barr's FV-1
  * layout): line k writes at p + its start and reads d samples back at p + start + d, so an access is one add, one
- * mask and the load, the offsets constants (2026-10-15: per-line pointers, lengths and write heads cost ~1000 cycles
+ * compare and the load, the offsets constants (2026-10-15: per-line pointers, lengths and write heads cost ~1000 cycles
  * a sample on the FM1 in loads alone). A line's region is its longest delay + 1. */
-#define MR_RING (32768u / MR_DS)
-#define MR_MASK (MR_RING - 1u)
 #define MR_B_IN1 MR_L(142)                                /* each line's delay at full size */
 #define MR_B_IN2 MR_L(107)
 #define MR_B_IN3 MR_L(379)
@@ -421,6 +419,10 @@ PS_STATIC_ASSERT(!MR_MELLOW || MR_HALF, "the mellowing is the half-rate tank's")
 #define MR_S_AP2R (MR_S_D1R + MR_B_D1R + 1u)
 #define MR_S_D2R (MR_S_AP2R + MR_B_AP2R + 1u)
 #define MR_S_END (MR_S_D2R + MR_B_D2R + 1u)
+/* the ring is exactly the lines' length (2026-11-24: it was 32768 cells, a power of two for the mask, 9 KB the lines
+ * never use: the pool needed it). A read or write wraps once by a compare: every offset is below the ring's length. */
+#define MR_RING MR_S_END
+#define MR_WRAP(i) ((i) >= MR_RING ? (i) - MR_RING : (i))
 PS_STATIC_ASSERT(MR_S_END <= MR_RING, "the tank's lines fit its ring");
 
 /* THE TANK'S 24-BIT CELLS (2026-11-24): the tank's values run at 256 x the Q15, so every rounding in its loops is 48 dB
@@ -618,8 +620,8 @@ static inline int32_t mr_dc_block(int32_t *s, int32_t x)
 }
 
 /* ring access, at the sample's pointer p: the line starting at s, d samples back; and its write */
-#define MR_RD(s, d) pk24_rd(mr_ring, (p + (s) + (d)) & MR_MASK)
-#define MR_WR(s, v) pk24_wr(mr_ring, (p + (s)) & MR_MASK, clamp24(v))
+#define MR_RD(s, d) pk24_rd(mr_ring, MR_WRAP(p + (s) + (d)))
+#define MR_WR(s, v) pk24_wr(mr_ring, MR_WRAP(p + (s)), clamp24(v))
 
 /* allpass on the line at s with delay d, coefficient g (Q15, either sign): v = x + g dl, out = dl - g v (|H| = 1) */
 static inline __attribute__((always_inline)) int32_t mr_ap(uint32_t p, uint32_t s, uint32_t d, int32_t x, int32_t g)
@@ -838,7 +840,7 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
          * the master limiter (a clamp here clipped a loud tail: buzz) */
         x[s] = mr_gate(&mr_qz[0], mr_dc_block(&mr_dco[0], (int32_t)((((int64_t)(yl >> 2)) * MR_OUT_GAIN) >> (MR_OUT_SH + 8))));   /* (2026-11-24: no DC out) */
         r[s] = mr_gate(&mr_qz[1], mr_dc_block(&mr_dco[1], (int32_t)((((int64_t)(yr >> 2)) * MR_OUT_GAIN) >> (MR_OUT_SH + 8))));
-        p = (p - 1u) & MR_MASK;
+        p = p ? p - 1u : MR_RING - 1u;
     }
     mr_p = p;
     mr_lp_l = lp_l;
