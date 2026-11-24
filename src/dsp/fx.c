@@ -83,11 +83,28 @@ static struct {
 /* The 12-bit cell (2026-11-23): sign (bit 11), a 4-bit exponent (bits 7..10), a 7-bit mantissa. Exponent 0 is linear
  * (0..127, one step each); exponent e >= 1 is (128 + m) << (e - 1), so each octave has 128 steps and the step doubles
  * with the level, as a compander's does. Values past 32640 clip; the encoder rounds to the nearest step. */
-static inline int32_t tape12_val(uint32_t c)
+static int32_t tape12_val(uint32_t c)                    /* (fills tape12_dec, fx_init) */
 {
     int32_t e = (int32_t)((c >> 7) & 15u), m = (int32_t)(c & 127u);
     int32_t mag = e == 0 ? m : ((128 | m) << (e - 1));
     return (c & 0x800u) ? -mag : mag;
+}
+/* The cell's codec by table (2026-11-24, the same codes and values): a read is one load from tape12_dec (every 12-bit
+ * code's value, from tape12_val), a write's exponent one load from tape12_exp (1 + floor(log2(mag >> 7)), which is
+ * 1 + the thresholds 256 .. 16384 mag reaches). The decode's branches and the encoder's seven compares cost the stereo
+ * delay ~60 instructions a step a line (two lines: ~+4 pts on the FM1 while playing). 8 KB + 256 B of .pool. */
+static int16_t tape12_dec[4096] SYNTH_POOL;
+static uint8_t tape12_exp[256] SYNTH_POOL;
+static void tape12_tables(void)
+{
+    for (uint32_t c = 0; c < 4096u; c++)
+        tape12_dec[c] = (int16_t)tape12_val(c);
+    tape12_exp[0] = 0;
+    for (uint32_t q = 1; q < 256u; q++) {
+        uint32_t e = 1, t = q;
+        while (t >>= 1) e++;
+        tape12_exp[q] = (uint8_t)e;
+    }
 }
 static inline uint32_t tape12_enc(int32_t x)
 {
@@ -95,8 +112,7 @@ static inline uint32_t tape12_enc(int32_t x)
     int32_t mag = x < 0 ? -x : x;
     if (mag > 32640) mag = 32640;
     if (mag < 128) return sign | (uint32_t)mag;
-    /* the exponent: 1 + the thresholds 256 .. 16384 that mag reaches (2026-11-24: comparisons, not a loop; same codes) */
-    int32_t e = 1 + (mag >= 256) + (mag >= 512) + (mag >= 1024) + (mag >= 2048) + (mag >= 4096) + (mag >= 8192) + (mag >= 16384);
+    int32_t e = tape12_exp[mag >> 7];                         /* (mag 128 .. 32640: mag >> 7 is 1 .. 255) */
     int32_t sh = e - 1, m = (mag + ((1 << sh) >> 1)) >> sh;   /* the rounded mantissa, 128 .. 256 */
     if (m >= 256) {                                           /* rounded into the next octave */
         if (e < 8) { e++; m = 128; } else m = 255;
@@ -108,7 +124,7 @@ static inline int32_t tape12_rd(uint32_t i)
     const uint8_t *b = &tape_mem.b[(i >> 1) * 3u];
     uint32_t c = (i & 1u) ? ((uint32_t)(b[1] >> 4) | ((uint32_t)b[2] << 4))
                           : ((uint32_t)b[0] | ((uint32_t)(b[1] & 15u) << 8));
-    return tape12_val(c);
+    return tape12_dec[c];
 }
 static inline void tape12_wr(uint32_t i, int32_t v)
 {
@@ -235,6 +251,7 @@ static void xf_init(void);                         /* the cross-feeds, below */
 void fx_init(void)
 {
     xf_init();
+    tape12_tables();
     memset(&tape_mem, 0, sizeof tape_mem);
     memset(sfx_rev_comb, 0, sizeof sfx_rev_comb);
     memset(sfx_rev_ap, 0, sizeof sfx_rev_ap);
@@ -1574,10 +1591,14 @@ static inline uint32_t tape_pos(uint32_t w, int32_t back, uint32_t lq)
     while (d >= (int32_t)lq) d -= (int32_t)lq;
     return (uint32_t)d;
 }
-static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r,
-                                  uint32_t n)
+/* (inlined twice, tape_delay_block_half: fast 1 is the plain tape, whose loop leaves out PING PONG's near head, the
+ * break-up, the wear, the runaway's low-pass and DELAY HP; the wrapper picks it only when each of them would do
+ * nothing this block, so both give the same values) */
+static inline __attribute__((always_inline)) void tape_half_run(const MasterPerformancePreset *p, const int32_t *in,
+                                                                int32_t *out_l, int32_t *out_r, uint32_t n, DelayFb fb,
+                                                                const int fast)
 {
-    const int pp = tpp;
+    const int pp = fast ? 0 : tpp;
     const uint32_t lq = tlen << 16;
     delay_targets(p, pp);                               /* (its length; the speed it sets is not used here) */
     uint32_t cells = (tp.last_len + 1u) >> 1;
@@ -1588,7 +1609,6 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
     tape_degrade(p->delay_degrade, &wow, &flutter, &filter);
     const int32_t wow_q8 = wow * WOW_STEP_Q8 / 2, flutter_q8 = flutter * FLUTTER_STEP_Q8 / 2;
     const int32_t loss_c = half_c(head_loss_q15(filter)), hp_c = half_c(tape_hp_q15(filter));
-    DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), fx_live[FX_L_TONE]);
     fb.run_c = half_c(fb.run_c);
     fb.scoop_c = fb.scoop_c != 0.f ? 2.f * fb.scoop_c - fb.scoop_c * fb.scoop_c : 0.f;
     int32_t run_lp = tp.run_lp;
@@ -1604,6 +1624,15 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
     uint8_t ph = tp.hph;
     uint32_t rc_i = tp.rc_i;
     int32_t rc_v = tp.rc_v;
+    /* the line and the per-step state in locals (2026-11-24, the same values): the cells' byte stores may alias any
+     * global, so every tp. field and tbase / tlen was loaded again after each write */
+    const uint32_t tb = tbase, tl = tlen;
+    int32_t mt0 = tp.mt[0][0], mt1 = tp.mt[1][0];
+    int32_t em_w = tp.em_w, em_r0 = tp.em_r[0], em_r1 = tp.em_r[1];
+    uint32_t brk_z = tp.brk_z;
+    int32_t brk_g = tp.brk_g, brk_tgt = tp.brk_tgt, brk_left = tp.brk_left, brk_snag = tp.brk_snag;
+
+#define TAPE_RD_L(i) tape12_rd(tb + (i))
     tp.speed_q24 = 1 << 24;                                /* (the full-rate tape's, should the type change back) */
 #if TAPE_BREAK
     const int32_t brk_k = p->delay_degrade > 64u ? (int32_t)(p->delay_degrade > 127u ? 127u : p->delay_degrade) - 64 : 0;
@@ -1612,7 +1641,7 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
 #if TAPE_WEAR
     const uint8_t tw_v = fx_live[FX_L_TONE];
     const float tw = tw_v < 64u ? tone_dark(tw_v) : (float)tone_hp(tw_v) * (1.f / 127.f);
-    const int tw_on = tw > 0.f || tp.tw_d != 0.f || tp.tw_v != 0.f || tp.tw_dc != 0.f, tw_tape = tw_v < 64u;
+    const int tw_on = !fast && (tw > 0.f || tp.tw_d != 0.f || tp.tw_v != 0.f || tp.tw_dc != 0.f), tw_tape = tw_v < 64u;
     float tw_drv = 1.f, tw_make = 32768.f, tw_asym = 0.f, tw_dc = tp.tw_dc;
     int32_t tw_fbg = 32767, tw_pos = 0, tw_step = 0;
     if (tw_on) {
@@ -1660,50 +1689,52 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
         if (!(step & (MOD_EVERY - 1u))) {
             int32_t nt = (para_sine(wow_ph + MOD_EVERY * 2u * WOW_INC) * wow_q8 +
                           para_sine(flutter_ph + MOD_EVERY * 2u * FLUTTER_INC) * flutter_q8) >> 15;
-            m1 = tp.mt[0][0] << 8;
-            d1 = (nt - tp.mt[0][0]) << 5;
-            tp.mt[0][0] = nt;
+            m1 = mt0 << 8;
+            d1 = (nt - mt0) << 5;
+            mt0 = nt;
         }
         m1 += d1;
 #if TAPE_BREAK
-        if (brk_k || tp.brk_snag || tp.brk_g != 32767) {
+        if (!fast && (brk_k || brk_snag || brk_g != 32767)) {
             if (brk_k) {
-                uint32_t z = brk_rand(&tp.brk_z);
-                if (z < brk_drop && tp.brk_left <= 0) {          /* a dropout: its depth and length */
-                    uint32_t y = brk_rand(&tp.brk_z);
-                    tp.brk_tgt = 4915 + (int32_t)((y >> 16) % 18022u);         /* 15 .. 70 % */
-                    tp.brk_left = 220 + (int32_t)((y & 0xFFFFu) % 1100u);      /* 10 .. 60 ms */
+                uint32_t z = brk_rand(&brk_z);
+                if (z < brk_drop && brk_left <= 0) {             /* a dropout: its depth and length */
+                    uint32_t y = brk_rand(&brk_z);
+                    brk_tgt = 4915 + (int32_t)((y >> 16) % 18022u);            /* 15 .. 70 % */
+                    brk_left = 220 + (int32_t)((y & 0xFFFFu) % 1100u);         /* 10 .. 60 ms */
                 } else if (z - brk_drop < brk_snagp) {           /* a snag */
-                    int32_t y = (int32_t)(brk_rand(&tp.brk_z) >> 16) - 32768;
-                    tp.brk_snag += y * 48 * brk_k / 63;          /* (+-24 cells at 127) */
+                    int32_t y = (int32_t)(brk_rand(&brk_z) >> 16) - 32768;
+                    brk_snag += y * 48 * brk_k / 63;             /* (+-24 cells at 127) */
                 }
             }
-            if (tp.brk_left > 0 && --tp.brk_left == 0) tp.brk_tgt = 32767;
-            if (!brk_k) { tp.brk_tgt = 32767; tp.brk_left = 0; }
-            tp.brk_g += (tp.brk_tgt - tp.brk_g + (tp.brk_tgt > tp.brk_g ? 31 : -31)) >> 5;   /* ~1.5 ms ease */
-            tp.brk_snag -= tp.brk_snag >> 10;                    /* settles over ~50 ms */
-            if (tp.brk_snag > -64 && tp.brk_snag < 64) tp.brk_snag = 0;
+            if (brk_left > 0 && --brk_left == 0) brk_tgt = 32767;
+            if (!brk_k) { brk_tgt = 32767; brk_left = 0; }
+            brk_g += (brk_tgt - brk_g + (brk_tgt > brk_g ? 31 : -31)) >> 5;   /* ~1.5 ms ease */
+            brk_snag -= brk_snag >> 10;                          /* settles over ~50 ms */
+            if (brk_snag > -64 && brk_snag < 64) brk_snag = 0;
         }
-        uint32_t r = tape_pos(wpos, (int32_t)gap + (m1 >> 8) + tp.brk_snag, lq);
+        uint32_t r = tape_pos(wpos, (int32_t)gap + (m1 >> 8) + (fast ? 0 : brk_snag), lq);
 #else
         uint32_t r = tape_pos(wpos, (int32_t)gap + (m1 >> 8), lq);
 #endif
 #if TAPE_WEAR
-        tw_pos += tw_step;
-        r = tape_pos(r, tw_pos, lq);                       /* the drift */
+        if (!fast) {                                       /* (fast: no wear, tw_pos 0: r as it is) */
+            tw_pos += tw_step;
+            r = tape_pos(r, tw_pos, lq);                   /* the drift */
+        }
 #endif
-        uint32_t i = r >> 16, i1 = i + 1u < tlen ? i + 1u : 0u;
+        uint32_t i = r >> 16, i1 = i + 1u < tl ? i + 1u : 0u;
         /* the read cache (2026-11-24): the cell this step reads first was the last one read, unless the head moved
          * back over it; only wide delays (128 cells: wow, flutter and the snags stay behind the write head) cache */
         const int wide = gap >= (int32_t)(128u << 16);
         SPROF_LAP(SPROF_D_MOD);
-        int32_t a = (wide && i == rc_i) ? rc_v : TAPE_RD(i), b = TAPE_RD(i1);
+        int32_t a = (wide && i == rc_i) ? rc_v : TAPE_RD_L(i), b = TAPE_RD_L(i1);
         SPROF_LAP(SPROF_D_RD);
         rc_i = wide ? i1 : 0xFFFFFFFFu;
         rc_v = b;
         int32_t play = a + (((b - a) * (int32_t)((r >> 1) & 0x7FFFu)) >> 15);
 #if TAPE_EMPH
-        play = tp.em_r[0] = play + (tp.em_r[0] >> 1);
+        play = em_r0 = play + (em_r0 >> 1);
 #endif
         loss_lp += sfx_mulq15(play - loss_lp, loss_c);
         hp_lp += sfx_mulq15(loss_lp - hp_lp, hp_c);
@@ -1714,30 +1745,30 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
             if (!(step & (MOD_EVERY - 1u))) {
                 int32_t nt = (para_sine(wow_ph2 + MOD_EVERY * 2u * WOW_INC2) * wow_q8 +
                               para_sine(flutter_ph2 + MOD_EVERY * 2u * FLUTTER_INC2) * flutter_q8) >> 15;
-                m2 = tp.mt[1][0] << 8;
-                d2 = (nt - tp.mt[1][0]) << 5;
-                tp.mt[1][0] = nt;
+                m2 = mt1 << 8;
+                d2 = (nt - mt1) << 5;
+                mt1 = nt;
             }
             m2 += d2;
             uint32_t r2 = tape_pos(wpos, (int32_t)(gap >> 1) + (m2 >> 8), lq);
 #if TAPE_BREAK
-            r2 = tape_pos(r2, tp.brk_snag, lq);
+            r2 = tape_pos(r2, brk_snag, lq);
 #endif
 #if TAPE_WEAR
             r2 = tape_pos(r2, tw_pos >> 1, lq);
 #endif
-            uint32_t i2 = r2 >> 16, i21 = i2 + 1u < tlen ? i2 + 1u : 0u;
-            int32_t a2 = TAPE_RD(i2), b2 = TAPE_RD(i21);
+            uint32_t i2 = r2 >> 16, i21 = i2 + 1u < tl ? i2 + 1u : 0u;
+            int32_t a2 = TAPE_RD_L(i2), b2 = TAPE_RD_L(i21);
             int32_t play2 = a2 + (((b2 - a2) * (int32_t)((r2 >> 1) & 0x7FFFu)) >> 15);
 #if TAPE_EMPH
-            play2 = tp.em_r[1] = play2 + (tp.em_r[1] >> 1);
+            play2 = em_r1 = play2 + (em_r1 >> 1);
 #endif
             loss2 += sfx_mulq15(play2 - loss2, loss_c);
             hp2 += sfx_mulq15(loss2 - hp2, hp_c);
             ol = loss2 - hp2;
         }
         int32_t fbs = o, hiss = 0;
-        if (fb.lp_on) {
+        if (!fast && fb.lp_on) {
             run_lp += mr_mulq15(o - run_lp, fb.run_c);
             fbs = run_lp;
             if (fb.runaway) {
@@ -1745,12 +1776,12 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
                 hiss = (int32_t)(int16_t)(seed >> 16) >> 12;
             }
         }
-        if (fb.scoop_c != 0.f) {
+        if (!fast && fb.scoop_c != 0.f) {
             scoop += ((float)fbs - scoop) * fb.scoop_c;
             fbs -= (int32_t)scoop;
         }
 #if TAPE_WEAR
-        if (tw_on) {                                       /* the grunge and the breath */
+        if (!fast && tw_on) {                              /* the grunge and the breath */
             float u = (float)fbs * tw_drv;
             if (tw_tape) {
                 float t = tw_asym * u * u;
@@ -1769,16 +1800,16 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
 #if TAPE_EMPH
         {
 #if TAPE_BREAK
-            int32_t e0 = tp.brk_g == 32767 ? aa_lp : (int32_t)(((int64_t)aa_lp * tp.brk_g) >> 15);   /* the dropout */
+            int32_t e0 = fast || brk_g == 32767 ? aa_lp : (int32_t)(((int64_t)aa_lp * brk_g) >> 15);   /* the dropout */
 #else
             int32_t e0 = aa_lp;
 #endif
-            int32_t e = e0 - (tp.em_w >> 1);
-            tp.em_w = e0;
-            TAPE_WR(wpos >> 16, clamp16(e));
+            int32_t e = e0 - (em_w >> 1);
+            em_w = e0;
+            tape12_wr(tb + (wpos >> 16), clamp16(e));
         }
 #else
-        TAPE_WR(wpos >> 16, clamp16(aa_lp));
+        tape12_wr(tb + (wpos >> 16), clamp16(aa_lp));
         SPROF_LAP(SPROF_D_WR);
 #endif
         step++;
@@ -1788,6 +1819,10 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
         SPROF_LAP(SPROF_D_STEP);
         out_r[s] = (r1 + 3 * r0) >> 2;
     }
+#undef TAPE_RD_L
+    tp.mt[0][0] = mt0; tp.mt[1][0] = mt1;
+    tp.em_w = em_w; tp.em_r[0] = em_r0; tp.em_r[1] = em_r1;
+    tp.brk_z = brk_z; tp.brk_g = brk_g; tp.brk_tgt = brk_tgt; tp.brk_left = brk_left; tp.brk_snag = brk_snag;
     tp.hz[0] = z0; tp.hz[1] = z1; tp.hz[2] = z2;
     tp.ho_l[0] = l0; tp.ho_l[1] = l1; tp.ho_r[0] = r0; tp.ho_r[1] = r1;
     tp.hph = ph;
@@ -1812,6 +1847,28 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
 #if TAPE_WEAR
     tp.tw_dc = tw_dc < 1e-6f && tw_dc > -1e-6f ? 0.f : tw_dc;
 #endif
+}
+/* The plain tape's own loop (2026-11-24): on the FM1 every load and store costs ~8 cycles, and the full loop carries so
+ * much state (the near head, the break-up, the wear, the runaway, DELAY HP) that ~130 spills a step were most of its
+ * time (the delay-only profile: 37 ticks a sample a line, ~3 cycles an instruction). When none of those would do
+ * anything this block (each test below is the one the loop makes), the loop without them gives the same values with
+ * far fewer live registers. Stereo's lines never run PING PONG inside, so with DEGRADE <= 64, LOOP TONE 64, FEEDBACK
+ * <= 100 and DELAY HP off both take it. */
+static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r,
+                                  uint32_t n)
+{
+    DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), fx_live[FX_L_TONE]);
+    int fast = !tpp && !fb.lp_on && fb.scoop_c == 0.f;
+#if TAPE_BREAK
+    fast = fast && p->delay_degrade <= 64u && tp.brk_snag == 0 && tp.brk_g == 32767;
+#endif
+#if TAPE_WEAR
+    fast = fast && fx_live[FX_L_TONE] == 64u && tp.tw_d == 0.f && tp.tw_v == 0.f && tp.tw_dc == 0.f;
+#endif
+    if (fast)
+        tape_half_run(p, in, out_l, out_r, n, fb, 1);
+    else
+        tape_half_run(p, in, out_l, out_r, n, fb, 0);
 }
 #endif
 
