@@ -40,15 +40,15 @@ int main(void)
     e = mk(VARCH_BINAURAL, 0, FLT_SH2, 0);  CHECK(varch_voice_cost(&e) == 16, "BINAURAL SH-2 twice %u", varch_voice_cost(&e));
     e = mk(VARCH_SPREAD, 40, FLT_MULTI, 1); CHECK(varch_voice_cost(&e) == 12, "SPREAD PCM %u", varch_voice_cost(&e));
 
-    /* the cap of one patch alone: what one core carries (56 tenths less the transport's 5, always priced since 2026-11-20:
-     * 51; 8 everywhere but SH-2 on the two-chain architectures, 6, and STACK SH-2 PCM, 4) */
+    /* the cap of one patch alone: what one core carries (60 tenths since 2026-11-24, 56 before, less the transport's 5,
+     * always priced since 2026-11-20: 55; 8 everywhere but SH-2 on STACK / BINAURAL / FULL and STACK SH-2 PCM, 6) */
     static const struct { uint8_t arch; int spread; uint8_t flt, pcm; unsigned want; const char *what; } C[] = {
         {VARCH_SPREAD, 0, FLT_MULTI, 0, 8, "SINGLE"},           {VARCH_SPREAD, 40, FLT_MULTI, 0, 8, "SPREAD"},
         {VARCH_SPREAD, 40, FLT_SH2, 0, 8, "SPREAD SH-2"},       {VARCH_SPREAD, 40, FLT_MULTI, 1, 8, "SPREAD PCM"},
         {VARCH_DUAL_OSC, 0, FLT_MULTI, 0, 8, "DUAL OSC"},       {VARCH_DUAL_OSC, 0, FLT_MULTI, 1, 8, "DUAL OSC PCM"},
-        {VARCH_DUAL_FILTER, 0, FLT_MULTI, 0, 8, "DUAL FILTER"}, {VARCH_DUAL_FILTER, 0, FLT_SH2, 0, 6, "DUAL FILTER SH-2"},
+        {VARCH_DUAL_FILTER, 0, FLT_MULTI, 0, 8, "DUAL FILTER"}, {VARCH_DUAL_FILTER, 0, FLT_SH2, 0, 8, "DUAL FILTER SH-2"},
         {VARCH_STACK, 0, FLT_MULTI, 0, 8, "STACK"},             {VARCH_STACK, 0, FLT_SH2, 0, 6, "STACK SH-2"},
-        {VARCH_STACK, 0, FLT_SH2, 1, 4, "STACK SH-2 PCM"},      {VARCH_BINAURAL, 0, FLT_MULTI, 0, 8, "BINAURAL"},
+        {VARCH_STACK, 0, FLT_SH2, 1, 6, "STACK SH-2 PCM"},      {VARCH_BINAURAL, 0, FLT_MULTI, 0, 8, "BINAURAL"},
         {VARCH_BINAURAL, 0, FLT_SH2, 0, 6, "BINAURAL SH-2"},    {VARCH_FULL, 0, FLT_MULTI, 0, 8, "FULL"},
         {VARCH_FULL, 0, FLT_SH2, 0, 6, "FULL SH-2"},
     };
@@ -92,7 +92,7 @@ int main(void)
     e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0); e.mfx.type = 1;
     CHECK(varch_voice_cap(&e) == 8, "SINGLE + MFX: cap %u, want 8", varch_voice_cap(&e));
     e = mk(VARCH_STACK, 0, FLT_MULTI, 0); e.mfx.type = 1;
-    CHECK(varch_voice_cap(&e) == 6, "STACK + MFX: cap %u, want 6 (48 over the 44 left)", varch_voice_cap(&e));
+    CHECK(varch_voice_cap(&e) == 8, "STACK + MFX: cap %u, want 8 (48 within the 48 left)", varch_voice_cap(&e));
     e = mk(VARCH_DUAL_FILTER, 0, FLT_MULTI, 0); e.mfx.type = 1;
     CHECK(varch_voice_cap(&e) == 8, "DUAL FILTER + MFX: cap %u, want 8", varch_voice_cap(&e));
 
@@ -214,7 +214,7 @@ int main(void)
         pool_range(1, &f1, &n1);
         pool_alloc_range(1, &af, &an);
         CHECK(af == f1 && an == n1, "room 0: the table's range (%d+%d vs %d+%d)", af, an, f1, n1);
-        CHECK(n0 == 1 && n1 == 5, "CAIRN pair by the table: 1 + 5 (%d + %d)", n0, n1);
+        CHECK(n0 == 1 && n1 == 6, "CAIRN pair by the table: 1 + 6 (%d + %d)", n0, n1);
         voice_room = 49;                             /* (6 voices: core 0 L1's 10 + three of L2's 14 = 52, over; 5: 38 / 42) */
         pool_alloc_range(1, &af, &an);
         CHECK(an == 5 && af + an == POLYPHONY_VOICES, "room 49: L2 5 at the top (%d at %d)", an, af);

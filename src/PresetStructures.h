@@ -584,7 +584,10 @@ static inline uint8_t varch_uses_fltmix(uint8_t a)
  * Every one of them at 8 voices ran without a late half (worst BINAURAL SH-2 78.9 % avg, 83 peak); the table gives 8
  * everywhere without an MFX but SH-2 on STACK / BINAURAL / FULL (6). The measured room still trims a heavier live floor. */
 #define VOICE_POOL 8u                /* physical voices: SINGL_SYNTH may use all of them */
-#define VOICE_CORE_COST 56u
+/* (2026-11-24, user: "go for 60": after the delay's quarter-rate tape and the voices' control tick in RAM the factory
+ * performances ran 36..64 % avg, peaks <= 80, no late half (PERF 183 / 187 at 56); the measured room still trims a heavy
+ * live floor) */
+#define VOICE_CORE_COST 60u
 #define VOICE_COST_PCM_FIRST 64u     /* OscParams.wavebank from here is a PCM wave (pcm_osc.h WAVE_PCM_FIRST) */
 static inline uint8_t route_to(const EngineState *e, uint8_t dest)   /* a route in use goes to MDST_* dest */
 {
