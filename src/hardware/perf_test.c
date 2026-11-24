@@ -109,6 +109,9 @@ enum { P_SETUP, P_SETTLE, P_MEASURE };
 #define F_INH (1u << 17)             /* INHARM 127 (metal) */
 #define F_WBAND (1u << 18)           /* WHISTLE band (tint brown) */
 #define F_WAIR (1u << 19)            /* WHISTLE air (tint brown) */
+/* (PT_DELAY_ONLY, 2026-11-24: the delay's cost, mono and stereo, PING PONG off and on) */
+#define F_DST (1u << 16)             /* DELAY MODE stereo */
+#define F_DPP (1u << 17)             /* PING PONG */
 /* (PT_COST_ONLY, the effects' price, 2026-11-20): the reverb type t (REVTYPE_*) in bits 16..19 as t + 1, PING PONG in bit
  * 31; only without F_MFX / F_MFX2 (whose types read those bits) and without F_FX_* */
 #define F_RVT(t) ((uint32_t)((t) + 1u) << 16)
@@ -141,6 +144,12 @@ static const PtScen SCEN[] = {
     PT_PRICE("STACK", VARCH_STACK),
     PT_PRICE("BIN", VARCH_BINAURAL),
     PT_PRICE("FULL", VARCH_FULL),
+#elif defined(PT_DELAY_ONLY)         /* (-D PT_DELAY_ONLY, 2026-11-24: the delay alone, for the profile: idle and 8 voices) */
+    {"D IDLE MONO", K_IDLE, VARCH_SINGLE, FLT_MULTI, 0, UIPAGE_HOME1},
+    {"D IDLE STEREO", K_IDLE, VARCH_SINGLE, FLT_MULTI, F_DST, UIPAGE_HOME1},
+    {"D 8V MONO", K_HELD, VARCH_SINGLE, FLT_MULTI, F_NV(8), UIPAGE_HOME1},
+    {"D 8V STEREO", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DST | F_NV(8), UIPAGE_HOME1},
+    {"D 8V STEREO PP", K_HELD, VARCH_SINGLE, FLT_MULTI, F_DST | F_DPP | F_NV(8), UIPAGE_HOME1},
 #elif defined(PT_NOISE_ONLY)         /* (-D PT_NOISE_ONLY, 2026-11-22: the noise features only, 2/4/6/8 voices each: NONE is the
                                       * reference; BAND / AIR with and without CLUSTER, and CLUSTER with INHARM; slopes from
                                       * the voice counts, the deltas from the same row without the feature) */
@@ -539,6 +548,12 @@ static void patch(EngineState *e, const PtScen *s)
         e->oscmix.noise_level = 60;
         e->oscmix.noise_colour = NOISE_WHITE;
     }
+#if defined(PT_DELAY_ONLY)
+    perf_state.delay_type = (uint8_t)((s->flags & F_DST) ? 1 : 0);
+    perf_state.delay_pingpong = (uint8_t)((s->flags & F_DPP) ? 1 : 0);
+    perf_state.delay_feedback = 61; perf_state.delay_degrade = 30; perf_state.delay_time = 80; perf_state.delay_sync = 0;
+    engine_state[0].amp.delay_send = 111; engine_state[0].amp.reverb_send = 0;
+#endif
 #if defined(PT_NOISE_ONLY)          /* (the noise features' rows: NOISE LEVEL 60, the whistle, tint brown, CLUSTER, INHARM) */
     if (s->flags & (F_WBAND | F_WAIR)) {
         e->oscmix.noise_level = 60;
