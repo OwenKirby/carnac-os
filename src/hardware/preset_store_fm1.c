@@ -53,7 +53,8 @@ typedef struct {
     uint32_t hcrc;
 } PsHdr;
 PS_STATIC_ASSERT(sizeof(PsHdr) == 32u && PS_PAYLOAD_OFF == sizeof(PsHdr), "the store's header, the payload after it");
-static uint8_t ps_buf[PS_PAYLOAD_MAX] __attribute__((aligned(4)));   /* a chunk's payload (X0X's st_buf is 224 short) */
+#include "hardware/mem_section.h"   /* SYNTH_POOL: ps_buf is in .pool (2026-11-24) */
+static uint8_t ps_buf[PS_PAYLOAD_MAX] __attribute__((aligned(4))) SYNTH_POOL;   /* a chunk's payload (X0X's st_buf is 224 short); .pool since 2026-11-24 */
 static uint8_t ps_page[PS_PAGE] __attribute__((aligned(4)));         /* the first page: the header, the payload's head */
 typedef struct {
     uint8_t *bank;                                  /* NULL: the performances, in flash only */

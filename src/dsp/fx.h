@@ -32,7 +32,8 @@ int32_t fx_process_sample(const MasterPerformancePreset *p, int32_t delay_in_q15
 #define FX_BLOCK_MAX 128u
 void fx_process_block(const MasterPerformancePreset *p, const int32_t *delay_in, int32_t *reverb_io, int32_t *wet_r,
                       uint32_t n);
-void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r, uint32_t n);
+void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in_l, const int32_t *in_r, int32_t *out_l, int32_t *out_r,
+                    uint32_t n);   /* in_r NULL: in_l is the mono send */
 void fx_reverb_block(const MasterPerformancePreset *p, int32_t *x, int32_t *r, uint32_t n);
 /* fx_reverb_block in its two halves, which share no state but a ring: the front takes the send (the tank's
  * input diffusion), the back gives the wet left (x) and right (r) of the send the front took FX_BLOCK_MAX samples
@@ -67,7 +68,7 @@ void fx_tone_sync(MasterPerformancePreset *p);
  * page's picture; written by the audio) */
 float fx_cross_level(void);
 void fx_cross_begin(uint32_t n);
-void fx_cross_to_dly(int32_t *delay_in, uint32_t n);
+void fx_cross_to_dly(int32_t *delay_in, int32_t *delay_in_r, uint32_t n);   /* delay_in_r NULL: mono */
 /* 1 while DLY > REV feeds the reverb (on, or fading out): only then does the reverb's front need this pass's echoes */
 int fx_cross_to_rev_on(void);
 void fx_cross_to_rev(const int32_t *delay_l, const int32_t *delay_r, int32_t *reverb_in, uint32_t n);
