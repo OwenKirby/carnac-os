@@ -155,6 +155,12 @@ typedef struct {
     uint32_t tw_ph, tw_cnt, tw_z;         /* TAPE_WEAR: the breath's spin, the drift's block count, its random stream */
     uint32_t rc_i; int32_t rc_v;          /* the read cache: the last cell decoded (the next step's first), its value (2026-11-24) */
     float tw_tgt, tw_v, tw_d, tw_dc;      /* TAPE_WEAR: the drift's target, its two smoothing stages (Q16 cells), the DC */
+    uint32_t sl_run, sl_key;              /* TAPE_SLEEP: samples settled so far, the line's shape it settled in */
+    int32_t sl_in, sl_l, sl_r;            /* .. the input and the two outputs it settled at */
+    uint8_t asleep;
+    float hbd[4], hbl[4], hbr[4];         /* TAPE_DIV 4: the halfband's states: the decimator's, each head's interpolator's */
+    int32_t hua, hpl, hpr;                /* .. the 22 kHz pair's first input, each interpolator's second output */
+    uint8_t hph2;                         /* .. 1 when the next 22 kHz sample completes a step's pair */
 } TapeState;
 
 static TapeState tpl[2];                 /* the lines: one (mono), or two (stereo: left, then right) */
@@ -207,6 +213,15 @@ static float rv_lim_env = SEND_LIM_CEIL, dl_lim_env = SEND_LIM_CEIL, dl_lim_env_
 static void send_limit(float *envp, const int32_t *in, int32_t *out, uint32_t n)
 {
     float env = *envp;
+    if (env == SEND_LIM_CEIL) {                            /* at rest (2026-11-24): with no sample past full scale */
+        uint32_t s = 0;                                    /* the loop below changes nothing: the send as it is */
+        for (; s < n; s++)
+            if ((uint32_t)in[s] + 32767u > 65534u) break;   /* (|v| > 32767) */
+        if (s == n) {
+            if (out != in) memcpy(out, in, n * sizeof out[0]);
+            return;
+        }
+    }
     for (uint32_t s = 0; s < n; s++) {
         int32_t v = in[s];
         float a = (float)(v < 0 ? -v : v);
@@ -1566,6 +1581,42 @@ static inline uint32_t tape_pos(uint32_t w, int32_t back, uint32_t lq)
     while (d >= (int32_t)lq) d -= (int32_t)lq;
     return (uint32_t)d;
 }
+/* TAPE_DIV 4 (2026-11-24, user: "ok with somewhat lo-fi tones ... like a BBD or a tape echo, but no hiss and no bad
+ * artifacts"): the tape at a quarter of the rate, cells at 11.025 kHz, half the steps of TAPE_DIV 2's. The [1 3 3 1]
+ * pair stays between 44.1 and 22.05 kHz; between 22.05 and 11.025 a polyphase IIR halfband (two allpass branches of two
+ * first-order sections in z^2: -59.6 dB from 6.5 kHz, flat to 4.5 kHz) decimates the input and interpolates each head's
+ * output, so the echo is ~4.5 kHz wide (a BBD's), with no aliasing grit. Its cells keep 16 bits (TAPE_Q12 0): the
+ * 12-bit steps' noise, in half the band, would have risen ~3 dB; at 16 bits it is ~24 dB under today's. Each per-step
+ * one-pole moves to the quarter rate (TD_C), so the tone and the decay times stay. */
+#ifndef TAPE_DIV
+#define TAPE_DIV 2
+#endif
+#ifndef TAPE_Q12
+#define TAPE_Q12 (TAPE_DIV == 2)
+#endif
+#if TAPE_DIV == 4
+#define TD_C(c) half_c(half_c(c))
+#define TD_SH 2u
+#define TD_REC 30720                                   /* the record low-pass, 0.75 at the half rate: the same pole */
+#elif TAPE_DIV == 2
+#define TD_C(c) half_c(c)
+#define TD_SH 1u
+#define TD_REC 24575
+#else
+#error "TAPE_DIV is 2 or 4"
+#endif
+static const float HB_A0[2] = {0.102382f, 0.616085f}, HB_A1[2] = {0.344771f, 0.869742f};
+/* a first-order allpass (a + z^-1) / (1 + a z^-1), one state (transposed) */
+static inline __attribute__((always_inline)) float hb_ap(float a, float x, float *s)
+{
+    float y = a * x + *s;
+    *s = x - a * y;
+    return y;
+}
+static inline __attribute__((always_inline)) int32_t hb_round(float v)   /* (a dying tail to 0, a settled DC exact) */
+{
+    return (int32_t)(v + (v < 0.f ? -0.5f : 0.5f));
+}
 /* The loop's parts (2026-11-24), each compiled in only where tape_delay_block_half's variant `tv` holds it: PING PONG's
  * near head, DELAY HP, the runaway's / LOOP TONE's low-pass, LOOP TONE's wear, the break-up. The wrapper picks a
  * variant only when every part it leaves out would do nothing this block, so all of them give the same values. */
@@ -1582,16 +1633,22 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
     const int pp = (tv & TV_PP) ? tpp : 0;
     const uint32_t lq = tlen << 16;
     delay_targets(p, pp);                               /* (its length; the speed it sets is not used here) */
-    uint32_t cells = (tp.last_len + 1u) >> 1;
+    uint32_t cells = (tp.last_len + ((1u << TD_SH) >> 1)) >> TD_SH;
     if (cells > tgapmax) cells = tgapmax;
     const int32_t gap_tgt = (int32_t)(cells << 16);
     int32_t wow, flutter;
     uint32_t filter;
     tape_degrade(p->delay_degrade, &wow, &flutter, &filter);
-    const int32_t wow_q8 = wow * WOW_STEP_Q8 / 2, flutter_q8 = flutter * FLUTTER_STEP_Q8 / 2;
-    const int32_t loss_c = half_c(head_loss_q15(filter)), hp_c = half_c(tape_hp_q15(filter));
-    fb.run_c = half_c(fb.run_c);
+    const int32_t wow_q8 = wow * WOW_STEP_Q8 / TAPE_DIV, flutter_q8 = flutter * FLUTTER_STEP_Q8 / TAPE_DIV;
+    const int32_t loss_c = TD_C(head_loss_q15(filter)), hp_c = TD_C(tape_hp_q15(filter));
+    fb.run_c = TD_C(fb.run_c);
     fb.scoop_c = fb.scoop_c != 0.f ? 2.f * fb.scoop_c - fb.scoop_c * fb.scoop_c : 0.f;
+#if TAPE_DIV == 4
+    fb.scoop_c = fb.scoop_c != 0.f ? 2.f * fb.scoop_c - fb.scoop_c * fb.scoop_c : 0.f;
+    float hbd0 = tp.hbd[0], hbd1 = tp.hbd[1], hbd2 = tp.hbd[2], hbd3 = tp.hbd[3];
+    int32_t hua = tp.hua, hpl = tp.hpl, hpr = tp.hpr;
+    uint8_t ph2 = tp.hph2;
+#endif
     int32_t run_lp = tp.run_lp;
     float scoop = fb.scoop_c != 0.f ? tp.scoop : 0.f;
     uint32_t seed = tp.seed_rng, step = tp.hstep;
@@ -1617,7 +1674,8 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
     tp.speed_q24 = 1 << 24;                                /* (the full-rate tape's, should the type change back) */
 #if TAPE_BREAK
     const int32_t brk_k = p->delay_degrade > 64u ? (int32_t)(p->delay_degrade > 127u ? 127u : p->delay_degrade) - 64 : 0;
-    const uint32_t brk_drop = (uint32_t)(brk_k * brk_k) * 74u, brk_snagp = (uint32_t)(brk_k * brk_k) * 34u;
+    const uint32_t brk_drop = (uint32_t)(brk_k * brk_k) * (74u << (TD_SH - 1u)),   /* (chances a step: twice at the */
+                   brk_snagp = (uint32_t)(brk_k * brk_k) * (34u << (TD_SH - 1u));  /* quarter rate) */
 #endif
 #if TAPE_WEAR
     const uint8_t tw_v = fx_live[FX_L_TONE];
@@ -1643,33 +1701,56 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
         float v1 = tp.tw_v + (tp.tw_tgt - tp.tw_v) * k, d1 = tp.tw_d + (v1 - tp.tw_d) * k;
         if (tw == 0.f && d1 < 64.f && d1 > -64.f && v1 < 64.f && v1 > -64.f) v1 = d1 = 0.f;
         tw_pos = (int32_t)tp.tw_d;
-        tw_step = (int32_t)((d1 - tp.tw_d) * (2.f / (float)(n ? n : 1u)));   /* a half-rate step's share */
+        tw_step = (int32_t)((d1 - tp.tw_d) * ((float)TAPE_DIV / (float)(n ? n : 1u)));   /* a step's share */
         tp.tw_v = v1;
         tp.tw_d = d1;
     }
 #endif
 
-    SPROF_DECL;
-    SPROF_START();
-    for (uint32_t s = 0; s < n; s++) {
+    /* In three passes (2026-11-24, the same sums in the same order): the input down to the steps' inputs, the steps,
+     * the heads' outputs back up. In one loop every sample carried the step's whole state (most of it spilled and
+     * reloaded on the samples that only shift a filter); now the steps' loop runs only on steps. */
+    int32_t xs[FX_BLOCK_MAX / TAPE_DIV + 1u], yl[FX_BLOCK_MAX / TAPE_DIV + 1u], yr[FX_BLOCK_MAX / TAPE_DIV + 1u];
+#if TAPE_DIV == 4
+    int32_t yl2[FX_BLOCK_MAX / TAPE_DIV + 1u], yr2[FX_BLOCK_MAX / TAPE_DIV + 1u];
+    const uint8_t ph2_0 = ph2;
+#endif
+    const uint8_t ph_0 = ph;
+    if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
+    uint32_t ns = 0;
+    for (uint32_t s = 0; s < n; s++) {                     /* 1. the decimators: each step's input */
         int32_t x = in[s];
-        if (!ph) {                                         /* the pair's first: the interpolator's late quarter */
+        if (!ph) {                                         /* (the pair's first) */
             z0 = z1; z1 = z2; z2 = x;
             ph = 1;
-            out_l[s] = (3 * l1 + l0) >> 2;
-            out_r[s] = (3 * r1 + r0) >> 2;
             continue;
         }
         ph = 0;
-        int32_t xin = (z0 + 3 * z1 + 3 * z2 + x) >> 3;     /* the decimator, a step */
+        int32_t xin = (z0 + 3 * z1 + 3 * z2 + x) >> 3;     /* the decimator, a step (TAPE_DIV 4: a 22 kHz sample) */
         z0 = z1; z1 = z2; z2 = x;
+#if TAPE_DIV == 4
+        if (!ph2) {                                        /* the 22 kHz pair's first: kept for the halfband */
+            hua = xin;
+            ph2 = 1;
+            continue;
+        }
+        ph2 = 0;
+        xin = hb_round(0.5f * (hb_ap(HB_A0[1], hb_ap(HB_A0[0], (float)xin, &hbd0), &hbd1) +
+                               hb_ap(HB_A1[1], hb_ap(HB_A1[0], (float)hua, &hbd2), &hbd3)));
+#endif
+        xs[ns++] = xin;
+    }
 
-        gap += (gap_tgt - gap) >> (TAPE_SLEW - 1);
-        wow_ph += 2u * WOW_INC;
-        flutter_ph += 2u * FLUTTER_INC;
+    SPROF_DECL;
+    SPROF_START();
+    for (uint32_t k = 0; k < ns; k++) {                    /* 2. the steps */
+        const int32_t xin = xs[k];
+        gap += (gap_tgt - gap) >> (TAPE_SLEW - TD_SH);
+        wow_ph += (uint32_t)TAPE_DIV * WOW_INC;
+        flutter_ph += (uint32_t)TAPE_DIV * FLUTTER_INC;
         if (!(step & (MOD_EVERY - 1u))) {
-            int32_t nt = (para_sine(wow_ph + MOD_EVERY * 2u * WOW_INC) * wow_q8 +
-                          para_sine(flutter_ph + MOD_EVERY * 2u * FLUTTER_INC) * flutter_q8) >> 15;
+            int32_t nt = (para_sine(wow_ph + MOD_EVERY * (uint32_t)TAPE_DIV * WOW_INC) * wow_q8 +
+                          para_sine(flutter_ph + MOD_EVERY * (uint32_t)TAPE_DIV * FLUTTER_INC) * flutter_q8) >> 15;
             m1 = mt0 << 8;
             d1 = (nt - mt0) << 5;
             mt0 = nt;
@@ -1682,16 +1763,16 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
                 if (z < brk_drop && brk_left <= 0) {             /* a dropout: its depth and length */
                     uint32_t y = brk_rand(&brk_z);
                     brk_tgt = 4915 + (int32_t)((y >> 16) % 18022u);            /* 15 .. 70 % */
-                    brk_left = 220 + (int32_t)((y & 0xFFFFu) % 1100u);         /* 10 .. 60 ms */
+                    brk_left = (220 + (int32_t)((y & 0xFFFFu) % 1100u)) >> (TD_SH - 1u);   /* 10 .. 60 ms */
                 } else if (z - brk_drop < brk_snagp) {           /* a snag */
                     int32_t y = (int32_t)(brk_rand(&brk_z) >> 16) - 32768;
-                    brk_snag += y * 48 * brk_k / 63;             /* (+-24 cells at 127) */
+                    brk_snag += (y * 48 * brk_k / 63) >> (TD_SH - 1u);   /* (+-24 cells at 127: ~1.1 ms) */
                 }
             }
             if (brk_left > 0 && --brk_left == 0) brk_tgt = 32767;
             if (!brk_k) { brk_tgt = 32767; brk_left = 0; }
-            brk_g += (brk_tgt - brk_g + (brk_tgt > brk_g ? 31 : -31)) >> 5;   /* ~1.5 ms ease */
-            brk_snag -= brk_snag >> 10;                          /* settles over ~50 ms */
+            brk_g += (brk_tgt - brk_g + (brk_tgt > brk_g ? 31 : -31)) >> (6u - TD_SH);   /* ~1.5 ms ease */
+            brk_snag -= brk_snag >> (11u - TD_SH);               /* settles over ~50 ms */
             if (brk_snag > -64 && brk_snag < 64) brk_snag = 0;
         }
         int32_t back = (int32_t)gap + (m1 >> 8) + ((tv & TV_BRK) ? brk_snag : 0);
@@ -1724,11 +1805,11 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
         hp_lp += sfx_mulq15(loss_lp - hp_lp, hp_c);
         int32_t o = loss_lp - hp_lp, ol = o;
         if (pp) {                                          /* the near head, halfway */
-            wow_ph2 += 2u * WOW_INC2;
-            flutter_ph2 += 2u * FLUTTER_INC2;
+            wow_ph2 += (uint32_t)TAPE_DIV * WOW_INC2;
+            flutter_ph2 += (uint32_t)TAPE_DIV * FLUTTER_INC2;
             if (!(step & (MOD_EVERY - 1u))) {
-                int32_t nt = (para_sine(wow_ph2 + MOD_EVERY * 2u * WOW_INC2) * wow_q8 +
-                              para_sine(flutter_ph2 + MOD_EVERY * 2u * FLUTTER_INC2) * flutter_q8) >> 15;
+                int32_t nt = (para_sine(wow_ph2 + MOD_EVERY * (uint32_t)TAPE_DIV * WOW_INC2) * wow_q8 +
+                              para_sine(flutter_ph2 + MOD_EVERY * (uint32_t)TAPE_DIV * FLUTTER_INC2) * flutter_q8) >> 15;
                 m2 = mt1 << 8;
                 d2 = (nt - mt1) << 5;
                 mt1 = nt;
@@ -1779,7 +1860,7 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
 #endif
         SPROF_LAP(SPROF_D_FLT);
         int32_t rec = tape_sat(xin + sfx_mulq15(fbs, fb.lo) + sfx_mulq15(fbs, fb.hi) + sfx_mulq15(fbs, fb.hi2) + hiss);
-        aa_lp += sfx_mulq15(rec - aa_lp, 24575);           /* (the full-speed tape's record low-pass, 0.75) */
+        aa_lp += sfx_mulq15(rec - aa_lp, TD_REC);          /* (the full-speed tape's record low-pass, 0.75) */
         wpos += 1u << 16;
         if (wpos >= lq) wpos -= lq;
 #if TAPE_EMPH
@@ -1791,17 +1872,69 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
 #endif
             int32_t e = e0 - (em_w >> 1);
             em_w = e0;
+#if TAPE_Q12
             tape12_wr(tb + (wpos >> 16), clamp16(e));
+#else
+            tape_mem.c[tb + (wpos >> 16)] = (int16_t)clamp16(e);   /* (16-bit cells: TAPE_DIV 4) */
+#endif
         }
 #else
         tape12_wr(tb + (wpos >> 16), clamp16(aa_lp));
         SPROF_LAP(SPROF_D_WR);
 #endif
         step++;
-        l0 = l1; l1 = ol;                                  /* the interpolator's step: a quarter of the newest */
-        r0 = r1; r1 = o;
-        out_l[s] = (l1 + 3 * l0) >> 2;
+#if TAPE_DIV == 4
+        {                                                  /* the halfband's interpolators: this 22 kHz sample, and */
+            float fl = (float)ol;                          /* the next (at the pair's first) */
+            yl[k] = hb_round(hb_ap(HB_A0[1], hb_ap(HB_A0[0], fl, &tp.hbl[0]), &tp.hbl[1]));
+            yl2[k] = hb_round(hb_ap(HB_A1[1], hb_ap(HB_A1[0], fl, &tp.hbl[2]), &tp.hbl[3]));
+            if (pp) {
+                float fr = (float)o;
+                yr[k] = hb_round(hb_ap(HB_A0[1], hb_ap(HB_A0[0], fr, &tp.hbr[0]), &tp.hbr[1]));
+                yr2[k] = hb_round(hb_ap(HB_A1[1], hb_ap(HB_A1[0], fr, &tp.hbr[2]), &tp.hbr[3]));
+            } else {
+                yr[k] = yl[k];
+                yr2[k] = yl2[k];
+            }
+        }
+#else
+        yl[k] = ol;
+        yr[k] = o;
+#endif
         SPROF_LAP(SPROF_D_STEP);
+    }
+
+    ph = ph_0;                                             /* 3. the interpolators: the outputs */
+#if TAPE_DIV == 4
+    ph2 = ph2_0;
+#endif
+    for (uint32_t s = 0, k = 0; s < n; s++) {
+        if (!ph) {                                         /* the pair's first: the late quarter */
+            ph = 1;
+            out_l[s] = (3 * l1 + l0) >> 2;
+            out_r[s] = (3 * r1 + r0) >> 2;
+            continue;
+        }
+        ph = 0;
+#if TAPE_DIV == 4
+        if (!ph2) {                                        /* the 22 kHz pair's first: the interpolators' second */
+            ph2 = 1;
+            l0 = l1; l1 = hpl;
+            r0 = r1; r1 = hpr;
+        } else {
+            ph2 = 0;
+            l0 = l1; l1 = yl[k];
+            r0 = r1; r1 = yr[k];
+            hpl = yl2[k];
+            hpr = yr2[k];
+            k++;
+        }
+#else
+        l0 = l1; l1 = yl[k];                               /* the interpolator's step: a quarter of the newest */
+        r0 = r1; r1 = yr[k];
+        k++;
+#endif
+        out_l[s] = (l1 + 3 * l0) >> 2;
         out_r[s] = (r1 + 3 * r0) >> 2;
     }
 #undef TAPE_RD_L
@@ -1832,6 +1965,16 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
 #if TAPE_WEAR
     tp.tw_dc = tw_dc < 1e-6f && tw_dc > -1e-6f ? 0.f : tw_dc;
 #endif
+#if TAPE_DIV == 4
+    tp.hbd[0] = hbd0; tp.hbd[1] = hbd1; tp.hbd[2] = hbd2; tp.hbd[3] = hbd3;
+    tp.hua = hua; tp.hpl = hpl; tp.hpr = hpr;
+    tp.hph2 = ph2;
+    for (int k = 0; k < 4; k++) {                          /* (no denormals: a silent tail's states to 0) */
+        if (tp.hbd[k] < 1e-3f && tp.hbd[k] > -1e-3f) tp.hbd[k] = 0.f;
+        if (tp.hbl[k] < 1e-3f && tp.hbl[k] > -1e-3f) tp.hbl[k] = 0.f;
+        if (tp.hbr[k] < 1e-3f && tp.hbr[k] > -1e-3f) tp.hbr[k] = 0.f;
+    }
+#endif
 }
 /* The plain tape's own loop (2026-11-24): on the FM1 every load and store costs ~8 cycles, and the full loop carries so
  * much state (the near head, the break-up, the wear, the runaway, DELAY HP) that ~130 spills a step were most of its
@@ -1839,9 +1982,42 @@ static inline __attribute__((always_inline)) void tape_half_run(const MasterPerf
  * anything this block (each test below is the one the loop makes), the loop without them gives the same values with
  * far fewer live registers. Stereo's lines never run PING PONG inside, so with DEGRADE <= 64, LOOP TONE 64, FEEDBACK
  * <= 100 and DELAY HP off both take it. */
+/* TAPE_SLEEP (2026-11-24): a delay at rest costs nothing. Its loop's integer one-poles stop a few LSB short of zero, so
+ * a tail ends not in silence but in a constant (+23..42 LSB, ~-58 dBFS DC: no sound, but the loop ran on at full cost
+ * for ever, ~5 % of core 0). When the input and both outputs have held the same values for the whole line (every cell
+ * rewritten since: all hold one value) and a little more, nothing the loop does can change them: it sleeps, giving those
+ * values without running, until the input moves (or the line's shape changes). Awake, nothing differs; asleep, the
+ * same values (host: 30 s tails, bit for bit). A woken tape's wow starts where it stopped (an arbitrary phase). */
+#ifndef TAPE_SLEEP
+#define TAPE_SLEEP 1
+#endif
+static int tape_all(const int32_t *a, uint32_t n, int32_t v)
+{
+    for (uint32_t s = 0; s < n; s++)
+        if (a[s] != v) return 0;
+    return 1;
+}
 static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_t *in, int32_t *out_l, int32_t *out_r,
                                   uint32_t n)
 {
+#if TAPE_SLEEP
+    const uint32_t key = tbase | tlen << 15 | (uint32_t)tpp << 31;
+    if (tp.asleep) {
+        if (n && tp.sl_key == key && tape_all(in, n, tp.sl_in)) {
+            for (uint32_t s = 0; s < n; s++) {
+                out_l[s] = tp.sl_l;
+                out_r[s] = tp.sl_r;
+            }
+            return;
+        }
+        tp.asleep = 0;
+        tp.sl_run = 0;
+        delay_targets(p, tpp);                            /* (a DELAY TIME turned while it slept: the heads where the */
+        uint32_t cells = (tp.last_len + ((1u << TD_SH) >> 1)) >> TD_SH;   /* running tape's slew would have taken them, */
+        if (cells > tgapmax) cells = tgapmax;             /* not a glide on the first echoes; the line is all one value) */
+        tp.gap_q16 = (int32_t)(cells << 16);
+    }
+#endif
     DelayFb fb = delay_fb(p->delay_feedback, p->delay_degrade, DELAY_HP(p), fx_live[FX_L_TONE]);
     unsigned need = (tpp ? TV_PP : 0u) | (fb.lp_on ? TV_LP : 0u) | (fb.scoop_c != 0.f ? TV_HP : 0u);
 #if TAPE_BREAK
@@ -1860,6 +2036,24 @@ static void tape_delay_block_half(const MasterPerformancePreset *p, const int32_
         tape_half_run(p, in, out_l, out_r, n, fb, TV_PP | TV_LP | TV_WEAR);
     else
         tape_half_run(p, in, out_l, out_r, n, fb, TV_ALL);
+#if TAPE_SLEEP
+    if (n) {                                           /* (playing, the first input that moves ends the test; the break-up
+                                                        * goes on writing its holes into a settled line: it stays awake) */
+        int same = !(need & TV_BRK) && tape_all(in, n, in[0]) && tape_all(out_l, n, out_l[0]) && tape_all(out_r, n, out_r[0]);
+        if (same && tp.sl_run && tp.sl_key == key && in[0] == tp.sl_in && out_l[0] == tp.sl_l && out_r[0] == tp.sl_r)
+            tp.sl_run += n;
+        else if (same) {
+            tp.sl_run = n;
+            tp.sl_key = key;
+            tp.sl_in = in[0];
+            tp.sl_l = out_l[0];
+            tp.sl_r = out_r[0];
+        } else
+            tp.sl_run = 0;
+        if (tp.sl_run >= (uint32_t)TAPE_DIV * tlen + 4096u)   /* (a cell every TAPE_DIV samples: the whole line, the filters) */
+            tp.asleep = 1;
+    }
+#endif
 }
 #endif
 
@@ -2106,18 +2300,16 @@ void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in_l, const
 {
     /* in_l is the mono send (in_r NULL), or the left channel of a stereo send (2026-11-24: each side feeds its own line) */
     int32_t dl[FX_BLOCK_MAX], dr[FX_BLOCK_MAX];
-    int32_t din[FX_BLOCK_MAX];
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     if (n == 0u) return;
     send_limit(&dl_lim_env, in_l, dl, n);
     if (in_r) send_limit(&dl_lim_env_r, in_r, dr, n);
-    else memcpy(dr, dl, n * sizeof dl[0]);
-    memcpy(din, dl, n * sizeof din[0]);
+    else if (DELAY_STEREO(p)) memcpy(dr, dl, n * sizeof dl[0]);   /* (2026-11-24: mono reads dl itself, no copies) */
 #if TAPE_HALF
     if (!DELAY_STEREO(p)) {                          /* mono: one line of 22200 cells (1.0 s), both ears alike */
         tcur = &tpl[0]; tbase = 0u; tlen = TAPE_LEN; tgapmax = TAPE_GAP_MAX; tlen_q8 = 256u;
         tpp = DELAY_PINGPONG(p) != 0u;
-        tape_delay_block_half(p, din, out_l, out_r, n);
+        tape_delay_block_half(p, dl, out_l, out_r, n);
     } else {                                         /* stereo: two lines of 8192 cells, the right at 3/4 of the left */
         static int32_t xl[FX_BLOCK_MAX], xr[FX_BLOCK_MAX];   /* last block's outputs: the PING PONG cross-feed */
         static int32_t sl[FX_BLOCK_MAX], sr[FX_BLOCK_MAX];
@@ -2135,7 +2327,7 @@ void fx_delay_block(const MasterPerformancePreset *p, const int32_t *in_l, const
         for (uint32_t k = 0; k < n; k++) { xl[k] = out_l[k]; xr[k] = out_r[k]; }
     }
 #else
-    tape_delay_block(p, din, out_l, out_r, n);
+    tape_delay_block(p, dl, out_l, out_r, n);
 #endif
 }
 
