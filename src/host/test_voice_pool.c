@@ -34,11 +34,12 @@ int main(void)
     /* costs, tenths of a plain voice */
     e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0);  CHECK(varch_voice_cost(&e) == 7, "SPREAD 0 %u", varch_voice_cost(&e));
     e = mk(VARCH_SPREAD, 40, FLT_MULTI, 0); CHECK(varch_voice_cost(&e) == 10, "SPREAD %u", varch_voice_cost(&e));
-    e = mk(VARCH_STACK, 0, FLT_MULTI, 0);   CHECK(varch_voice_cost(&e) == 12, "STACK %u", varch_voice_cost(&e));
+    /* (2026-11-24: re-priced in hundredths, the total rounded: STACK 12.53, its SH-2 pair 3.26, its PCM pair 1.32) */
+    e = mk(VARCH_STACK, 0, FLT_MULTI, 0);   CHECK(varch_voice_cost(&e) == 13, "STACK %u", varch_voice_cost(&e));
     e = mk(VARCH_STACK, 0, FLT_SH2, 0);     CHECK(varch_voice_cost(&e) == 16, "STACK SH-2 x2 %u", varch_voice_cost(&e));
-    e = mk(VARCH_STACK, 0, FLT_SH2, 1);     CHECK(varch_voice_cost(&e) == 18, "STACK SH-2 x2 PCM x2 %u", varch_voice_cost(&e));
+    e = mk(VARCH_STACK, 0, FLT_SH2, 1);     CHECK(varch_voice_cost(&e) == 17, "STACK SH-2 x2 PCM x2 %u", varch_voice_cost(&e));
     e = mk(VARCH_BINAURAL, 0, FLT_SH2, 0);  CHECK(varch_voice_cost(&e) == 16, "BINAURAL SH-2 twice %u", varch_voice_cost(&e));
-    e = mk(VARCH_SPREAD, 40, FLT_MULTI, 1); CHECK(varch_voice_cost(&e) == 12, "SPREAD PCM %u", varch_voice_cost(&e));
+    e = mk(VARCH_SPREAD, 40, FLT_MULTI, 1); CHECK(varch_voice_cost(&e) == 11, "SPREAD PCM %u", varch_voice_cost(&e));
 
     /* the cap of one patch alone: what one core carries (60 tenths since 2026-11-24, 56 before, less the transport's 5,
      * always priced since 2026-11-20: 55; 8 everywhere but SH-2 on STACK / BINAURAL / FULL and STACK SH-2 PCM, 6) */
@@ -92,7 +93,7 @@ int main(void)
     e = mk(VARCH_SPREAD, 0, FLT_MULTI, 0); e.mfx.type = 1;
     CHECK(varch_voice_cap(&e) == 8, "SINGLE + MFX: cap %u, want 8", varch_voice_cap(&e));
     e = mk(VARCH_STACK, 0, FLT_MULTI, 0); e.mfx.type = 1;
-    CHECK(varch_voice_cap(&e) == 8, "STACK + MFX: cap %u, want 8 (48 within the 48 left)", varch_voice_cap(&e));
+    CHECK(varch_voice_cap(&e) == 6, "STACK + MFX: cap %u, want 6 (52 over the 48 left)", varch_voice_cap(&e));
     e = mk(VARCH_DUAL_FILTER, 0, FLT_MULTI, 0); e.mfx.type = 1;
     CHECK(varch_voice_cap(&e) == 8, "DUAL FILTER + MFX: cap %u, want 8", varch_voice_cap(&e));
 

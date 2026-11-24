@@ -597,18 +597,35 @@ static inline uint8_t route_to(const EngineState *e, uint8_t dest)   /* a route 
             return 1u;
     return 0u;
 }
+/* RE-PRICED 2026-11-24 (the user asked, after the delay's quarter-rate tape and the voices' control tick in RAM; the
+ * same PT_PRICE_ONLY / PT_COST_ONLY rows): every part in hundredths of a tenth, the total rounded to the nearest tenth
+ * (each part rounded up on its own stacked an SH-2 / PCM / routes patch up to ~1.5 tenths over what it measured). A base
+ * is its architecture's dearer row (plain or heavy): SPREAD 0 6.6 points a voice on its core (6.95 tenths), SPREAD 9.23,
+ * DUAL OSC 9.40, DUAL FILTER 9.10, STACK 11.90, BINAURAL 11.67, FULL 12.03; an SH-2 filter 1.47..1.60 (1.63 tenths); a
+ * PCM oscillator 0.53..0.63 (0.66), on a spreading SPREAD 1.63 (1.72); a route past the first 0.149 (0.157, it was
+ * 0.185); a noise source ~0 that day (0.6..1.1 on 2026-11-22: half a tenth kept); CLUSTER not re-measured (2). Isolated
+ * voices cost ~5..13 % more than on 2026-11-18 (RAM runs a little slower than a warm I-cache: a row of 8 like voices
+ * keeps its code warm) while mixed performances run far lighter (the room measures that; VOICE_CORE_COST 60). */
+#define VC_SH2 163u
+#define VC_PCM 66u
+#define VC_PCM_SPREAD 172u
+#define VC_ROUTE 16u
+#define VC_NOISE 50u
+#define VC_CLUSTER 200u
 static inline uint8_t varch_voice_cost(const EngineState *e)
 {
-    uint8_t a = varch_of(e), c, sh2 = 0, pcm = 0, bin = a == VARCH_BINAURAL;
+    uint8_t a = varch_of(e), sh2 = 0, pcm = 0, bin = a == VARCH_BINAURAL;
+    const uint8_t spreading = (uint8_t)(a == VARCH_SPREAD && (e->oscmix.spread || route_to(e, MDST_SPREAD)));
+    uint16_t c;
     switch (a) {
-    case VARCH_SPREAD:      c = (e->oscmix.spread || route_to(e, MDST_SPREAD)) ? 10u : 7u; break;
-    case VARCH_DUAL_OSC:    c = 10u; break;
-    case VARCH_DUAL_FILTER: c = 9u; break;
-    case VARCH_STACK:       c = 12u; break;
-    case VARCH_BINAURAL:    c = 12u; break;
-    case VARCH_FULL:        c = 12u; break;
-    case VARCH_DUAL_SPREAD: c = 10u; break;     /* (retired: loads as DUAL OSC) */
-    default:                c = 7u; break;      /* SINGLE (retired: loads as SPREAD 0) */
+    case VARCH_SPREAD:      c = spreading ? 972u : 695u; break;
+    case VARCH_DUAL_OSC:    c = 989u; break;
+    case VARCH_DUAL_FILTER: c = 958u; break;
+    case VARCH_STACK:       c = 1253u; break;
+    case VARCH_BINAURAL:    c = 1228u; break;
+    case VARCH_FULL:        c = 1266u; break;
+    case VARCH_DUAL_SPREAD: c = 989u; break;    /* (retired: loads as DUAL OSC) */
+    default:                c = 695u; break;    /* SINGLE (retired: loads as SPREAD 0) */
     }
     sh2 = (uint8_t)((e->filter[0].flavour == FLT_SH2) * (bin ? 2 : 1) +
                     (varch_uses_filter2(a) && e->filter[1].flavour == FLT_SH2));
@@ -621,15 +638,15 @@ static inline uint8_t varch_voice_cost(const EngineState *e)
     for (uint8_t i = 0u; i < NROUTE; i++)
         r = (uint8_t)(r + (e->route[i].src != MSRC_NONE && e->route[i].dest != MDST_NONE &&
                            e->route[i].amount != BIPOLAR_CENTER));
-    uint8_t rt = r > 1u ? (uint8_t)(((r - 1u) * 2u + 4u) / 9u) : 0u;
+    uint16_t rt = r > 1u ? (uint16_t)((r - 1u) * VC_ROUTE) : 0u;
     /* THE NOISE (measured 2026-11-22 on the FM1, PT_NOISE_ONLY rows: 2/4/6/8 voices on SINGLE, SPREAD, STACK; the slope x2 =
      * points a voice on its core, 0.95 a tenth). A noise source on costs ~0.6..1.1 tenths a voice (its band or air); CLUSTER
      * on top of a band or the air ~1.4..1.9 more (its three extra bands, rounded up to 2); INHARM costs nothing. Before this,
      * noise and CLUSTER were free (CLUSTER a tenth, estimated). */
     uint8_t nz = (uint8_t)(noise_amount_of(e) > 0u);
-    uint8_t cl = (uint8_t)(e->noise_cluster && nz && e->oscmix.noise_colour >= WHISTLE_BAND ? 2u : 0u);
-    return (uint8_t)(c + 2u * sh2 + (a == VARCH_SPREAD || a == VARCH_SINGLE ? 2u : 1u) * pcm + rt + nz + cl);   /* (2026-11-18: PCM on
-                                    * SPREAD reads four playheads, 1.6..2.0 a voice; elsewhere 0.5..1.0 an oscillator) */
+    uint8_t cl = (uint8_t)(e->noise_cluster && nz && e->oscmix.noise_colour >= WHISTLE_BAND);
+    c = (uint16_t)(c + VC_SH2 * sh2 + (spreading ? VC_PCM_SPREAD : VC_PCM) * pcm + rt + VC_NOISE * nz + VC_CLUSTER * cl);
+    return (uint8_t)((c + 50u) / 100u);             /* (PCM on a spreading SPREAD reads four playheads) */
 }
 
 /* The cost one core carries when layer A sounds voices 0..na-1 and layer B the top nb of the pool (voice v is on core
