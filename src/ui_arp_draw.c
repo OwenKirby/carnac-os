@@ -199,100 +199,75 @@ static void ar_draw_menu(const UIStateMachine *sm)
 }
 
 /* ------------------------------------------------------------- chord --- */
-/* how the chord shown plays: the playing step's octave range (1..ARP_NOCT) and style while a pattern plays, otherwise
- * the live OCTAVE and STYLE dials (what a chord key plays, and what a capture copies) */
-static uint8_t ar_shape(const UIStateMachine *sm, const CarpSeq *a, uint8_t *style)
+/* how the chord shown plays: the playing step's span (1..ARP_NOCT) and phrase while a pattern plays, otherwise the live
+ * SPAN, STYLE and VARIATION dials (what a chord key plays, and what a capture copies) */
+static uint8_t ar_shape(const UIStateMachine *sm, const CarpSeq *a, uint8_t *style, uint8_t *var)
 {
     if (carp_pos(a) != CARP_POS_NONE)
-        return carp_shown_shape(a, style);
-    *style = sm->arp_knob[2] < ARPSTYLE_COUNT ? sm->arp_knob[2] : (uint8_t)ARPSTYLE_UP;
-    return sm->arp_knob[1] < ARP_NOCT ? (uint8_t)(sm->arp_knob[1] + 1u) : (uint8_t)1u;
+        return carp_shown_shape(a, style, var);
+    *style = sm->arp_knob[2] < ARPSTYLE_COUNT ? sm->arp_knob[2] : (uint8_t)ARPSTYLE_ARP;
+    *var = sm->arp_knob[3] < ARP_NVAR ? sm->arp_knob[3] : (uint8_t)0u;
+    return carp_span(*style, *var, sm->arp_knob[1] < ARP_NSPAN ? sm->arp_knob[1] : (uint8_t)0u);
 }
 
-/* The stones between xa and xb (centred there, so more octaves add stones both ways), standing on the horizon: every
- * note a strike draws from, the chord over its octave range (engine order: the chord, then the chord an octave up ..),
- * each as tall as it is high in that range, the chord's own octave in THEME and the octaves above in a darker stone.
- * Left to right is the order they play in: UP rises, DOWN falls, UP-DN rises to the middle and falls (an arch), DN-UP
- * the other way (a valley), RANDOM shuffled. BLOCK and the strums strike the whole chord and climb an octave a strike,
- * so their octaves stand apart, each chord under a lintel: flat for BLOCK, sloping with the strum for STRUM UP / DN.
- * The stones narrow (8 px apart down to 3) to fit. */
-static void ar_draw_stones(const uint8_t *notes, uint8_t n, uint8_t oct, uint8_t style, int32_t xa, int32_t xb)
+/* a phrase that strikes chords (HOLD, or its first strike a chord, upper chord, strum or chk), not single notes */
+static uint8_t ar_chordal(uint8_t style, uint8_t var)
 {
-    int16_t pool[CARP_POOL_MAX], lo, hi;
-    uint8_t slot[CARP_POOL_MAX], m = (uint8_t)(n * oct), k, g, i, t;
-    uint8_t chord = (uint8_t)(style == ARPSTYLE_BLOCK || style == ARPSTYLE_STRUM_UP || style == ARPSTYLE_STRUM_DN ||
-                              style == ARPSTYLE_HOLD);
-    int32_t p, w, gap = 0, total, x0, x, sh, span, hmax = chord ? 13 : 15, sx[CARP_POOL_MAX], top[CARP_POOL_MAX];
-    uint32_t r;
+    uint8_t ev[CARP_NCELL], fl, n = carp_phrase(style, var, ev, &fl), i, p;
+    if (fl & CARP_PH_HOLD)
+        return 1u;
+    for (i = 0u; i < n; i++) {
+        p = CARP_EV_PART(ev[i]);
+        if (p == CARP_EV_REST || p == CARP_EV_TIE)
+            continue;
+        return (uint8_t)(p >= CARP_EV_CHORD && p <= CARP_EV_MUTE);
+    }
+    return 0u;
+}
+
+/* The stones between xa and xb (centred there), standing on the horizon: the voicing a phrase draws from, the chord
+ * spread over its SPAN, ascending, each as tall as it is high in that range, the chord's own octave in THEME and the
+ * octaves above in a darker stone. A chordal phrase strikes the chord spread over the span: those stones alone, under
+ * one lintel. The stones narrow (8 px apart down to 3) to fit. */
+static void ar_draw_stones(const uint8_t *notes, uint8_t n, uint8_t oct, uint8_t style, uint8_t var, int32_t xa,
+                           int32_t xb)
+{
+    uint8_t pool[CARP_POOL_MAX], m, k, j, chord = ar_chordal(style, var);
+    int16_t lo, hi, nt[CARP_POOL_MAX];
+    int32_t p, w, total, x0, x, sh, span, hmax = chord ? 13 : 15, top = AR_CHORD_H;
     uint16_t c;
+    m = carp_voicing(notes, n, oct, pool);
     if (m == 0u)
         return;
-    for (k = 0; k < m; k++)
-        pool[k] = (int16_t)(notes[k % n] + 12 * (k / n));
-    lo = hi = pool[0];
-    for (k = 1; k < m; k++) {
-        if (pool[k] < lo) lo = pool[k];
-        if (pool[k] > hi) hi = pool[k];
+    if (chord && n > 1u && m > n) {                  /* the chord spread over the voicing, as the engine strikes it */
+        for (j = 0u; j < n; j++)
+            nt[j] = pool[(j * (m - 1u) + (n - 1u) / 2u) / (n - 1u)];
+        m = n;
+    } else {
+        for (k = 0u; k < m; k++)
+            nt[k] = pool[k];
     }
-    for (k = 0; k < m; k++) {                        /* the place each note stands in */
-        g = (uint8_t)(k / n);
-        i = (uint8_t)(k % n);
-        t = (uint8_t)(m - 1u - k);
-        switch (style) {
-        case ARPSTYLE_DOWN: slot[k] = t; break;
-        case ARPSTYLE_UPDN: slot[k] = k & 1u ? (uint8_t)(m - 1u - k / 2u) : (uint8_t)(k / 2u); break;
-        case ARPSTYLE_DNUP: slot[k] = t & 1u ? (uint8_t)(m - 1u - t / 2u) : (uint8_t)(t / 2u); break;
-        case ARPSTYLE_STRUM_DN: slot[k] = (uint8_t)(g * n + n - 1u - i); break;
-        default: slot[k] = k; break;                 /* UP, BLOCK, STRUM UP, and RANDOM before its shuffle */
-        }
-    }
-    if (style == ARPSTYLE_RANDOM) {                  /* shuffled, the same way for the same chord */
-        r = sq_hash(pool[0] * 31 + m, pool[m - 1u]);
-        for (k = (uint8_t)(m - 1u); k > 0u; k--) {
-            r = sq_hash((int32_t)(r >> 1), k);
-            i = (uint8_t)(r % (k + 1u));
-            t = slot[k]; slot[k] = slot[i]; slot[i] = t;
-        }
-    }
-    for (p = 8; p > 3; p--) {                        /* the widest stones that fit */
-        gap = chord ? p / 2 + 1 : 0;
-        if (m * p + (oct - 1) * gap <= xb - xa)
+    lo = nt[0];
+    hi = nt[m - 1u];
+    for (p = 8; p > 3; p--)                          /* the widest stones that fit */
+        if (m * p <= xb - xa)
             break;
-    }
-    gap = chord ? p / 2 + 1 : 0;
     w = p >= 7 ? p - 3 : p >= 5 ? p - 2 : p - 1;
-    total = m * p + (oct - 1) * gap - (p - w);
+    total = m * p - (p - w);
     x0 = xa + (xb - xa - total) / 2;
     if (x0 < xa)
         x0 = xa;
     span = hi > lo + 12 ? hi - lo : 12;              /* (an octave at least, so a close chord stands even) */
-    for (k = 0; k < m; k++) {
-        x = x0 + slot[k] * p + (chord ? (int32_t)(slot[k] / n) * gap : 0);
-        sh = 5 + ((int32_t)(pool[k] - lo) * (hmax - 5) + span / 2) / span;
-        c = k < n ? SQC(THEME) : sq_shade(SQC(THEME), 2u);
-        sq_stone(x, AR_CHORD_H - 1, w, sh, sh, c, (uint32_t)pool[k] * 7u + k, 0u, 0u);
-        sx[slot[k]] = x;
-        top[slot[k]] = AR_CHORD_H - 1 - sh;
+    for (k = 0u; k < m; k++) {
+        x = x0 + k * p;
+        sh = 5 + ((int32_t)(nt[k] - lo) * (hmax - 5) + span / 2) / span;
+        c = nt[k] < notes[0] + 12 ? SQC(THEME) : sq_shade(SQC(THEME), 2u);
+        sq_stone(x, AR_CHORD_H - 1, w, sh, sh, c, (uint32_t)nt[k] * 7u + k, 0u, 0u);
+        if (AR_CHORD_H - 1 - sh < top)
+            top = AR_CHORD_H - 1 - sh;
     }
-    if (!chord)
-        return;
-    for (g = 0; g < oct; g++) {                      /* each octave's lintel, resting on its stones */
-        int32_t a0 = g * n, a1 = a0 + n - 1, ya = top[a0], yb = top[a1], d = 0, y, j;
-        c = g == 0u ? SQC(THEME) : sq_shade(SQC(THEME), 2u);
-        if (style == ARPSTYLE_BLOCK || style == ARPSTYLE_HOLD || n == 1u) {
-            for (j = a0; j <= a1; j++)
-                if (top[j] < ya) ya = top[j];
-            yb = ya;
-        }
-        for (j = a0; j <= a1; j++) {                 /* raised over any stone standing above the slope */
-            y = a1 == a0 ? ya : ya + (yb - ya) * (j - a0) / (a1 - a0);
-            if (y - top[j] > d) d = y - top[j];
-        }
-        for (x = sx[a0]; x < sx[a1] + w; x++) {
-            y = (sx[a1] == sx[a0] ? ya : ya + (yb - ya) * (x - sx[a0]) / (sx[a1] - sx[a0])) - d - 2;
-            cv_rect(x, y < 0 ? 0 : y, 1, 2, c);
-        }
-    }
+    if (chord && m > 1u)                             /* the lintel over the chord */
+        cv_rect(x0, top - 3 < 0 ? 0 : top - 3, total, 2, SQC(THEME));
 }
 
 /* "CHORD  C3 E3 G3 C4", the same notes as standing stones on a dotted horizon (ar_draw_stones: their octave range and
@@ -301,7 +276,7 @@ static void ar_draw_stones(const uint8_t *notes, uint8_t n, uint8_t oct, uint8_t
 static void ar_draw_chord(const UIStateMachine *sm, const CarpSeq *a)
 {
     char b[24], nb[6];
-    uint8_t notes[ARP_CHORD_NOTES], n = carp_shown(a, notes), i, k = 0, style, oct = ar_shape(sm, a, &style);
+    uint8_t notes[ARP_CHORD_NOTES], n = carp_shown(a, notes), i, k = 0, style, var, oct = ar_shape(sm, a, &style, &var);
     uint8_t maq = (uint8_t)(sm->arp->transpose_maq_option == 1u);
     int8_t tr = maq ? carp_maq_transpose(a) : carp_transpose(a);
     int32_t y = CAP_IN(S, AR_CHORD_H - 3), x, xr = 234;
@@ -324,14 +299,14 @@ static void ar_draw_chord(const UIStateMachine *sm, const CarpSeq *a)
         ar_num(b + k, (uint32_t)(tr < 0 ? -tr : tr));
         xr = sq_text_r(234, y, &AF_S, b, SQC(ACCENT), SQC(BG)) - 6;
     }
-    ar_draw_stones(notes, n, oct, style, x, xr);
+    ar_draw_stones(notes, n, oct, style, var, x, xr);
     cv_blit(0, AR_CHORD_Y);
 }
 
 /* ------------------------------------------------------------- steps --- */
 /* a tablet's second line: the style (3 letters at most) left, the RATE right (1/2, 1/4, then 8ths .. 128ths; T a
  * triplet), 42 px at the widest of the 44 there */
-static const char *const AR_STYLE_SHORT[ARPSTYLE_COUNT] = {"HLD", "BLK", "UP", "DN", "U-D", "D-U", "RND", "ST+", "ST-"};
+static const char *const AR_STYLE_SHORT[ARPSTYLE_COUNT] = {"BT", "ARP", "PLS", "STB", "STR", "GTR", "KEY", "BAS", "HRP"};
 static const char *const AR_RATE_SHORT[ARPRATE_COUNT] = {"1/2", "1/4", "4T", "1/8", "8T", "16", "16T", "32", "32T",
                                                          "64", "64T", "128"};
 
@@ -356,7 +331,7 @@ static void ar_cup(int32_t x, int32_t y, uint16_t c)
     cv_pset(x + 3, y + 3, c);
 }
 
-/* step i's tablet: number and chord root, style and octaves, the rhythm as a row of stones. live: within SEQ LENGTH;
+/* step i's tablet: number and chord root, style and span, the phrase as a row of stones. live: within SEQ LENGTH;
  * head: playing (or the record cursor); held: selected on STEPS or its step key down (a knob turn lands here). card:
  * its place on screen, 0..7. The rhythm (8.3): a strike a standing stone, filled from its foot to the gate; a tie a lintel
  * laid from the stone before onto a stone of its own; a rest a pebble on the ground. A TIE step is one lintel across
@@ -387,8 +362,8 @@ static void ar_draw_cell(const ArpState *st, uint8_t i, uint8_t card, uint8_t li
         ar_cup(x + 2, 4, held ? SQC(HI) : live ? SQC(ACCENT) : dim);
         x += 9;
     }
-    if (!empty)                                      /* the octave range: a cairn of 1 .. 4 pebbles */
-        for (k = 0; k < (int32_t)(s->octave_range < ARP_NOCT ? s->octave_range + 1u : 1u); k++)
+    if (!empty)                                      /* SPAN: a cairn of 1 .. 4 pebbles (AUTO: the phrase's own) */
+        for (k = 0; k < (int32_t)carp_span(s->style, s->variation, s->octave_range); k++)
             cv_rect(x + 2, 11 - 3 * k, 3, 2, dim);
     sq_text_r(AR_CELL_W - 6, CAP_IN(S, 16), &AF_S, tie ? "TIE" : empty ? "--" : ui_sm_note_name(s->chord_root, nb),
               empty && !tie ? dim : txt, SQC(BG));
@@ -401,35 +376,43 @@ static void ar_draw_cell(const ArpState *st, uint8_t i, uint8_t card, uint8_t li
         sq_text_r(AR_CELL_W - 6, 13 + CAP_IN(S, 14), &AF_S, AR_RATE_SHORT[s->rate < ARPRATE_COUNT ? s->rate : ARP_RATE_DEFAULT],
                   dim, SQC(BG));
     if (!empty)
-        sq_text_on(6, 13 + CAP_IN(S, 14), &AF_S, AR_STYLE_SHORT[s->style < ARPSTYLE_COUNT ? s->style : (uint8_t)ARPSTYLE_UP],
+        sq_text_on(6, 13 + CAP_IN(S, 14), &AF_S, AR_STYLE_SHORT[s->style < ARPSTYLE_COUNT ? s->style : (uint8_t)ARPSTYLE_ARP],
                    dim, SQC(BG));
-    if (!empty && s->style == ARPSTYLE_HOLD) {      /* the chord's stones under one lintel: held */
-        uint8_t up, strum = carp_hold_strum(s->variation, &up);
-        int32_t d = strum ? 2 : 0, hk;
-        cw = gw / (int32_t)ARP_CHORD_NOTES;
-        w = cw - 3;
-        for (c = 0; c < ARP_CHORD_NOTES; c++) {     /* stepped as it strums: rising up, falling down */
-            hk = sh - 2 - d * (up ? (int32_t)(ARP_CHORD_NOTES - 1u - c) : (int32_t)c);
-            sq_stone(gx + (int32_t)c * cw + 2, yb, w, hk, hk, lit, i * 8u + c + 17u, 0u, ruin);
-        }
-        cv_rect(gx - 1, AR_GLYPH_Y, gw + 2, 2, txt);
-    } else if (!empty) {
-        nc = carp_rhythm(s->variation, cells);
-        cw = gw / nc;
-        w = cw - 3;
-        for (c = 0; c < nc; c++) {
-            x = gx + (int32_t)c * cw + 2;
-            seed = i * 8u + c + 17u;
-            if (cells[c] == CARP_CELL_STRIKE) {      /* a standing stone, filled from its foot to the gate */
-                fill = (sh * ((int32_t)gate + 1) + 64) / 128;
-                sq_stone(x, yb, w, sh, sh, dim, seed, 1u, ruin);
-                if (fill > 0)
-                    sq_stone(x, yb, w, sh, fill, lit, seed, 0u, ruin);
-            } else if (cells[c] == CARP_CELL_TIE) {  /* a lintel from the stone before onto one of its own */
-                sq_stone(x, yb, w, sh, sh, dim, seed, 1u, ruin);
-                cv_rect(x - cw + 1, AR_GLYPH_Y, cw + w - 2, 2, txt);
-            } else {                                 /* a rest: a pebble on the ground */
-                sq_stone(x + w / 2 - 2, yb, 4, 2, 2, dim, seed, 0u, 0u);
+    if (!empty) {                                    /* the phrase's first 8 events */
+        uint8_t fl, p, hk;
+        nc = carp_phrase(s->style, s->variation, cells, &fl);
+        if (fl & CARP_PH_HOLD) {                     /* the chord's stones under one lintel: held, stepped as it strums */
+            p = CARP_EV_PART(cells[0]);
+            cw = gw / (int32_t)ARP_CHORD_NOTES;
+            w = cw - 3;
+            for (c = 0; c < ARP_CHORD_NOTES; c++) {
+                k = p == CARP_EV_STRUM_UP ? (int32_t)(ARP_CHORD_NOTES - 1u - c) : p == CARP_EV_STRUM_DN ? (int32_t)c : 0;
+                hk = (uint8_t)(sh - 2 - 2 * k);
+                sq_stone(gx + (int32_t)c * cw + 2, yb, w, hk, hk, lit, i * 8u + c + 17u, 0u, ruin);
+            }
+            cv_rect(gx - 1, AR_GLYPH_Y, gw + 2, 2, txt);
+        } else {
+            if (nc > 8u) nc = 8u;
+            cw = gw / nc;
+            w = cw - 2 > 1 ? cw - 2 : 1;
+            for (c = 0; c < nc; c++) {
+                x = gx + (int32_t)c * cw + 1;
+                seed = i * 8u + c + 17u;
+                p = CARP_EV_PART(cells[c]);
+                if (p == CARP_EV_REST) {             /* a rest: a pebble on the ground */
+                    sq_stone(x + w / 2 - 1, yb, w < 4 ? w : 4, 2, 2, dim, seed, 0u, 0u);
+                } else if (p == CARP_EV_TIE) {       /* a lintel from the stone before */
+                    cv_rect(x - cw + 1, AR_GLYPH_Y, cw + 1, 2, txt);
+                } else {                             /* a strike: a chord full height, a voice as high as it sits */
+                    hk = (uint8_t)(p == CARP_EV_BASS ? sh / 3 : p >= CARP_EV_LOW && p <= CARP_EV_TOP ?
+                                   sh * (int32_t)(p - CARP_EV_LOW + 2u) / 5 : p >= CARP_EV_ARP_UP ? sh * 2 / 3 : sh);
+                    if (hk < 3u) hk = 3u;
+                    fill = (hk * ((int32_t)gate + 1) + 64) / 128;
+                    if (cells[c] & CARP_EV_SHORT || p == CARP_EV_MUTE) fill = hk / 4;
+                    sq_stone(x, yb, w, hk, hk, dim, seed, 1u, ruin);
+                    if (fill > 0)
+                        sq_stone(x, yb, w, hk, fill, cells[c] & CARP_EV_ACCENT ? txt : lit, seed, 0u, ruin);
+                }
             }
         }
     }
@@ -626,7 +609,7 @@ static void ar_draw_keys(const UIStateMachine *sm, const CarpSeq *a, const uint8
 {
     static const uint8_t WHITE_PC[7] = {0, 2, 4, 5, 7, 9, 11};
     uint64_t on, pool = 0u;
-    uint8_t lo = ar_keys_lo(notes, n), style, oct = ar_shape(sm, a, &style), i, k, w, pc, note;
+    uint8_t lo = ar_keys_lo(notes, n), style, var, oct = ar_shape(sm, a, &style, &var), i, k, w, pc, note;
     int32_t x, bh = AR_KEYS_H * 3 / 5;
     uint16_t c;
     on = ar_striking(a, lo);
@@ -695,7 +678,7 @@ static void arp_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint
 {
     static uint8_t pal_drawn = 0xFFu, view_drawn = 0xFFu;
     uint32_t h, base = sq_mix(2166136261u, sq_pal);
-    uint8_t c, w0, r, shape, notes[ARP_CHORD_NOTES], n, pos = carp_pos(a), len = ar_len(sm->arp), cur = pos;
+    uint8_t c, w0, r, shape, shv, notes[ARP_CHORD_NOTES], n, pos = carp_pos(a), len = ar_len(sm->arp), cur = pos;
     if (pal_drawn != sq_pal) {
         pal_drawn = sq_pal;
         force = 1u;
@@ -729,8 +712,8 @@ static void arp_draw(UIStateMachine *sm, const MaqSeq *q, const CarpSeq *a, uint
     h = sq_mix_bytes(base, notes, n);
     h = sq_mix(h, (uint32_t)n | (uint32_t)(uint8_t)carp_transpose(a) << 8 | (uint32_t)sm->arp->transpose_maq_option << 16 |
                       (uint32_t)(uint8_t)carp_maq_transpose(a) << 24);
-    r = ar_shape(sm, a, &shape);
-    h = sq_mix(h, (uint32_t)r | (uint32_t)shape << 8);
+    r = ar_shape(sm, a, &shape, &shv);
+    h = sq_mix(h, (uint32_t)r | (uint32_t)shape << 8 | (uint32_t)shv << 16);
     if (ar_dirty(ARR_CHORD, h, force))
         ar_draw_chord(sm, a);
     ar_trail_push(notes, n);                         /* (on STEPS too: the trail is there on coming back) */

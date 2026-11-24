@@ -779,11 +779,10 @@ enum { FA_F2 = 41, FA_G2 = 43, FA_AB2 = 44, FA_A2 = 45, FA_BB2 = 46, FA_B2 = 47,
 #define FA_NSTEP 8u                      /* the factory patterns' steps (9..16 left empty) */
 #define FA_RATE_DIV 0xFFu                /* a step's RATE: the one whose rhythm fills the step (arp_rate_of_div) */
 typedef struct {
-    uint8_t genre, div, rate, style, oct, gate;
+    uint8_t genre, div, rate, style, oct, gate;   /* oct: SPAN, 0 AUTO */
     uint8_t maq;                         /* 1: TRANSPOSE MAQ, and the performance is ARP-led */
     uint8_t root[FA_NSTEP];              /* chord keys, FA_T a TIE */
-    const char *var;                     /* 8 steps: 'a' + the RHYTHM variation (8.3: a = 01A, j = 05B _ o _ o the
-                                          * off-beats, q = 09A 1 1 1 _, y = ALL every cell); HOLD: b strum up, c down */
+    uint8_t var;                         /* every step's VARIATION: the STYLE's phrase (arp_seq.c carp_phrase_names) */
     const char *acc;                     /* 8 steps: '1' accented */
 } FactoryArp;
 /* a progression of four chords, each tied over the next step */
@@ -793,42 +792,42 @@ typedef struct {
 #define FA_8(a, b, c, d) {a, a, b, b, c, c, d, d}
 #define FA_R(a, b, c, d, e, f, g, h) {a, b, c, d, e, f, g, h}
 #define FA_NOACC "00000000"
-#define FA_NONE FA_ARP(MIN, 1_4, FA_RATE_DIV, UP, 0, 96, 0, FA_R(FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_A2), \
-                       "aaaaaaaa", FA_NOACC)   /* a SEQ-led performance's arp slot (for the ARP page alone) */
+#define FA_NONE FA_ARP(MIN, 1_4, ARPRATE_1_16, ARP, 0, 96, 0, FA_R(FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_A2), \
+                       0, FA_NOACC)   /* a SEQ-led performance's arp slot (for the ARP page alone) */
 
 static const FactoryArp FA_TAB[FP_NPERF] = {
  /* LUNAR STANDSTILL: a bar a step, its sixteenths every cell, up and down two octaves */
- FA_ARP(MIN9,   1,   ARPRATE_1_16, UPDN, 1,  60, 1, FA_P(FA_D3, FA_BB2, FA_G2, FA_A2), "yyyyyyyy", "10101010"),
+ FA_ARP(MIN9,   1,   ARPRATE_1_16, ARP,  2,  60, 1, FA_P(FA_D3, FA_BB2, FA_G2, FA_A2), 2, "10101010"),
  /* HEARTH CIRCLE: held chords strummed up quickly, a bar each */
- FA_ARP(CINE_5, 1_2, ARPRATE_1_64, HOLD,  0, 127, 1, FA_P(FA_F2, FA_A2, FA_C3, FA_G2), "bbbbbbbb", FA_NOACC),
+ FA_ARP(CINE_5, 1_2, ARPRATE_1_64, BEAT,  0, 127, 1, FA_P(FA_F2, FA_A2, FA_C3, FA_G2), 1, FA_NOACC),
  FA_NONE,                                                                                                /* OGHAM */
  FA_NONE,                                                                                                /* CALANAIS */
  /* NEBRA SKY DISC: a bar a step, sixteenths up two octaves */
- FA_ARP(MIN,    1,   ARPRATE_1_16, UP,   1,  50, 1, FA_R(FA_E3, FA_T, FA_C3, FA_T, FA_D3, FA_T, FA_E3, FA_T), "yyyyyyyy",
+ FA_ARP(MIN,    1,   ARPRATE_1_16, ARP,  2,  50, 1, FA_R(FA_E3, FA_T, FA_C3, FA_T, FA_D3, FA_T, FA_E3, FA_T), 0,
         "10001000"),
  FA_NONE,                                                                                                /* ORRERY */
  FA_NONE,                                                                                                /* GRIMES GRAVES */
  FA_NONE,                                                                                                /* ROLLRIGHT */
  FA_NONE,                                                                                                /* TRISKELE */
  /* DEEP CHAMBER: minor sevenths on the off-beats, Am7 for six bars, Gm7 for two */
- FA_ARP(MIN7,   1_2, FA_RATE_DIV, BLOCK, 0,  30, 1, FA_R(FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_G2, FA_G2), "jjjjjjjj",
+ FA_ARP(MIN7,   1_2, ARPRATE_1_16, STAB, 0,  30, 1, FA_R(FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_A2, FA_G2, FA_G2), 0,
         FA_NOACC),
- /* DUB OFFERING: the off-beat skank, Dm - Gm - Dm - Am */
- FA_ARP(MIN,    1_2, FA_RATE_DIV, BLOCK, 0,  40, 1, FA_8(FA_D3, FA_G2, FA_D3, FA_A2), "jjjjjjjj", FA_NOACC),
+ /* DUB OFFERING: the skank on 2 and 4, Dm - Gm - Dm - Am */
+ FA_ARP(MIN,    1_2, ARPRATE_1_16, STAB, 0,  40, 1, FA_8(FA_D3, FA_G2, FA_D3, FA_A2), 1, FA_NOACC),
  FA_NONE,                                                                                                /* MELODICA RITE */
  FA_NONE,                                                                                                /* SIGNAL FIRE */
  /* AURORA ALTAR: major ninths planing, strummed up, a bar each */
- FA_ARP(MAJ9,   1_2, ARPRATE_1_32, HOLD,  0, 127, 1, FA_P(FA_F2, FA_DB3, FA_EB3, FA_C3), "bbbbbbbb", FA_NOACC),
+ FA_ARP(MAJ9,   1_2, ARPRATE_1_32, BEAT,  0, 127, 1, FA_P(FA_F2, FA_DB3, FA_EB3, FA_C3), 1, FA_NOACC),
  /* FROST RUNES: sixteenths up two octaves of sus chords, a bar each */
- FA_ARP(CINE_2, 1_2, ARPRATE_1_16, UP,   1,  60, 1, FA_P(FA_A2, FA_F2, FA_D3, FA_E3), "yyyyyyyy", "10001000"),
+ FA_ARP(CINE_2, 1_2, ARPRATE_1_16, ARP,  2,  60, 1, FA_P(FA_A2, FA_F2, FA_D3, FA_E3), 0, "10001000"),
  /* SINGING STONES: open fifths strummed down, a bar each */
- FA_ARP(5TH,    1_2, ARPRATE_1_32, HOLD,  1, 127, 1, FA_P(FA_D3, FA_BB2, FA_F2, FA_A2), "cccccccc", FA_NOACC),
+ FA_ARP(5TH,    1_2, ARPRATE_1_32, BEAT,  2, 127, 1, FA_P(FA_D3, FA_BB2, FA_F2, FA_A2), 2, FA_NOACC),
  FA_NONE,                                                                                                /* OVERTONE RITE */
  /* BELTANE: block chords, a bar each */
- FA_ARP(CINE_6, 1_2, FA_RATE_DIV, BLOCK, 0, 127, 1, FA_P(FA_D3, FA_BB2, FA_F2, FA_C3), "aaaaaaaa", FA_NOACC),
+ FA_ARP(CINE_6, 1_2, ARPRATE_1_16, BEAT, 0, 127, 1, FA_P(FA_D3, FA_BB2, FA_F2, FA_C3), 4, FA_NOACC),
  FA_NONE,                                                                                                /* SARSEN BEAT */
  /* RAINMAKER: eighths up and down two octaves of open chords, a bar each */
- FA_ARP(CINE_2, 1_2, ARPRATE_1_8, UPDN,  1,  90, 1, FA_P(FA_D3, FA_BB2, FA_G2, FA_A2), "yyyyyyyy", "10001000"),
+ FA_ARP(CINE_2, 1_2, ARPRATE_1_8, ARP,   2,  90, 1, FA_P(FA_D3, FA_BB2, FA_G2, FA_A2), 2, "10001000"),
 };
 
 #define FS_SEQ(root, pre, sroot, l1, l2, l3, l4) {root, pre, sroot, {0, 0}, {l1, l2, l3, l4}}
@@ -1023,7 +1022,7 @@ static void factory_arp(uint32_t s, ArpState *st)
         c->rate = f->rate == FA_RATE_DIV ? arp_rate_of_div(f->div) : f->rate;   /* its rhythm across the step */
         c->octave_range = f->oct;
         c->style = f->style;
-        c->variation = (uint8_t)(f->var[i] - 'a');
+        c->variation = f->var;
         c->accent = (uint8_t)(f->acc[i] == '1');
     }
     arp_set_timing(st, f->div);

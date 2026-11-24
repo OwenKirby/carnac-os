@@ -47,12 +47,12 @@ arch 7 noise 1 slots 1  0aaa986f
 arch 7 noise 2 slots 0  3c097020
 arch 7 noise 2 slots 1  a28fccdf
 dual layer  86483569
-seq ext 0 block 32  d92dc0c0
-seq ext 0 block 7  2420b458
-seq ext 0 block 128  88167450
-seq ext 1 block 32  6d1a759c
-seq ext 1 block 7  947fbd22
-seq ext 1 block 128  95bc659c
+seq ext 0 block 32  e633bddf
+seq ext 0 block 7  c7c5d8ab
+seq ext 0 block 128  a62ae83d
+seq ext 1 block 32  231af9aa
+seq ext 1 block 7  439bdd5e
+seq ext 1 block 128  db61486d
 mfx L1 1 L2 1  bc183c64
 mfx L1 2 L2 2  8915b3c2
 mfx L1 3 L2 3  f67be172

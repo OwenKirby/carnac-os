@@ -11,24 +11,279 @@
 #define CARP_AUD_KEEP 0x80u          /* req_aud: a latched key's release (carp_latch_up), in the root byte's free top bit */
 #define CARP_PULSES_PER_FRAME_MAX MAQ_PULSES_PER_FRAME_MAX
 
-/* 8.3 rhythm_variation_table: row r, column A / B. 0 = _ rest, 1 = o strike, 2 = ~ tie. Rows 7..12's B column is 3
- * cells long (the 4th byte unused), each cell one RATE as every other: a triplet feel comes from a T RATE. */
-static const uint8_t CARP_RHYTHM[12][2][4] = {
-    {{1, 0, 0, 0}, {1, 1, 0, 0}},    /* 01 */
-    {{0, 1, 0, 0}, {1, 0, 1, 0}},    /* 02 */
-    {{0, 0, 1, 0}, {1, 0, 0, 1}},    /* 03 */
-    {{0, 0, 0, 1}, {0, 1, 1, 0}},    /* 04 */
-    {{1, 2, 1, 0}, {0, 1, 0, 1}},    /* 05 */
-    {{1, 0, 1, 2}, {0, 0, 1, 1}},    /* 06 */
-    {{1, 2, 2, 1}, {1, 0, 0, 0}},    /* 07, B triplet */
-    {{0, 1, 2, 1}, {0, 1, 0, 0}},    /* 08, B triplet */
-    {{1, 1, 1, 0}, {0, 0, 1, 0}},    /* 09, B triplet */
-    {{1, 1, 0, 1}, {1, 1, 0, 0}},    /* 10, B triplet */
-    {{1, 0, 1, 1}, {1, 0, 1, 0}},    /* 11, B triplet */
-    {{0, 1, 1, 1}, {0, 1, 1, 0}},    /* 12, B triplet */
+/* ------------------------------------------------------------ phrases --- */
+/* 2026-11-23: STYLE x VARIATION = 9 families x 12 phrases, after the Roland J-6's 9 x 12 grid, with its timing (RATE)
+ * and range (SPAN) left to their own knobs. Written on a 16th grid (RATE 1/16: 16 events = a bar); a phrase shorter
+ * than 16 loops sooner (3, 6 and 12 run across the bar: waltzes, polymeters). Each event is CARP_EV_* plus O1 / O2 / OD
+ * (an octave up / two up / down), AC (accent), ST (staccato). */
+#define RS CARP_EV_REST
+#define TI CARP_EV_TIE
+#define BS CARP_EV_BASS
+#define V1 CARP_EV_LOW
+#define V2 CARP_EV_MID2
+#define V3 CARP_EV_MID3
+#define TP CARP_EV_TOP
+#define CH CARP_EV_CHORD
+#define UC CARP_EV_UPPER
+#define DS CARP_EV_STRUM_UP          /* a down-stroke: low strings first */
+#define US CARP_EV_STRUM_DN          /* an up-stroke: high strings first */
+#define MU CARP_EV_MUTE
+#define AU CARP_EV_ARP_UP
+#define AD CARP_EV_ARP_DN
+#define AP CARP_EV_ARP_PP
+#define AR CARP_EV_ARP_RND
+#define O1(e) ((e) | 0x10)
+#define O2(e) ((e) | 0x20)
+#define OD(e) ((e) | 0x30)
+#define AC(e) ((e) | CARP_EV_ACCENT)
+#define ST(e) ((e) | CARP_EV_SHORT)
+#define T3 TI, TI, TI
+#define T7 TI, TI, TI, TI, TI, TI, TI
+#define T15 T7, T7, TI
+#define R2 RS, RS
+#define R3 RS, RS, RS
+#define R8 RS, RS, RS, RS, RS, RS, RS, RS
+#define CARP_NARG(...) CARP_NARG_(__VA_ARGS__, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+#define CARP_NARG_(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, n, ...) n
+/* flags: S1..S3 the phrase's own span (SPAN AUTO), RG its notes ring on, HD HOLD */
+#define S1 1u
+#define S2 2u
+#define S3 3u
+#define RG CARP_PH_RING
+#define HD CARP_PH_HOLD
+#define PH(f, ...) {CARP_NARG(__VA_ARGS__), (f), {__VA_ARGS__}}
+typedef struct { uint8_t len, flags, ev[CARP_NCELL]; } CarpPhrase;
+
+static const CarpPhrase CARP_PHRASES[ARPSTYLE_COUNT][ARP_NVAR] = {
+    {   /* BEAT: the chord on a rhythm (the J-6's styles 3-5) */
+        PH(S1 | HD, CH),                                             /* HOLD: struck once, held through the chord */
+        PH(S1 | HD, DS),                                             /* HOLD UP: strummed upward, RATE apart */
+        PH(S1 | HD, US),                                             /* HOLD DN */
+        PH(S1, CH, T15),                                             /* WHOLE */
+        PH(S1, CH, T7),                                              /* HALF */
+        PH(S1, CH, T3),                                              /* QUARTER */
+        PH(S1, CH, TI),                                              /* EIGHTHS */
+        PH(S1, AC(CH), CH, CH, CH),                                  /* 16THS */
+        PH(S1, AC(CH), TI, TI, TI, TI, TI, CH, TI, R8),              /* CHARLSTN: 1, the and of 2 */
+        PH(S1, AC(CH), TI, TI, TI, TI, TI, CH, TI, TI, TI, TI, TI, CH, T3),   /* TRESILLO: 3 + 3 + 2 */
+        PH(S1, AC(CH), TI, TI, CH, TI, TI, CH, TI, TI, CH, TI, TI, CH, TI, CH, TI),   /* DOTTED */
+        PH(S1, AC(CH), TI, TI, TI, TI, TI, CH, T7, CH, TI),         /* PUSH: the next bar anticipated */
+    },
+    {   /* ARP: one note at a time */
+        PH(S1, AC(AU), AU, AU, AU),                                  /* UP */
+        PH(S1, AC(AD), AD, AD, AD),                                  /* DOWN */
+        PH(S1, AC(AP), AP, AP, AP),                                  /* UP-DOWN */
+        PH(S1, AC(AR), AR, AR, AR),                                  /* RANDOM */
+        PH(S2, AC(AU), AU, AU, AU),                                  /* UP 2 OCT */
+        PH(S2, AC(AD), AD, AD, AD),                                  /* DN 2 OCT */
+        PH(S2, AC(AP), AP, AP, AP),                                  /* U-D 2OCT */
+        PH(S2, AC(V1), TP, V2, V3),                                  /* CONVERGE: outside in */
+        PH(S2, AC(V2), V3, V1, TP),                                  /* DIVERGE: inside out */
+        PH(S2, AC(V1), V2, V1, V3, V1, TP, V1, V3),                  /* PEDAL: the thumb on the lowest */
+        PH(S2, AC(V1), V3, V2, TP),                                  /* BROKEN: 1 3 2 4 */
+        PH(S2, AC(AU), AD),                                          /* WEAVE: up and down at once */
+    },
+    {   /* PULSE: sequencer lines */
+        PH(S1, AC(V1), O1(V1)),                                      /* OCTAVES */
+        PH(S1, AC(V1), V2, O1(V1), V2),                              /* ROOT 5TH */
+        PH(S1, AC(V1), V1, O1(V1), V1, V2, V1, O1(V1), V3),          /* BERLIN 1 */
+        PH(S1, AC(V1), O1(V1), V2, V1, V3, V1, TP, V2),              /* BERLIN 2 */
+        PH(S1, AC(V1), RS, V1, V1),                                  /* GALLOP */
+        PH(S1, AC(V1), ST(V1), V1, ST(V1)),                          /* DRIVE */
+        PH(S1, AC(V1), O1(V1), RS, V1, O1(V1), V1, AC(V2), RS, V1, V1, O1(V2), V1, RS, AC(V1), O1(V1), V1),   /* ACID */
+        PH(S1, R2, AC(BS), RS),                                      /* OFFBASS */
+        PH(S1, RS, AC(BS), BS, BS),                                  /* ROLLING */
+        PH(S2, AC(TP), V3, V2, V1),                                  /* CASCADE */
+        PH(S2, AC(V1), R2, V2, R2, V1, R2, V3, R2, TP, R3),          /* MINIMAL */
+        PH(S2, AC(V1), V2, TP),                                      /* 3 OVER 4 */
+    },
+    {   /* STAB: syncopated chords */
+        PH(S1, R2, AC(CH), RS),                                      /* OFFBEAT */
+        PH(S1, R2, R2, AC(ST(UC)), R3),                              /* SKANK: 2 and 4 */
+        PH(S1, R2, AC(ST(CH)), RS),                                  /* UPBEAT */
+        PH(S1, AC(CH), R2, CH, R2, CH, R3, CH, R2, CH, R2),          /* HOUSE */
+        PH(S1, AC(ST(CH)), R2, ST(CH), R2, ST(CH), R3, ST(CH), RS, AC(ST(CH)), R3),   /* FUNK */
+        PH(S1, AC(CH), ST(CH), RS, CH, RS, CH, ST(CH), RS, AC(CH), RS, CH, ST(CH), RS, CH, RS, CH),   /* GATE */
+        PH(S1, AC(CH), R2, CH, R2, CH, R3, CH, RS, CH, R3),          /* CLAVE: son 3-2 */
+        PH(S1, R2, R2, AC(CH), TI, TI, RS),                          /* BACKBEAT */
+        PH(S1, RS, AC(CH), RS, CH),                                  /* SYNCOPE */
+        PH(S1, AC(CH), R2, CH, R2, CH, RS),                          /* DEMBOW: 3 + 3 + 2 */
+        PH(S1, AC(ST(CH)), ST(CH), R2, ST(CH), R3),                  /* STUTTER */
+        PH(S1, R2, AC(CH), TI, TI, R3),                              /* DUB TECH */
+    },
+    {   /* STRUM: guitar strumming (DS down-stroke, US up-stroke) */
+        PH(S1, AC(DS), T15),                                         /* BAR */
+        PH(S1, AC(DS), T7),                                          /* HALVES */
+        PH(S1, AC(DS), T3),                                          /* FOUR */
+        PH(S1, AC(DS), TI, US, TI),                                  /* DOWN-UP */
+        PH(S1, AC(DS), T3, DS, TI, US, T3, US, TI, DS, TI, US, TI),  /* FOLK: D - D U - U D U */
+        PH(S1, AC(DS), T3, TI, TI, US, T3, US, TI, DS, TI, US, TI),  /* ISLAND: D - - U - U D U */
+        PH(S1, AC(DS), T3, DS, TI, US, TI, DS, TI, US, TI),          /* WALTZ (12) */
+        PH(S1 | RG, V1, V2, V3, TP, V3, V2),                         /* BALLAD: picked (6) */
+        PH(S1 | RG, AC(V1), TI, V3, TI, V2, TI, TP, TI),             /* TRAVIS: thumb and fingers */
+        PH(S1, US, US, US, US, AC(DS), T3, DS, TI, US, TI, AC(DS), T3),   /* FLAMENCO */
+        PH(S1, AC(DS), TI, US),                                      /* SHUFFLE (3: a T RATE swings it) */
+        PH(S1, AC(DS), TI, DS, TI),                                  /* ROCK */
+    },
+    {   /* GUITAR: rhythm guitar (MU a muted chk) */
+        PH(S1, AC(DS), MU, US, MU, MU, MU, US, MU, DS, MU, MU, MU, MU, MU, AC(US), MU),   /* FUNK 16 */
+        PH(S1, MU, MU, AC(DS), MU, MU, MU, US, MU),                  /* CHANK */
+        PH(S1, R2, R2, AC(ST(US)), R3),                              /* REGGAE */
+        PH(S1, R2, AC(ST(US)), RS),                                  /* SKA */
+        PH(S1, ST(V1), RS, ST(V1), RS, ST(V1), RS, ST(V1), RS, ST(V1), RS, ST(V1), RS, AC(DS), TI, ST(V1), RS),   /* PALM */
+        PH(S1, MU, RS, AC(ST(US)), MU),                              /* DISCO */
+        PH(S1, AC(TP), V3, RS, TP, V2, RS, TP, V3, RS, TP, V2, RS, TP, V3, V2, RS),   /* HIGHLIFE */
+        PH(S1, AC(V1), RS, ST(DS), RS, V2, RS, ST(DS), RS),          /* COUNTRY */
+        PH(S1, AC(ST(DS)), RS, ST(DS), ST(DS)),                      /* GALLOP */
+        PH(S1, AC(V1), R2, UC, R2, UC, RS, V2, RS, UC, RS, UC, R3),  /* BOSSA */
+        PH(S1, AC(ST(DS)), R2, ST(US), R2, ST(DS), RS),              /* STABS */
+        PH(S1, AC(DS), US),                                          /* TREMOLO */
+    },
+    {   /* KEYS: piano figures */
+        PH(S1, AC(V1), TP, V2, TP),                                  /* ALBERTI */
+        PH(S1 | RG, AC(BS), TI, V2, TI, V3, TI, TP, TI, V3, TI, V2, TI, V3, TI, TP, TI),   /* BALLAD */
+        PH(S1, AC(BS), T3, UC, T3, OD(V2), T3, UC, T3),              /* STRIDE */
+        PH(S1, AC(BS), TI, TI, CH, TI, TI, CH, TI),                  /* GOSPEL */
+        PH(S1, AC(OD(V1)), TI, OD(V2), TI, OD(V3), TI, OD(V2), TI),  /* BOOGIE */
+        PH(S1, AC(TP), RS, V3, TP, RS, V2, RS, TP, RS, V3, TP, RS, V2, RS, TP, RS),   /* MONTUNO */
+        PH(S1 | RG, AC(V1), V2, V3, TP, O1(V1), O1(V2), O1(V3), O1(TP)),   /* RIPPLE */
+        PH(S1, AC(BS), T3, UC, T7),                                  /* SATIE (12) */
+        PH(S1 | RG, AC(BS), V2, V3, TP, V3, V2),                     /* NOCTURNE (6) */
+        PH(S1, AC(TP), V3),                                          /* TRILL */
+        PH(S1, AC(TP), O1(TP)),                                      /* OCT TOP */
+        PH(S1, AC(V1), V2, V3, V2),                                  /* GLASS */
+    },
+    {   /* BASS: a bass note under the chord */
+        PH(S1, AC(BS), TI, UC, TI),                                  /* OOM-PAH */
+        PH(S1, AC(BS), TI, UC, TI, OD(V2), TI, UC, TI),              /* BOOMCHIK */
+        PH(S1, AC(BS), T3, UC, T3, UC, T3),                          /* WALTZ (12) */
+        PH(S1, AC(BS), TI, TI, UC, TI, TI, UC, TI, OD(V2), TI, UC, TI, TI, UC, TI, TI),   /* BOSSA */
+        PH(S1, AC(BS), TI, TI, BS, UC, TI, UC, TI),                  /* HABANERA */
+        PH(S1, UC, R2, AC(BS), TI, UC, BS, TI),                      /* TUMBAO */
+        PH(S1, AC(OD(V1)), T3, OD(V2), T3, OD(V3), T3, OD(TP), T3),  /* WALKING */
+        PH(S1, R2, R2, ST(UC), R3, AC(BS), T3, ST(UC), R3),          /* ONE DROP */
+        PH(S1, AC(BS), RS, V1, RS),                                  /* DISCO */
+        PH(S1, AC(BS), UC, OD(V2), UC),                              /* POLKA */
+        PH(S1, AC(BS), RS, ST(UC), RS),                              /* STEPPERS */
+        PH(S1, AC(BS), R2, BS, R2, UC, RS),                          /* BOUNCE */
+    },
+    {   /* HARP: ringing figures */
+        PH(S2 | RG, AC(AU), AU, AU, AU),                             /* CASCADE */
+        PH(S2 | RG, AC(AD), AD, AD, AD),                             /* FALLING */
+        PH(S2 | RG, AC(AP), AP, AP, AP),                             /* ROLLING */
+        PH(S2 | RG, AC(AU), AU, AU, AU, AU, AU, AU, AU, T7, TI),     /* GLISS */
+        PH(S2 | RG, AC(V1), TP, V2, TP, V3, TP, V2, TP),             /* KORA */
+        PH(S2 | RG, AC(TP), T3, O1(TP), T3, V3, T7),                 /* BELLS */
+        PH(S2 | RG, AC(V1), T3, TP, TI, V3, TI, TP, T3, V2, T3),     /* DRONE */
+        PH(S2 | RG, AC(DS), T15),                                    /* ROLLED */
+        PH(S2 | RG, AC(V1), V2, V3, TP, O1(V1), TP, V3, V2),         /* WAVES */
+        PH(S3 | RG, AC(AR), AR, AR, AR),                             /* RAIN */
+        PH(S3 | RG, AC(AR), R2, AR, RS, AR, R2),                     /* STARS */
+        PH(S2 | RG, AC(V1), V3, V2, TP, V3, O1(V1), TP, O1(V2)),     /* LYRE */
+    },
 };
-#define CARP_VAR_ALL 24u             /* after the table: every cell struck (a steady arpeggio, a chord repeated at RATE) */
-PS_STATIC_ASSERT(ARP_NVAR == 2u * 12u + 1u, "one variation per rhythm table row and column, then ALL");
+#undef RS
+#undef TI
+#undef BS
+#undef V1
+#undef V2
+#undef V3
+#undef TP
+#undef CH
+#undef UC
+#undef DS
+#undef US
+#undef MU
+#undef AU
+#undef AD
+#undef AP
+#undef AR
+#undef O1
+#undef O2
+#undef OD
+#undef AC
+#undef ST
+#undef T3
+#undef T7
+#undef T15
+#undef R2
+#undef R3
+#undef R8
+#undef S1
+#undef S2
+#undef S3
+#undef RG
+#undef HD
+#undef PH
+
+const char *const carp_style_names[ARPSTYLE_COUNT] = {
+    "BEAT", "ARP", "PULSE", "STAB", "STRUM", "GUITAR", "KEYS", "BASS", "HARP",
+};
+const char *const carp_phrase_names[ARPSTYLE_COUNT][ARP_NVAR] = {
+    {"HOLD", "HOLD UP", "HOLD DN", "WHOLE", "HALF", "QUARTER", "EIGHTHS", "16THS", "CHARLSTN", "TRESILLO", "DOTTED",
+     "PUSH"},
+    {"UP", "DOWN", "UP-DOWN", "RANDOM", "UP 2 OCT", "DN 2 OCT", "U-D 2OCT", "CONVERGE", "DIVERGE", "PEDAL", "BROKEN",
+     "WEAVE"},
+    {"OCTAVES", "ROOT 5TH", "BERLIN 1", "BERLIN 2", "GALLOP", "DRIVE", "ACID", "OFFBASS", "ROLLING", "CASCADE",
+     "MINIMAL", "3 OVER 4"},
+    {"OFFBEAT", "SKANK", "UPBEAT", "HOUSE", "FUNK", "GATE", "CLAVE", "BACKBEAT", "SYNCOPE", "DEMBOW", "STUTTER",
+     "DUB TECH"},
+    {"BAR", "HALVES", "FOUR", "DOWN-UP", "FOLK", "ISLAND", "WALTZ", "BALLAD", "TRAVIS", "FLAMENCO", "SHUFFLE", "ROCK"},
+    {"FUNK 16", "CHANK", "REGGAE", "SKA", "PALM", "DISCO", "HIGHLIFE", "COUNTRY", "GALLOP", "BOSSA", "STABS",
+     "TREMOLO"},
+    {"ALBERTI", "BALLAD", "STRIDE", "GOSPEL", "BOOGIE", "MONTUNO", "RIPPLE", "SATIE", "NOCTURNE", "TRILL", "OCT TOP",
+     "GLASS"},
+    {"OOM-PAH", "BOOMCHIK", "WALTZ", "BOSSA", "HABANERA", "TUMBAO", "WALKING", "ONE DROP", "DISCO", "POLKA", "STEPPERS",
+     "BOUNCE"},
+    {"CASCADE", "FALLING", "ROLLING", "GLISS", "KORA", "BELLS", "DRONE", "ROLLED", "WAVES", "RAIN", "STARS", "LYRE"},
+};
+
+uint8_t carp_phrase(uint8_t style, uint8_t var, uint8_t ev[CARP_NCELL], uint8_t *flags)
+{
+    const CarpPhrase *p;
+    uint8_t i;
+    if (style >= ARPSTYLE_COUNT) style = 0u;
+    if (var >= ARP_NVAR) var = ARP_NVAR - 1u;        /* (as the knob shows it: the last) */
+    p = &CARP_PHRASES[style][var];
+    for (i = 0u; i < CARP_NCELL; i++)
+        ev[i] = i < p->len ? p->ev[i] : (uint8_t)CARP_EV_REST;
+    *flags = p->flags;
+    return p->len;
+}
+
+uint8_t carp_span(uint8_t style, uint8_t var, uint8_t span)
+{
+    if (span >= 1u && span <= ARP_NOCT)
+        return span;
+    if (style >= ARPSTYLE_COUNT) style = 0u;
+    if (var >= ARP_NVAR) var = ARP_NVAR - 1u;
+    return CARP_PH_SPAN(CARP_PHRASES[style][var].flags);
+}
+
+uint8_t carp_voicing(const uint8_t *chord, uint8_t n, uint8_t oct, uint8_t pool[CARP_POOL_MAX])
+{
+    uint8_t i, k, m = 0u, j;
+    uint16_t v;
+    if (oct < 1u) oct = 1u;
+    if (oct > ARP_NOCT) oct = ARP_NOCT;
+    if (n > ARP_CHORD_NOTES) n = ARP_CHORD_NOTES;
+    for (k = 0u; k < oct; k++)
+        for (i = 0u; i < n; i++) {
+            v = (uint16_t)(chord[i] + 12u * k);
+            if (v > VAL_MAX)
+                continue;
+            for (j = m; j > 0u && pool[j - 1u] > v; j--)   /* insertion, ascending */
+                pool[j] = pool[j - 1u];
+            if (j > 0u && pool[j - 1u] == v) {           /* a double: put back what moved */
+                for (; j < m; j++)
+                    pool[j] = pool[j + 1u];
+                continue;
+            }
+            pool[j] = (uint8_t)v;
+            m++;
+        }
+    return m;
+}
 
 /* 8.2 TIME DIVISION (TIMING) in 24 PPQN pulses: 2, 1, 1/2, 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T (whole notes) */
 static const uint8_t CARP_DIV_TICKS[ARPDIV_COUNT] = {192u, 96u, 48u, 24u, 16u, 12u, 8u, 6u, 4u, 3u, 2u};
@@ -37,21 +292,6 @@ static const uint8_t CARP_DIV_TICKS[ARPDIV_COUNT] = {192u, 96u, 48u, 24u, 16u, 1
 uint16_t carp_div_ticks(uint8_t division)
 {
     return CARP_DIV_TICKS[division < ARPDIV_COUNT ? division : (uint8_t)ARP_TIMING_DEFAULT];
-}
-
-uint8_t carp_rhythm(uint8_t variation, uint8_t cells[CARP_NCELL])
-{
-    uint8_t v = variation < ARP_NVAR ? variation : (uint8_t)0u, row = (uint8_t)(v >> 1), col = (uint8_t)(v & 1u), i;
-    uint8_t n = col && row >= 6u && v != CARP_VAR_ALL ? (uint8_t)3u : (uint8_t)CARP_NCELL;
-    for (i = 0u; i < CARP_NCELL; i++)
-        cells[i] = v == CARP_VAR_ALL ? (uint8_t)CARP_CELL_STRIKE : i < n ? CARP_RHYTHM[row][col][i] : (uint8_t)CARP_CELL_REST;
-    return n;
-}
-
-uint8_t carp_hold_strum(uint8_t variation, uint8_t *up)
-{
-    *up = (uint8_t)(variation != 2u);
-    return (uint8_t)(variation != 0u);               /* 0 none, 1 up, 2 down (more, from a non-HOLD step: up) */
 }
 
 uint8_t carp_chord_notes(uint8_t genre, uint8_t root, uint8_t out[ARP_CHORD_NOTES])
@@ -117,7 +357,8 @@ SYNTH_COLD static void carp_release(CarpSeq *a)
     a->hold_n = 0u;                                  /* no HOLD chord sounding */
 }
 
-/* one pattern note on, into the cache (a note already sounding is struck again, not doubled) */
+/* one pattern note on, into the cache (a note already sounding is struck again, not doubled). A ringing phrase never
+ * releases before a strike: with the cache full, the slot after the one let go last is let go now */
 SYNTH_COLD static void carp_note_on(CarpSeq *a, int16_t note)
 {
     uint8_t i, slot = ARP_CHORD_NOTES;
@@ -132,8 +373,11 @@ SYNTH_COLD static void carp_note_on(CarpSeq *a, int16_t note)
         if (a->on[i] == CARP_NOTE_NONE && slot == ARP_CHORD_NOTES)
             slot = i;
     }
-    if (slot == ARP_CHORD_NOTES)
-        return;                                      /* (cannot happen: at most 4 notes per strike, released first) */
+    if (slot == ARP_CHORD_NOTES) {                   /* full (a ringing phrase): the next slot round goes */
+        slot = (uint8_t)(a->ring_i % ARP_CHORD_NOTES);
+        a->ring_i = (uint8_t)(slot + 1u);
+        carp_send(a, a->on_ch, 0x80u, a->on[slot], 0u);
+    }
     a->on_ch[0] = a->ch[0];
     a->on_ch[1] = a->ch[1];
     carp_send(a, a->ch, 0x90u, (uint8_t)note, a->strike_vel);
@@ -162,12 +406,17 @@ static uint8_t carp_live_now(const CarpSeq *a)
 /* what a strike adds to the chord: the transposition, none for a live step (the held key is the pitch) */
 static int16_t carp_shift(const CarpSeq *a) { return a->live ? 0 : a->transpose; }
 
-/* gate, octave range and style, range-checked */
-static void carp_knobs(CarpSeq *a, uint8_t gate, uint8_t oct, uint8_t style)
+/* gate, span and phrase, range-checked; the phrase's events and the voicing from them */
+static void carp_knobs(CarpSeq *a, uint8_t gate, uint8_t span, uint8_t style, uint8_t var)
 {
     a->gate = gate > VAL_MAX ? (uint8_t)VAL_MAX : gate;
-    a->oct = oct < ARP_NOCT ? (uint8_t)(oct + 1u) : 1u;
-    a->style = style < ARPSTYLE_COUNT ? style : (uint8_t)ARPSTYLE_UP;
+    if (style >= ARPSTYLE_COUNT) style = 0u;
+    if (var >= ARP_NVAR) var = ARP_NVAR - 1u;        /* (a pattern saved before 2026-11-23: up to 24) */
+    a->style = style;
+    a->var = var;
+    a->oct = carp_span(style, var, span <= ARP_NOCT ? span : (uint8_t)0u);
+    a->ncell_var = carp_phrase(style, var, a->cells, &a->ph_flags);
+    a->npool = carp_voicing(a->chord, a->nchord, a->oct, a->pool);
 }
 
 /* a step's length in pulses: the pattern's TIMING (a held key playing live too) */
@@ -176,20 +425,22 @@ static uint8_t carp_step_len(const CarpSeq *a)
     return (uint8_t)carp_div_ticks(ARP_TIMING(a->st));
 }
 
-/* the step's cells from this frame: its rhythm, every cell one RATE long (a 3-cell rhythm too: VARIATION is the
- * pattern only, RATE alone the division; 2026-11-20, a triplet's 3 cells were squeezed into 4 RATEs), running round as
- * long as the step lasts. A cell is struck only if half of it fits before the step's end (the next step's first cell
- * comes on the clock, and a cell ending with the step would double it); HOLD strikes once. */
+/* the step's cells from this frame: its phrase, every cell one RATE long, running round as long as the step lasts,
+ * from the place the transport's clock has it at (the cells since the start: a phrase runs on across steps, a bar
+ * loop under the chord changes). A cell is struck only if half of it fits before the step's end (the next step's first
+ * cell comes on the clock, and a cell ending with the step would double it); HOLD strikes once. */
 static void carp_cells_start(CarpSeq *a)
 {
     uint32_t p = midi_clock_period_q8(), step = ((uint32_t)a->step_ticks * p) >> 8;   /* 192 ticks at 40 BPM: ~529k */
-    uint32_t half, m;
+    uint32_t half, m, c0;
+    uint8_t hold = (uint8_t)((a->ph_flags & CARP_PH_HOLD) != 0u);
     a->cell_frames = ((uint32_t)a->rate_q * p) >> 10;                                 /* rate_q 96ths = rate_q/4 pulses */
     if (a->cell_frames == 0u) a->cell_frames = 1u;
     half = a->cell_frames >> 1;
     m = step > half ? (step - half - 1u) / a->cell_frames + 1u : 1u;
-    a->cell_max = a->ncell == 0u ? 0u : a->style == ARPSTYLE_HOLD ? 1u : m > 0xFFFFu ? 0xFFFFu : (uint16_t)m;
-    a->cell = 0u;
+    a->cell_max = a->ncell == 0u ? 0u : hold ? 1u : m > 0xFFFFu ? 0xFFFFu : (uint16_t)m;
+    c0 = a->rate_q == 0u ? 0u : (a->step_pulse * 4u + a->rate_q / 2u) / a->rate_q;   /* the nearest cell */
+    a->cell = a->ncell == 0u || hold ? (uint8_t)0u : (uint8_t)(c0 % a->ncell);
     a->cell_k = 0u;
     a->step_start = a->frame;
     a->cell_due = a->frame;
@@ -200,30 +451,28 @@ static void carp_cells_start(CarpSeq *a)
 SYNTH_COLD static void carp_load(CarpSeq *a)
 {
     const ArpState *st = a->st;
-    uint8_t i, root = ARP_CHORD_EMPTY, var = 0u;
-    uint32_t k;
+    uint8_t i, root = ARP_CHORD_EMPTY;
+    uint32_t k = 0u;
     a->live = carp_live_now(a);
     a->accent = 0u;
     if (a->live) {
         k = a->req_knobs;
         root = a->live_root;
-        carp_knobs(a, st->gate_length, (uint8_t)(k >> 8), (uint8_t)(k >> 16));
         a->rate_q = arp_rate_q((uint8_t)k);
-        var = (uint8_t)(k >> 24);
+        a->live_k = k >> 8;
     } else if (a->pos < ARP_NSTEP) {
         const ArpChordStep *s = &st->steps[a->pos];
         root = s->chord_root;
-        carp_knobs(a, st->gate_length, s->octave_range, s->style);
+        k = (uint32_t)s->octave_range << 8 | (uint32_t)s->style << 16 | (uint32_t)s->variation << 24;
         a->rate_q = arp_rate_q(s->rate);
-        var = s->variation;
         a->accent = (uint8_t)(s->accent != 0u);
     }
     a->nchord = ARP_ROOT_IS_CHORD(root) ? carp_chord_notes(st->current_genre_bank, root, a->chord) : 0u;
-    a->ncell = a->ncell_var = carp_rhythm(var, a->cells);
-    if (a->style == ARPSTYLE_HOLD) {                 /* one strike at the start, held: the rhythm is its strum */
-        a->hold_strum = var;
-        a->cells[0] = CARP_CELL_STRIKE;
-        a->ncell = a->ncell_var = 1u;
+    carp_knobs(a, st->gate_length, (uint8_t)(k >> 8), (uint8_t)(k >> 16), (uint8_t)(k >> 24));
+    a->ncell = a->ncell_var;
+    if (a->ph_flags & CARP_PH_HOLD) {                /* one strike at the start, held: its event is the strum */
+        i = CARP_EV_PART(a->cells[0]);
+        a->hold_strum = i == CARP_EV_STRUM_UP ? (uint8_t)1u : i == CARP_EV_STRUM_DN ? (uint8_t)2u : (uint8_t)0u;
     }
     a->cell = 0u;
     a->cell_k = 0u;
@@ -239,6 +488,7 @@ SYNTH_COLD static void carp_load(CarpSeq *a)
     }
     a->shown_oct = a->oct;
     a->shown_style = a->style;
+    a->shown_var = a->var;
     carp_channels(a, a->ch);
     a->vel = a->live ? a->live_vel : carp_velocity(a);
     carp_cells_start(a);
@@ -260,52 +510,87 @@ static uint8_t carp_tied(const CarpSeq *a)
                      a->nchord != 0u && !a->live && !carp_live_now(a));
 }
 
-/* a TIE step (8.1): the chord before it carries on. A one-note style runs its rhythm again (the note order runs on);
- * BLOCK and the strums strike nothing, their chord sustaining from the source step (tie_hold). */
+/* a TIE step (8.1): the chord before it carries on, its phrase running on with the TIE step's RATE (a HOLD chord
+ * holds on: its strike finds the same notes sounding) */
 static void carp_tie(CarpSeq *a)
 {
     a->accent = 0u;
-    a->ncell = a->tie_hold ? (uint8_t)0u : a->ncell_var;
+    a->ncell = a->ncell_var;
     a->rate_q = arp_rate_q(a->st->steps[a->pos].rate);   /* its own RATE */
     carp_cells_start(a);
 }
 
 /* the next step: the playhead on (while the transport runs), load it, shield. A HOLD chord step leaves the notes
- * sounding to its strike, which keeps them if they are its own chord (carp_hold_strike). */
+ * sounding to its strike, which keeps them if they are its own chord (carp_hold_strike); a ringing phrase lets its
+ * notes ring into the next step's strikes. */
 static void carp_step_begin(CarpSeq *a)
 {
     if (a->running)
         a->pos = carp_next_pos(a);
+    if (!a->ph_started) {                            /* the phrase's clock: the pulses since the start */
+        a->step_pulse = 0u;
+        a->ph_started = 1u;
+    } else {
+        a->step_pulse += a->step_ticks;
+    }
     a->ticks_left = a->step_ticks = carp_step_len(a);
     if (carp_tied(a)) {
         carp_tie(a);                                 /* the chord before it sounds on: no Note-Offs */
         return;
     }
-    a->tie_hold = 0u;
-    carp_load(a);                                    /* (no notes: its strike is the first cell, after this) */
-    if (a->nchord == 0u || a->style != ARPSTYLE_HOLD)
-        carp_release(a);                             /* 8.4: Note-Offs before this step's Note-Ons */
+    {
+        uint8_t was = a->nchord != 0u ? a->chord[0] : (uint8_t)CARP_NOTE_NONE, changed, i, held = 0u;
+        for (i = 0u; i < ARP_CHORD_NOTES; i++)
+            held |= (uint8_t)(a->on[i] != CARP_NOTE_NONE);
+        carp_load(a);                                /* (no notes: its strike is the first cell, after this) */
+        changed = (uint8_t)(a->nchord == 0u || a->chord[0] != was);
+        a->retrig = (uint8_t)(held && changed);      /* a new chord is struck inside a note still held */
+        if (a->nchord == 0u || !(a->ph_flags & (CARP_PH_HOLD | CARP_PH_RING)) ||
+            ((a->ph_flags & CARP_PH_RING) && changed))
+            carp_release(a);                         /* 8.4: Note-Offs before this step's Note-Ons */
+    }
 }
 
-/* the note a one-note style strikes: the chord spread over the octave range, ascending, taken in the style's order */
-static int16_t carp_pick(CarpSeq *a)
+/* voice v (0 lowest .. 3 top) of the voicing: the lowest, a third of the way up, two thirds, the top */
+static uint8_t carp_voice(const CarpSeq *a, uint8_t v)
 {
-    uint8_t n = (uint8_t)(a->nchord * a->oct), i, p;
-    uint8_t c = a->counter;
+    uint8_t n = a->npool;
+    if (n <= 1u || v == 0u)
+        return a->pool[0];
+    if (v >= 3u)
+        return a->pool[n - 1u];
+    return a->pool[(uint8_t)(v * n / 3u)];
+}
+
+/* the chord over the voicing: its notes spread from the lowest to the top (SPAN 1: the chord itself), from note `from` */
+static uint8_t carp_spread(const CarpSeq *a, uint8_t from, int16_t base, uint8_t notes[ARP_CHORD_NOTES])
+{
+    uint8_t n = a->nchord < a->npool ? a->nchord : a->npool, m = 0u, j;
+    int16_t v;
+    for (j = from; j < n; j++) {
+        v = (int16_t)(a->pool[n <= 1u ? 0u : (uint8_t)((j * (a->npool - 1u) + (n - 1u) / 2u) / (n - 1u))] + base);
+        if (v >= 0 && v <= (int16_t)VAL_MAX)
+            notes[m++] = (uint8_t)v;
+    }
+    return m;
+}
+
+/* the note an ARP event strikes: the voicing taken in its order, one step a strike (the order runs on across steps) */
+static uint8_t carp_pick(CarpSeq *a, uint8_t part)
+{
+    uint8_t n = a->npool, i, p, c = a->counter;
     if (n <= 1u)
-        i = 0u;
-    else
-        switch (a->style) {
-        case ARPSTYLE_DOWN: i = (uint8_t)(n - 1u - c % n); break;
-        case ARPSTYLE_UPDN: case ARPSTYLE_DNUP:      /* 1 2 3 4 3 2 1 2 ..: the ends once */
-            p = (uint8_t)(c % (uint8_t)(2u * n - 2u));
-            i = p < n ? p : (uint8_t)(2u * n - 2u - p);
-            if (a->style == ARPSTYLE_DNUP) i = (uint8_t)(n - 1u - i);
-            break;
-        case ARPSTYLE_RANDOM: i = (uint8_t)(carp_rand(a) % n); break;
-        default: i = (uint8_t)(c % n); break;        /* UP */
-        }
-    return (int16_t)(a->chord[i % a->nchord] + 12 * (i / a->nchord) + carp_shift(a));
+        return a->pool[0];
+    switch (part) {
+    case CARP_EV_ARP_DN: i = (uint8_t)(n - 1u - c % n); break;
+    case CARP_EV_ARP_PP:                             /* 1 2 3 4 3 2 1 2 ..: the ends once */
+        p = (uint8_t)(c % (uint8_t)(2u * n - 2u));
+        i = p < n ? p : (uint8_t)(2u * n - 2u - p);
+        break;
+    case CARP_EV_ARP_RND: i = (uint8_t)(carp_rand(a) % n); break;
+    default: i = (uint8_t)(c % n); break;            /* UP */
+    }
+    return a->pool[i];
 }
 
 /* the strike's velocity: ACCENT VEL on an accented step's first strike, else the step's */
@@ -319,32 +604,15 @@ static void carp_strike_vel(CarpSeq *a)
     }
 }
 
-/* chord + base (semitones): the notes in range, ascending */
-static uint8_t carp_hold_notes(const CarpSeq *a, int16_t base, uint8_t notes[ARP_CHORD_NOTES])
-{
-    uint8_t n = 0u, i;
-    int16_t v;
-    for (i = 0u; i < a->nchord; i++) {
-        v = (int16_t)(a->chord[i] + base);
-        if (v >= 0 && v <= (int16_t)VAL_MAX)
-            notes[n++] = (uint8_t)v;
-    }
-    return n;
-}
-
 /* a HOLD step's one strike: its chord, held to the step's end. The HOLD chord still sounding (or strumming) from a step
  * before, the same notes on the same channels, carries on unstruck, so a chord repeated step after step is struck once,
- * at any TIMING (2026-10-21: before, a strum longer than the step, or the octave climb, struck it again every step).
- * Anything else is released and the chord struck, an octave higher a new chord within the range (as BLOCK), strummed
- * as its RHYTHM says (carp_hold_strum) with its notes RATE apart. */
+ * at any TIMING. Anything else is released and the chord struck, strummed as its event says (carp_load: hold_strum)
+ * with its notes RATE apart. */
 static void carp_hold_strike(CarpSeq *a)
 {
-    uint8_t notes[ARP_CHORD_NOTES], n, i, same = 0u, up;
-    int16_t shift = carp_shift(a);
-    a->tie_hold = (uint8_t)(a->running && !a->live && a->pos < ARP_NSTEP &&
-                            a->st->steps[carp_next_pos(a)].chord_root == ARP_CHORD_TIE);
-    if (a->hold_n != 0u && a->hold_oct < a->oct && a->on_ch[0] == a->ch[0] && a->on_ch[1] == a->ch[1]) {
-        n = carp_hold_notes(a, (int16_t)(12 * a->hold_oct + shift), notes);
+    uint8_t notes[ARP_CHORD_NOTES], n, i, same = 0u;
+    n = carp_spread(a, 0u, carp_shift(a), notes);
+    if (a->hold_n != 0u && a->on_ch[0] == a->ch[0] && a->on_ch[1] == a->ch[1]) {
         same = (uint8_t)(n == a->hold_n);
         for (i = 0u; same && i < n; i++)
             same = (uint8_t)(notes[i] == a->hold_notes[i]);
@@ -356,19 +624,16 @@ static void carp_hold_strike(CarpSeq *a)
     }
     carp_release(a);
     carp_strike_vel(a);
-    a->hold_oct = (uint8_t)(a->counter % a->oct);
-    a->counter++;
-    n = carp_hold_notes(a, (int16_t)(12 * a->hold_oct + shift), notes);
     for (i = 0u; i < n; i++)
         a->hold_notes[i] = notes[i];
     a->hold_n = n;
-    if (!carp_hold_strum(a->hold_strum, &up) || n <= 1u) {
+    if (a->hold_strum == 0u || n <= 1u) {
         for (i = 0u; i < n; i++)
             carp_note_on(a, notes[i]);
         return;
     }
     for (i = 0u; i < n; i++)                         /* strummed: the first note now, the rest RATE apart */
-        a->strum[i] = notes[up ? i : (uint8_t)(n - 1u - i)];
+        a->strum[i] = notes[a->hold_strum == 1u ? i : (uint8_t)(n - 1u - i)];
     a->strum_frames = (midi_clock_period_q8() * a->rate_q) >> 10;   /* rate_q quarter pulses = 96ths of a beat */
     if (a->strum_frames == 0u) a->strum_frames = 1u;
     carp_note_on(a, a->strum[0]);
@@ -377,66 +642,102 @@ static void carp_hold_strike(CarpSeq *a)
     a->strum_due = a->frame + a->strum_frames;
 }
 
-/* an o cell: shield, strike as the style says, schedule the gate end over this cell and the ~ cells after it */
-static void carp_strike(CarpSeq *a)
+#define CARP_STRUM_MAX 400u          /* a strum's notes at most ~9 ms apart (a guitar's), 4x that ringing (a harp's roll) */
+
+/* an event that strikes: shield (unless the phrase rings), strike its notes, schedule the gate end over this cell and
+ * the ~ cells after it */
+static void carp_strike(CarpSeq *a, uint8_t e)
 {
-    uint8_t i, n, up, last = 1u;
-    uint8_t chord = (uint8_t)(a->style == ARPSTYLE_BLOCK || a->style == ARPSTYLE_STRUM_UP || a->style == ARPSTYLE_STRUM_DN);
-    uint16_t hold = 1u, k;
-    uint32_t gate;
-    int16_t base;
-    if (a->style == ARPSTYLE_HOLD) {
+    static const int8_t OCT[4] = {0, 12, 24, -12};
+    uint8_t part = CARP_EV_PART(e), ring = (uint8_t)((a->ph_flags & CARP_PH_RING) != 0u);
+    uint8_t notes[ARP_CHORD_NOTES], n = 0u, i;
+    uint16_t hold = 1u;
+    uint32_t gate, cap;
+    int16_t base = (int16_t)(OCT[CARP_EV_OCT(e)] + carp_shift(a)), v;
+    if (a->ph_flags & CARP_PH_HOLD) {
         carp_hold_strike(a);
         return;
     }
-    carp_release(a);
+    if (!ring)
+        carp_release(a);
     carp_strike_vel(a);                              /* an accented step's first strike */
-    while (a->cell_k + hold < a->cell_max && a->cells[(a->cell + hold) % a->ncell] == CARP_CELL_TIE)
-        hold++;                                      /* (the rhythm runs round: cell_k counts the cells, cell its place) */
-    for (k = 1u; a->cell_k + k < a->cell_max && last; k++)
-        if (a->cells[(a->cell + k) % a->ncell] == CARP_CELL_STRIKE)
-            last = 0u;
+    if (e & CARP_EV_ACCENT)
+        a->strike_vel = (uint8_t)(a->strike_vel + (VAL_MAX + 1u - a->strike_vel) / 2u);
+    if (part == CARP_EV_MUTE)
+        a->strike_vel = (uint8_t)((a->strike_vel * 5u) >> 3);
+    if (a->strike_vel == 0u) a->strike_vel = 1u;
+    if (a->strike_vel > VAL_MAX) a->strike_vel = VAL_MAX;
+    while (a->cell_k + hold < a->cell_max && a->cells[(a->cell + hold) % a->ncell] == CARP_EV_TIE)
+        hold++;                                      /* (the phrase runs round: cell_k counts the cells, cell its place) */
     gate = a->gate >= VAL_MAX ? 0u : ((uint32_t)hold * a->cell_frames * ((uint32_t)a->gate + 1u)) >> 7;
     if (a->gate < VAL_MAX && gate == 0u) gate = 1u;
-    a->tie_hold = (uint8_t)(chord && last && a->running && !a->live && a->pos < ARP_NSTEP &&
-                            a->st->steps[carp_next_pos(a)].chord_root == ARP_CHORD_TIE);
-    if (a->tie_hold)
-        gate = 0u;                                   /* the step's last chord sustains into the TIE after it */
-    if (chord) {
-        base = (int16_t)(12 * (a->counter % a->oct) + carp_shift(a));   /* the chord climbs an octave per strike */
-        n = a->nchord;
-        if (a->style == ARPSTYLE_BLOCK || n == 1u) {
-            for (i = 0u; i < n; i++)
-                carp_note_on(a, (int16_t)(a->chord[i] + base));
-        } else {                                     /* a strum: the first note now, the rest strum_frames apart */
-            up = (uint8_t)(a->style == ARPSTYLE_STRUM_UP);
-            for (i = 0u; i < n; i++) {
-                int16_t v = (int16_t)(a->chord[up ? i : n - 1u - i] + base);
-                a->strum[i] = (uint8_t)(v < 0 ? 0xFF : v > (int16_t)VAL_MAX ? 0xFF : v);
-            }
-            a->strum_frames = a->cell_frames / (2u * n);
-            if (a->strum_frames == 0u) a->strum_frames = 1u;
-            if (gate != 0u && gate <= a->strum_frames * (uint32_t)(n - 1u))
-                gate = a->strum_frames * (uint32_t)(n - 1u) + 1u;   /* every strummed note sounds a frame at least */
-            if (a->strum[0] != 0xFFu) carp_note_on(a, a->strum[0]);
-            a->nstrum = n;
-            a->strum_i = 1u;
-            a->strum_due = a->frame + a->strum_frames;
-        }
-    } else {
-        carp_note_on(a, carp_pick(a));
+    if (part == CARP_EV_MUTE)
+        gate = a->cell_frames >> 2;                  /* a chk: short whatever the GATE */
+    else if (e & CARP_EV_SHORT)
+        gate = (gate == 0u ? (uint32_t)hold * a->cell_frames : gate) >> 2;
+    if (ring)
+        gate = 0u;                                   /* rings on until let go for a newer note */
+    if (part != CARP_EV_MUTE && (e & CARP_EV_SHORT) && gate == 0u && !ring) gate = 1u;
+    switch (part) {
+    case CARP_EV_BASS:
+        v = (int16_t)(a->pool[0] - 12 + base);
+        if (v >= 0 && v <= (int16_t)VAL_MAX) notes[n++] = (uint8_t)v;
+        break;
+    case CARP_EV_LOW: case CARP_EV_MID2: case CARP_EV_MID3: case CARP_EV_TOP:
+        v = (int16_t)(carp_voice(a, (uint8_t)(part - CARP_EV_LOW)) + base);
+        if (v >= 0 && v <= (int16_t)VAL_MAX) notes[n++] = (uint8_t)v;
+        break;
+    case CARP_EV_ARP_UP: case CARP_EV_ARP_DN: case CARP_EV_ARP_PP: case CARP_EV_ARP_RND:
+        v = (int16_t)(carp_pick(a, part) + base);
+        a->counter++;
+        if (v >= 0 && v <= (int16_t)VAL_MAX) notes[n++] = (uint8_t)v;
+        break;
+    case CARP_EV_UPPER:
+        n = carp_spread(a, a->nchord > 1u ? 1u : 0u, base, notes);
+        break;
+    default:                                         /* CHORD, the strums, MUTE */
+        n = carp_spread(a, 0u, base, notes);
+        break;
     }
-    a->counter++;
+    if ((part == CARP_EV_STRUM_UP || part == CARP_EV_STRUM_DN) && n > 1u) {
+        for (i = 0u; i < n; i++)                     /* a strum: the first note now, the rest strum_frames apart */
+            a->strum[i] = notes[part == CARP_EV_STRUM_UP ? i : (uint8_t)(n - 1u - i)];
+        cap = ring ? 4u * CARP_STRUM_MAX : CARP_STRUM_MAX;
+        a->strum_frames = a->cell_frames / (2u * n);
+        if (a->strum_frames > cap) a->strum_frames = cap;
+        if (a->strum_frames == 0u) a->strum_frames = 1u;
+        if (gate != 0u && gate <= a->strum_frames * (uint32_t)(n - 1u))
+            gate = a->strum_frames * (uint32_t)(n - 1u) + 1u;   /* every strummed note sounds a frame at least */
+        carp_note_on(a, a->strum[0]);
+        a->nstrum = n;
+        a->strum_i = 1u;
+        a->strum_due = a->frame + a->strum_frames;
+    } else {
+        for (i = 0u; i < n; i++)
+            carp_note_on(a, notes[i]);
+    }
     if (gate != 0u) {
         a->rel_pending = 1u;
         a->rel_due = a->frame + gate;
     }
 }
 
+/* the event a ~ at the playing cell holds on: the strike before it (a rest before it: the rest) */
+static uint8_t carp_held_event(const CarpSeq *a)
+{
+    uint8_t j, e;
+    for (j = 1u; j < a->ncell; j++) {
+        e = a->cells[(uint8_t)((a->cell + a->ncell - j) % a->ncell)];
+        if (CARP_EV_PART(e) != CARP_EV_TIE)
+            return e;
+    }
+    return CARP_EV_TIE;
+}
+
 /* the step's cells, gate ends and strum notes that are due by this frame, in time order */
 static void carp_due(CarpSeq *a)
 {
-    uint8_t guard = 3u * CARP_NCELL + ARP_CHORD_NOTES;
+    uint8_t guard = 3u * CARP_NCELL + ARP_CHORD_NOTES, ev;
     while (guard--) {
         uint8_t rel = (uint8_t)(a->rel_pending && (int32_t)(a->frame - a->rel_due) >= 0);
         uint8_t strum = (uint8_t)(a->strum_i < a->nstrum && (int32_t)(a->frame - a->strum_due) >= 0);
@@ -448,10 +749,16 @@ static void carp_due(CarpSeq *a)
         } else if (rel && (!cell || (int32_t)(a->cell_due - a->rel_due) >= 0)) {
             carp_release(a);                         /* the gate's end (before a strike on the same frame) */
         } else if (cell) {
-            if (a->cells[a->cell] == CARP_CELL_STRIKE)
-                carp_strike(a);
-            else if (a->cells[a->cell] == CARP_CELL_REST && !a->tie_hold)
-                carp_release(a);                     /* _ silences a legato strike (not one tied on); ~ holds it */
+            ev = a->cells[a->cell];
+            if (CARP_EV_PART(ev) == CARP_EV_TIE && a->retrig && a->cell_k == 0u)
+                ev = carp_held_event(a);             /* a new chord inside a held note: that note again, on it */
+            a->retrig = 0u;
+            if (CARP_EV_PART(ev) == CARP_EV_REST) {
+                if (!(a->ph_flags & CARP_PH_RING))
+                    carp_release(a);                 /* _ silences a legato strike; ~ holds it */
+            } else if (CARP_EV_PART(ev) != CARP_EV_TIE) {
+                carp_strike(a, ev);
+            }
             a->cell_k++;
             a->cell = (uint8_t)(a->cell + 1u >= a->ncell ? 0u : a->cell + 1u);
             a->cell_due = a->step_start + a->cell_frames * a->cell_k;
@@ -494,8 +801,8 @@ static void carp_rewind(CarpSeq *a)
     a->cell = 0u;
     a->cell_k = a->cell_max = 0u;
     a->nchord = 0u;                                  /* a TIE on step 1 rests at the start */
-    a->tie_hold = 0u;
     a->counter = 0u;
+    a->ph_started = 0u;                              /* the phrase from its top on the first step */
     a->live = 0u;
 }
 
@@ -520,8 +827,11 @@ static void carp_live_start(CarpSeq *a)
         a->counter = 0u;                             /* the key lands inside a pulse: one more, so the step is never cut */
         a->step_ticks = carp_step_len(a);
         a->ticks_left = (uint8_t)(a->step_ticks + 1u);
+        a->step_pulse = 0u;                          /* the phrase from its top, at the key */
+        a->ph_started = 1u;
     }
     carp_load(a);
+    a->retrig = 1u;
 }
 
 /* a chord key's request: the chord or hold before it off, then the new one: a hold plays live while the pattern is
@@ -562,7 +872,8 @@ static void carp_aud_apply(CarpSeq *a, uint32_t req)
     }
     a->nshown = n;
     a->shown_oct = 1u;                               /* a block chord, as it sounds */
-    a->shown_style = ARPSTYLE_BLOCK;
+    a->shown_style = ARPSTYLE_BEAT;
+    a->shown_var = 0u;
 }
 
 /* --------------------------------------------------------------- API --- */
@@ -581,8 +892,17 @@ void carp_init(CarpSeq *a, ArpState *st, const MasterPerformancePreset *perf, Ma
     a->ch[0] = a->ch[1] = CARP_CH_NONE;
     a->vel = a->strike_vel = 1u;
     a->accent = 0u;
-    a->tie_hold = 0u;
     a->ncell_var = 0u;
+    a->ph_flags = 0u;
+    a->npool = 0u;
+    a->step_pulse = 0u;
+    a->ph_started = 0u;
+    a->ring_i = 0u;
+    a->retrig = 0u;
+    a->style = ARPSTYLE_ARP;
+    a->var = 0u;
+    a->oct = 1u;
+    a->gate = ARP_GATE_DEFAULT;
     a->rel_pending = 0u;
     a->nstrum = a->strum_i = 0u;
     a->pos = CARP_POS_NONE;
@@ -590,7 +910,7 @@ void carp_init(CarpSeq *a, ArpState *st, const MasterPerformancePreset *perf, Ma
     a->step_ticks = (uint8_t)carp_div_ticks(ARP_TIMING_DEFAULT);
     a->rate_q = arp_rate_q(ARP_RATE_DEFAULT);
     a->hold_strum = 0u;
-    a->hold_n = a->hold_oct = 0u;
+    a->hold_n = 0u;
     a->ncell = a->cell = 0u;
     a->cell_k = a->cell_max = 0u;
     a->nchord = 0u;
@@ -600,13 +920,15 @@ void carp_init(CarpSeq *a, ArpState *st, const MasterPerformancePreset *perf, Ma
     a->live_root = CARP_NOTE_NONE;
     a->live_vel = 1u;
     a->live = 0u;
-    a->req_knobs = (uint32_t)ARP_RATE_DEFAULT | (uint32_t)ARPSTYLE_UP << 16;   /* the UI's knobs at power-up */
+    a->req_knobs = (uint32_t)ARP_RATE_DEFAULT | (uint32_t)ARPSTYLE_ARP << 16;  /* the UI's knobs at power-up: ARP UP */
+    a->live_k = a->req_knobs >> 8;
     a->req_transpose = 0;
     a->transpose = 0;
     a->follow = 0;
     a->nshown = 0u;
     a->shown_oct = 1u;
-    a->shown_style = ARPSTYLE_UP;
+    a->shown_style = ARPSTYLE_ARP;
+    a->shown_var = 0u;
     a->req_play = 0u;
     a->running = 0u;
     a->ext_running_seen = midi_clock_ext_running();
@@ -696,7 +1018,23 @@ uint8_t carp_frame(CarpSeq *a, uint32_t frame, const MaqSeq *q)
     carp_transport(a, q, pulses - n);
     if (a->live) {                                   /* a held key follows the knobs from its next strike */
         uint32_t k = a->req_knobs;
-        carp_knobs(a, a->st->gate_length, (uint8_t)(k >> 8), (uint8_t)(k >> 16));
+        uint8_t g = a->st->gate_length;
+        a->gate = g > VAL_MAX ? (uint8_t)VAL_MAX : g;
+        if ((k >> 8) != a->live_k) {                 /* SPAN, STYLE or VARIATION turned: the new phrase, in its place */
+            a->live_k = k >> 8;
+            carp_knobs(a, g, (uint8_t)(k >> 8), (uint8_t)(k >> 16), (uint8_t)(k >> 24));
+            if (a->nchord != 0u) {
+                a->ncell = a->ncell_var;
+                a->cell = (uint8_t)(a->cell % a->ncell);
+            }
+            if (a->ph_flags & CARP_PH_HOLD) {
+                uint8_t p = CARP_EV_PART(a->cells[0]);
+                a->hold_strum = p == CARP_EV_STRUM_UP ? (uint8_t)1u : p == CARP_EV_STRUM_DN ? (uint8_t)2u : (uint8_t)0u;
+            }
+            a->shown_oct = a->oct;
+            a->shown_style = a->style;
+            a->shown_var = a->var;
+        }
     }
     if (a->running || a->live_root != CARP_NOTE_NONE) {
         if (n > CARP_PULSES_PER_FRAME_MAX)
@@ -783,8 +1121,9 @@ uint8_t carp_shown(const CarpSeq *a, uint8_t out[ARP_CHORD_NOTES])
     return n;
 }
 
-uint8_t carp_shown_shape(const CarpSeq *a, uint8_t *style)
+uint8_t carp_shown_shape(const CarpSeq *a, uint8_t *style, uint8_t *var)
 {
     *style = a->shown_style;
+    *var = a->shown_var;
     return a->shown_oct;
 }

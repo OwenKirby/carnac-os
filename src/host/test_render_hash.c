@@ -171,7 +171,7 @@ int main(int argc, char **argv)
             for (int s = 0; s < 3; s++) {
                 ArpChordStep *st = &arp_state.steps[s];
                 st->chord_root = (uint8_t)(55 + s * 2); st->octave_range = 1;
-                st->style = (uint8_t)(ARPSTYLE_UP + s); st->variation = (uint8_t)(s * 3);
+                st->style = (uint8_t)(ARPSTYLE_ARP + s); st->variation = (uint8_t)(s * 3);
             }
             arp_state.sequence_length = 3;
             arp_state.gate_length = 90;              /* (each step's gate before 2026-10-17's RATE; 1/4 steps) */

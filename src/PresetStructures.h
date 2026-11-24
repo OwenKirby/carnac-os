@@ -245,25 +245,29 @@ static inline void seq_lane_set_event(SequencerLane *lane, uint8_t event_type)
 #define ARP_CHORD_EMPTY 127u         /* chord_root of a step no chord was captured into (or CLEARed): the step rests */
 #define ARP_CHORD_TIE 126u           /* chord_root of a TIE step: the chord before it carries on (8.1) */
 #define ARP_ROOT_IS_CHORD(r) ((r) < ARP_CHORD_TIE)   /* a chord key's note, 0..125 */
-#define ARP_NOCT 4u                  /* octave_range 0..3 = the pattern spans 1..4 octaves */
-#define ARP_NVAR 25u                 /* variation: 8.3 rhythm_variation_table row r, column c (A / B) = r * 2 + c; 24: ALL, every cell struck */
-enum {                               /* style (knob 3, "phrase category"): the order a step's strikes take the notes */
-    ARPSTYLE_HOLD,                   /* the chord struck once and held while the steps after it play the same chord (not
-                                      * again on the clock); RHYTHM is its strum then: 0 none, 1 up, 2 down, its notes
-                                      * RATE apart (FREC_VER_ARP 5, 2026-10-21: first in the list, was last) */
-    ARPSTYLE_BLOCK,                  /* the whole chord on every strike */
-    ARPSTYLE_UP, ARPSTYLE_DOWN, ARPSTYLE_UPDN, ARPSTYLE_DNUP, ARPSTYLE_RANDOM,   /* one note per strike */
-    ARPSTYLE_STRUM_UP, ARPSTYLE_STRUM_DN,                                       /* the chord, spread across the cell */
+#define ARP_NOCT 4u                  /* a phrase spans 1..4 octaves of its chord (SPAN) */
+#define ARP_NSPAN (ARP_NOCT + 1u)    /* octave_range (SPAN, knob 2): 0 AUTO (the phrase's own span), 1..4 octaves */
+#define ARP_NVAR 12u                 /* variation (knob 4): the style's phrase, 0..11 (arp_seq.c CARP_PHRASES) */
+enum {                               /* style (knob 3, 2026-11-23): the family of phrases VARIATION picks from (arp_seq.c) */
+    ARPSTYLE_BEAT,                   /* the chord on a rhythm; variations 0..2 HOLD: struck once, held while the steps after
+                                      * it play the same chord, strummed none / up / down with its notes RATE apart */
+    ARPSTYLE_ARP,                    /* one note at a time through the chord: up, down, up-down, converge .. */
+    ARPSTYLE_PULSE,                  /* sequencer lines: octave pulses, Berlin-school runs, gallops, offbeat bass */
+    ARPSTYLE_STAB,                   /* syncopated chord stabs: offbeat, skank, house, funk, clave, gate */
+    ARPSTYLE_STRUM,                  /* guitar strumming: down / up strokes, folk, island, waltz, fingerpicking */
+    ARPSTYLE_GUITAR,                 /* rhythm guitar: 16th funk with muted chks, reggae, ska, palm mutes, highlife */
+    ARPSTYLE_KEYS,                   /* piano figures: Alberti, ballad, stride, gospel, montuno, ripples */
+    ARPSTYLE_BASS,                   /* a bass note under the chord: oom-pah, boom-chick, bossa, habanera, walking */
+    ARPSTYLE_HARP,                   /* ringing figures: cascades, rolls, kora, bells, rain */
     ARPSTYLE_COUNT
 };
-#define ARP_NSTRUM 3u                /* a HOLD step's RHYTHM: none, up, down */
 
 /* 8.1: one step key's capture: the chord struck plus the 4 ARP knob values at that moment (2.2) */
 typedef struct {
     uint8_t chord_root;              /* the chord key's MIDI note 0..125 (the chord's bass), ARP_CHORD_TIE, ARP_CHORD_EMPTY */
     uint8_t rate;                    /* knob 1: ARPRATE_*, its notes' rate (FREC_VER_ARP 5, 2026-10-21: was the step's
                                       * length, ARPDIV_*, now the pattern's TIMING; v4, 2026-10-17: was its GATE) */
-    uint8_t octave_range;            /* knob 2: 0..ARP_NOCT - 1 */
+    uint8_t octave_range;            /* knob 2, SPAN: 0 AUTO, 1..ARP_NOCT octaves (2026-11-23: was the octave range 0..3) */
     uint8_t style;                   /* knob 3: ARPSTYLE_* */
     uint8_t variation;               /* knob 4: 0..ARP_NVAR - 1 */
     uint8_t accent;                  /* 0 / 1: the step's first strike plays at ACCENT VEL (the ACCENT key toggles it) */
@@ -323,7 +327,7 @@ static inline void arp_defaults(ArpState *a)
         a->steps[i].chord_root = ARP_CHORD_EMPTY;
         a->steps[i].rate = ARP_RATE_DEFAULT;
         a->steps[i].octave_range = 0u;
-        a->steps[i].style = ARPSTYLE_UP;
+        a->steps[i].style = ARPSTYLE_ARP;
         a->steps[i].variation = 0u;
         a->steps[i].accent = 0u;
     }

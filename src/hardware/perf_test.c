@@ -618,9 +618,9 @@ static void seq_slot(void)
         ArpChordStep *st = &arp_state.steps[i];
         st->chord_root = (uint8_t)(55 + (i * 5) % 12);
         st->rate = ARPRATE_1_128;                    /* (TIMING 1/32: below) */
-        st->octave_range = ARP_NOCT - 1u;
-        st->style = (uint8_t)(ARPSTYLE_UP + i % 7u);
-        st->variation = (uint8_t)(i * 3u);
+        st->octave_range = ARP_NOCT;                 /* SPAN 4 octaves */
+        st->style = (uint8_t)(ARPSTYLE_ARP + i % 8u); /* (2026-11-23: every family but BEAT, chords and strums too) */
+        st->variation = (uint8_t)((i * 5u) % ARP_NVAR);
     }
     arp_state.sequence_length = 8u;
     arp_state.gate_length = 90;
@@ -650,8 +650,8 @@ static void loop_slot(void)
         ArpChordStep *st = &arp_state.steps[i];
         st->chord_root = (uint8_t)ROOT[i & 3u];
         st->rate = ARPRATE_1_16;
-        st->octave_range = 1;
-        st->style = ARPSTYLE_UP;
+        st->octave_range = 2;
+        st->style = ARPSTYLE_ARP;                    /* UP */
         st->variation = 0;
     }
     arp_state.sequence_length = 4;

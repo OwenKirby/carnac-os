@@ -358,7 +358,7 @@ static void test_factory(void)
             CHECK(a->steps[i].chord_root == ARP_CHORD_EMPTY, "arp %u step %u past the factory's 8 not empty", s, i);
         for (i = 0; i < ARP_LEN_DEFAULT; i++) {
             const ArpChordStep *c = &a->steps[i];
-            CHECK((ARP_ROOT_IS_CHORD(c->chord_root) || c->chord_root == ARP_CHORD_TIE) && c->octave_range < ARP_NOCT &&
+            CHECK((ARP_ROOT_IS_CHORD(c->chord_root) || c->chord_root == ARP_CHORD_TIE) && c->octave_range < ARP_NSPAN &&
                   c->style < ARPSTYLE_COUNT && c->variation < ARP_NVAR && c->accent <= 1u && c->rate < ARPRATE_COUNT,
                   "arp %u step %u out of range", s, i);
         }
