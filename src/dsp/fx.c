@@ -1605,12 +1605,21 @@ FX_INL uint32_t tape_pos(uint32_t w, int32_t back, uint32_t lq)
  * output, so the echo is ~4.5 kHz wide (a BBD's), with no aliasing grit. Its cells keep 16 bits (TAPE_Q12 0): the
  * 12-bit steps' noise, in half the band, would have risen ~3 dB; at 16 bits it is ~24 dB under today's. Each per-step
  * one-pole moves to the quarter rate (TD_C), so the tone and the decay times stay. */
+/* TAPE_HB1 (2026-11-24, user: "quarter rate is maybe a bit too low ... gain back a bit more fidelity", once the loop ran
+ * from RAM): the half-rate tape again, done properly: the same IIR halfband between 44.1 and 22.05 kHz instead of the
+ * [1 3 3 1] pair (whose images and aliases reached -30 dBFS from a 9..12 kHz note: the old fizz), 16-bit cells, and the
+ * record low-pass opened from ~4.9 kHz (0.75 a step) to ~9 kHz (30245): a ~9 kHz echo, as a good tape echo's, still
+ * darker each repeat. The halfband here passes to ~9 kHz and stops from ~13 kHz (-59.6 dB). */
 #ifndef TAPE_DIV
-#define TAPE_DIV 4                                     /* (2026-11-24, user: "work on quarter rate tape"; 2: as before) */
+#define TAPE_DIV 2                                     /* (2026-11-24: 4 the quarter-rate tape, ~5 kHz) */
+#endif
+#ifndef TAPE_HB1
+#define TAPE_HB1 (TAPE_DIV == 2)
 #endif
 #ifndef TAPE_Q12
-#define TAPE_Q12 (TAPE_DIV == 2)
+#define TAPE_Q12 (TAPE_DIV == 2 && !TAPE_HB1)
 #endif
+#define TAPE_HB (TAPE_DIV == 4 || TAPE_HB1)            /* a halfband at some stage: its states and second outputs */
 #if TAPE_DIV == 4
 #define TD_C(c) half_c(half_c(c))
 #define TD_SH 2u
@@ -1618,14 +1627,18 @@ FX_INL uint32_t tape_pos(uint32_t w, int32_t back, uint32_t lq)
 #elif TAPE_DIV == 2
 #define TD_C(c) half_c(c)
 #define TD_SH 1u
+#if TAPE_HB1
+#define TD_REC 30245                                   /* ~9 kHz a pole at 22.05 kHz (1 - e^(-2 pi 9000 / 22050)) */
+#else
 #define TD_REC 24575
+#endif
 #else
 #error "TAPE_DIV is 2 or 4"
 #endif
 #define HB_A00 0.102382f                               /* (literals, not a table: no data loads from the XIP flash) */
-#define HB_A01 0.616085f
-#define HB_A10 0.344771f
-#define HB_A11 0.869742f
+#define HB_A01 0.616085f                               /* (TAPE_HB1 at 44.1 kHz: flat to ~9 kHz, -59.6 dB from 13 kHz; a */
+#define HB_A10 0.344771f                               /* narrower 9.6 / 12.45 design rejected 15 kHz far worse, -68 */
+#define HB_A11 0.869742f                               /* vs -86 dBFS, and a 12 kHz note folded the same, -36 vs -38) */
 /* a first-order allpass (a + z^-1) / (1 + a z^-1), one state (transposed) */
 static inline __attribute__((always_inline)) float hb_ap(float a, float x, float *s)
 {
@@ -1747,9 +1760,11 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
     const uint32_t lq = R->lq;
     const int32_t gap_tgt = R->gap_tgt, wow_q8 = R->wow_q8, flutter_q8 = R->flutter_q8, loss_c = R->loss_c, hp_c = R->hp_c;
     const DelayFb fb = R->fb;
-#if TAPE_DIV == 4
+#if TAPE_HB
     float hbd0 = tp.hbd[0], hbd1 = tp.hbd[1], hbd2 = tp.hbd[2], hbd3 = tp.hbd[3];
     int32_t hua = tp.hua, hpl = tp.hpl, hpr = tp.hpr;
+#endif
+#if TAPE_DIV == 4
     uint8_t ph2 = tp.hph2;
 #endif
     int32_t run_lp = tp.run_lp;
@@ -1790,13 +1805,28 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
      * the heads' outputs back up. In one loop every sample carried the step's whole state (most of it spilled and
      * reloaded on the samples that only shift a filter); now the steps' loop runs only on steps. */
     int32_t xs[FX_BLOCK_MAX / TAPE_DIV + 1u], yl[FX_BLOCK_MAX / TAPE_DIV + 1u], yr[FX_BLOCK_MAX / TAPE_DIV + 1u];
-#if TAPE_DIV == 4
+#if TAPE_HB
     int32_t yl2[FX_BLOCK_MAX / TAPE_DIV + 1u], yr2[FX_BLOCK_MAX / TAPE_DIV + 1u];
+#endif
+#if TAPE_DIV == 4
     const uint8_t ph2_0 = ph2;
 #endif
     const uint8_t ph_0 = ph;
     if (n > FX_BLOCK_MAX) n = FX_BLOCK_MAX;
     uint32_t ns = 0;
+#if TAPE_DIV == 2 && TAPE_HB1
+    for (uint32_t s = 0; s < n; s++) {                     /* 1. the halfband decimator: each step's input */
+        int32_t x = in[s];
+        if (!ph) {                                         /* (the pair's first: kept for the halfband) */
+            hua = x;
+            ph = 1;
+            continue;
+        }
+        ph = 0;
+        xs[ns++] = hb_round(0.5f * (hb_ap(HB_A01, hb_ap(HB_A00, (float)x, &hbd0), &hbd1) +
+                                    hb_ap(HB_A11, hb_ap(HB_A10, (float)hua, &hbd2), &hbd3)));
+    }
+#else
     for (uint32_t s = 0; s < n; s++) {                     /* 1. the decimators: each step's input */
         int32_t x = in[s];
         if (!ph) {                                         /* (the pair's first) */
@@ -1819,6 +1849,7 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
 #endif
         xs[ns++] = xin;
     }
+#endif
 
     for (uint32_t k = 0; k < ns; k++) {                    /* 2. the steps */
         const int32_t xin = xs[k];
@@ -1969,9 +2000,9 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
         TLAP(SPROF_D_WR);
 #endif
         step++;
-#if TAPE_DIV == 4
-        {                                                  /* the halfband's interpolators: this 22 kHz sample, and */
-            float fl = (float)ol;                          /* the next (at the pair's first) */
+#if TAPE_HB
+        {                                                  /* the halfband's interpolators: this (22 or 44.1 kHz) */
+            float fl = (float)ol;                          /* sample, and the next (at the pair's first) */
             yl[k] = hb_round(hb_ap(HB_A01, hb_ap(HB_A00, fl, &tp.hbl[0]), &tp.hbl[1]));
             yl2[k] = hb_round(hb_ap(HB_A11, hb_ap(HB_A10, fl, &tp.hbl[2]), &tp.hbl[3]));
             if (pp) {
@@ -1994,6 +2025,22 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
 #if TAPE_DIV == 4
     ph2 = ph2_0;
 #endif
+#if TAPE_DIV == 2 && TAPE_HB1
+    for (uint32_t s = 0, k = 0; s < n; s++) {              /* (the halfband's: a step's two samples) */
+        if (!ph) {                                         /* the pair's first: the last step's second sample */
+            ph = 1;
+            out_l[s] = hpl;
+            out_r[s] = hpr;
+            continue;
+        }
+        ph = 0;
+        out_l[s] = yl[k];
+        out_r[s] = yr[k];
+        hpl = yl2[k];
+        hpr = yr2[k];
+        k++;
+    }
+#else
     for (uint32_t s = 0, k = 0; s < n; s++) {
         if (!ph) {                                         /* the pair's first: the late quarter */
             ph = 1;
@@ -2023,6 +2070,7 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
         out_l[s] = (l1 + 3 * l0) >> 2;
         out_r[s] = (r1 + 3 * r0) >> 2;
     }
+#endif
 #undef TAPE_RD_L
     tp.mt[0][0] = mt0; tp.mt[1][0] = mt1;
     tp.em_w = em_w; tp.em_r[0] = em_r0; tp.em_r[1] = em_r1;
@@ -2052,10 +2100,12 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
 #if TAPE_WEAR
     tp.tw_dc = tw_dc < 1e-6f && tw_dc > -1e-6f ? 0.f : tw_dc;
 #endif
-#if TAPE_DIV == 4
+#if TAPE_HB
     tp.hbd[0] = hbd0; tp.hbd[1] = hbd1; tp.hbd[2] = hbd2; tp.hbd[3] = hbd3;
     tp.hua = hua; tp.hpl = hpl; tp.hpr = hpr;
+#if TAPE_DIV == 4
     tp.hph2 = ph2;
+#endif
     for (int k = 0; k < 4; k++) {                          /* (no denormals: a silent tail's states to 0) */
         if (tp.hbd[k] < 1e-3f && tp.hbd[k] > -1e-3f) tp.hbd[k] = 0.f;
         if (tp.hbl[k] < 1e-3f && tp.hbl[k] > -1e-3f) tp.hbl[k] = 0.f;
