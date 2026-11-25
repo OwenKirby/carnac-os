@@ -19,3 +19,12 @@
 #else
 #define SYNTH_FAST
 #endif
+/* SYNTH_RAMLO (2026-11-24): a loop in the low RAM (RAMTEXT, .ram_text: the start-up copies it, the PC guard's window holds
+ * it), which --fast-ram left nearly empty. From there a call cannot reach the XIP flash, nor the flash reach it: only
+ * for code that calls nothing (its helpers always inlined) and is called through a pointer (the delay's tape loops, the
+ * reverb's tank). Without --fast-ram (RAMTEXT then holds .c1_text too) it stays in the flash. */
+#if defined(SYNTH_FAST_RAM)
+#define SYNTH_RAMLO __attribute__((noinline, used, section(".ram_text.dsp")))
+#else
+#define SYNTH_RAMLO __attribute__((noinline))
+#endif

@@ -911,8 +911,10 @@ static inline __attribute__((always_inline)) void tank_run(int32_t *x, const int
 
 /* x: the reverb send in, the left output out; r: the right output. type: REVTYPE_MOD / _CELESTIAL / _DOLMEN /
  * _TUMULUS */
-static void tank_reverb_block(const MasterPerformancePreset *p, int32_t *x, const int32_t *sd, int32_t *r, uint32_t n,
-                              uint8_t type)
+/* (2026-11-24: in the low RAM, SYNTH_RAMLO, called through tank_fn: run from the XIP flash it lost ~25 % to the I-cache's
+ * misses, cold 54 vs warm 40 ticks a sample (FACT 0), on core 1, now what the effects' pass waits for. It calls nothing.) */
+static SYNTH_RAMLO void tank_reverb_block(const MasterPerformancePreset *p, int32_t *x, const int32_t *sd, int32_t *r,
+                                          uint32_t n, uint8_t type)
 {
     int32_t knob_t = p->reverb_decay > 127u ? 127 : p->reverb_decay, knob_d = p->reverb_damp > 127u ? 127 : p->reverb_damp;
     int32_t decay, damp;
@@ -2134,6 +2136,8 @@ static inline __attribute__((always_inline)) void tape_half_passes(const TapeRun
  * flash (out of a call's reach), so everything they use is inlined (FX_INL) and the flash calls them through this
  * table. (TAPE_RAM: above, at TLAP) */
 typedef void (*TapePassFn)(const TapeRun *R, const int32_t *in, int32_t *out_l, int32_t *out_r, uint32_t n);
+/* (not SYNTH_RAMLO: X0X's build refuses a "call" in .ram_text, and its disassembler reads the loop's FPU instructions,
+ * 3f e5 .., as calls; in .c1_text, the FAST region, no such check runs) */
 #if TAPE_RAM
 #define TAPE_PASS_FN __attribute__((noinline, used, section(".c1_text")))
 #else
@@ -2259,6 +2263,10 @@ void fx_reverb_front(const MasterPerformancePreset *p, const int32_t *send, uint
     rv_w = (rv_w + n) & (RV_RING - 1u);
 }
 
+/* the tank, through a pointer (SYNTH_RAMLO: the low RAM is out of a direct call's reach from the flash) */
+typedef void (*TankFn)(const MasterPerformancePreset *p, int32_t *x, const int32_t *sd, int32_t *r, uint32_t n,
+                       uint8_t type);
+static TankFn const volatile tank_fn = tank_reverb_block;
 /* the side's block for the back (core 1's: static, not on its 2.8 KB stack) */
 static int32_t rv_sd[FX_BLOCK_MAX] FX_LINE;
 
@@ -2287,7 +2295,7 @@ static void tank_half_block(const MasterPerformancePreset *p, int32_t *x, const 
     }
     mr_half_c1.pend_s = pend_s;
     if (m)
-        tank_reverb_block(p, mr_hx, mr_hs, mr_hr, m, p->reverb_type);
+        tank_fn(p, mr_hx, mr_hs, mr_hr, m, p->reverb_type);
     int32_t al = mr_half_c1.prev_l, ar = mr_half_c1.prev_r;
     m = 0;
     o = odd;
@@ -2335,7 +2343,7 @@ void fx_reverb_back(const MasterPerformancePreset *p, int32_t *x, int32_t *r, ui
 #if MR_HALF
         tank_half_block(p, x, sd, r, n, odd);
 #else
-        tank_reverb_block(p, x, sd, r, n, p->reverb_type);
+        tank_fn(p, x, sd, r, n, p->reverb_type);
 #endif
         return;
     }
