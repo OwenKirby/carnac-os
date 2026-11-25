@@ -188,10 +188,11 @@ def main():
                     help="the profile build: the render times its stages (-DSYNTH_PROF, src/dsp/synth_prof.h)")
     ap.add_argument("--dsp-ram", action="store_true",
                     help="run the DSP's code from RAM instead of the flash (XIP) through the I-cache (dsp_ram_ld)")
-    ap.add_argument("--fast-ram", type=int, metavar="KIB", default=32,
+    ap.add_argument("--fast-ram", type=int, metavar="KIB", default=24,
                     help="run the code marked SYNTH_FAST (dsp_cold.h) and .c1_text from a KIB KiB region at the top of "
-                         "the pool instead of the XIP flash / RAMTEXT (fast_ram_ld; 2026-11-24: on by default, 32: the "
-                         "voice control tick ran 20..40 %% faster); 0: off")
+                         "the pool instead of the XIP flash / RAMTEXT (fast_ram_ld; 2026-11-24: on by default, the "
+                         "voice control tick ran 20..40 %% faster; 2026-11-25: 32 -> 24, it holds 23.3 KB: the 8 KB "
+                         "back to the pool, for the recorder / clip sequencer); 0: off")
     ap.add_argument("--dsp-align", type=int, metavar="N", default=4,
                     help="align each DSP function to N bytes, a power of 2 (synth_dsp.c only; 0: the compiler's 2). "
                          "4 (2026-10-26): the DSP runs from the XIP flash through the I-cache, and with 2-byte "
